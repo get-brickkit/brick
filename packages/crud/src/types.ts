@@ -237,6 +237,29 @@ export interface Query<
   offset?: number;
   includeTotal?: boolean;
 }
+/** `list` input: a query, plus keyset pagination. */
+export type ListQuery<
+  T extends Table,
+  F,
+  S extends readonly ReadKeys<T, F>[] | undefined = undefined,
+  I extends readonly IncludeKeys<F>[] | undefined = undefined,
+> = Query<T, F, S, I> & {
+  /** `null` for the first page, then the previous page's `nextCursor`. */
+  cursor?: string | null;
+};
+type KindQuery<T extends Table, F, S, I, Kind> = Kind extends "list"
+  ? ListQuery<
+      T,
+      F,
+      Extract<S, readonly ReadKeys<T, F>[] | undefined>,
+      Extract<I, readonly IncludeKeys<F>[] | undefined>
+    >
+  : Query<
+      T,
+      F,
+      Extract<S, readonly ReadKeys<T, F>[] | undefined>,
+      Extract<I, readonly IncludeKeys<F>[] | undefined>
+    >;
 // The table is supplied after crud() is configured. Only explicit field
 // schemas can supply value types here; column-derived values stay unknown.
 type AuthorizeKeys<F, P extends string> = string extends keyof F
@@ -269,7 +292,9 @@ type AuthorizeQuery<F> = {
 };
 /** Validated authorization inputs, indexed by CRUD operation. */
 export type CrudInputs<F extends Fields = Fields> = {
-  list: { [K in keyof AuthorizeQuery<F>]: AuthorizeQuery<F>[K] };
+  list: { [K in keyof AuthorizeQuery<F>]: AuthorizeQuery<F>[K] } & {
+    cursor?: string | null;
+  };
   findOne: { [K in keyof AuthorizeQuery<F>]: AuthorizeQuery<F>[K] };
   get: {
     id: unknown;
@@ -312,11 +337,12 @@ export interface QueryAction<
   Kind extends "list" | "findOne",
 > extends Omit<
   Callable<
-    Query<
+    KindQuery<
       T,
       F,
       readonly ReadKeys<T, F>[] | undefined,
-      readonly IncludeKeys<F>[] | undefined
+      readonly IncludeKeys<F>[] | undefined,
+      Kind
     >,
     Kind extends "list"
       ? {
@@ -324,6 +350,7 @@ export interface QueryAction<
           total?: number;
           limit: number;
           offset: number;
+          nextCursor?: string | null;
         }
       : ReadRow<T, F> | null,
     C
@@ -334,7 +361,7 @@ export interface QueryAction<
     const S extends readonly ReadKeys<T, F>[] | undefined = undefined,
     const I extends readonly IncludeKeys<F>[] | undefined = undefined,
   >(params: {
-    input: Query<T, F, S, I>;
+    input: KindQuery<T, F, S, I, Kind>;
     ctx?: Partial<C>;
   }): Promise<
     Kind extends "list"
@@ -343,6 +370,7 @@ export interface QueryAction<
           total?: number;
           limit: number;
           offset: number;
+          nextCursor?: string | null;
         }
       : Selected<T, F, S, I> | null
   >;
@@ -350,7 +378,7 @@ export interface QueryAction<
     const S extends readonly ReadKeys<T, F>[] | undefined = undefined,
     const I extends readonly IncludeKeys<F>[] | undefined = undefined,
   >(
-    input: Query<T, F, S, I>,
+    input: KindQuery<T, F, S, I, Kind>,
     ctx?: Partial<C>,
   ): Promise<
     Kind extends "list"
@@ -359,6 +387,7 @@ export interface QueryAction<
           total?: number;
           limit: number;
           offset: number;
+          nextCursor?: string | null;
         }
       : Selected<T, F, S, I> | null
   >;
@@ -366,7 +395,7 @@ export interface QueryAction<
     const S extends readonly ReadKeys<T, F>[] | undefined = undefined,
     const I extends readonly IncludeKeys<F>[] | undefined = undefined,
   >(params: {
-    input: Query<T, F, S, I>;
+    input: KindQuery<T, F, S, I, Kind>;
     ctx?: Partial<C>;
   }): Promise<
     Kind extends "list"
@@ -375,6 +404,7 @@ export interface QueryAction<
           total?: number;
           limit: number;
           offset: number;
+          nextCursor?: string | null;
         }
       : Selected<T, F, S, I> | null
   >;

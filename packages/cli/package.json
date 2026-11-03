@@ -92,6 +92,7 @@
     "@sinclair/typebox": "^0.34.52",
     "class-variance-authority": "^0.7.1",
     "commander": "^15.0.0",
+    "drizzle-kit": "^0.31.11",
     "elysia": "2.0.0-rc.1"
   },
   "devDependencies": {

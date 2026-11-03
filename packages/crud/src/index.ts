@@ -8,6 +8,7 @@ import {
   type EventRecorder,
 } from "@brickkit/core";
 import { Type, FormatRegistry, Kind, type TSchema } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import {
   getTableColumns,
   type Column,
@@ -155,6 +156,37 @@ function object(properties: Record<string, TSchema>) {
 const invalid = (message: string): never => {
   throw new ActionExecutionError("BAD_REQUEST", message, 400);
 };
+/** An opaque list cursor: the orderBy it was made for, and the last row's sort values. */
+function encodeCursor(spec: string, values: unknown[]): string {
+  return Buffer.from(JSON.stringify([spec, values.map(jsonValue)])).toString(
+    "base64url",
+  );
+}
+/** The sort values a client cursor holds, checked against the columns they bind to. */
+function decodeCursor(
+  cursor: string,
+  spec: string,
+  keyset: { column: Column }[],
+): unknown[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(cursor, "base64url").toString());
+  } catch {
+    return invalid("Invalid cursor");
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed[0] !== spec ||
+    !Array.isArray(parsed[1]) ||
+    parsed[1].length !== keyset.length ||
+    keyset.some(
+      ({ column }, index) =>
+        !Value.Check(columnSchema(column), (parsed as unknown[][])[1][index]),
+    )
+  )
+    return invalid("Invalid cursor for this orderBy");
+  return parsed[1];
+}
 const MAX_WHERE_DEPTH = 20;
 // Iterative pre-validation depth walk over raw `where` input. The action
 // input validator runs before execute()/condition(), so unbounded `and`/`or`
@@ -559,7 +591,13 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
       const createSchema = writeSchema("create");
       const updateSchema = writeSchema("update");
       const inputs: Record<Operation | BulkOperation, TSchema> = {
-        list: querySchema,
+        list: object({
+          ...queryProperties,
+          // `null` starts keyset pagination; a `nextCursor` continues it.
+          cursor: t.Optional(
+            t.Union([t.String({ maxLength: 4096 }), t.Null()]),
+          ),
+        }),
         findOne: querySchema,
         get: object({ id: idSchema, select: selection, include: includes }),
         create: createSchema,
@@ -579,6 +617,7 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
           total: t.Optional(t.Integer()),
           limit: t.Integer(),
           offset: t.Integer(),
+          nextCursor: t.Optional(t.Union([t.String(), t.Null()])),
         }),
         findOne: t.Union([rowSchema, t.Null()]),
         get: rowSchema,
@@ -598,6 +637,7 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
           total: t.Optional(t.Integer()),
           limit: t.Integer(),
           offset: t.Integer(),
+          nextCursor: t.Optional(t.Union([t.String(), t.Null()])),
         }),
         findOne: t.Union([rowSchemaLoose, t.Null()]),
         get: rowSchemaLoose,
@@ -783,6 +823,38 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
             ? eq(idColumn, bind(databaseValue(idColumn, input.id)))
             : undefined,
         );
+        // Keyset pagination: order by the sort fields plus the ID, and start
+        // after the row the cursor names.
+        const paging = operation === "list" && input.cursor !== undefined;
+        const sorts: { field: string; direction: string }[] =
+          input.orderBy ?? [];
+        const keyset = sorts.map((sort) => ({
+          column: columns[sort.field] as Column,
+          desc: sort.direction === "desc",
+        }));
+        if (paging) {
+          shape.push("cursor");
+          if (input.offset) invalid("Use cursor or offset, not both");
+          if (!keyset.some((key) => key.column === idColumn))
+            keyset.push({ column: idColumn, desc: false });
+          if (keyset.some((key) => !key.column.notNull))
+            invalid("Cursor pagination needs sort fields that are not null");
+        }
+        const cursorSpec = sorts
+          .map((sort) => `${sort.field}:${sort.direction}`)
+          .join(",");
+        let after: SQL | undefined;
+        if (paging && input.cursor !== null) {
+          const values = decodeCursor(input.cursor, cursorSpec, keyset);
+          shape.push("after");
+          // (a, b) after (x, y): a > x OR (a = x AND b > y), per direction.
+          for (let index = keyset.length - 1; index >= 0; index--) {
+            const { column, desc: down } = keyset[index];
+            const value = () => bind(databaseValue(column, values[index]));
+            const past = down ? lt(column, value()) : gt(column, value());
+            after = after ? or(past, and(eq(column, value()), after)) : past;
+          }
+        }
         const derived: string[] = input.include ?? [];
         const selected: string[] = [...(input.select ?? readable), ...derived];
         const selectedProjection = Object.fromEntries(
@@ -791,11 +863,19 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
             .map((key) => [key, columns[key]]),
         );
         // A sentinel permits resources with no readable fields without exposing the ID.
-        const dbProjection = derived.length
-          ? columns
-          : Object.keys(selectedProjection).length
-            ? selectedProjection
-            : { __brickSentinel: idColumn };
+        const dbProjection = {
+          ...(derived.length
+            ? columns
+            : Object.keys(selectedProjection).length
+              ? selectedProjection
+              : { __brickSentinel: idColumn }),
+          // The next cursor needs the sort values, even when not selected.
+          ...(paging
+            ? Object.fromEntries(
+                keyset.map((key, index) => [`__brickKey${index}`, key.column]),
+              )
+            : {}),
+        };
         const resolveRows = async (rows: Record<string, unknown>[]) => {
           if (!rows.length) return rows;
           const resolved = rows.map((row) => ({ ...row }));
@@ -827,28 +907,29 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
           const limit =
             operation === "list" ? (input.limit ?? defaultLimit) : 1;
           const offset = input.offset ?? 0;
-          const ordering = (input.orderBy ?? []).map((sort: any) =>
-            sort.direction === "desc"
-              ? desc(columns[sort.field])
-              : asc(columns[sort.field]),
+          const ordering = keyset.map((key) =>
+            key.desc ? desc(key.column) : asc(key.column),
           );
-          const boundLimit = bind(limit),
+          // One extra row tells whether there is a next page.
+          const boundLimit = bind(paging ? limit + 1 : limit),
             boundOffset = bind(offset);
+          const fetched = await executeQuery(
+            db,
+            key("rows"),
+            () =>
+              db
+                .select(dbProjection)
+                .from(resource.table)
+                .where(after ? and(where, after) : where)
+                .orderBy(...ordering)
+                .limit(boundLimit)
+                .offset(boundOffset),
+            params,
+            cacheable,
+          );
+          const more = paging && fetched.length > limit;
           const rows = await resolveRows(
-            await executeQuery(
-              db,
-              key("rows"),
-              () =>
-                db
-                  .select(dbProjection)
-                  .from(resource.table)
-                  .where(where)
-                  .orderBy(...ordering)
-                  .limit(boundLimit)
-                  .offset(boundOffset),
-              params,
-              cacheable,
-            ),
+            more ? fetched.slice(0, limit) : fetched,
           );
           if (operation === "get") {
             if (!rows[0])
@@ -865,6 +946,16 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
             limit,
             offset,
           };
+          if (paging) {
+            const last = rows.at(-1);
+            result.nextCursor =
+              more && last
+                ? encodeCursor(
+                    cursorSpec,
+                    keyset.map((_, index) => last[`__brickKey${index}`]),
+                  )
+                : null;
+          }
           if (input.includeTotal) {
             const counts = await executeQuery(
               db,

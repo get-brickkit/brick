@@ -178,20 +178,7 @@ orders.use(notify({}, { deps: { mailer: createMailer() } }));
 - **Names.** Each table is prefixed with the host and the plugin: `table("comments")` on resource `page` becomes `page_comments`; a table with another name becomes `page_comments_<name>`. The installer can choose the prefix instead: `comments({}, { prefix: "blog_" })` gives `blog_comments`. A name the service already has is refused.
 - **Database.** The tables are added to the host service's database (`database.tables`), so they belong to that service.
 - **Schema sync.** `syncSchema(service)` and `syncSchema(database.tables, db)` create them with the app's own tables.
-- **Migrations.** Drizzle Kit reads tables from a schema file. Import the services, which installs the plugins, and export the plugin tables by name. Run Drizzle Kit with Bun so it can load `@brickkit/core`:
-
-```ts title="src/schema/plugins.ts"
-import { database } from "../services/pages/database";
-import "../services/pages/page.resource"; // installs the comments plugin
-
-export const { page_comments } = database.tables;
-```
-
-```bash
-bunx --bun drizzle-kit generate
-```
-
-The file you import must not use top-level `await`, which Drizzle Kit cannot load.
+- **Migrations.** [`brick db generate`](/docs/brick-cli/db) loads the app, so the plugin tables are in its migrations with the app's own tables; `brick db push` creates them on a development database. No schema file is needed.
 
 ## Host hooks
 
