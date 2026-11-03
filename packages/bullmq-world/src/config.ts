@@ -1,6 +1,6 @@
 import type { KeepJobs } from "bullmq";
 import type { RedisOptions } from "ioredis";
-import type { RunRetention } from "./reaper.js";
+import type { RunRetention } from "@brickkit/redis-world/internal";
 
 export interface RedisWorldConfig {
   /**

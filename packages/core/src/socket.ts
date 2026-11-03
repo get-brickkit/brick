@@ -3,7 +3,12 @@ import type { Elysia } from "elysia";
 import { websocket } from "elysia/websocket";
 import { createLogger } from "./logger";
 import { joinRoute, kebabCase, ownerPath } from "./routes";
-import type { BaseContext } from "./types";
+import { buildErrorHelpers } from "./action";
+import {
+  ActionExecutionError,
+  type ActionErrorDefinition,
+  type BaseContext,
+} from "./types";
 import { getCompiledCheck } from "./typebox";
 import { inTransaction, onTransactionCommit } from "./events/transaction";
 import {
@@ -44,6 +49,8 @@ export interface RegisteredSocket {
   schema: BrickSocketSchema;
   input: SocketSchemas;
   output: SocketSchemas;
+  /** The errors its handlers declare, for the client contract. */
+  errors?: Record<string, ActionErrorDefinition>;
   allowedOrigins?: readonly string[];
   allowMissingOrigin?: boolean;
   maxRooms: number;
@@ -155,9 +162,10 @@ export function defineServiceSocket<
   I extends SocketSchemas,
   O extends SocketSchemas,
   Ctx extends BaseContext,
+  E extends Record<string, ActionErrorDefinition> = {},
 >(
   service: string,
-  config: BrickSocketConfig<I, O, Ctx>,
+  config: BrickSocketConfig<I, O, Ctx, E>,
   resolve: (request: Request, user?: unknown) => Promise<Ctx>,
 ): RegisteredSocket {
   if (
@@ -213,6 +221,7 @@ export function defineServiceSocket<
   }
   const typed = (socket: SocketSender): BrickSocketSender<SocketPayloads<O>> =>
     socket;
+  const error = buildErrorHelpers(config.errors);
   const context = async (request: Request, user: unknown) => {
     const ctx = await resolve(request, user);
     if (config.authorize && !(await config.authorize({ ctx })))
@@ -248,6 +257,7 @@ export function defineServiceSocket<
     },
     input,
     output,
+    ...(config.errors ? { errors: { ...config.errors } } : {}),
     allowedOrigins: config.allowedOrigins
       ? [...config.allowedOrigins]
       : undefined,
@@ -314,6 +324,7 @@ export function defineServiceSocket<
             input: data as SocketPayloads<I>[keyof I],
             ctx,
             socket: typed(socket),
+            error,
           });
         },
         async join(room) {
@@ -712,7 +723,31 @@ export function mountSockets(
                   state.sender,
                 );
             })
-            .catch((error: unknown) => fail(ws, error))
+            .catch((error: unknown) => {
+              // A declared error answers the message; the connection stays open.
+              if (error instanceof ActionExecutionError && !state.closed)
+                try {
+                  const frame = JSON.stringify({
+                    event: "$error",
+                    data: {
+                      event: value.event,
+                      code: error.code,
+                      message: error.message,
+                      status: error.status,
+                      ...(error.details !== undefined
+                        ? { details: error.details }
+                        : {}),
+                    },
+                  });
+                  if (bytes(frame) > SOCKET_MAX_BYTES)
+                    throw new Error("Socket error too large", { cause: error });
+                  if (ws.readyState === 1) ws.send(frame);
+                  return;
+                } catch (unsent) {
+                  return fail(ws, unsent);
+                }
+              fail(ws, error);
+            })
             .finally(() => {
               state.pending--;
               state.bytes -= size;

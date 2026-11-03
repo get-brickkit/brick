@@ -52,7 +52,7 @@ export function generateClientContract(app: BrickApp): string {
           contract[service.name],
           types[service.name],
           metadata,
-          `BrickClientSocket<${payloads(socket.input)}, ${payloads(socket.output)}>`,
+          `BrickClientSocket<${payloads(socket.input)}, ${payloads(socket.output)}, ${errorsType(socket.errors)}>`,
         );
       } catch (error) {
         throw new Error(
@@ -165,11 +165,14 @@ function actionType(
   output: string,
   errors: Record<string, unknown> | undefined,
 ): string {
+  return `BrickClientAction<${input}, ${output}, ${errorsType(errors)}>`;
+}
+
+function errorsType(errors: Record<string, unknown> | undefined): string {
   const codes = Object.keys(errors ?? {});
-  const errorsType = codes.length
+  return codes.length
     ? `Record<${codes.map((code) => JSON.stringify(code)).join(" | ")}, { message: string; status?: number }>`
     : "{}";
-  return `BrickClientAction<${input}, ${output}, ${errorsType}>`;
 }
 
 function namespaceType(node: Record<string, any>): string {

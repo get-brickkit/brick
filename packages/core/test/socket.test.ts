@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from "bun:test";
+import { afterEach, expect, it, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import {
@@ -101,6 +101,68 @@ for (const compiler of [true, false])
     live.close();
     expect(() => live.send("say", "again")).toThrow(BrickSocketError);
   });
+
+it("sends a declared handler error to the client and keeps the connection open", async () => {
+  const service = defineService("chat");
+  service.socket({
+    name: "live",
+    input: { say: t.String() },
+    output: { message: t.String() },
+    allowMissingOrigin: true,
+    errors: {
+      TOO_LONG: {
+        message: "Too long",
+        status: 422,
+        details: t.Object({ max: t.Number() }),
+      },
+    },
+    handlers: {
+      say: ({ input, socket, error }) => {
+        if (input === "crash") throw new Error("private failure");
+        if (input.length > 3) error.TOO_LONG(undefined, { max: 3 });
+        socket.send("message", input);
+      },
+    },
+  });
+  const api = createBrickClient({
+    baseUrl: start(service),
+    contract: contract as unknown as {
+      chat: {
+        live: BrickClientSocket<
+          { say: string },
+          { message: string },
+          Record<"TOO_LONG", { message: string }>
+        >;
+      };
+    },
+  });
+  const live = api.chat.live.connect({ reconnect: false });
+  const failed = new Promise<any>((resolve) => live.onHandlerError(resolve));
+  const received = new Promise((resolve) => live.on("message", resolve));
+  const closed = new Promise((resolve) =>
+    live.onClose(({ code }) => resolve(code)),
+  );
+  await live.ready;
+  live.send("say", "too long");
+  expect(await failed).toMatchObject({
+    name: "ActionExecutionError",
+    event: "say",
+    code: "TOO_LONG",
+    message: "Too long",
+    status: 422,
+    details: { max: 3 },
+  });
+  live.send("say", "ok");
+  expect(await received).toBe("ok");
+  expect(live.status).toBe("open");
+  const log = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    live.send("say", "crash");
+    expect(await closed).toBe(1011);
+  } finally {
+    log.mockRestore();
+  }
+});
 
 it("resolves fresh context and rechecks authorization before every message", async () => {
   let active = true;

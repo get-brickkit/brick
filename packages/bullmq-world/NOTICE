@@ -11,6 +11,7 @@ Changes made to the original files:
   `registerRoute`, restart recovery, and `runs.list` with status arrays.
 - Run, hook and step writes that were several round trips are single scripts.
 - Inlined the small helpers that were in the monorepo's private `shared`
-  package, so the package has no workspace dependencies.
+  package. Storage, streaming, retention and those helpers now live in
+  @brickkit/redis-world, which this package depends on.
 - Rewrote the test suite for v5 and added concurrency, crash and end-to-end
   chaos tests.

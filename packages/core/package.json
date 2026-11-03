@@ -34,6 +34,10 @@
       "import": "./dist/pg.js",
       "types": "./dist/pg.d.ts"
     },
+    "./workflow": {
+      "import": "./dist/workflow.js",
+      "types": "./dist/workflow.d.ts"
+    },
     "./tanstack-query": {
       "import": "./dist/tanstack-query.js",
       "types": "./dist/tanstack-query.d.ts"

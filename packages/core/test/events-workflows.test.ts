@@ -7,10 +7,13 @@ import {
   brick,
   defineDatabase,
   defineListener,
+  definePlugin,
   defineService,
   EventsHub,
   outboxTable,
+  port,
   syncSchema,
+  useDeps,
   type EventsWorld,
 } from "../src";
 
@@ -303,6 +306,95 @@ describe("workflow listeners", () => {
     expect(globalThis.__fakeWorkflow.starts[0]!.options.runKey).toBe(
       rows(db)[0].id,
     );
+  });
+
+  describe("added by a plugin", () => {
+    const PLUGIN_ID = "workflow//./plugin/sync//sync";
+    const manifest = {
+      steps: {},
+      workflows: {
+        "src/fulfil.ts": { fulfil: { workflowId: WORKFLOW_ID } },
+        "plugin/sync.ts": { sync: { workflowId: PLUGIN_ID } },
+      },
+    };
+    // The bundle answers with the deps its steps would see.
+    const flow =
+      "export async function POST() { return Response.json(globalThis.__readDeps()); }";
+
+    function app(world: EventsWorld, root: string, pluginWorkflow: unknown) {
+      (globalThis as any).__readDeps = () => useDeps();
+      const sync = definePlugin({
+        name: "@acme/sync",
+        deps: { mailer: port<string>() },
+        app: ({ listeners }) =>
+          listeners(
+            defineListener({
+              name: "sync",
+              on: "item.*",
+              workflow: pluginWorkflow as never,
+            }),
+          ),
+      });
+      const host = defineService(`wf_plugin_${++serial}`, {
+        deps: { carrier: port<string>() },
+      });
+      const made = brick({
+        services: [host],
+        deps: { carrier: "app" },
+        requestLogging: false,
+        docs: false,
+        plugins: [sync({}, { deps: { mailer: "plugin" } })],
+        events: {
+          world,
+          workflows: { root },
+          dispatch: { timer: false },
+          listeners: [
+            defineListener({
+              name: "fulfil",
+              on: "item.create",
+              workflow: transformed(),
+            }),
+          ],
+        },
+      });
+      hubs.push(made.events!);
+      return made.events!;
+    }
+
+    it("runs each workflow's steps with the deps of the app or plugin that listens", async () => {
+      const { root } = project({ manifest, flow });
+      const { world, calls } = fakeWorld();
+      const hub = app(world, root, transformed(PLUGIN_ID));
+      hub.start();
+      await settle(hub, () => calls.handlers.length === 1);
+      const handler = calls.handlers[0]![1] as (
+        r: Request,
+      ) => Promise<Response>;
+      const depsFor = async (id: string) =>
+        (
+          await handler(
+            new Request("http://x", {
+              method: "POST",
+              headers: { "x-vqs-queue-name": `__wkf_workflow_${id}` },
+            }),
+          )
+        ).json();
+      expect(await depsFor(PLUGIN_ID)).toEqual({ mailer: "plugin" });
+      expect(await depsFor(WORKFLOW_ID)).toEqual({ carrier: "app" });
+    });
+
+    it("refuses one workflow run by an app listener and a plugin listener", async () => {
+      const { root } = project({ manifest, flow });
+      const { world, calls } = fakeWorld();
+      const hub = app(world, root, transformed());
+      hub.start();
+      await settle(hub, () =>
+        quiet.mock.calls.some((call) =>
+          String(call[0]).includes("is run by listeners with different deps"),
+        ),
+      );
+      expect(calls.handlers).toHaveLength(0);
+    });
   });
 
   it("starts the world when events start, and closes it when they stop", async () => {

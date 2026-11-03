@@ -13,6 +13,7 @@ export type {
   BrickClientSocket,
   BrickSocketClient,
   BrickSocketConnectOptions,
+  BrickSocketHandlerError,
   BrickSocketReconnectOptions,
   BrickSocketSender,
   BrickSocketStatus,
@@ -294,8 +295,12 @@ export type BrickActionCaller<A> =
 
 /** Recursively maps action leaves and their namespaces to browser callers. */
 export type BrickClient<T> =
-  T extends BrickClientSocket<infer I, infer O>
-    ? { connect(options?: BrickSocketConnectOptions): BrickSocketClient<I, O> }
+  T extends BrickClientSocket<infer I, infer O, infer E>
+    ? {
+        connect(
+          options?: BrickSocketConnectOptions,
+        ): BrickSocketClient<I, O, E>;
+      }
     : T extends BrickClientAction<any, any, any> | Action<any, any, any, any>
       ? BrickActionCaller<T>
       : T extends (...args: any[]) => any

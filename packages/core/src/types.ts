@@ -877,8 +877,12 @@ export interface Service<
 
   build(): this;
 
-  socket<const I extends SocketSchemas, const O extends SocketSchemas>(
-    config: BrickSocketConfig<I, O, BaseContext<TDb> & TServiceContext>,
+  socket<
+    const I extends SocketSchemas,
+    const O extends SocketSchemas,
+    const E extends Record<string, ActionErrorDefinition> = {},
+  >(
+    config: BrickSocketConfig<I, O, BaseContext<TDb> & TServiceContext, E>,
   ): BrickSocketHandle<SocketPayloads<O>>;
   listSockets(): RegisteredSocket[];
 

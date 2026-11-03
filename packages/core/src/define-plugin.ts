@@ -309,7 +309,10 @@ export interface PluginAppContext<O, S, P extends Ports = {}> {
       set: { status?: number | string; headers: Record<string, string> };
     }) => unknown,
   ): void;
-  /** Event listeners to add to the app's `events`; `useDeps()` in their `run` returns the plugin's deps. */
+  /**
+   * Event listeners to add to the app's `events`. `useDeps()` in their `run`,
+   * and in the steps of their `workflow`, returns the plugin's deps.
+   */
   listeners(...listeners: EventListener[]): void;
 }
 
@@ -955,19 +958,14 @@ export function setupAppPlugins(
         // `useDeps()` in a plugin's listener returns the plugin's deps, not the app's.
         listeners.push(
           ...items.map((listener) => {
-            // Workflow steps run in the app's workflow handler, where they'd see the app's deps.
-            if (listener.workflow)
-              throw new Error(
-                `${manifest.name}: plugins can't add workflow listeners yet, because workflow steps would see the app's deps instead of the plugin's; use a run listener ('${listener.name}')`,
-              );
             const run = listener.run;
-            return run
-              ? {
-                  ...listener,
-                  run: (delivery: Parameters<typeof run>[0]) =>
-                    runWithDeps(deps, () => run(delivery)),
-                }
-              : listener;
+            // The workflow runtime runs this workflow's steps with these deps.
+            if (!run) return { ...listener, [PLUGIN_DEPS]: deps };
+            return {
+              ...listener,
+              run: (delivery: Parameters<typeof run>[0]) =>
+                runWithDeps(deps, () => run(delivery)),
+            };
           }),
         );
       },

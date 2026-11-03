@@ -4,6 +4,7 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     cli: "src/cli.ts",
+    internal: "src/shared.ts",
   },
   format: "esm",
   dts: true,

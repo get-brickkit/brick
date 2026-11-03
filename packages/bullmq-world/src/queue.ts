@@ -21,7 +21,7 @@ import {
 import type { Redis } from "ioredis";
 import { monotonicFactory } from "ulid";
 import type { RedisWorldConfig } from "./config.js";
-import { initialMessageKey } from "./run-id.js";
+import { initialMessageKey } from "@brickkit/redis-world/internal";
 import { debug, hasBinary, uint8ArrayReplacer } from "./util.js";
 
 /**

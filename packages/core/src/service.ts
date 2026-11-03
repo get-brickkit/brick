@@ -329,8 +329,12 @@ export class ServiceImpl<
     return this.tools.get(name);
   }
 
-  socket<const I extends SocketSchemas, const O extends SocketSchemas>(
-    config: BrickSocketConfig<I, O, BaseContext<TDb> & TServiceContext>,
+  socket<
+    const I extends SocketSchemas,
+    const O extends SocketSchemas,
+    const E extends Record<string, ActionErrorDefinition> = {},
+  >(
+    config: BrickSocketConfig<I, O, BaseContext<TDb> & TServiceContext, E>,
   ): BrickSocketHandle<SocketPayloads<O>> {
     if (this._isBuilt)
       throw new Error("Sockets must be declared before service build");
