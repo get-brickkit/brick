@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach } from "bun:test";
 import { defineDatabase, eq } from "@brickkit/core";
 import { hash } from "bcryptjs";
 
+import { resolveUser } from "../src/api/auth/brick";
 import { createAuthInstance, initAuth } from "../src/api/auth/index";
 import { account, user } from "../src/api/auth/schema";
 import { authTables } from "../src/api/db";
@@ -37,13 +38,22 @@ function authedHeaders(auth: ReturnType<typeof createAuthInstance>) {
   };
 }
 
+/** What `brick({ auth })` does per request: resolve the user, then the context. */
+async function contextFor(headers: Record<string, string> = {}) {
+  const request = new Request("http://localhost/api/pages/page", { headers });
+  return pagesService.resolveContext({
+    request,
+    user: await resolveUser(request),
+  });
+}
+
 function sessionCookie(res: Response): string {
   const cookie = res.headers.get("set-cookie");
   if (!cookie) throw new Error("sign-in response carried no set-cookie");
   return cookie;
 }
 
-describe("better-auth + service context loading", () => {
+describe("better-auth + auth.resolve", () => {
   beforeEach(async () => {
     await prepareTestDatabase();
   });
@@ -92,27 +102,20 @@ describe("better-auth + service context loading", () => {
     expect(rows[0]?.password).toBe(legacyHash);
   });
 
-  it("loads user/session into service context from the session cookie", async () => {
+  it("resolves the session cookie into ctx.user", async () => {
     const auth = isolatedAuth();
     const api = authedHeaders(auth);
     const signedUp = await api.signup();
     const cookie = sessionCookie(await api.signInResponse());
 
-    const ctx = await pagesService.resolveContext({
-      request: new Request("http://localhost/api/pages/page", {
-        headers: { cookie },
-      }),
-    });
+    const ctx = await contextFor({ cookie });
     expect(ctx.user?.id).toBe(signedUp.user.id);
     expect(ctx.user?.email).toBe(EMAIL);
-    expect(ctx.session).toBeDefined();
   });
 
   it("leaves user null without a session cookie (protected tools reject)", async () => {
     isolatedAuth();
-    const ctx = await pagesService.resolveContext({
-      request: new Request("http://localhost/api/pages/page"),
-    });
+    const ctx = await contextFor();
     expect(ctx.user).toBeNull();
     await expect(listPagesTool({ ctx, input: {} })).rejects.toThrow(
       /unauthorized|access denied/i,
@@ -124,11 +127,7 @@ describe("better-auth + service context loading", () => {
     const api = authedHeaders(auth);
     await api.signup();
     const cookie = sessionCookie(await api.signInResponse());
-    const ctx = await pagesService.resolveContext({
-      request: new Request("http://localhost/api/pages/page", {
-        headers: { cookie },
-      }),
-    });
+    const ctx = await contextFor({ cookie });
     const listed = await listPagesTool({ ctx, input: {} });
     expect(Array.isArray(listed)).toBe(true);
     expect(listed).toHaveLength(0);

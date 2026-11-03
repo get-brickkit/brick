@@ -7,16 +7,10 @@ Brick-TS provides first-class support for AI agents through Model Context Protoc
 
 ## Minimal Example
 
-Define an AI tool on a service, assemble an MCP registry, and serve it over JSON-RPC 2.0:
+Define an AI tool on a service, then let `brick({ mcp })` serve every tool over MCP:
 
 ```ts title="src/services/documents.ts"
-import {
-  brick,
-  createMcpHandler,
-  createMcpRegistry,
-  defineService,
-  t,
-} from "@brickkit/core";
+import { brick, defineService, t } from "@brickkit/core";
 
 export const docsService = defineService("docs");
 
@@ -46,22 +40,45 @@ export const searchDocs = docsService.tool({
   },
 });
 
-// 2. Build MCP registry from registered tools
-const mcpRegistry = createMcpRegistry({
-  services: [docsService],
-});
-
-// 3. Create JSON-RPC 2.0 handler
-const mcpHandler = createMcpHandler({
-  registry: mcpRegistry,
-  serverInfo: { name: "docs-agent-server", version: "1.0.0" },
-});
-
-// 4. Mount on the Brick (Elysia) app; the handler only accepts POST
-const app = brick({ services: [docsService] });
-app.post("/mcp", ({ request }) => mcpHandler(request));
+// 2. Serve every service tool at POST /mcp
+const app = brick({ services: [docsService], mcp: true });
 app.listen(4000);
 ```
+
+## Serving MCP (`brick({ mcp })`)
+
+`mcp: true` (or an options object) mounts an MCP endpoint that serves every tool the app's services register with `service.tool()`. It speaks the streamable HTTP transport statelessly: each `POST` gets one JSON response, and `GET` answers `405` because the server opens no event stream. The server reports the app's `title` and `version` as its name and version.
+
+| Option      | Default  | Description                                                                                                  |
+| :---------- | :------- | :----------------------------------------------------------------------------------------------------------- |
+| `path`      | `"/mcp"` | Where the endpoint is served.                                                                                |
+| `authorize` | none     | `({ request, user }) => boolean \| Response \| void`, run on every MCP request after `auth.resolve` (below). |
+
+`authorize` sees the principal [`auth.resolve`](/docs/access-control#signing-users-in) returned as `user` (`null` when there is none). Return `false` to answer `401`, or a `Response` to answer with it; anything else lets the request through. Each tool still runs its own `authorize` with `ctx.user` set to that principal.
+
+```ts title="src/app.ts"
+export default brick({
+  services: [docsService],
+  auth: { resolve: (request) => verifyToken(request) },
+  mcp: {
+    // MCP clients start OAuth from this challenge (RFC 9728).
+    authorize: ({ user }) =>
+      user != null ||
+      new Response(null, {
+        status: 401,
+        headers: {
+          "WWW-Authenticate": `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"`,
+        },
+      }),
+  },
+});
+```
+
+Serve the protected-resource metadata document from `auth.handler`, next to your provider's routes. The Pages example does this with Better Auth's MCP plugin: see `examples/pages/src/api/auth/brick.ts`.
+
+### Output schemas
+
+`tools/list` gives each tool with an `output` schema an `outputSchema`, and `tools/call` returns the result as `structuredContent` as well as text. MCP requires an object schema, so a tool whose output is a string, array or union is described as `{ result: <schema> }` and returns `{ result: value }`.
 
 ## Tools (`defineTool` / `service.tool`)
 
@@ -116,14 +133,14 @@ console.log(toolList.map((t) => t.name)); // ["search_docs", "delete_user"]
 
 ## JSON-RPC 2.0 Handler (`createMcpHandler`)
 
-`createMcpHandler({ registry, serverInfo, protocolVersions? })` returns a stateless `(request, ctx?) => Promise<Response>` handler for MCP JSON-RPC 2.0 over HTTP POST. Non-POST requests get `405`, and notifications (requests without an `id`) get `202` with no body. It handles:
+`brick({ mcp })` uses this handler. Reach for it directly only to mount MCP somewhere `brick()` doesn't, such as another server. `createMcpHandler({ registry, serverInfo, protocolVersions? })` returns a stateless `(request, ctx?) => Promise<Response>` handler for MCP JSON-RPC 2.0 over HTTP POST. Non-POST requests get `405`, and notifications (requests without an `id`) get `202` with no body. It handles:
 
 - `initialize`: Returns `{ capabilities: { tools: {} }, protocolVersion, serverInfo }`. The client's requested version is echoed if it is in `protocolVersions` (default `["2025-06-18"]`); otherwise the first listed version is returned.
 - `ping`: Returns `{}`.
-- `tools/list`: Returns each tool's `name`, `title` (if set), `description`, `inputSchema`, and `annotations`.
-- `tools/call`: Validates and executes the tool, returning `{ content: [{ type: "text", text }] }`. Strings are returned as-is; other values are JSON-stringified. A thrown error becomes a result with `isError: true` and the error message as text. An unknown tool name returns JSON-RPC error `-32602`.
+- `tools/list`: Returns each tool's `name`, `title` (if set), `description`, `inputSchema`, `outputSchema` (if it has an `output`), and `annotations`.
+- `tools/call`: Validates and executes the tool, returning `{ content: [{ type: "text", text }] }`, plus `structuredContent` when the tool has an `output`. Strings are returned as-is; other values are JSON-stringified. A thrown error becomes a result with `isError: true` and the error message as text. An unknown tool name returns JSON-RPC error `-32602`.
 
-The handler performs no authentication. Wrap it with your own auth, and pass an optional `ctx` (for example `{ user }`) as the second argument; it is forwarded to the tool's execution context along with the `request`.
+The handler alone performs no authentication. Wrap it with your own auth, and pass an optional `ctx` (for example `{ user }`) as the second argument; it is forwarded to the tool's execution context along with the `request`.
 
 ### Connecting a Client
 

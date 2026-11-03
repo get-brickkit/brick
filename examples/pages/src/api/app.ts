@@ -1,8 +1,10 @@
-import { and, brick, eq, traceRoute } from "@brickkit/core";
+import { and, brick, eq } from "@brickkit/core";
 
 import { getAuth } from "./auth";
-import { registerMcpRoutes } from "./mcp";
+import { authorizeMcp, authRoutes, resolveUser } from "./auth/brick";
 import { baseUrlSecret, portSecret } from "./secrets";
+// Registers the MCP tools on pagesService, so `mcp` serves them.
+import "./services/pages/mcp";
 import {
   pagesService,
   pagesTable,
@@ -22,7 +24,7 @@ const NOT_FOUND_HTML =
 // options below). Better Auth's OpenAPI document joins the API reference in the
 // `brick dev` dashboard (its APIs tab) through `reference.documents`.
 // CORS allows only the public origin (BASE_URL), with credentials for the
-// session cookie.
+// session cookie; it also covers what `auth.handler` answers.
 //
 // Side-effect free: constructs (but never starts) the app, so embedders
 // (TanStack Start server entry) can import this module safely.
@@ -55,14 +57,12 @@ export function buildApp() {
     telemetry: true,
     title: "Pages API",
     version: "1.0.0",
+    // Better Auth: its routes (/api/auth/*, OAuth discovery) and the signed-in
+    // user (session cookie, or an MCP access token) as ctx.user.
+    auth: { resolve: resolveUser, handler: authRoutes },
+    // Every pagesService tool at /mcp, for MCP access tokens only.
+    mcp: { authorize: authorizeMcp },
   });
-
-  // better-auth handler (email/password, session, OAuth/MCP plugins).
-  // Mounted before the raw routes so /api/auth/* never hits the action mesh.
-  app.all(
-    "/api/auth/*",
-    traceRoute("/api/auth/*", ({ request }) => getAuth().handler(request)),
-  );
 
   // Public page viewer: raw HTML endpoint (not part of the JSON action mesh).
   // Port of the Go GET /p/:slug handler with its cache headers.
@@ -98,9 +98,6 @@ export function buildApp() {
     service: pagesService,
     summary: "Public page viewer",
   });
-
-  // MCP bearer transport (Go `mcp.NewHandler` parity) + OAuth discovery.
-  registerMcpRoutes(app);
 
   return app;
 }

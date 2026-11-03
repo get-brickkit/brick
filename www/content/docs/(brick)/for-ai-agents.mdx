@@ -67,7 +67,7 @@ Add your own commands, service entry path, and migration rules to make these ins
 
 ## Connect to your application's MCP tools
 
-Brick provides `createMcpRegistry` and `createMcpHandler` for exposing your app's tools. Register tools with `service.tool()`, import their modules, then mount the handler in your authenticated HTTP layer. See [Tools and MCP](/docs/tools-and-mcp) for the implementation and the Pages example for an authenticated transport.
+`brick({ mcp: true })` serves your app's tools at `/mcp`. Register tools with `service.tool()` and import their modules; `auth.resolve` and `mcp.authorize` decide who may call them. See [Tools and MCP](/docs/tools-and-mcp) for the options and the Pages example for an OAuth-protected endpoint.
 
 Point your agent's MCP client at the endpoint your app mounts, using that app's authentication. This is an application endpoint you provide; Brick's documentation site does not run a hosted MCP server. Tool annotations describe behavior, while `authorize` enforces access.
 

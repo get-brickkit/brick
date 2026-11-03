@@ -153,7 +153,7 @@ it("pages info exports effective routes matching the live server", async () => {
     import app from "./src/api/app.ts";
     import { brick, getGlobalRegistry } from "@brickkit/core";
     const registry = getGlobalRegistry();
-    const original = registry.exportArchitecture();
+    const original = registry.exportArchitecture(app.definition);
     const prefixed = brick({ services: [...app.definition.services], prefix: "/v9", requestLogging: false });
     app.listen({ port: 0 });
     prefixed.listen({ port: 0 });

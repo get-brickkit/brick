@@ -3,7 +3,36 @@ title: Access Control and Policies
 description: Secure actions and CRUD operations with role-based authorization and row scoping.
 ---
 
-Brick-TS provides two complementary layers of access control: operation-level authorization guards on actions and row-level scoping on CRUD resources.
+Brick-TS provides two complementary layers of access control: operation-level authorization guards on actions and row-level scoping on CRUD resources. Both read `ctx.user`, which `brick({ auth })` fills in.
+
+## Signing users in
+
+`brick({ auth })` connects any authentication provider (Better Auth, Auth.js, your own JWT check) to the app:
+
+- `resolve(request)` returns the principal behind a request, or `null` for an anonymous one. Brick runs it for every HTTP action, every socket handshake, and every MCP request, and sets the result as `ctx.user`.
+- `handler(request)` (optional) serves the provider's own routes, such as sign-in and OAuth. It runs before routing: return a `Response` to answer, or `undefined` to let the request through.
+
+```ts title="src/app.ts"
+import { brick } from "@brickkit/core";
+import { auth } from "./auth"; // a Better Auth instance
+import { articlesService } from "./services/articles";
+
+export default brick({
+  services: [articlesService],
+  auth: {
+    resolve: async (request) =>
+      (await auth.api.getSession({ headers: request.headers }))?.user ?? null,
+    handler: (request) =>
+      new URL(request.url).pathname.startsWith("/api/auth/")
+        ? auth.handler(request)
+        : undefined,
+  },
+});
+```
+
+A service `context` runs after `resolve`, sees `user`, and can add fields (a tenant, roles) or replace it. Calls between services pass `ctx.user` along, so `resolve` runs once per request.
+
+`handler` answers before Elysia's route hooks run, so `beforeHandle` and `afterHandle` don't see its responses. Headers set in a middleware that runs earlier, such as a plugin's `middleware`, still reach them. Don't read the request body in `resolve`: the MCP handler reads it next. Clone the request if your provider needs the body.
 
 ## Action Authorization (`authorize`)
 
@@ -46,7 +75,7 @@ When an action declares an `authorize` guard, Brick's types use `NarrowAuthorize
 
 ## CRUD Access Policies
 
-CRUD resources from `@brickkit/crud` are **deny-by-default**. `access` is a required option, and an access object without `authorize` rejects every operation: `UNAUTHORIZED` (401) when `ctx.user` is missing, `FORBIDDEN` (403) when it is set. CRUD `authorize` runs after input validation and receives `{ operation, input, ctx }`.
+CRUD resources from `@brickkit/crud` are **deny-by-default**. `access` is a required option, and an access object without `authorize` rejects every operation with `FORBIDDEN` (403). CRUD `authorize` runs after input validation and receives `{ operation, input, ctx }`.
 
 ### 1. Public Access
 
@@ -138,18 +167,24 @@ When `scope` returns a Drizzle SQL condition, Brick combines it with the client'
 
 If `scope` returns a condition for `create`, the call is rejected with `FORBIDDEN` (403): row-scoped creation needs an explicit create policy. Return `undefined` for `create` and assign the owner or tenant column in a [`beforeCreate` hook](/docs/hooks).
 
-## Status Codes and Error Codes
+## Status Codes and Error Codes Today
 
-A rejected `authorize` answers 401 when the request has no `ctx.user` and 403 when it has one:
+Understanding current runtime behavior:
 
-| Mechanism                                      | Code           | Status | Location in Code              |
-| :--------------------------------------------- | :------------- | :----- | :---------------------------- |
-| Action `authorize` rejection, no `ctx.user`    | `UNAUTHORIZED` | `401`  | `packages/core/src/action.ts` |
-| Action `authorize` rejection, with `ctx.user`  | `FORBIDDEN`    | `403`  | `packages/core/src/action.ts` |
-| CRUD `authorize` rejection or missing, no user | `UNAUTHORIZED` | `401`  | `packages/crud/src/index.ts`  |
-| CRUD `authorize` rejection or missing, a user  | `FORBIDDEN`    | `403`  | `packages/crud/src/index.ts`  |
-| CRUD `scope` returned a condition on create    | `FORBIDDEN`    | `403`  | `packages/crud/src/index.ts`  |
-| `error.UNAUTHORIZED()` in your own code        | `UNAUTHORIZED` | `401`  | `packages/core/src/action.ts` |
+| Mechanism                                   | Code           | Status          | Location in Code              |
+| :------------------------------------------ | :------------- | :-------------- | :---------------------------- |
+| Action `authorize` rejection                | `UNAUTHORIZED` | `403 Forbidden` | `packages/core/src/action.ts` |
+| CRUD `authorize` rejection or missing       | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/index.ts`  |
+| CRUD `scope` returned a condition on create | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/index.ts`  |
+| `error.UNAUTHORIZED()` in your own code     | `UNAUTHORIZED` | `401`           | `packages/core/src/action.ts` |
+
+<Callout type="info">
+  **Planned Status Code Alignment**: Currently, failed action authorization
+  throws code `UNAUTHORIZED` with HTTP status 403. A planned update tracked in
+  [GitHub Issue #53](https://github.com/get-brickkit/brick/issues/53) will align
+  unauthenticated requests to HTTP 401 and forbidden role/scope rejections to
+  HTTP 403.
+</Callout>
 
 ### Schema
 

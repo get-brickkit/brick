@@ -46,6 +46,8 @@ import type { EventsOptions } from "./events/types";
 import { localBroker, mountSockets, socketPath } from "./socket";
 import type { SocketBroker } from "./socket-types";
 import { corsHook, type CorsOptions } from "./cors";
+import type { AuthOptions } from "./access";
+import { createMcpRegistry, createMcpRoute, type McpOptions } from "./mcp";
 
 export interface CreateServerOptions {
   port?: number;
@@ -125,6 +127,17 @@ export interface CreateServerOptions {
    * Other origins get no `Access-Control-Allow-Origin`. Preflights are answered.
    */
   cors?: false | CorsOptions;
+  /**
+   * App-level authentication for any provider. `resolve` turns a request into
+   * the principal actions read as `ctx.user` (HTTP actions, socket handshakes
+   * and MCP requests); `handler` serves the provider's own routes. See `AuthOptions`.
+   */
+  auth?: AuthOptions;
+  /**
+   * Serve every tool (`service.tool()`) over MCP (streamable HTTP, stateless
+   * JSON) at `path` (default `/mcp`). `authorize` gates each request. See `McpOptions`.
+   */
+  mcp?: boolean | McpOptions;
 }
 
 export {
@@ -188,9 +201,15 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     services.flatMap((service) => installedPlugins(service)),
     options.plugins ?? [],
   );
-  // CORS first, so preflights are answered before middleware such as auth.
+  // CORS first, so preflights are answered and its headers reach responses
+  // from middleware and auth.handler, which skip the later lifecycle hooks.
   if (options.cors) app.onRequest(corsHook(options.cors));
   for (const handler of plugins.middleware) app.onRequest(handler);
+
+  // App-level auth: the provider's routes first, then the principal per request.
+  const authHandler = options.auth?.handler;
+  if (authHandler) app.onRequest(({ request }) => authHandler(request));
+  const resolveUser = options.auth?.resolve;
 
   // Diagnostics & health
   app.get("/_health", () => ({
@@ -449,6 +468,13 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     const action = service
       .listActions()
       .find((candidate) => candidate.name === route.ir.action)!;
+    // The handler reads the principal off the route context as `ctx.user`.
+    const handle = resolveUser
+      ? async (context: any) => {
+          context.user = await resolveUser(context.request);
+          return route.handler(context);
+        }
+      : route.handler;
     const invoke = (context: any) => {
       const result = telemetry
         ? withSpan(
@@ -457,9 +483,9 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
               "brick.service": route.ir.service,
               "brick.action": route.ir.action,
             },
-            () => route.handler(context),
+            () => handle(context),
           )
-        : route.handler(context);
+        : handle(context);
       return result &&
         typeof (result as PromiseLike<unknown>).then === "function"
         ? Promise.resolve(result).then(jsonActionResult)
@@ -479,11 +505,37 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     if (mounted) mountedRoutes.push(route.ir);
   }
 
+  // MCP: every registered tool, behind auth.resolve and mcp.authorize.
+  if (options.mcp) {
+    const mcp = options.mcp === true ? {} : options.mcp;
+    const mcpPath = mcp.path ?? "/mcp";
+    const serve = createMcpRoute({
+      ...mcp,
+      registry: createMcpRegistry({ services }),
+      serverInfo: { name: title, version },
+      resolveUser,
+    });
+    for (const method of ["POST", "GET"] as const)
+      mountRoute(
+        method,
+        mcpPath,
+        // Named fields only: Elysia then leaves the body for the handler to read.
+        telemetry
+          ? ({ request, headers, set }: any) =>
+              traceHttpRequest({ request, headers, set }, method, mcpPath, () =>
+                serve(request),
+              )
+          : ({ request }: { request: Request }) => serve(request),
+        true, // a clash with another route throws
+      );
+  }
+
   mountSockets(
     app,
     sockets,
     options.sockets?.broker ?? localBroker(),
     options.sockets?.secret,
+    resolveUser,
   );
   const definition = Object.freeze({
     services: Object.freeze([...services]),
