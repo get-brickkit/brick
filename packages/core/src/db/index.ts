@@ -10,7 +10,8 @@ import {
   type PostgresDatabaseConfig,
   type PostgresDatabase,
 } from "./postgres";
-import { getTableColumns, getTableName, sql } from "drizzle-orm";
+import { getTableColumns, getTableName, sql, type Table } from "drizzle-orm";
+import { getTableConfig, isPgEnum } from "drizzle-orm/pg-core";
 
 export * from "./sqlite";
 export * from "./postgres";
@@ -358,9 +359,49 @@ export function buildFtsMatchQuery(search: string): string | null {
 }
 
 /**
- * Explicit SQLite development/test schema preparation helper.
- * Never called by services, resources, auth, or server startup.
- * Not a migration runner; PostgreSQL schema management is caller-owned.
+ * The schema drizzle-kit reads: the tables, plus the Postgres enums their
+ * columns use (drizzle-kit only creates enums it is handed).
+ *
+ * @param tables - Drizzle tables, all of one engine.
+ * @returns A record to pass to drizzle-kit's API (`pushSchema`, `generateDrizzleJson`).
+ */
+export function drizzleSchema(
+  tables: readonly Table[],
+): Record<string, unknown> {
+  const schema: Record<string, unknown> = {};
+  for (const table of tables) {
+    schema[`table:${getTableName(table)}`] = table;
+    for (const column of Object.values(getTableColumns(table)) as any[])
+      if (isPgEnum(column.enum))
+        schema[`enum:${column.enum.enumName}`] = column.enum;
+  }
+  return schema;
+}
+
+/** drizzle-kit's programmatic API, an optional peer dependency. */
+async function loadDrizzleKit(): Promise<typeof import("drizzle-kit/api")> {
+  // A variable specifier keeps `brick build` from bundling drizzle-kit (and
+  // every driver it can load) into the app server.
+  const specifier = "drizzle-kit/api";
+  try {
+    return await import(specifier);
+  } catch (err: any) {
+    throw new Error(
+      `[Brick-TS DB] Postgres schema tools need drizzle-kit: run \`bun add -d drizzle-kit\`, or use \`brick db push\`. (${err?.message ?? err})`,
+    );
+  }
+}
+
+/**
+ * Create the declared tables that do not exist yet. A development and test
+ * helper: never called by services, resources or server startup, and never
+ * changes a table that exists. Use `brick db generate` / `brick db migrate`
+ * for production schema changes.
+ *
+ * SQLite: `CREATE TABLE IF NOT EXISTS` per table, synchronously.
+ * Postgres: drizzle-kit (an optional peer dependency) writes the DDL for the
+ * missing tables, their enums, indexes and foreign keys, applied in one
+ * transaction. Returns a promise to await.
  */
 export function syncSchema(
   tablesOrService: Map<string, any> | any[] | Record<string, any> | Service,
@@ -406,15 +447,30 @@ export function syncSchema(
     return;
   }
 
-  // Postgres async mode
-  return (async () => {
-    for (const table of tables) {
-      try {
-        const _tableName = getTableName(table);
-        // Postgres sync or migration runner if configured
-      } catch (err: any) {
-        console.warn(`[Brick-TS DB] Postgres syncSchema error:`, err.message);
-      }
-    }
-  })();
+  return createMissingPostgresTables(db, tables);
+}
+
+async function createMissingPostgresTables(
+  db: any,
+  tables: Table[],
+): Promise<void> {
+  const kit = await loadDrizzleKit();
+  const rows: { schema: string; name: string }[] = await db.execute(
+    sql`select table_schema as schema, table_name as name from information_schema.tables`,
+  );
+  const present = new Set(rows.map((row) => `${row.schema}.${row.name}`));
+  const existing = tables.filter((table) => {
+    const { schema = "public", name } = getTableConfig(table as any);
+    return present.has(`${schema}.${name}`);
+  });
+  if (existing.length === tables.length) return;
+  // Diff the tables that exist against all of them: only the missing tables
+  // (and what only they use) come out, as CREATE statements.
+  const statements = await kit.generateMigration(
+    kit.generateDrizzleJson(drizzleSchema(existing)),
+    kit.generateDrizzleJson(drizzleSchema(tables)),
+  );
+  await db.transaction(async (tx: any) => {
+    for (const statement of statements) await tx.execute(sql.raw(statement));
+  });
 }

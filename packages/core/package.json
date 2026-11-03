@@ -73,6 +73,7 @@
     "@tanstack/query-core": "5.104.3",
     "@tanstack/vue-query": "5.104.3",
     "@types/bun": "^1.4.3",
+    "drizzle-kit": "0.31.11",
     "oxfmt": "^0.73.0",
     "oxlint": "^1.88.0",
     "tsdown": "^0.23.1",
@@ -80,10 +81,14 @@
     "vue": "^3.5.13"
   },
   "peerDependencies": {
-    "@tanstack/query-core": "^5.0.0"
+    "@tanstack/query-core": "^5.0.0",
+    "drizzle-kit": "^0.31.0"
   },
   "peerDependenciesMeta": {
     "@tanstack/query-core": {
+      "optional": true
+    },
+    "drizzle-kit": {
       "optional": true
     }
   }
