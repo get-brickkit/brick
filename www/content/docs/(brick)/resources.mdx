@@ -95,16 +95,16 @@ export const pagesSchemaFields = [
 
 When `crud()` installs onto `pagesService.resource({ name: "page", ... })`, actions are registered on the service under dot-separated names prefixed by the resource name. Routes are mounted under `${prefix}/${service}/${resource}`, in kebab-case (see [URL Scheme](/docs/routes)):
 
-| Action         | Route                           | Input                                                           |
-| :------------- | :------------------------------ | :-------------------------------------------------------------- |
-| `page.list`    | `POST /api/pages/page/query`    | `{ select?, where?, orderBy?, limit?, offset?, includeTotal? }` |
-| `page.get`     | `GET /api/pages/page/:id`       | `{ id, select? }`                                               |
-| `page.findOne` | `POST /api/pages/page/find-one` | Same as `list`; returns the first row or `null`                 |
-| `page.create`  | `POST /api/pages/page`          | Fields with `create: true`                                      |
-| `page.update`  | `PATCH /api/pages/page/:id`     | `{ id, data }` with fields that have `update: true`             |
-| `page.delete`  | `DELETE /api/pages/page/:id`    | `{ id }`; returns `{ success: true }`                           |
-| `page.count`   | `POST /api/pages/page/count`    | `{ where? }`; returns `{ count }`                               |
-| `page.exists`  | `POST /api/pages/page/exists`   | `{ where? }`; returns `{ exists }`                              |
+| Action         | Route                           | Input                                                                    |
+| :------------- | :------------------------------ | :----------------------------------------------------------------------- |
+| `page.list`    | `POST /api/pages/page/query`    | `{ select?, where?, orderBy?, limit?, offset?, cursor?, includeTotal? }` |
+| `page.get`     | `GET /api/pages/page/:id`       | `{ id, select? }`                                                        |
+| `page.findOne` | `POST /api/pages/page/find-one` | Same as `list` without `cursor`; returns the first row or `null`         |
+| `page.create`  | `POST /api/pages/page`          | Fields with `create: true`                                               |
+| `page.update`  | `PATCH /api/pages/page/:id`     | `{ id, data }` with fields that have `update: true`                      |
+| `page.delete`  | `DELETE /api/pages/page/:id`    | `{ id }`; returns `{ success: true }`                                    |
+| `page.count`   | `POST /api/pages/page/count`    | `{ where? }`; returns `{ count }`                                        |
+| `page.exists`  | `POST /api/pages/page/exists`   | `{ where? }`; returns `{ exists }`                                       |
 
 The bulk operations are off until you enable them (see [Bulk Operations](#bulk-operations)):
 
@@ -174,6 +174,50 @@ crud({
     title: { read: true },
   },
 });
+```
+
+## Pagination
+
+`list` pages with `limit` and `offset` by default and returns `{ items, limit, offset }`, plus `total` when you pass `includeTotal: true`.
+
+For long or changing lists, use cursor (keyset) pagination instead. Pass `cursor: null` for the first page, then the `nextCursor` of the previous page. `nextCursor` is `null` on the last page:
+
+```ts title="src/web/feed.ts"
+const first = await api.pages.page.list({
+  orderBy: [{ field: "publishedAt", direction: "desc" }],
+  limit: 20,
+  cursor: null,
+});
+// { items: [...20 rows], limit: 20, offset: 0, nextCursor: "WyJwdWJsaXNoZWRBd..." }
+
+const second = await api.pages.page.list({
+  orderBy: [{ field: "publishedAt", direction: "desc" }],
+  limit: 20,
+  cursor: first.nextCursor,
+});
+```
+
+A cursor page starts after the last row of the previous one (`WHERE (publishedAt, id) < (...)`), so it stays fast deep into the list and does not skip or repeat rows when rows are added or removed in between. Rows are ordered by the `orderBy` fields and then by the ID, which breaks ties.
+
+- Send the same `orderBy` with every page. A cursor made for another `orderBy`, or one that was edited, fails with `BAD_REQUEST`.
+- `cursor` and `offset` cannot be combined, and the sort fields must be `NOT NULL` columns.
+- `where`, `select` and `includeTotal` work as usual; `total` counts every match, not just the rows after the cursor.
+- Cursors hold the last row's sort values as JSON, so `Date` values keep millisecond precision. On Postgres, sort on `timestamp({ precision: 3 })` columns, or a row whose timestamp has microseconds may be repeated.
+
+With [TanStack Query](/docs/tanstack-query), the cursor is the page parameter of an infinite query:
+
+```ts title="src/hooks/use-feed.ts"
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { api } from "../lib/api";
+
+export const useFeed = () =>
+  useInfiniteQuery({
+    queryKey: ["pages", "feed"],
+    queryFn: ({ pageParam }) =>
+      api.pages.page.list({ limit: 20, cursor: pageParam }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (page) => page.nextCursor,
+  });
 ```
 
 ## Bulk Operations
