@@ -1,8 +1,10 @@
-import { and, brick, eq, traceRoute } from "@brickkit/core";
+import { and, brick, definePlugin, eq } from "@brickkit/core";
 
 import { getAuth } from "./auth";
-import { registerMcpRoutes } from "./mcp";
+import { authorizeMcp, authRoutes, resolveUser } from "./auth/brick";
 import { portSecret } from "./secrets";
+// Registers the MCP tools on pagesService, so `mcp` serves them.
+import "./services/pages/mcp";
 import {
   pagesService,
   pagesTable,
@@ -17,11 +19,29 @@ export interface PagesEnv {
 const NOT_FOUND_HTML =
   '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><h1>404</h1><p>Page not found</p></body></html>';
 
+// CORS headers mirror the Go middleware in server/main.go. Middleware runs
+// before routing, so they also reach what `auth.handler` answers.
+const cors = definePlugin({
+  name: "@pages/cors",
+  app: ({ middleware }) =>
+    middleware(({ request, set }) => {
+      Object.assign(set.headers, {
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Headers":
+          "Content-Type, Authorization, MCP-Protocol-Version",
+        "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+        "Access-Control-Allow-Origin": request.headers.get("origin") ?? "*",
+      });
+      // Preflight short-circuit (Go: 204 No Content).
+      if (request.method === "OPTIONS")
+        return new Response(null, { status: 204 });
+    }),
+});
+
 // buildApp wires the Brick-TS pages service mesh plus the raw HTML route
 // GET /p/:slug (public page viewer); request logging comes from the SDK (brick
 // options below). Better Auth's OpenAPI document joins the API reference in the
 // `brick dev` dashboard (its APIs tab) through `reference.documents`.
-// CORS headers mirror the Go middleware in server/main.go (owned by A1).
 //
 // Side-effect free: constructs (but never starts) the app, so embedders
 // (TanStack Start server entry) can import this module safely.
@@ -50,49 +70,13 @@ export function buildApp() {
     telemetry: true,
     title: "Pages API",
     version: "1.0.0",
+    plugins: [cors()],
+    // Better Auth: its routes (/api/auth/*, OAuth discovery) and the signed-in
+    // user (session cookie, or an MCP access token) as ctx.user.
+    auth: { resolve: resolveUser, handler: authRoutes },
+    // Every pagesService tool at /mcp, for MCP access tokens only.
+    mcp: { authorize: authorizeMcp },
   });
-
-  const corsHeaders = (origin: string | null): Record<string, string> => ({
-    "Access-Control-Allow-Credentials": "true",
-    "Access-Control-Allow-Headers":
-      "Content-Type, Authorization, MCP-Protocol-Version",
-    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-    "Access-Control-Allow-Origin": origin ?? "*",
-  });
-
-  // Preflight short-circuit (Go: 204 No Content).
-  app.beforeHandle(({ request }: any) => {
-    if (request.method === "OPTIONS") {
-      return new Response(null, {
-        headers: corsHeaders(request.headers.get("origin")),
-        status: 204,
-      });
-    }
-  });
-
-  // CORS response headers (owned by A1). Request logging (Go: method path →
-  // status (latency)) is handled by the SDK requestLogging plugin above.
-  app.afterHandle(({ request, set }: any) => {
-    const headers = corsHeaders(request.headers.get("origin"));
-    for (const [key, value] of Object.entries(headers)) {
-      (set.headers as Record<string, string>)[key] = value;
-    }
-  });
-
-  app.error(({ request, set }: any) => {
-    const headers = corsHeaders(request?.headers?.get?.("origin") ?? null);
-    for (const [key, value] of Object.entries(headers)) {
-      (set.headers as Record<string, string>)[key] = value;
-    }
-    return undefined;
-  });
-
-  // better-auth handler (email/password, session, OAuth/MCP plugins).
-  // Mounted before the raw routes so /api/auth/* never hits the action mesh.
-  app.all(
-    "/api/auth/*",
-    traceRoute("/api/auth/*", ({ request }) => getAuth().handler(request)),
-  );
 
   // Public page viewer: raw HTML endpoint (not part of the JSON action mesh).
   // Port of the Go GET /p/:slug handler with its cache headers.
@@ -128,9 +112,6 @@ export function buildApp() {
     service: pagesService,
     summary: "Public page viewer",
   });
-
-  // MCP bearer transport (Go `mcp.NewHandler` parity) + OAuth discovery.
-  registerMcpRoutes(app);
 
   return app;
 }
