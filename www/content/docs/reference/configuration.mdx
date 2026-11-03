@@ -56,7 +56,7 @@ export default brick({
 
 For an allowed origin, Brick echoes it in `Access-Control-Allow-Origin` and adds `Vary: Origin`. With `credentials: true` it also sends `Access-Control-Allow-Credentials: true`, so the browser sends cookies and reads the response. An origin that isn't allowed gets no CORS headers, and the browser blocks the call. Brick never reflects an origin the rule doesn't allow.
 
-Preflight requests (`OPTIONS` with `Access-Control-Request-Method`) are answered with `204` before routing and before plugin middleware, so an auth middleware doesn't refuse them. An allowed preflight lists `GET, POST, PUT, PATCH, DELETE` and echoes the requested headers. CORS headers are also set on error responses, so the browser can read the error.
+Preflight requests (`OPTIONS` with `Access-Control-Request-Method`) are answered with `204` before routing, plugin middleware and [`auth.handler`](/docs/access-control#signing-users-in), so auth doesn't refuse them. Responses from middleware and `auth.handler` carry the CORS headers too. An allowed preflight lists `GET, POST, PUT, PATCH, DELETE` and echoes the requested headers. CORS headers are also set on error responses, so the browser can read the error.
 
 ## Environment Variables
 

@@ -116,6 +116,34 @@ describe("brick({ auth })", () => {
     const health = await app.handle(new Request("http://localhost/_health"));
     expect(health.status).toBe(200);
   });
+
+  it("adds cors headers to handler responses and answers their preflights", async () => {
+    const origin = "https://app.example.com";
+    const app = setup({
+      cors: { origin, credentials: true },
+      auth: { resolve, handler: () => Response.json({ provider: true }) },
+    });
+    const own = await app.handle(
+      new Request("http://localhost/auth/session", { headers: { origin } }),
+    );
+    expect(await own.json()).toEqual({ provider: true });
+    expect(own.headers.get("access-control-allow-origin")).toBe(origin);
+    expect(own.headers.get("access-control-allow-credentials")).toBe("true");
+    const preflight = await app.handle(
+      new Request("http://localhost/auth/session", {
+        method: "OPTIONS",
+        headers: { origin, "access-control-request-method": "POST" },
+      }),
+    );
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin")).toBe(origin);
+    const other = await app.handle(
+      new Request("http://localhost/auth/session", {
+        headers: { origin: "https://evil.example.com" },
+      }),
+    );
+    expect(other.headers.get("access-control-allow-origin")).toBeNull();
+  });
 });
 
 describe("brick({ mcp })", () => {
