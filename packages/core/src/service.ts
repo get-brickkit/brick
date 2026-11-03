@@ -432,8 +432,8 @@ export class ServiceImpl<
           ...pluginTables(this.database.tables),
         }
       : undefined;
-    // The schema is data. A function among the options (context, an auth policy,
-    // lifecycle hooks) cannot cross to the dev dashboard: structured clone
+    // The schema is data. A function among the options (such as `context`)
+    // cannot cross to the dev dashboard: structured clone
     // refuses the whole architecture. JSON keeps the data and drops the rest.
     const { database: _database, events: _events, ...config } = this.options;
     const options: ServiceSchema["options"] = JSON.parse(
@@ -568,8 +568,7 @@ async function resolveServiceContext<
  * slots from `port<T>()` that `brick({ deps })` fills, read as `ctx.deps`),
  * `context` (adds fields such as the signed-in user to every action's `ctx`),
  * `events` (the event catalog: a payload schema per event name, recorded as
- * `<service>.<name>` and offered as `service.events.<name>`), and `auth`,
- * `rateLimit`, `cache`, `resilience`, `telemetry`, and `lifecycle`.
+ * `<service>.<name>` and offered as `service.events.<name>`).
  * @returns The service.
  * @example
  * import { defineDatabase, defineService, t } from "@brickkit/core";
