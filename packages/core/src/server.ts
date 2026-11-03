@@ -45,6 +45,7 @@ import { WEBHOOK_ROUTE } from "./events/workflows";
 import type { EventsOptions } from "./events/types";
 import { localBroker, mountSockets, socketPath } from "./socket";
 import type { SocketBroker } from "./socket-types";
+import { corsHook, type CorsOptions } from "./cors";
 
 export interface CreateServerOptions {
   port?: number;
@@ -117,6 +118,13 @@ export interface CreateServerOptions {
    * `service.use()` or `resource.use()` take part too, before these.
    */
   plugins?: readonly PluginInstance<any, any>[];
+  /**
+   * CORS for browser callers on other origins. `true` allows the app's own
+   * origin; a string, list or predicate names the allowed origins, compared
+   * exactly. `{ origin, credentials }` adds `credentials: true` for cookies.
+   * Other origins get no `Access-Control-Allow-Origin`. Preflights are answered.
+   */
+  cors?: false | CorsOptions;
 }
 
 export {
@@ -180,6 +188,8 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     services.flatMap((service) => installedPlugins(service)),
     options.plugins ?? [],
   );
+  // CORS first, so preflights are answered before middleware such as auth.
+  if (options.cors) app.request(corsHook(options.cors));
   for (const handler of plugins.middleware) app.request(handler);
 
   // Diagnostics & health

@@ -345,7 +345,7 @@ export function socketPath(
 }
 
 /** The origin a browser saw, so TLS-terminating proxies still pass the same-origin check. */
-function publicOrigin(request: Request): string {
+export function publicOrigin(request: Request): string {
   // Browsers cannot set X-Forwarded-* on a WebSocket handshake, so a cross-site page cannot forge a match.
   const forwarded = (name: string) =>
     request.headers.get(name)?.split(",")[0]?.trim() || undefined;
