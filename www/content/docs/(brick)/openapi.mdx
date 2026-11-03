@@ -121,7 +121,7 @@ bunx brick gen openapi src/server.ts --output openapi.json
 
 ## Paths and Tags
 
-Each operation's path is the route Brick serves (see [URL Scheme](/docs/routes)), so `getUser` above is `GET /api/users/{id}`. Every operation is tagged with its service, here `users`. Resource routes (CRUD, [resource actions](/docs/resources#resource-actions) and resource plugins) are tagged `service · resource`, such as `pages · page`. An action's own `tags` are added after that tag, not in place of it. Paths kept by `legacyRoutes` are not in the spec.
+Each operation's path is the route Brick serves (see [URL Scheme](/docs/routes)), so `getUser` above is `GET /api/users/{id}`. Every operation is tagged with its service, here `users`. Resource routes (CRUD, [resource actions](/docs/resources#resource-actions) and resource plugins) are tagged `service · resource`, such as `pages · page`. An action's own `tags` are added after that tag, not in place of it.
 
 ## Security Requirements in OpenAPI
 

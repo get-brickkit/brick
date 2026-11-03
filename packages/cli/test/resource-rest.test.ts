@@ -6,9 +6,9 @@ import {
   sqliteTable,
   text,
   resetGlobalRegistry,
+  brick,
 } from "@brickkit/core";
 import { crud } from "@brickkit/crud";
-import { brick } from "../src/server";
 beforeEach(resetGlobalRegistry);
 const table = sqliteTable("rest_notes", {
   id: text("id").primaryKey(),

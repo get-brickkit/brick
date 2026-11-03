@@ -46,7 +46,7 @@ When an action declares an `authorize` guard, Brick's types use `NarrowAuthorize
 
 ## CRUD Access Policies
 
-CRUD resources from `@brickkit/crud` are **deny-by-default**. `access` is a required option, and an access object without `authorize` rejects every operation with `FORBIDDEN` (403). CRUD `authorize` runs after input validation and receives `{ operation, input, ctx }`.
+CRUD resources from `@brickkit/crud` are **deny-by-default**. `access` is a required option, and an access object without `authorize` rejects every operation: `UNAUTHORIZED` (401) when `ctx.user` is missing, `FORBIDDEN` (403) when it is set. CRUD `authorize` runs after input validation and receives `{ operation, input, ctx }`.
 
 ### 1. Public Access
 
@@ -138,24 +138,18 @@ When `scope` returns a Drizzle SQL condition, Brick combines it with the client'
 
 If `scope` returns a condition for `create`, the call is rejected with `FORBIDDEN` (403): row-scoped creation needs an explicit create policy. Return `undefined` for `create` and assign the owner or tenant column in a [`beforeCreate` hook](/docs/hooks).
 
-## Status Codes and Error Codes Today
+## Status Codes and Error Codes
 
-Understanding current runtime behavior:
+A rejected `authorize` answers 401 when the request has no `ctx.user` and 403 when it has one:
 
-| Mechanism                                   | Code           | Status          | Location in Code              |
-| :------------------------------------------ | :------------- | :-------------- | :---------------------------- |
-| Action `authorize` rejection                | `UNAUTHORIZED` | `403 Forbidden` | `packages/core/src/action.ts` |
-| CRUD `authorize` rejection or missing       | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/index.ts`  |
-| CRUD `scope` returned a condition on create | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/index.ts`  |
-| `error.UNAUTHORIZED()` in your own code     | `UNAUTHORIZED` | `401`           | `packages/core/src/action.ts` |
-
-<Callout type="info">
-  **Planned Status Code Alignment**: Currently, failed action authorization
-  throws code `UNAUTHORIZED` with HTTP status 403. A planned update tracked in
-  [GitHub Issue #53](https://github.com/get-brickkit/brick/issues/53) will align
-  unauthenticated requests to HTTP 401 and forbidden role/scope rejections to
-  HTTP 403.
-</Callout>
+| Mechanism                                      | Code           | Status | Location in Code              |
+| :--------------------------------------------- | :------------- | :----- | :---------------------------- |
+| Action `authorize` rejection, no `ctx.user`    | `UNAUTHORIZED` | `401`  | `packages/core/src/action.ts` |
+| Action `authorize` rejection, with `ctx.user`  | `FORBIDDEN`    | `403`  | `packages/core/src/action.ts` |
+| CRUD `authorize` rejection or missing, no user | `UNAUTHORIZED` | `401`  | `packages/crud/src/index.ts`  |
+| CRUD `authorize` rejection or missing, a user  | `FORBIDDEN`    | `403`  | `packages/crud/src/index.ts`  |
+| CRUD `scope` returned a condition on create    | `FORBIDDEN`    | `403`  | `packages/crud/src/index.ts`  |
+| `error.UNAUTHORIZED()` in your own code        | `UNAUTHORIZED` | `401`  | `packages/core/src/action.ts` |
 
 ### Schema
 

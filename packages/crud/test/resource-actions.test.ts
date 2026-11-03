@@ -315,35 +315,6 @@ test("OpenAPI groups resource routes under service · resource; the client nests
   }
 });
 
-test("legacyRoutes also serves v0.10 paths with a Deprecation header", async () => {
-  const { sqlite, service } = fixture();
-  try {
-    const app = brick({ services: [service], docs: false, legacyRoutes: true });
-    const legacy = await call(app, "GET", "/api/order/1", "ada");
-    expect(legacy.status).toBe(200);
-    expect(legacy.headers.get("deprecation")).toBe("true");
-    expect(legacy.headers.get("link")).toBe(
-      '</api/order-billing/order/1>; rel="successor-version"',
-    );
-    const action = await call(app, "GET", "/api/orderBilling/getSummary");
-    expect(await action.json()).toEqual({ ok: true });
-    expect(action.headers.get("link")).toBe(
-      '</api/order-billing/get-summary>; rel="successor-version"',
-    );
-    const current = await call(app, "GET", "/api/order-billing/order/1", "ada");
-    expect(current.headers.get("deprecation")).toBeNull();
-    // Only the current paths are described.
-    expect(app.definition.routes.some((r) => r.path === "/api/order/:id")).toBe(
-      false,
-    );
-
-    const strict = brick({ services: [service], docs: false });
-    expect((await call(strict, "GET", "/api/order/1", "ada")).status).toBe(404);
-  } finally {
-    sqlite.close();
-  }
-});
-
 test("a record action finds a row whose id column holds dates", async () => {
   const events = sqliteTable("events", {
     at: integer("at", { mode: "timestamp_ms" }).primaryKey(),

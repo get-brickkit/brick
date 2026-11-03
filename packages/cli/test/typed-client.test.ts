@@ -6,11 +6,11 @@ import {
   sqliteTable,
   text,
   resetGlobalRegistry,
+  brick,
 } from "@brickkit/core";
 import { crud } from "@brickkit/crud";
 import { createBrickClient } from "@brickkit/core/client";
 import { generateClientContract } from "../src/client-contract";
-import { brick } from "../src/server";
 beforeEach(resetGlobalRegistry);
 it("uses generated metadata for CRUD routes, namespaced calls and disabled exposure", async () => {
   const table = sqliteTable("client_notes", {

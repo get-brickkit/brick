@@ -2,7 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Elysia } from "elysia";
 import { websocket } from "elysia/websocket";
 import { createLogger } from "./logger";
-import { joinRoute, kebabCase, legacyPath, ownerPath } from "./routes";
+import { joinRoute, kebabCase, ownerPath } from "./routes";
 import type { BaseContext } from "./types";
 import { getCompiledCheck } from "./typebox";
 import { inTransaction, onTransactionCommit } from "./events/transaction";
@@ -344,17 +344,8 @@ export function socketPath(
   );
 }
 
-/** The v0.10 route, served too by `brick({ legacyRoutes: true })`. */
-export function legacySocketPath(
-  prefix: string,
-  service: string,
-  socket: RegisteredSocket,
-): string | undefined {
-  return legacyPath(prefix, service, socket.schema.name, socket.schema.path);
-}
-
 /** The origin a browser saw, so TLS-terminating proxies still pass the same-origin check. */
-function publicOrigin(request: Request): string {
+export function publicOrigin(request: Request): string {
   // Browsers cannot set X-Forwarded-* on a WebSocket handshake, so a cross-site page cannot forge a match.
   const forwarded = (name: string) =>
     request.headers.get(name)?.split(",")[0]?.trim() || undefined;

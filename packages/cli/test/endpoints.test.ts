@@ -6,8 +6,8 @@ import {
   text,
   resetGlobalRegistry,
   ActionExecutionError,
+  brick,
 } from "@brickkit/core";
-import { brick } from "../src/server";
 
 describe("@brickkit/cli app.endpoint()", () => {
   beforeEach(() => {

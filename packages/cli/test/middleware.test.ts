@@ -5,8 +5,8 @@ import {
   resetGlobalRegistry,
   t,
   ActionExecutionError,
+  brick,
 } from "@brickkit/core";
-import { brick } from "../src/server";
 
 function makeService() {
   const svc = defineService("items");

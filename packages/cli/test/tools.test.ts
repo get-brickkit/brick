@@ -1,6 +1,5 @@
 import { expect, it } from "bun:test";
-import { defineService } from "@brickkit/core";
-import { brick } from "../src/server";
+import { defineService, brick } from "@brickkit/core";
 
 it("keeps tool-only services out of routes and OpenAPI", async () => {
   const service = defineService("hidden_tools");

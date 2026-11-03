@@ -1,10 +1,9 @@
 import { beforeEach, expect, it } from "bun:test";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { defineService, resetGlobalRegistry, t } from "@brickkit/core";
+import { brick, defineService, resetGlobalRegistry, t } from "@brickkit/core";
 import { createBrickClient } from "@brickkit/core/client";
 import { generateClientContract } from "../src/client-contract";
-import { brick } from "../src/server";
 
 beforeEach(resetGlobalRegistry);
 

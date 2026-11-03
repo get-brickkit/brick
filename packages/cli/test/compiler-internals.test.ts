@@ -3,8 +3,8 @@ import {
   defineService,
   getGlobalRegistry,
   resetGlobalRegistry,
+  brick,
 } from "@brickkit/core";
-import { brick } from "../src/server";
 
 beforeEach(resetGlobalRegistry);
 const request = (path: string) => new Request("http://localhost" + path);

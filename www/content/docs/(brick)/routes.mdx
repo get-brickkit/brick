@@ -82,25 +82,15 @@ To migrate:
 
 - Web apps: regenerate the client contract (Vite plugin or `brick gen client`) and update calls such as `api.page.list()` to `api.pages.page.list()`.
 - Explicit paths: rewrite them relative to the owner, so `path: "/api/orders/:id/summary"` on service `orders` becomes `path: "/:id/summary"`.
-- Other HTTP callers: switch to the new URLs, or keep the old ones working for a while with `legacyRoutes`.
+- Other HTTP callers: switch to the new URLs.
 
-### `legacyRoutes`
+## Migrating to v0.12
 
-```ts title="src/app.ts"
-export default brick({ services, legacyRoutes: true });
-// GET /api/order/:id → same handler as GET /api/orders/order/:id
-```
+v0.12 removes what v0.11 kept for compatibility, and options the runtime never acted on.
 
-With `legacyRoutes: true`, the app also serves the v0.10 paths with the same handlers:
+To migrate:
 
-- CRUD and resource plugin routes at `${prefix}/${resource}/...`.
-- Service plugin routes at `${prefix}/${service}/...` with names as declared.
-- Service actions and tools at `${prefix}/${service}/${action}` with names as declared.
-- An explicit path that still starts with the prefix (an un-migrated v0.10 path) at that old absolute URL.
-- Sockets at their old path.
-
-Responses on a legacy path add `Deprecation: true` and `Link: </api/orders/order/1>; rel="successor-version"`, with path parameters filled in. Socket upgrades on a legacy path get no extra headers. The request span gets `brick.legacy_route = true`, and the dev dashboard's Overview shows how many recent calls used a v0.10 path, so you can tell when clients have moved.
-
-A legacy path is skipped when a current route already owns it. OpenAPI and the typed client never describe legacy paths.
-
-<Callout type="warn">`legacyRoutes` will be removed in v0.12.</Callout>
+- `legacyRoutes`: remove it from `brick()`. The v0.10 paths are no longer served, so clients must call the current URLs (see [Migrating From v0.10](#migrating-from-v010)).
+- `@brickkit/cli` runtime imports: import `brick`, `BrickApp`, `CreateServerOptions`, the endpoint, docs and request-logging helpers, and the compiler runtime (`compileBrickApplication`, `bindCompiledApplication`, `loadCompiledBrickApp` and their types) from `@brickkit/core`. `@brickkit/cli/compiler` now exports only `emitCompiledApplication` and `emitHandlerFactory`.
+- `defineService` options `auth`, `rateLimit`, `cache`, `resilience`, `telemetry` and `lifecycle`: delete them. They never had an effect. Use `authorize` on actions and `access` on resources for access control, and [`brick({ telemetry })`](/docs/reference/configuration) for tracing.
+- Hand-written CORS middleware: replace it with [`brick({ cors })`](/docs/reference/configuration#cors).

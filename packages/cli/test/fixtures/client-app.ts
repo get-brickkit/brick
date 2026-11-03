@@ -1,4 +1,4 @@
-import { brick } from "../../src/server";
+import { brick } from "@brickkit/core";
 import { defineService, t } from "@brickkit/core";
 
 const jsonValue = t.Recursive(
