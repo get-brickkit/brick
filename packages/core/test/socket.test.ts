@@ -563,37 +563,6 @@ it("kicks only connections also in another room", async () => {
   expect(await fromA).toBe("direct");
 });
 
-it("delivers once to connections on the current and v0.10 paths", async () => {
-  const service = defineService("chat");
-  const feed = service.socket({
-    name: "liveFeed",
-    input: {},
-    output: { message: t.String() },
-    allowMissingOrigin: true,
-    rooms: () => ["user:anon"],
-    handlers: {},
-  });
-  const app = brick({
-    services: [service],
-    prefix: "/v2",
-    docs: false,
-    requestLogging: false,
-    legacyRoutes: true,
-  }).listen(0);
-  apps.push(app);
-  const url = `http://localhost:${app.server!.port}/v2/chat`;
-  const current = await open(`${url}/live-feed`);
-  const legacy = await open(`${url}/liveFeed`);
-  const received: string[] = [];
-  for (const ws of [current, legacy])
-    ws.addEventListener("message", ({ data }) =>
-      received.push(JSON.parse(String(data)).data),
-    );
-  feed.emit("user:anon", "message", "once");
-  await Bun.sleep(20);
-  expect(received).toEqual(["once", "once"]);
-});
-
 it("refuses joins over the room cap and keeps server rooms", async () => {
   const { live, url } = roomsApp(2);
   const ws = await open(url + "/v2/chat/live");

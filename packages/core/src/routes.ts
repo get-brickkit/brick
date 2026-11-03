@@ -27,8 +27,6 @@ export function joinRoute(base: string, path: string): string {
 export interface ActionRoute {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
-  /** The v0.10 path, served too by `brick({ legacyRoutes: true })`. */
-  legacyPath?: string;
 }
 
 /**
@@ -46,12 +44,7 @@ export function getActionRoute(
 ): ActionRoute | false {
   const plugin = getPluginActionRoute(action, prefix);
   if (plugin === false) return false;
-  if (plugin)
-    return {
-      method: plugin.method,
-      path: plugin.path,
-      legacyPath: plugin.legacyPath,
-    };
+  if (plugin) return { method: plugin.method, path: plugin.path };
   const service = action.serviceName ?? "";
   const method = action.config.method ?? "POST";
   const { resourceAction } = action as { resourceAction?: ResourceActionInfo };
@@ -72,24 +65,7 @@ export function getActionRoute(
       action.config.path !== undefined
         ? joinRoute(base, action.config.path)
         : `${base}/${kebabCase(action.name)}`,
-    legacyPath: legacyPath(prefix, service, action.name, action.config.path),
   };
-}
-
-/**
- * The v0.10 route of a service action or socket: the names as declared, or an
- * explicit path that still reads as absolute (it starts with the prefix). A
- * path already rewritten as relative has no v0.10 form.
- */
-export function legacyPath(
-  prefix: string,
-  service: string,
-  name: string,
-  path: string | undefined,
-): string | undefined {
-  const root = prefix.replace(/\/$/, "");
-  if (path === undefined) return `${root}/${service}/${name}`;
-  return path.startsWith(`${root}/`) ? path : undefined;
 }
 
 /** Stamped on actions declared with `resource.action(...)`. */

@@ -85,24 +85,7 @@ describe("DevTelemetryStore", () => {
     expect(trace.httpStatus).toBe(200);
     expect(trace.durationMs).toBe(12);
     expect(trace.spans.map((span) => span.spanId)).toEqual(["root", "action"]);
-    expect(trace.legacyRoute).toBeUndefined();
     expect(store.snapshot().failures).toHaveLength(0);
-  });
-
-  it("flags a request to a v0.10 path served by legacyRoutes", () => {
-    const store = new DevTelemetryStore();
-    store.ingest(
-      [
-        start("t1", "root", "POST /api/users/getUser", 1000, {
-          attributes: { ...rootAttributes, "brick.legacy_route": true },
-        }),
-        end("t1", "root", "POST /api/users/getUser", 1012, {
-          attributes: { "http.response.status_code": 200 },
-        }),
-      ],
-      1,
-    );
-    expect(store.snapshot().traces[0]!.legacyRoute).toBe(true);
   });
 
   it("records one failure from the action span, with its code, message, and stack", () => {

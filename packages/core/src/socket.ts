@@ -2,7 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Elysia } from "elysia";
 import { websocket } from "elysia/websocket";
 import { createLogger } from "./logger";
-import { joinRoute, kebabCase, legacyPath, ownerPath } from "./routes";
+import { joinRoute, kebabCase, ownerPath } from "./routes";
 import type { BaseContext } from "./types";
 import { getCompiledCheck } from "./typebox";
 import { inTransaction, onTransactionCommit } from "./events/transaction";
@@ -342,15 +342,6 @@ export function socketPath(
     ownerPath(prefix, service),
     socket.schema.path ?? `/${kebabCase(socket.schema.name)}`,
   );
-}
-
-/** The v0.10 route, served too by `brick({ legacyRoutes: true })`. */
-export function legacySocketPath(
-  prefix: string,
-  service: string,
-  socket: RegisteredSocket,
-): string | undefined {
-  return legacyPath(prefix, service, socket.schema.name, socket.schema.path);
 }
 
 /** The origin a browser saw, so TLS-terminating proxies still pass the same-origin check. */
