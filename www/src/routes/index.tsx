@@ -2,12 +2,12 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 import { ArrowRightIcon } from "lucide-react";
 import * as React from "react";
 
-import { LogoMark } from "@/components/logo";
 import { InstallOptions } from "@/components/install-command";
 import { site } from "@/lib/site";
 import { cn } from "@/lib/utils";
 import { SourceCode } from "@/components/source-code";
 import { HomeCapabilities } from "@/components/home-capabilities";
+import { HomeTour } from "@/components/home-tour";
 import usersSource from "../../../examples/showcase/src/services/users.ts?raw";
 import mainSource from "../../../examples/showcase/src/main.ts?raw";
 import serverSource from "../../../examples/showcase/src/server.ts?raw";
@@ -18,29 +18,64 @@ export const Route = createFileRoute("/")({
 
 const features = [
   {
-    title: "Monomorphic Dispatch",
-    text: "Call typed actions directly in process with the same validation and error handling used by HTTP routes.",
-    link: "/docs/services-and-actions",
+    title: "Services and actions",
+    text: "Validated, typed units of work you call in process or over HTTP.",
+    link: "services-and-actions",
   },
   {
-    title: "AOT Routing & Streaming",
-    text: "Compile action handlers and resource plans ahead of request handling, and serve them through Elysia.",
-    link: "/docs/brick-cli/build",
+    title: "Resources",
+    text: "A Drizzle table becomes CRUD routes with field policies and filters.",
+    link: "resources",
   },
   {
-    title: "Logical Monolith",
-    text: "Single repository with shared schemas, full TypeScript type safety, and instant jump-to-definition across services.",
-    link: "/docs/type-inference",
+    title: "Commands",
+    text: "Business rules that write a row and emit events in one transaction.",
+    link: "commands",
   },
   {
-    title: "Physical Microservices",
-    text: "Expose services over HTTP using the same action definitions you invoke in process.",
-    link: "/docs",
+    title: "Events",
+    text: "Events recorded with the write, delivered to listeners after commit.",
+    link: "events",
   },
   {
-    title: "Better Auth & Drizzle",
-    text: "First-class integration with Better Auth session security and Drizzle ORM pre-compiled query caching.",
-    link: "/docs/access-control",
+    title: "Realtime",
+    text: "Typed WebSockets with rooms, fan-out, and reconnect.",
+    link: "websockets",
+  },
+  {
+    title: "Typed client",
+    text: "A generated browser contract, with TanStack Query options.",
+    link: "typed-client",
+  },
+  {
+    title: "MCP tools",
+    text: "Expose tools to AI agents over the Model Context Protocol.",
+    link: "tools-and-mcp",
+  },
+  {
+    title: "Access control",
+    text: "Authorization guards on actions and row scoping on resources.",
+    link: "access-control",
+  },
+  {
+    title: "OpenAPI",
+    text: "An OpenAPI document generated from the same definitions.",
+    link: "openapi",
+  },
+  {
+    title: "Migrations",
+    text: "Create tables in development and run migrations in production.",
+    link: "migrations",
+  },
+  {
+    title: "Plugins",
+    text: "Package routes, resources, and dashboard tabs to reuse across apps.",
+    link: "plugins",
+  },
+  {
+    title: "Dev dashboard",
+    text: "brick dev serves a dashboard of requests, spans, and failures.",
+    link: "brick-cli/dev-and-start",
   },
 ];
 
@@ -87,17 +122,14 @@ function Home() {
         >
           Brick v{site.version}, open source
         </a>
-        <LogoMark className="hero-symbol" />
         <h1>
           Build your backend.
           <br />
           Keep your TypeScript.
         </h1>
-        <p className="hero-caption">Small definitions. Production execution.</p>
         <p className="hero-description">
-          Your actions, resources, and rules.
-          <br className="hidden sm:block" /> Compiled into a backend ready to
-          run on Bun.
+          A TypeScript backend framework on Bun, typed from the table to the
+          browser.
         </p>
         <div className="hero-actions">
           <Link
@@ -119,6 +151,29 @@ function Home() {
           </a>
         </div>
         <InstallOptions />
+        <HomeTour />
+      </section>
+
+      <section id="platform" aria-labelledby="platform-heading">
+        <div className="home-section-heading">
+          <h2 id="platform-heading">The rest of the backend.</h2>
+          <p className="section-description">
+            Each piece is opt-in and typed from the same definitions.
+          </p>
+        </div>
+        <ul className="home-feature-index">
+          {features.map((feature) => (
+            <li key={feature.title}>
+              <Link to="/docs/$" params={{ _splat: feature.link }}>
+                <span>
+                  {feature.title}
+                  <ArrowRightIcon className="size-3.5" aria-hidden="true" />
+                </span>
+                <p>{feature.text}</p>
+              </Link>
+            </li>
+          ))}
+        </ul>
       </section>
 
       <div id="definitions" className="home-section-heading">
@@ -223,66 +278,6 @@ function Home() {
         </div>
       </div>
 
-      <div id="platform" className="home-section-heading home-platform-heading">
-        <div>
-          <h2>
-            A foundation for
-            <br />
-            what comes next.
-          </h2>
-        </div>
-        <p className="section-description">
-          A focused set of primitives, built on the TypeScript tools you already
-          know.
-        </p>
-      </div>
-      <ul className="home-feature-grid">
-        {features.map((feature, i) => (
-          <li key={feature.title}>
-            <Link
-              to={feature.link}
-              className="brick-feature group flex h-full flex-col rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            >
-              <div
-                className="feature-visual transition-colors group-hover:border-foreground/30"
-                aria-hidden="true"
-                data-variant={i}
-              >
-                <span className="visual-index">0{i + 1}</span>
-                <div className="visual-flow">
-                  <span>
-                    {["ACTION", "ROUTE", "SERVICE", "HTTP", "SESSION"][i]}
-                  </span>
-                  <b>↓</b>
-                  <span>
-                    {["EXECUTE", "HANDLER", "ACTION", "SERVICE", "POLICY"][i]}
-                  </span>
-                </div>
-                <span className="visual-caption">
-                  {
-                    [
-                      "Type-safe execution",
-                      "Compiled ahead of time",
-                      "Direct in-process calls",
-                      "Same action, new interface",
-                      "Your identity, your rules",
-                    ][i]
-                  }
-                </span>
-              </div>
-              <div className="feature-copy">
-                <h3 className="flex items-center justify-between font-semibold tracking-tight">
-                  {feature.title}
-                  <ArrowRightIcon className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground motion-reduce:transition-none motion-reduce:group-hover:translate-x-0" />
-                </h3>
-                <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-                  {feature.text}
-                </p>
-              </div>
-            </Link>
-          </li>
-        ))}
-      </ul>
       <HomeCapabilities />
     </main>
   );
