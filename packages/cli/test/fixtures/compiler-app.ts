@@ -60,7 +60,7 @@ const app = brick({
   reference: { path: "/reference", title: "App reference" },
   requestLogging: false,
 });
-app.afterHandle("global", ({ set }) => {
+app.onAfterHandle("global", ({ set }) => {
   set.headers["x-app-hook"] = "preserved";
 });
 app.endpoint({ method: "GET", path: "/raw", handler: () => ({ raw: true }) });

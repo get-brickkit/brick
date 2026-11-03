@@ -61,7 +61,7 @@ export function buildApp() {
   });
 
   // Preflight short-circuit (Go: 204 No Content).
-  app.beforeHandle(({ request }: any) => {
+  app.onBeforeHandle(({ request }: any) => {
     if (request.method === "OPTIONS") {
       return new Response(null, {
         headers: corsHeaders(request.headers.get("origin")),
@@ -72,14 +72,14 @@ export function buildApp() {
 
   // CORS response headers (owned by A1). Request logging (Go: method path →
   // status (latency)) is handled by the SDK requestLogging plugin above.
-  app.afterHandle(({ request, set }: any) => {
+  app.onAfterHandle(({ request, set }: any) => {
     const headers = corsHeaders(request.headers.get("origin"));
     for (const [key, value] of Object.entries(headers)) {
       (set.headers as Record<string, string>)[key] = value;
     }
   });
 
-  app.error(({ request, set }: any) => {
+  app.onError(({ request, set }: any) => {
     const headers = corsHeaders(request?.headers?.get?.("origin") ?? null);
     for (const [key, value] of Object.entries(headers)) {
       (set.headers as Record<string, string>)[key] = value;

@@ -74,9 +74,9 @@ export function requestLoggingPlugin(opts: RequestLoggingOptions = {}): Elysia {
     return undefined;
   };
 
-  plugin.beforeHandle("global", markStarted);
-  plugin.afterHandle("global", logSuccess);
-  plugin.error("global", logError);
+  plugin.onBeforeHandle("global", markStarted);
+  plugin.onAfterHandle("global", logSuccess);
+  plugin.onError("global", logError);
 
   return plugin;
 }
