@@ -88,6 +88,7 @@ export function createHandlerFactory(route: RouteIR): HandlerFactory {
       headers,
       request,
       set,
+      user,
     }: any): ActionContext & { requestId: string } => {
       const seq = runtime.nextSequence();
       const traceId = headers?.["x-trace-id"] || "tr_" + seq;
@@ -106,6 +107,8 @@ export function createHandlerFactory(route: RouteIR): HandlerFactory {
         deps: service.deps ?? runtime.emptyServices,
         metadata: { headers },
         _resolved: true,
+        // `brick({ auth })` resolved it onto the route context.
+        user,
       };
     };
     if (contextHook || authorize) {

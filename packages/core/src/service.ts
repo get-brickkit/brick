@@ -338,8 +338,8 @@ export class ServiceImpl<
     const socket: RegisteredSocket = defineServiceSocket(
       this.name,
       config,
-      async (request) => {
-        const ctx = await resolveServiceContext(this, { request });
+      async (request, user) => {
+        const ctx = await resolveServiceContext(this, { request, user });
         // A socket a plugin declared runs with the plugin's deps.
         const deps = (socket as unknown as Record<symbol, unknown>)[
           PLUGIN_DEPS

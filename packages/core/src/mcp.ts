@@ -5,6 +5,8 @@ export interface McpToolDefinition {
   title?: string;
   description: string;
   inputSchema: unknown;
+  /** The tool's `output` schema; a non-object one is wrapped as `{ result }`. */
+  outputSchema?: unknown;
   annotations: ToolAnnotations;
 }
 
@@ -58,6 +60,9 @@ export function createMcpRegistry(options: McpRegistryOptions): McpRegistry {
           properties: {},
           additionalProperties: false,
         },
+        ...(tool.config.output
+          ? { outputSchema: outputSchema(tool.config.output) }
+          : {}),
         annotations: tool.config.annotations ?? {},
       })),
     async callTool(name, args = {}, ctx) {
@@ -66,6 +71,19 @@ export function createMcpRegistry(options: McpRegistryOptions): McpRegistry {
       return tool({ input: args, ctx });
     },
   };
+}
+
+// MCP requires an object outputSchema, so other outputs travel as `{ result }`.
+const WRAP_RESULT = "x-brick-wrap-result";
+function outputSchema(schema: { type?: unknown }) {
+  return schema.type === "object"
+    ? schema
+    : {
+        type: "object",
+        properties: { result: schema },
+        required: ["result"],
+        [WRAP_RESULT]: true,
+      };
 }
 
 export interface McpHandlerOptions {
@@ -150,6 +168,11 @@ export function createMcpHandler(options: McpHandlerOptions) {
             params.arguments as Record<string, unknown> | undefined,
             { ...ctx, request },
           );
+          const schema = options.registry
+            .listTools()
+            .find((tool) => tool.name === params.name)?.outputSchema as
+            | Record<string, unknown>
+            | undefined;
           return result(id, {
             content: [
               {
@@ -160,6 +183,13 @@ export function createMcpHandler(options: McpHandlerOptions) {
                     : (JSON.stringify(value, null, 2) ?? "null"),
               },
             ],
+            ...(schema
+              ? {
+                  structuredContent: schema[WRAP_RESULT]
+                    ? { result: value }
+                    : value,
+                }
+              : {}),
           });
         } catch (error) {
           if (error instanceof UnknownToolError)
@@ -178,5 +208,46 @@ export function createMcpHandler(options: McpHandlerOptions) {
       default:
         return rpcError(id, -32601, `method not found: ${method}`);
     }
+  };
+}
+
+export interface McpOptions {
+  /** Where the endpoint is served (default `/mcp`). */
+  path?: string;
+  /**
+   * Runs on every MCP request after `auth.resolve`, with the principal it
+   * returned as `user` (`null` without one). Return `false` to answer 401, or a
+   * `Response` to answer with it (such as an OAuth `WWW-Authenticate`
+   * challenge); anything else lets the request through.
+   */
+  authorize?: (ctx: {
+    request: Request;
+    user: unknown;
+  }) => boolean | Response | void | Promise<boolean | Response | void>;
+}
+
+/** The `brick({ mcp })` endpoint: resolve the caller, authorize, then answer. */
+export function createMcpRoute(
+  options: McpOptions & {
+    registry: McpRegistry;
+    serverInfo: McpHandlerOptions["serverInfo"];
+    resolveUser?: (request: Request) => unknown;
+  },
+) {
+  const handle = createMcpHandler(options);
+  return async (request: Request): Promise<Response> => {
+    const user = (await options.resolveUser?.(request)) ?? null;
+    const verdict = await options.authorize?.({ request, user });
+    if (verdict instanceof Response) return verdict;
+    if (verdict === false)
+      return Response.json(
+        {
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32001, message: "unauthorized" },
+        },
+        { status: 401 },
+      );
+    return handle(request, { user });
   };
 }

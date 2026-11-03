@@ -59,6 +59,13 @@ describe("tools", () => {
         description: "Echo for the current user",
         annotations: { readOnlyHint: true, openWorldHint: false },
         inputSchema: echo.config.input,
+        // MCP needs an object outputSchema, so the string is wrapped.
+        outputSchema: {
+          type: "object",
+          properties: { result: echo.config.output },
+          required: ["result"],
+          "x-brick-wrap-result": true,
+        },
       },
     ]);
     expect(generateOpenApiSpec({ services: [service] }).paths).toEqual({});

@@ -1,6 +1,29 @@
 import type { Action, ActionAccessPolicy } from "./types";
 
 export type { ActionAccessPolicy };
+
+/**
+ * App-level authentication for `brick({ auth })`, for any provider (Better
+ * Auth, Auth.js, a JWT check of your own).
+ */
+export interface AuthOptions<TPrincipal = unknown> {
+  /**
+   * The principal behind a request, or `null` for an anonymous one. It becomes
+   * `ctx.user`, which `authorize` and CRUD `access` read, for HTTP actions,
+   * socket handshakes and MCP requests. A service `context` runs after it and
+   * may still replace `user`.
+   */
+  resolve: (
+    request: Request,
+  ) => TPrincipal | null | undefined | Promise<TPrincipal | null | undefined>;
+  /**
+   * Runs before routing, to serve the provider's own routes (sign-in, OAuth,
+   * discovery): return a `Response` to answer, `undefined` to let it through.
+   */
+  handler?: (
+    request: Request,
+  ) => Response | undefined | Promise<Response | undefined>;
+}
 export interface ActionAccessInfo {
   hasAuthorize: boolean;
   hasScope: boolean;
