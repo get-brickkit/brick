@@ -5,6 +5,8 @@ import { defineConfig } from "tsdown";
 // source is bundled. Entries mirror package.json "exports" plus the bin.
 export default defineConfig({
   dts: true,
+  // TS 7 emits declarations for the whole tsconfig project; scope it to src.
+  tsconfig: "tsconfig.build.json",
   fixedExtension: false,
   hash: false,
   entry: [

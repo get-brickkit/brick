@@ -422,7 +422,7 @@ export function mountSockets(
   )
     throw new Error("Brick: the socket broker does not support replay");
   for (const { definition } of sockets) definition.brokers.add(broker);
-  app.cleanup(async () => {
+  app.onStop(async () => {
     for (const { definition } of sockets) definition.brokers.delete(broker);
     await broker.close?.();
   });

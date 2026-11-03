@@ -195,7 +195,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     services.flatMap((service) => installedPlugins(service)),
     options.plugins ?? [],
   );
-  for (const handler of plugins.middleware) app.request(handler);
+  for (const handler of plugins.middleware) app.onRequest(handler);
 
   // Diagnostics & health
   app.get("/_health", () => ({

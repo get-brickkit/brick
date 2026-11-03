@@ -6,7 +6,7 @@ import { defineConfig } from "tsdown";
 // React's and Brick's stay imports.
 export default defineConfig({
   entry: { dashboard: "dashboard/kit.ts" },
-  tsconfig: "dashboard/tsconfig.json",
+  tsconfig: "tsconfig.dashboard.json",
   dts: { emitDtsOnly: true },
   deps: { onlyBundle: false },
   format: ["esm"],

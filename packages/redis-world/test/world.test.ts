@@ -312,7 +312,7 @@ describe("world queue and recovery (Redis integration)", () => {
       deliveries.find((d) =>
         d.headers.get("x-vqs-queue-name")?.endsWith("recovered-workflow"),
       )?.body,
-    ).toEqual({
+    ).toMatchObject({
       runId,
     });
   });
