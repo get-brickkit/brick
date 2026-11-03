@@ -12,6 +12,7 @@ export default defineConfig({
     "src/client.ts",
     "src/tanstack-query.ts",
     "src/pg.ts",
+    "src/workflow.ts",
   ],
   format: ["esm"],
   outDir: "dist",

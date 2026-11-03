@@ -1,4 +1,11 @@
-import { defineAction, defineError, defineListener, t } from "../src";
+import {
+  defineAction,
+  defineError,
+  defineListener,
+  stepErrors,
+  stepFailure,
+  t,
+} from "../src";
 
 const SlugExists = defineError("SLUG_EXISTS", {
   status: 409,
@@ -38,3 +45,16 @@ defineListener({
     error.SLUG_EXISTS();
   },
 });
+
+const step = stepErrors({ ...SlugExists, PLAIN: { message: "Plain" } });
+step.SLUG_EXISTS(undefined, { slug: "a", takenBy: "u_1" });
+// @ts-expect-error details must match the schema
+step.SLUG_EXISTS(undefined, { slug: 1 });
+// @ts-expect-error a step raises only the codes it declared
+step.NOT_FOUND();
+step.PLAIN();
+const failure = stepFailure(new Error(), { ...SlugExists });
+if (failure.code === "SLUG_EXISTS") {
+  const takenBy: string = failure.details.takenBy;
+  void takenBy;
+}

@@ -103,32 +103,8 @@ export function buildErrorHelpers<
   return helpers as ErrorBuilder<TErrors>;
 }
 
-/**
- * Define a reusable error. Spread it into the `errors` of any action, listener or
- * command; give it a `details` schema and `error.CODE(message, details)` checks
- * the details against it in types. The details are not validated at runtime.
- *
- * @example
- * const SlugExists = defineError("SLUG_EXISTS", {
- *   status: 409,
- *   message: "Slug is already taken",
- *   details: t.Object({ slug: t.String() }),
- * });
- * // errors: { ...SlugExists }  then  error.SLUG_EXISTS(undefined, { slug })
- */
-export function defineError<
-  const TCode extends string,
-  TDetails extends TSchema | undefined = undefined,
->(
-  code: TCode,
-  definition: { status?: number; message: string; details?: TDetails },
-): {
-  [K in TCode]: { status?: number; message: string } & (TDetails extends TSchema
-    ? { details: TDetails }
-    : {});
-} {
-  return { [code]: definition } as any;
-}
+// Lives with the step helpers, which workflow code imports without the server.
+export { defineError } from "./workflow";
 
 /** The `errors` map of an action, to re-declare in another action or listener: `errors: { ...errorsOf(charge) }`. */
 export function errorsOf<

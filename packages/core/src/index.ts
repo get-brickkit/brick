@@ -130,6 +130,7 @@ export {
   type UntypedServiceClient,
 } from "./rpc";
 export { port, useDeps, type Port, type Ports, type DepsOf } from "./deps";
+export { stepErrors, stepFailure, type StepErrorBuilder } from "./workflow";
 
 export {
   defineListener,

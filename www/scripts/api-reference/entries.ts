@@ -46,6 +46,14 @@ export const ENTRY_POINTS: EntryPoint[] = [
       "Postgres databases for Brick services, with Drizzle's table builders.",
   },
   {
+    slug: "core-workflow",
+    specifier: "@brickkit/core/workflow",
+    file: "packages/core/src/workflow.ts",
+    tsconfig: "packages/core/tsconfig.build.json",
+    description:
+      "Typed errors for workflow steps, safe to import in workflow code.",
+  },
+  {
     slug: "cli",
     specifier: "@brickkit/cli",
     file: "packages/cli/src/index.ts",
