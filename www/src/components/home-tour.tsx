@@ -1,7 +1,6 @@
 import * as React from "react";
 
 import { SourceCode } from "@/components/source-code";
-import { cn } from "@/lib/utils";
 
 // Snippets follow the docs pages each tab names; keep them in step with those pages.
 const stops = [
@@ -109,14 +108,9 @@ export const sendTracking = defineListener({
   },
 ];
 
-/**
- * The hero's one animation: the active tab's underline fills, and its
- * animationend moves to the next tab. Reduced motion drops the animation, so
- * nothing advances; picking a tab stops the tour.
- */
+/** One building block at a time: the code and what it serves. */
 export function HomeTour() {
   const [active, setActive] = React.useState(0);
-  const [touring, setTouring] = React.useState(true);
   return (
     <div className="home-tour">
       <div
@@ -132,32 +126,23 @@ export function HomeTour() {
             id={`tour-tab-${stop.id}`}
             aria-selected={active === i}
             aria-controls={`tour-panel-${stop.id}`}
-            onClick={() => {
-              setActive(i);
-              setTouring(false);
-            }}
+            onClick={() => setActive(i)}
             className="tour-tab"
           >
             {stop.label}
-            {active === i && touring && (
-              <span
-                aria-hidden="true"
-                className="tour-progress"
-                onAnimationEnd={() => setActive((i + 1) % stops.length)}
-              />
-            )}
           </button>
         ))}
       </div>
-      {/* Every panel stays mounted and stacked so highlighting runs once and the window never resizes. */}
-      <div className="tour-panels">
+      {/* Panels stay mounted so each snippet is highlighted once. */}
+      <div>
         {stops.map((stop, i) => (
           <div
             key={stop.id}
             role="tabpanel"
             id={`tour-panel-${stop.id}`}
             aria-labelledby={`tour-tab-${stop.id}`}
-            className={cn("tour-panel", active !== i && "invisible")}
+            hidden={active !== i}
+            className="tour-panel"
           >
             <div className="tour-code">
               <SourceCode code={stop.code} />
