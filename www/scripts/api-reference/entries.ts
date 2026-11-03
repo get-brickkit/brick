@@ -46,6 +46,14 @@ export const ENTRY_POINTS: EntryPoint[] = [
       "Postgres databases for Brick services, with Drizzle's table builders.",
   },
   {
+    slug: "core-testing",
+    specifier: "@brickkit/core/testing",
+    file: "packages/core/src/testing.ts",
+    tsconfig: "packages/core/tsconfig.build.json",
+    description:
+      "createTestApp: an app per test with a typed client and a cleanup.",
+  },
+  {
     slug: "cli",
     specifier: "@brickkit/cli",
     file: "packages/cli/src/index.ts",

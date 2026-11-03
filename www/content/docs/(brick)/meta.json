@@ -29,6 +29,7 @@
     "websockets",
     "tanstack-query",
     "tools-and-mcp",
+    "testing",
     "openapi",
     "dashboard-extensions",
     "type-inference",
