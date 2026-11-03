@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "paths": {
+      "@brickkit/core": ["../core/dist/index.d.ts"]
+    }
+  },
+  "include": ["src"]
+}
