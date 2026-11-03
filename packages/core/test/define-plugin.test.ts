@@ -311,22 +311,30 @@ describe("app part and lifecycle", () => {
     await app.events?.stop();
   });
 
-  it("refuses a workflow listener, whose steps would see the app's deps", () => {
+  it("adds a workflow listener, tagged with the plugin's deps for its steps", () => {
+    const sync = Object.assign(async () => {}, { workflowId: "flows/sync" });
     const flows = definePlugin({
       name: "@acme/flows",
+      deps: { mailer: port<string>() },
       app: ({ listeners }) => {
-        listeners({
-          name: "flow-listener",
-          on: ["pages.*"],
-          workflow: "flows/sync",
-        } as never);
+        listeners(
+          defineListener({
+            name: "flow-listener",
+            on: "pages.*",
+            workflow: sync,
+          }),
+        );
       },
     });
-    expect(() =>
-      brick({ services: [], requestLogging: false, plugins: [flows()] }),
-    ).toThrow(
-      "@acme/flows: plugins can't add workflow listeners yet, because workflow steps would see the app's deps instead of the plugin's; use a run listener ('flow-listener')",
-    );
+    const app = brick({
+      services: [],
+      requestLogging: false,
+      plugins: [flows({}, { deps: { mailer: "plugin" } })],
+      events: { world: { createRunId: () => "run" } },
+    });
+    expect(app.events?.describe().listeners).toEqual([
+      { name: "flow-listener", on: ["pages.*"], kind: "workflow" },
+    ]);
   });
 
   it("refuses a plugin passed to brick() that a resource already installed", () => {

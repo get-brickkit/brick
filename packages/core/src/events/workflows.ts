@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { runWithDeps } from "../deps";
+import { PLUGIN_DEPS, runWithDeps } from "../deps";
 import type {
   EventDelivery,
   EventListener,
@@ -180,15 +180,20 @@ export class WorkflowRuntime {
           "in a test or script, call buildWorkflows() from @brickkit/cli/workflows first.",
       );
     const manifest = this.readManifest();
-    this.checkListeners(manifest);
+    const depsOf = this.checkListeners(manifest);
     const bundle = await this.loadBundle(flow);
     if (typeof bundle.POST !== "function")
       throw new Error(`${flow} does not export a POST handler`);
     const post = bundle.POST;
-    // Steps run inside this handler, so `useDeps()` in a step finds this app's deps.
-    this.world.registerHandler?.(WORKFLOW_QUEUE_PREFIX, (request: Request) =>
-      runWithDeps(this.deps, () => post(request)),
-    );
+    // Steps run inside this handler, so `useDeps()` in a step finds the deps of
+    // the app, or of the plugin whose listener runs the workflow. The queue is
+    // named after the workflow: `__wkf_workflow_<workflowId>`.
+    this.world.registerHandler?.(WORKFLOW_QUEUE_PREFIX, (request: Request) => {
+      const queue = request.headers.get("x-vqs-queue-name") ?? "";
+      const deps =
+        depsOf.get(queue.slice(WORKFLOW_QUEUE_PREFIX.length)) ?? this.deps;
+      return runWithDeps(deps, () => post(request));
+    });
     await this.world.start?.();
     return sdk;
   }
@@ -245,8 +250,15 @@ export class WorkflowRuntime {
    * must know that id: a function that was never transformed, or a bundle built
    * before the workflow existed, would fail on its first delivery with a less
    * helpful message.
+   *
+   * @returns The deps each workflow's steps run with, by workflow id.
+   * @throws When one workflow is run by listeners with different deps (an app
+   * and a plugin, or two plugin installs): its steps could see only one set.
    */
-  private checkListeners(manifest: BundleManifest | undefined): void {
+  private checkListeners(
+    manifest: BundleManifest | undefined,
+  ): Map<string, Record<string, unknown>> {
+    const depsOf = new Map<string, Record<string, unknown>>();
     const known = new Set<string>();
     for (const file of Object.values(manifest?.workflows ?? {}))
       for (const entry of Object.values(file))
@@ -263,6 +275,16 @@ export class WorkflowRuntime {
         throw new Error(
           `The workflow bundle does not contain '${id}' (listener '${listener.name}'). Rebuild it with brick dev or brick start.`,
         );
+      const deps =
+        ((listener as unknown as Record<symbol, unknown>)[PLUGIN_DEPS] as
+          | Record<string, unknown>
+          | undefined) ?? this.deps;
+      if ((depsOf.get(id) ?? deps) !== deps)
+        throw new Error(
+          `Workflow '${id}' is run by listeners with different deps (listener '${listener.name}'); give each app or plugin install its own workflow.`,
+        );
+      depsOf.set(id, deps);
     }
+    return depsOf;
   }
 }

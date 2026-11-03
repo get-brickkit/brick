@@ -168,7 +168,7 @@ orders.use(notify({}, { deps: { mailer: createMailer() } }));
 - **Required.** When a plugin declares deps, the install options and every dep in them are required: `notify()` does not compile. A JavaScript caller gets `@acme/brick-notify needs deps.mailer; pass it when installing: notify(options, { deps: { mailer } })`.
 - **Exact.** A key the plugin does not declare is a compile error, and at install `@acme/brick-notify does not declare deps.extra; it takes mailer`. A plugin without `deps` takes none.
 - **`ctx.deps` is the plugin's.** In every action, socket, endpoint and host hook the plugin adds, `ctx.deps` holds exactly the values passed at install, typed by its ports. That includes actions on resources it creates and `crud()` it installs inside its setup. It never holds the host service's `brick({ deps })`; a plugin without deps sees `{}`. Create actions inside the setup: one action object registered by two installs with different deps is refused.
-- **Setup and listeners.** Every part receives the values as `deps`, and `on("start")` and `on("stop")` handlers as `context.deps`. `useDeps()` in the `run` of a listener the plugin adds returns them too. Plugins can't add workflow listeners yet: workflow steps run in the app's workflow handler, where they would see the app's deps, so installing one fails.
+- **Setup and listeners.** Every part receives the values as `deps`, and `on("start")` and `on("stop")` handlers as `context.deps`. `useDeps()` in the `run` of a listener the plugin adds returns them too, and so does `useDeps()` in the steps of a workflow listener it adds.
 - **App plugins.** `brick({ plugins: [notify({}, { deps: { mailer } })] })` takes them the same way.
 
 ## Owned tables
@@ -203,7 +203,7 @@ The `app` part receives `on`, `middleware` and `listeners`:
 
 - `on("start", fn)` runs when the app starts, in install order; `on("stop", fn)` when it stops, in reverse order. Both may be async. `brick dev`, `brick start`, `brick worker` and a built server start the app before serving; `app.listen()` starts it too, and `app.stop()` stops it. In a test, `await app.start()` and `await app.stop()`. A start that throws stops the plugins already started and fails the start.
 - `middleware(fn)` runs before every request is routed. Return a `Response` to answer it; return nothing to let it through.
-- `listeners(...)` adds event listeners to the app's `events`.
+- `listeners(...)` adds event listeners to the app's `events`: `run` listeners and [workflow listeners](/docs/events#workflows). The app needs an `events.world` for a workflow listener, as for its own.
 
 Setup stays synchronous. Open connections in `on("start")`, never while the plugin installs.
 
