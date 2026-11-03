@@ -83,3 +83,14 @@ To migrate:
 - Web apps: regenerate the client contract (Vite plugin or `brick gen client`) and update calls such as `api.page.list()` to `api.pages.page.list()`.
 - Explicit paths: rewrite them relative to the owner, so `path: "/api/orders/:id/summary"` on service `orders` becomes `path: "/:id/summary"`.
 - Other HTTP callers: switch to the new URLs.
+
+## Migrating to v0.12
+
+v0.12 removes what v0.11 kept for compatibility, and options the runtime never acted on.
+
+To migrate:
+
+- `legacyRoutes`: remove it from `brick()`. The v0.10 paths are no longer served, so clients must call the current URLs (see [Migrating From v0.10](#migrating-from-v010)).
+- `@brickkit/cli` runtime imports: import `brick`, `BrickApp`, `CreateServerOptions`, the endpoint, docs and request-logging helpers, and the compiler runtime (`compileBrickApplication`, `bindCompiledApplication`, `loadCompiledBrickApp` and their types) from `@brickkit/core`. `@brickkit/cli/compiler` now exports only `emitCompiledApplication` and `emitHandlerFactory`.
+- `defineService` options `auth`, `rateLimit`, `cache`, `resilience`, `telemetry` and `lifecycle`: delete them. They never had an effect. Use `authorize` on actions and `access` on resources for access control, and [`brick({ telemetry })`](/docs/reference/configuration) for tracing.
+- Hand-written CORS middleware: replace it with [`brick({ cors })`](/docs/reference/configuration#cors).
