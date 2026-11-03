@@ -5,6 +5,7 @@ import {
   docsMarkdownOptions,
   remarkDocsMarkdown,
 } from "./src/lib/docs-markdown";
+import { codeThemes } from "./src/lib/code-theme";
 
 export const docs = defineDocs({
   dir: "content/docs",
@@ -17,7 +18,10 @@ export const docs = defineDocs({
 });
 
 export default defineConfig({
-  mdxOptions: { remarkPlugins: [remarkDocsMarkdown] },
+  mdxOptions: {
+    remarkPlugins: [remarkDocsMarkdown],
+    rehypeCodeOptions: { themes: codeThemes },
+  },
 });
 
 export const blog = defineDocs({
