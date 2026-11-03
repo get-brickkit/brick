@@ -54,8 +54,12 @@ jobs:
       - run: bun run build:worlds
       - run: bun run typecheck
       - run: bun run typecheck:worlds
-      # REDIS_URL turns on examples/events' workflow tests (a Redis world).
       - run: bun run test
+      # REDIS_URL turns on examples/events' workflow tests (a Redis world). They
+      # run from the example's folder: the Workflow SDK resolves from the working
+      # directory, and their workflow transform would leak into other test files.
+      - run: bun test
+        working-directory: examples/events
         env:
           REDIS_URL: redis://localhost:6379/9
       - run: bun run test:worlds
