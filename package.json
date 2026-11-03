@@ -18,7 +18,7 @@
     "release": "bun scripts/release.ts",
     "test": "bun test packages examples/extensions/test examples/events/test examples/websocket/test scripts --path-ignore-patterns='**/*-world/**'",
     "typecheck": "bun run --filter @brickkit/core typecheck && bun run --filter @brickkit/crud typecheck && bun run --filter @brickkit/cli typecheck && bun run --filter @brickkit/workflow-inspector typecheck",
-    "build:worlds": "bun run --filter '@brickkit/*-world' build",
+    "build:worlds": "bun run --filter @brickkit/redis-world build && bun run --filter @brickkit/bullmq-world build",
     "typecheck:worlds": "bun run --filter '@brickkit/*-world' typecheck",
     "test:worlds": "bun run --filter '@brickkit/*-world' test",
     "lint": "oxlint .",
