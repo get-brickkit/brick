@@ -78,8 +78,10 @@ export function createReaper(options: {
   redis: Redis;
   keyPrefix: string;
   retention: RunRetention;
+  /** Logs sweep failures; each world passes its own debug namespace. */
+  log?: (...args: unknown[]) => void;
 }): Reaper {
-  const { redis, keyPrefix, retention } = options;
+  const { redis, keyPrefix, retention, log = debug } = options;
   const intervalMs = retention.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS;
   const batchSize = retention.batchSize ?? DEFAULT_BATCH_SIZE;
   const lockKey = `${keyPrefix}reaper:lock`;
@@ -241,7 +243,7 @@ export function createReaper(options: {
         try {
           if (await deleteRun(runId, status)) deleted++;
         } catch (err) {
-          debug("reaper failed to delete run", runId, err);
+          log("reaper failed to delete run", runId, err);
         }
       }
     }
@@ -253,7 +255,7 @@ export function createReaper(options: {
     start() {
       if (timer) return;
       const tick = () => {
-        running = sweep().catch((err) => debug("reaper sweep failed", err));
+        running = sweep().catch((err) => log("reaper sweep failed", err));
       };
       timer = setInterval(tick, intervalMs);
       timer.unref();

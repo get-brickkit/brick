@@ -90,7 +90,7 @@ The optional in-band writer fence, `$retention: '0'` purging, hook token retenti
 
 ## Choosing a World
 
-Choose `@brickkit/redis-world` when you want fewer dependencies and a hand-built list queue with durable delays, retries, and worker recovery. Choose `@brickkit/bullmq-world` when you want BullMQ's queue tooling and delivery records. Both use independent copies of the same v5 storage, streaming, and run-retention implementation. This package has no BullMQ dependency and no Bull Board integration.
+Choose `@brickkit/redis-world` when you want fewer dependencies and a hand-built list queue with durable delays, retries, and worker recovery. Choose `@brickkit/bullmq-world` when you want BullMQ's queue tooling and delivery records. Both use the same v5 storage, streaming, and run-retention implementation, which lives in this package; `@brickkit/bullmq-world` depends on it. This package has no BullMQ dependency and no Bull Board integration.
 
 BullMQ-only options `jobPrefix`, `stalledInterval`, `maxStalledCount`, `lockDuration`, and `jobRetention` are absent. `keyPrefix` isolates the queue; `heartbeatTtlMs` controls crash recovery. Promotion and orphan checks run about every 100 ms while workers are alive.
 

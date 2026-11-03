@@ -1,36 +1,16 @@
 import {
   mintedSpecVersion,
   reenqueueActiveRuns,
-  type Storage,
   type World,
 } from "@workflow/world";
 import { WorkflowRunNotFoundError } from "@workflow/errors";
 import { Redis } from "ioredis";
 import type { RedisWorldConfig } from "./config.js";
 import { createQueue, type QueueStats } from "./queue.js";
-import {
-  createEventsStorage,
-  createHooksStorage,
-  createRunsStorage,
-  createStepsStorage,
-} from "./storage.js";
 import { createReaper, hasRetention, validateRetention } from "./reaper.js";
 import { createRunId } from "./run-id.js";
+import { createStorage } from "./shared.js";
 import { createStreamer } from "./streamer.js";
-
-function createStorage(
-  redis: Redis,
-  keyPrefix: string,
-  maxEventsPerRun?: number,
-): Storage {
-  const config = { redis, keyPrefix, maxEventsPerRun };
-  return {
-    runs: createRunsStorage(config),
-    events: createEventsStorage(config),
-    hooks: createHooksStorage(config),
-    steps: createStepsStorage(config),
-  };
-}
 
 export function createWorld(
   config: RedisWorldConfig = {

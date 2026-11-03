@@ -1,36 +1,21 @@
 import {
   mintedSpecVersion,
   reenqueueActiveRuns,
-  type Storage,
   type World,
 } from "@workflow/world";
 import { WorkflowRunNotFoundError } from "@workflow/errors";
+import {
+  createReaper,
+  createRunId,
+  createStorage,
+  createStreamer,
+  hasRetention,
+  validateRetention,
+} from "@brickkit/redis-world/internal";
 import { Redis } from "ioredis";
 import type { RedisWorldConfig } from "./config.js";
 import { createQueue, type QueueStats } from "./queue.js";
-import {
-  createEventsStorage,
-  createHooksStorage,
-  createRunsStorage,
-  createStepsStorage,
-} from "./storage.js";
-import { createReaper, hasRetention, validateRetention } from "./reaper.js";
-import { createRunId } from "./run-id.js";
-import { createStreamer } from "./streamer.js";
-
-function createStorage(
-  redis: Redis,
-  keyPrefix: string,
-  maxEventsPerRun?: number,
-): Storage {
-  const config = { redis, keyPrefix, maxEventsPerRun };
-  return {
-    runs: createRunsStorage(config),
-    events: createEventsStorage(config),
-    hooks: createHooksStorage(config),
-    steps: createStepsStorage(config),
-  };
-}
+import { debug } from "./util.js";
 
 export function createWorld(
   config: RedisWorldConfig = {
@@ -65,7 +50,12 @@ export function createWorld(
   const keyPrefix = config.keyPrefix || "workflow:";
   validateRetention(config.retention);
   const reaper = hasRetention(config.retention)
-    ? createReaper({ redis, keyPrefix, retention: config.retention })
+    ? createReaper({
+        redis,
+        keyPrefix,
+        retention: config.retention,
+        log: debug,
+      })
     : undefined;
 
   const storage = createStorage(redis, keyPrefix, config.maxEventsPerRun);
@@ -125,4 +115,4 @@ export function createWorld(
 // Re-export config and queue types for consumers
 export type { RedisWorldConfig } from "./config.js";
 export type { QueueStats } from "./queue.js";
-export type { KeepRuns, RunRetention } from "./reaper.js";
+export type { KeepRuns, RunRetention } from "@brickkit/redis-world/internal";

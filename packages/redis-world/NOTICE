@@ -8,10 +8,11 @@ Changes: ported the queue to Workflow SDK v5's single-queue contract; added
 atomic reservation and persisted attempt/delivery counters, heartbeat lease
 fencing, owner-checked dedup release, capped retries without message loss,
 v5 routing and binary transport, and new recovery and runtime chaos tests.
-Storage, streaming, retention, and utilities are copied from the independent
-@brickkit/bullmq-world v5 implementation in this repository.
+Storage, streaming, retention, and utilities came from the
+@brickkit/bullmq-world v5 implementation in this repository, which now uses
+them from this package.
 
-The copied v5 implementation is derived from @fantasticfour/world-redis-bullmq
+That v5 implementation is derived from @fantasticfour/world-redis-bullmq
 (https://github.com/vinnymac/worlds, packages/world-redis-bullmq), Apache-2.0.
 Its v5 changes include position-based event IDs, atomic writes, restart
 recovery, independent utilities, and concurrency and chaos tests.
