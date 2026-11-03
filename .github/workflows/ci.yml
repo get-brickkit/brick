@@ -1,0 +1,78 @@
+# Lint, typecheck, build and test every package and the docs site.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  BUN_VERSION: 1.4.4
+
+jobs:
+  packages:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: brick
+          POSTGRES_PASSWORD: brick
+          POSTGRES_DB: brick_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U brick" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      # Without it the Postgres outbox and CRUD transaction tests skip. The Redis
+      # socket broker tests use the redis service on its default localhost:6379.
+      # REDIS_TEST_URL stays unset: both worlds' storage tests use the key prefix
+      # "workflow:test:" and run at once, so each file keeps its own testcontainer.
+      # REDIS_URL stays unset too: it turns on examples/events' workflow tests,
+      # which do not pass yet.
+      TEST_DATABASE_URL: postgres://brick:brick@localhost:5432/brick_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run format:check
+      - run: bun run build
+      - run: bun run build:worlds
+      - run: bun run typecheck
+      - run: bun run typecheck:worlds
+      - run: bun run test
+      - run: bun run test:worlds
+
+  www:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      # The docs generate example architecture from the built @brickkit/core.
+      - run: bun run build
+      - run: bun run lint
+        working-directory: www
+      - run: bun run types:check
+        working-directory: www
+      - name: Test docs
+        run: bun run docs:check
+        working-directory: www
