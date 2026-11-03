@@ -9,7 +9,7 @@ import type {
   BrickClientAction,
   BrickClientSocket,
 } from "@brickkit/core/client";
-import type { BrickApp } from "./endpoints";
+import type { BrickApp } from "@brickkit/core";
 
 /** Generate browser metadata and transport types from the app's selected services. */
 export function generateClientContract(app: BrickApp): string {

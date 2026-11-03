@@ -9,9 +9,9 @@ import {
   sqliteTable,
   text,
   t,
+  compileBrickApplication,
 } from "@brickkit/core";
 import { generateClientContract } from "../src/client-contract";
-import { compileBrickApplication } from "../src/compiler";
 
 beforeEach(resetGlobalRegistry);
 

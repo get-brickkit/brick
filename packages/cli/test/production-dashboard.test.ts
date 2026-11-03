@@ -6,12 +6,12 @@ import {
   defineService,
   resetGlobalRegistry,
   t,
+  brick,
 } from "@brickkit/core";
 import { startDevDashboard } from "../src/dev-dashboard";
 import { captureConsole } from "../src/dev-telemetry";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
 import { startProductionDashboard } from "../src/production-dashboard";
-import { brick } from "../src/server";
 
 const token = "0123456789abcdef-secret";
 const bearer = { authorization: `Bearer ${token}` };

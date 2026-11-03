@@ -4,8 +4,8 @@ import {
   defineAction,
   t,
   resetGlobalRegistry,
+  brick,
 } from "@brickkit/core";
-import { brick } from "../src/server";
 
 describe("@brickkit/cli OpenAPI & Interactive Documentation Server", () => {
   beforeEach(() => {

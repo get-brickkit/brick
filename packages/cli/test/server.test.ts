@@ -4,8 +4,8 @@ import {
   defineAction,
   resetGlobalRegistry,
   t,
+  brick,
 } from "@brickkit/core";
-import { brick } from "../src/index";
 
 describe("@brickkit/cli Server Engine", () => {
   beforeEach(() => {

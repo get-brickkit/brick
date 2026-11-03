@@ -7,9 +7,9 @@ import {
   text,
   integer,
   resetGlobalRegistry,
+  brick,
 } from "@brickkit/core";
 import { crud } from "@brickkit/crud";
-import { brick } from "../src/server";
 import { generateClientContract } from "../src/client-contract";
 
 beforeEach(resetGlobalRegistry);

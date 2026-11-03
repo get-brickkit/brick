@@ -34,7 +34,7 @@ async function eventually<T>(
 }
 
 async function writeApp(root: string, extraOptions = "", folder = "") {
-  const cli = resolve(import.meta.dir, "../src/server.ts");
+  const cli = "@brickkit/core";
   await Bun.write(
     join(root, folder, "actions.ts"),
     `import { defineService, t } from "@brickkit/core";

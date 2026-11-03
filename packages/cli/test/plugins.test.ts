@@ -8,10 +8,10 @@ import {
   defineServicePlugin,
   resetGlobalRegistry,
   t,
+  compileBrickApplication,
+  brick,
 } from "@brickkit/core";
 import { generateClientContract } from "../src/client-contract";
-import { compileBrickApplication } from "../src/compiler";
-import { brick } from "../src/server";
 
 beforeEach(resetGlobalRegistry);
 

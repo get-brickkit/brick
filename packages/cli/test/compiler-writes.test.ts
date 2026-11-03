@@ -7,9 +7,9 @@ import {
   sqliteTable,
   text,
   integer,
+  brick,
 } from "@brickkit/core";
 import { crud } from "@brickkit/crud";
-import { brick } from "../src/server";
 beforeEach(resetGlobalRegistry);
 const table = sqliteTable("compiled_writes", {
   id: text("row_id").primaryKey(),
