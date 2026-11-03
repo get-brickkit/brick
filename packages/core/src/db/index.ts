@@ -12,6 +12,8 @@ import {
 } from "./postgres";
 import { getTableColumns, getTableName, sql, type Table } from "drizzle-orm";
 import { getTableConfig, isPgEnum } from "drizzle-orm/pg-core";
+import { migrate as migratePostgres } from "drizzle-orm/postgres-js/migrator";
+import { migrate as migrateSQLite } from "drizzle-orm/bun-sqlite/migrator";
 
 export * from "./sqlite";
 export * from "./postgres";
@@ -88,6 +90,26 @@ export function createDatabase<
   }
 
   throw new Error(`[Brick-TS DB] Unsupported database engine: '${engine}'`);
+}
+
+/**
+ * Apply the migrations in a folder that have not run yet, in order, and record
+ * them in the database's `__drizzle_migrations` table. The folder is the one
+ * `brick db generate` (or drizzle-kit) writes.
+ *
+ * @param database - A handle from `defineDatabase`.
+ * @param migrationsFolder - The folder holding `meta/_journal.json`.
+ * @example
+ * await migrateDatabase(database, "./drizzle");
+ */
+export async function migrateDatabase(
+  database: DatabaseHandle<unknown>,
+  migrationsFolder: string,
+): Promise<void> {
+  const db = database.getDb() as any;
+  if (database.engine === "postgres")
+    await migratePostgres(db, { migrationsFolder });
+  else migrateSQLite(db, { migrationsFolder });
 }
 
 /** Attach a defined database. Schema changes remain the caller's responsibility. */

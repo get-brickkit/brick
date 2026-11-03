@@ -12,6 +12,7 @@ import { loadBrickApp } from "./app-entry";
 import { ConfigError, loadConfig, type LoadedConfig } from "./config";
 import { writeServiceManifest } from "./manifest";
 import { runLint } from "./lint";
+import { runDbCommand } from "./db";
 import cliPkg from "../package.json";
 
 // Single source of truth for the CLI version (inlined at build time).
@@ -151,6 +152,9 @@ Usage:
   brick gen openapi <entry> [--output <file>]            Generate OpenAPI 3.1 JSON specification
   brick gen client <entry> [--output <file>]             Generate a typed browser client contract
   brick gen manifest                                     Write <generated>/services.gen.ts
+  brick db generate [entry] [--out <dir>] [--name <name>]  Write a SQL migration for the schema changes
+  brick db migrate [entry] [--out <dir>]                 Apply the migrations that have not run yet
+  brick db push [entry] [--force]                        Change the database to match the schema (development)
   brick lint [entry]                                     Check the project against the Brick lint rules
   brick info <entry>                                     Export architecture JSON schema
 
@@ -469,6 +473,58 @@ ${PORT_RESOLUTION_HELP}`,
       );
       console.log(`Services manifest written to ${output}`);
     });
+
+  const db = program
+    .command("db")
+    .description(
+      "Manage the app's database schema with drizzle-kit: generate, migrate, push",
+    );
+  const dbCommand = (
+    name: "generate" | "migrate" | "push",
+    description: string,
+  ) =>
+    db
+      .command(name)
+      .description(description)
+      .argument("[entry]", "Application entry file")
+      .option("--config <path>", CONFIG_HELP)
+      .option(
+        "--out <dir>",
+        "Migrations folder (default drizzle, beside brick.config.ts); one subfolder per database when the app has several",
+      );
+  const dbAction =
+    (name: "generate" | "migrate" | "push") =>
+    async (
+      entry: string | undefined,
+      opts: ConfigOpts & { out?: string; name?: string; force?: boolean },
+      command: Command,
+    ) => {
+      const project = await loadConfig(opts.config);
+      const app = await loadProjectApp(
+        requireEntry(command, entry, project),
+        project,
+      );
+      await runDbCommand(name, app, {
+        out: opts.out ?? fromRoot(project, "drizzle")!,
+        name: opts.name,
+        force: opts.force,
+      });
+    };
+  dbCommand(
+    "generate",
+    "Write a SQL migration for the schema changes since the last one",
+  )
+    .option("--name <name>", "Migration name (default migration)")
+    .action(dbAction("generate"));
+  dbCommand("migrate", "Apply the migrations that have not run yet").action(
+    dbAction("migrate"),
+  );
+  dbCommand(
+    "push",
+    "Change the database to match the schema directly, without migration files (development)",
+  )
+    .option("--force", "Apply changes that drop data")
+    .action(dbAction("push"));
 
   program
     .command("lint")
