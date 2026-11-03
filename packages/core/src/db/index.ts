@@ -405,13 +405,27 @@ async function loadDrizzleKit(): Promise<typeof import("drizzle-kit/api")> {
   // A variable specifier keeps `brick build` from bundling drizzle-kit (and
   // every driver it can load) into the app server.
   const specifier = "drizzle-kit/api";
+  let kit: typeof import("drizzle-kit/api");
   try {
-    return await import(specifier);
+    kit = await import(specifier);
   } catch (err: any) {
     throw new Error(
       `[Brick-TS DB] Postgres schema tools need drizzle-kit: run \`bun add -d drizzle-kit\`, or use \`brick db push\`. (${err?.message ?? err})`,
     );
   }
+  // drizzle-kit assigns helpers to built-in prototypes when imported
+  // (Array.prototype.random, String.prototype.camelCase, ...). Hide them from
+  // for...in loops in this process, which break Elysia's AOT compiler among others.
+  for (const proto of [
+    Object.prototype,
+    Array.prototype,
+    String.prototype,
+    Function.prototype,
+  ])
+    for (const key of Reflect.ownKeys(proto))
+      if (Object.getOwnPropertyDescriptor(proto, key)?.enumerable)
+        Object.defineProperty(proto, key, { enumerable: false });
+  return kit;
 }
 
 /**
