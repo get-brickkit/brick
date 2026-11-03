@@ -54,6 +54,14 @@ export const ENTRY_POINTS: EntryPoint[] = [
       "Typed errors for workflow steps, safe to import in workflow code.",
   },
   {
+    slug: "core-testing",
+    specifier: "@brickkit/core/testing",
+    file: "packages/core/src/testing.ts",
+    tsconfig: "packages/core/tsconfig.build.json",
+    description:
+      "createTestApp: an app per test with a typed client and a cleanup.",
+  },
+  {
     slug: "cli",
     specifier: "@brickkit/cli",
     file: "packages/cli/src/index.ts",

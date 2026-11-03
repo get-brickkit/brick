@@ -102,17 +102,24 @@ bun run check
 
 ## Release
 
-Releases run from a clean, up-to-date `main` checkout:
+All five published packages (`@brickkit/core`, `@brickkit/crud`, `@brickkit/cli`, `@brickkit/redis-world`, and `@brickkit/bullmq-world`) share one version and ship under one `v<version>` tag. A release writes the new version into each package manifest, sets the CLI's `@brickkit/core` dependency and CRUD's `@brickkit/core` peer dependency to `^<version>`, and updates `bun.lock`. It refuses to run when the five versions differ.
+
+Stable releases run from a clean, up-to-date `main` checkout:
 
 ```sh
-bun run release patch
+bun run release patch   # or minor, major
 ```
 
-The GitHub `publish-npm.yml` workflow stages candidate versions without changing Git refs. Its `validate` matrix builds, typechecks, tests, and packs `core`, `crud`, `cli`, `redis-world`, and `bullmq-world` separately. Only when all five validations pass does it publish each validated tarball. After all five npm publishes succeed, it commits and tags the version, then creates the GitHub release. A failed validation or publish does not create a release commit. No builds or tests run again inside the individual publish jobs, so a later test failure cannot leave only some packages published.
+Beta releases run from `beta` with `bun run release beta`. The first beta after `X.Y.Z` is `X.(Y+1).0-beta.0`; later ones count up (`-beta.1`, `-beta.2`). Betas publish under the npm `beta` dist-tag and as GitHub prereleases; stable versions publish under `latest`. To promote a beta, merge `beta` into `main` and run a stable bump there: any stable bump from `X.Y.Z-beta.N` releases `X.Y.Z`.
 
-Set `dry_run` to validate and pack the next version without creating a commit, tag, or npm release. Beta releases run from `beta`. If npm itself fails after some uploads, rerun the failed jobs for that same candidate; already-published package versions are skipped.
+The GitHub `publish-npm.yml` workflow stages candidate versions without changing Git refs. Its `validate` matrix builds, typechecks, tests, and packs each of the five packages separately. Only when all five validations pass does it publish each validated tarball. After all five npm publishes succeed, it commits and tags the version, then creates the GitHub release. A failed validation or publish does not create a release commit. No builds or tests run again inside the individual publish jobs, so a later test failure cannot leave only some packages published. If npm itself fails after some uploads, rerun the failed jobs for that same candidate; already-published package versions are skipped.
 
-The local `scripts/release.ts` command dispatches this same workflow, so it also waits for publication before creating a release commit. `--dry-run` previews the next version locally. The internal `--prepare` mode changes only package manifests and the lockfile for workflow validation.
+`bun run release` only checks the preconditions (a clean tree, the release branch in sync with origin, a tag that does not exist yet, and `gh` signed in) and dispatches that workflow. There are two dry runs:
+
+- `bun run release <bump> --dry-run` runs locally. It prints the next version and the files it would write, and changes nothing. It does not build, test, or pack.
+- The workflow's `dry_run` input, set when you dispatch `publish-npm.yml` by hand, runs the full `validate` matrix and packs the tarballs, but publishes nothing and creates no commit or tag.
+
+The internal `--prepare` mode is for the workflow: it writes the manifests and the lockfile for validation, without committing.
 
 ## Star history
 

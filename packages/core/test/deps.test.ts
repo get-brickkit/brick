@@ -15,6 +15,7 @@ import {
   useService,
   type BrickApp,
 } from "../src";
+import { createTestApp } from "../src/testing";
 
 interface Carrier {
   book(orderId: string): string;
@@ -58,15 +59,21 @@ const call = async (app: BrickApp, path: string, body: unknown) =>
 describe("declared deps", () => {
   for (const compiler of [true, false])
     it(`gives actions the app's deps as ctx.deps (compiler: ${compiler})`, async () => {
-      const orders = ordersService("orders");
-      const app = brick({
-        services: [orders],
-        deps: { carrier: carrier("trk") },
-        compiler,
-        requestLogging: false,
-        docs: false,
+      const { client, cleanup } = createTestApp(() => {
+        const orders = ordersService("orders");
+        const ship = orders.getAction("ship")!;
+        return {
+          services: [orders],
+          deps: { carrier: carrier("trk") },
+          compiler,
+          docs: false,
+          contract: { orders: { ship } },
+        };
       });
-      expect(await call(app, "/api/orders/ship", { id: "o1" })).toBe("trk_o1");
+      expect(await client.orders.ship({ id: "o1" })).toEqual({
+        tracking: "trk_o1",
+      });
+      await cleanup();
     });
 
   it("fails at brick() when a dep is missing or extra", () => {
@@ -84,20 +91,22 @@ describe("declared deps", () => {
   });
 
   it("keeps the deps of two apps in one process apart", async () => {
-    const first = brick({
+    const first = createTestApp({
       services: [ordersService("ordersA")],
       deps: { carrier: carrier("a") },
-      requestLogging: false,
       docs: false,
     });
-    const second = brick({
+    const second = createTestApp({
       services: [ordersService("ordersB")],
       deps: { carrier: carrier("b") },
-      requestLogging: false,
       docs: false,
     });
-    expect(await call(first, "/api/orders-a/ship", { id: "1" })).toBe("a_1");
-    expect(await call(second, "/api/orders-b/ship", { id: "1" })).toBe("b_1");
+    expect(await call(first.app, "/api/orders-a/ship", { id: "1" })).toBe(
+      "a_1",
+    );
+    expect(await call(second.app, "/api/orders-b/ship", { id: "1" })).toBe(
+      "b_1",
+    );
   });
 
   it("lets a unit test pass fakes to an action directly", async () => {

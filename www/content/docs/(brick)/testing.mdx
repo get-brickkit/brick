@@ -1,0 +1,66 @@
+---
+title: Testing
+description: Build an app per test with createTestApp and call it through the typed client, without opening a port.
+---
+
+`createTestApp` from `@brickkit/core/testing` builds an app for one test and gives you a [typed client](/docs/typed-client) that calls it in process. Requests go straight to `app.handle`, so no server listens and tests can run in parallel.
+
+## Minimal Example
+
+```ts title="src/services/orders/orders.test.ts"
+import { expect, test } from "bun:test";
+import { defineService, t } from "@brickkit/core";
+import { createTestApp } from "@brickkit/core/testing";
+
+test("ships an order", async () => {
+  const { client, cleanup } = createTestApp(() => {
+    const orders = defineService("orders");
+    const ship = orders.action({
+      name: "ship",
+      input: t.Object({ id: t.String() }),
+      execute: ({ input }) => ({ tracking: `trk_${input.id}` }),
+    });
+    return { services: [orders], contract: { orders: { ship } } };
+  });
+
+  expect(await client.orders.ship({ id: "o1" })).toEqual({
+    tracking: "trk_o1",
+  });
+  await cleanup();
+});
+```
+
+Pass a function and Brick empties the global service registry before it runs, so the services it defines don't clash with ones another test defined under the same name. You can also pass the options directly when the services already exist: `createTestApp({ services: [orders] })`.
+
+## Options
+
+`createTestApp` takes everything [`brick()`](/docs/reference/configuration) takes, such as `services`, `deps`, `prefix` and `compiler`, plus:
+
+| Option     | Type                  | Default | Description                                                                                                                                                                                               |
+| :--------- | :-------------------- | :------ | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `contract` | `Record<string, any>` | none    | What the client calls, typed: your actions grouped by service (`{ orders: { ship } }`) or a contract from `brick gen client`. Without it, calls are untyped and go to `POST {prefix}/<service>/<action>`. |
+
+Request logging is off unless you set `requestLogging`.
+
+## What it returns
+
+| Field       | Description                                                                                                                               |
+| :---------- | :---------------------------------------------------------------------------------------------------------------------------------------- |
+| `app`       | The `BrickApp`, for `app.definition` or `app.handle`.                                                                                     |
+| `client`    | A [`createBrickClient`](/docs/typed-client) client typed by `contract`. Declared errors reject with `ActionExecutionError`, as over HTTP. |
+| `fetch`     | `fetch(path, init)` against the app, for raw requests: `await fetch("/api/orders/ship", { method: "POST", body })`.                       |
+| `cleanup()` | Stops the app if a test called `app.listen()`, and empties the global registry.                                                           |
+
+## Fakes for deps
+
+Give the app fakes for the [deps](/docs/dependencies) its services declare:
+
+```ts
+const { client } = createTestApp({
+  services: [orders],
+  deps: { carrier: fakeCarrier() },
+  contract: { orders: { ship } },
+});
+```
+
+To test a single action without an app, call `action.execute({ input, ctx })` instead. For commands, see [Testing without a database](/docs/commands#testing-without-a-database).
