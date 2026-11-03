@@ -168,7 +168,7 @@ Unknown events, incorrect payloads, and reversed message directions fail TypeScr
 
 ## Authorization and origins
 
-Brick resolves context and runs `authorize` before upgrading, then repeats both before every message handler. A resolver that checks the current session store can reject a revoked session on the next message. The request headers remain those of the original handshake; a reconnect sends fresh ones.
+With [`brick({ auth })`](/docs/access-control#signing-users-in), `auth.resolve` runs once on the handshake request, and its principal is `ctx.user` for the life of the connection. Brick resolves context and runs `authorize` before upgrading, then repeats both before every message handler. A resolver that checks the current session store can reject a revoked session on the next message. The request headers remain those of the original handshake; a reconnect sends fresh ones.
 
 Browsers send applicable cookies during the handshake. The HTTP client's `headers` and `fetch` options do not attach authorization headers to a browser WebSocket. A failed browser handshake reports a connection error without exposing the HTTP response body or status.
 
