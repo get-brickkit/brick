@@ -37,6 +37,10 @@
     "./tanstack-query": {
       "import": "./dist/tanstack-query.js",
       "types": "./dist/tanstack-query.d.ts"
+    },
+    "./testing": {
+      "import": "./dist/testing.js",
+      "types": "./dist/testing.d.ts"
     }
   },
   "publishConfig": {

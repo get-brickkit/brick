@@ -1,18 +1,11 @@
 import type { Database } from "bun:sqlite";
-import { beforeEach, expect, test } from "bun:test";
-import {
-  brick,
-  defineDatabase,
-  defineService,
-  resetGlobalRegistry,
-  t,
-} from "@brickkit/core";
+import { expect, test } from "bun:test";
+import { defineDatabase, defineService, t } from "@brickkit/core";
+import { createTestApp } from "@brickkit/core/testing";
 import { eq } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { crud } from "../src";
 import { generateClientContract } from "../../cli/src/client-contract";
-
-beforeEach(resetGlobalRegistry);
 
 const orders = sqliteTable("orders", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -21,37 +14,40 @@ const orders = sqliteTable("orders", {
 });
 
 function fixture() {
-  const database = defineDatabase({ tables: { orders } });
-  const db = database.getDb();
-  const sqlite = (db as typeof db & { $client: Database }).$client;
-  sqlite.exec(
-    "CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, status TEXT NOT NULL)",
-  );
-  sqlite.exec(
-    "INSERT INTO orders (owner, status) VALUES ('ada', 'paid'), ('bob', 'paid')",
-  );
-  const service = defineService("orders", {
-    database,
-    context: ({ request }) => ({ user: request.headers.get("x-user") }),
+  let sqlite!: Database;
+  const testApp = createTestApp(() => {
+    const database = defineDatabase({ tables: { orders } });
+    const db = database.getDb();
+    sqlite = (db as typeof db & { $client: Database }).$client;
+    sqlite.exec(
+      "CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, status TEXT NOT NULL)",
+    );
+    sqlite.exec(
+      "INSERT INTO orders (owner, status) VALUES ('ada', 'paid'), ('bob', 'paid')",
+    );
+    const service = defineService("orders", {
+      database,
+      context: ({ request }) => ({ user: request.headers.get("x-user") }),
+    });
+    const order = service.resource({ name: "order", table: orders }).use(
+      crud({
+        access: {
+          authorize: ({ ctx }) => ctx.user != null,
+          scope: ({ ctx }) => eq(orders.owner, ctx.user as string),
+        },
+        fields: { id: { read: true }, status: { read: true } },
+      }),
+    );
+    order.command("markReady", {
+      authorize: ({ ctx }) => ctx.user != null,
+      access: { scope: ({ ctx }) => eq(orders.owner, ctx.user as string) },
+      input: t.Object({ note: t.String() }),
+      output: t.Object({ id: t.Number(), status: t.String() }),
+      decide: () => ({ set: { status: "ready" } }),
+    });
+    return { services: [service], docs: false };
   });
-  const order = service.resource({ name: "order", table: orders }).use(
-    crud({
-      access: {
-        authorize: ({ ctx }) => ctx.user != null,
-        scope: ({ ctx }) => eq(orders.owner, ctx.user as string),
-      },
-      fields: { id: { read: true }, status: { read: true } },
-    }),
-  );
-  order.command("markReady", {
-    authorize: ({ ctx }) => ctx.user != null,
-    access: { scope: ({ ctx }) => eq(orders.owner, ctx.user as string) },
-    input: t.Object({ note: t.String() }),
-    output: t.Object({ id: t.Number(), status: t.String() }),
-    decide: () => ({ set: { status: "ready" } }),
-  });
-  const app = brick({ services: [service], docs: false });
-  return { sqlite, app };
+  return { sqlite, ...testApp };
 }
 
 const call = (
