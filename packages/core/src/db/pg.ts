@@ -1,7 +1,6 @@
-// Postgres schema builders, re-exported from the framework's own drizzle-orm
-// copy. Import tables from `@brickkit/core/pg` (never `drizzle-orm/pg-core`
-// directly): table objects must be created by the same module instance the
-// framework runtime uses, otherwise brand-symbol identity breaks.
+// Postgres schema builders from drizzle-orm/pg-core. drizzle-orm is a peer
+// dependency, so the app and Brick share one copy and tables from either
+// `@brickkit/core/pg` or `drizzle-orm/pg-core` work.
 //
 // This entry is deliberately separate from the package root: several builder
 // names (`text`, `integer`, `index`, …) exist in both `sqlite-core` and

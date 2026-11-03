@@ -45,12 +45,12 @@ An explicit `path` on an action, resource action or socket is relative to its ow
 
 Names that share a URL segment in one service, or a resource action named after a CRUD segment or action (`query`, `count`, `findOne`, `list`, ...), fail at startup.
 
-When upgrading from v0.10, regenerate the client contract, change `api.<resource>.*` calls to `api.<service>.<resource>.*`, and rewrite absolute action paths relative to the owner. `brick({ legacyRoutes: true })` serves the old paths with `Deprecation` and `Link` headers during the move; it is removed in v0.12, so don't add it to new code.
+When upgrading from v0.10, regenerate the client contract, change `api.<resource>.*` calls to `api.<service>.<resource>.*`, and rewrite absolute action paths relative to the owner. `legacyRoutes` was removed in v0.12: the old paths are no longer served, so don't add it.
 
 ## Inspect the application
 
 A running Brick app exposes its registered architecture at `GET /_brick/services`. For an offline export, run `bunx brick info <entry>` with the project's app entry file. The CLI loads definitions before exporting mounted routes and resource access policies. Service options are included, so review configuration values before sharing the JSON.
 
-An app can expose MCP through `createMcpRegistry` and `createMcpHandler`. Read its tool definitions and auth layer before calling tools. The documentation site does not provide a hosted MCP server.
+An app can expose MCP through `brick({ mcp })` (or `createMcpRegistry` and `createMcpHandler`). Read its tool definitions and auth layer before calling tools. The documentation site does not provide a hosted MCP server.
 
 Run the project's type checks and relevant tests after edits. Follow its scripts for schema migrations and contract generation.
