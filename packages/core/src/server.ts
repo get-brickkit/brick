@@ -1,6 +1,4 @@
 import { Elysia } from "elysia";
-import { toErrorResponse } from "./error-response";
-import { createLogger } from "./logger";
 import {
   compileBrickApplication,
   type CompiledApplication,
@@ -21,7 +19,6 @@ import {
 import { generateOpenApiSpec } from "./openapi";
 import { resolveSecrets, type SecretSource } from "./secrets";
 import {
-  logRequest,
   requestLoggingPlugin,
   type RequestLoggingOptions,
 } from "./request-logger";
@@ -49,8 +46,6 @@ import type { EventsOptions } from "./events/types";
 import { localBroker, mountSockets, socketPath } from "./socket";
 import type { SocketBroker } from "./socket-types";
 import { corsHook, type CorsOptions } from "./cors";
-import type { AuthOptions } from "./access";
-import { createMcpRegistry, createMcpRoute, type McpOptions } from "./mcp";
 
 export interface CreateServerOptions {
   port?: number;
@@ -130,17 +125,6 @@ export interface CreateServerOptions {
    * Other origins get no `Access-Control-Allow-Origin`. Preflights are answered.
    */
   cors?: false | CorsOptions;
-  /**
-   * App-level authentication for any provider. `resolve` turns a request into
-   * the principal actions read as `ctx.user` (HTTP actions, socket handshakes
-   * and MCP requests); `handler` serves the provider's own routes. See `AuthOptions`.
-   */
-  auth?: AuthOptions;
-  /**
-   * Serve every tool (`service.tool()`) over MCP (streamable HTTP, stateless
-   * JSON) at `path` (default `/mcp`). `authorize` gates each request. See `McpOptions`.
-   */
-  mcp?: boolean | McpOptions;
 }
 
 export {
@@ -205,39 +189,9 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     options.plugins ?? [],
   );
   // CORS first, so preflights are answered and its headers reach responses
-  // from middleware and auth.handler, which skip the later lifecycle hooks.
+  // from middleware, which skips the later lifecycle hooks.
   if (options.cors) app.onRequest(corsHook(options.cors));
   for (const handler of plugins.middleware) app.onRequest(handler);
-
-  const requestLogging = options.requestLogging ?? true;
-  const logOptions = requestLogging === true ? {} : requestLogging || undefined;
-
-  // App-level auth: the provider's routes first, then the principal per request.
-  const authHandler = options.auth?.handler;
-  if (authHandler)
-    app.onRequest(async ({ request, set }) => {
-      const startedAt = Date.now();
-      const response = await authHandler(request);
-      if (!response) return;
-      // An onRequest answer skips route tracing and the request logger's
-      // hooks, so trace and log it here. shortcut: the span opens once the
-      // handler answered (most requests it lets through), backdated to its
-      // start, so spans the handler opens are not its children; upgrade if
-      // auth providers need nested traces.
-      const path = new URL(request.url).pathname;
-      if (telemetry)
-        traceHttpRequest(
-          { request, set, headers: Object.fromEntries(request.headers) },
-          request.method,
-          path,
-          () => response,
-          startedAt,
-        );
-      if (logOptions)
-        logRequest(logOptions, request, response.status, startedAt);
-      return response;
-    });
-  const resolveUser = options.auth?.resolve;
 
   // Diagnostics & health
   app.get("/_health", () => ({
@@ -247,8 +201,13 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   }));
 
   // Request logging first so every route below is timed.
-  if (logOptions && logOptions.enabled !== false)
-    app.use(requestLoggingPlugin(logOptions));
+  const requestLogging = options.requestLogging ?? true;
+  if (requestLogging !== false) {
+    const pluginOpts = requestLogging === true ? {} : requestLogging;
+    if (pluginOpts.enabled !== false) {
+      app.use(requestLoggingPlugin(pluginOpts));
+    }
+  }
 
   // Scalar API reference page (opt-in): `reference: true`, or options with a path.
   const reference = options.reference ?? false;
@@ -491,30 +450,6 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     const action = service
       .listActions()
       .find((candidate) => candidate.name === route.ir.action)!;
-    // The handler reads the principal off the route context as `ctx.user`.
-    const logger = resolveUser
-      ? createLogger(`[${route.ir.service}:${route.ir.action}]`)
-      : undefined;
-    const handle = resolveUser
-      ? async (context: any) => {
-          try {
-            context.user = await resolveUser(context.request);
-          } catch (err) {
-            // Answer as the handler answers its own throws.
-            const requestId =
-              context.headers?.["x-request-id"] || `req_${crypto.randomUUID()}`;
-            if (context.set?.headers)
-              context.set.headers["x-request-id"] = requestId;
-            const response = toErrorResponse(err, {
-              logger: logger!,
-              requestId,
-            });
-            context.set.status = response.status;
-            return response;
-          }
-          return route.handler(context);
-        }
-      : route.handler;
     const invoke = (context: any) => {
       const result = telemetry
         ? withSpan(
@@ -523,9 +458,9 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
               "brick.service": route.ir.service,
               "brick.action": route.ir.action,
             },
-            () => handle(context),
+            () => route.handler(context),
           )
-        : handle(context);
+        : route.handler(context);
       return result &&
         typeof (result as PromiseLike<unknown>).then === "function"
         ? Promise.resolve(result).then(jsonActionResult)
@@ -545,37 +480,11 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     if (mounted) mountedRoutes.push(route.ir);
   }
 
-  // MCP: every registered tool, behind auth.resolve and mcp.authorize.
-  if (options.mcp) {
-    const mcp = options.mcp === true ? {} : options.mcp;
-    const mcpPath = mcp.path ?? "/mcp";
-    const serve = createMcpRoute({
-      ...mcp,
-      registry: createMcpRegistry({ services }),
-      serverInfo: { name: title, version },
-      resolveUser,
-    });
-    for (const method of ["POST", "GET"] as const)
-      mountRoute(
-        method,
-        mcpPath,
-        // Named fields only: Elysia then leaves the body for the handler to read.
-        telemetry
-          ? ({ request, headers, set }: any) =>
-              traceHttpRequest({ request, headers, set }, method, mcpPath, () =>
-                serve(request),
-              )
-          : ({ request }: { request: Request }) => serve(request),
-        true, // a clash with another route throws
-      );
-  }
-
   mountSockets(
     app,
     sockets,
     options.sockets?.broker ?? localBroker(),
     options.sockets?.secret,
-    resolveUser,
   );
   const definition = Object.freeze({
     services: Object.freeze([...services]),

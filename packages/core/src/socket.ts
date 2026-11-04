@@ -60,8 +60,7 @@ export interface RegisteredSocket {
   handle: BrickSocketHandle<any>;
   topicPrefix: string;
   topic(room: string): string;
-  /** `user` is the principal `brick({ auth })` resolved at the handshake. */
-  connect(request: Request, user?: unknown): Promise<SocketSession>;
+  connect(request: Request): Promise<SocketSession>;
 }
 
 class SocketDenied extends Error {}
@@ -166,7 +165,7 @@ export function defineServiceSocket<
 >(
   service: string,
   config: BrickSocketConfig<I, O, Ctx, E>,
-  resolve: (request: Request, user?: unknown) => Promise<Ctx>,
+  resolve: (request: Request) => Promise<Ctx>,
 ): RegisteredSocket {
   if (
     !config.name ||
@@ -222,8 +221,8 @@ export function defineServiceSocket<
   const typed = (socket: SocketSender): BrickSocketSender<SocketPayloads<O>> =>
     socket;
   const error = buildErrorHelpers(config.errors);
-  const context = async (request: Request, user: unknown) => {
-    const ctx = await resolve(request, user);
+  const context = async (request: Request) => {
+    const ctx = await resolve(request);
     if (config.authorize && !(await config.authorize({ ctx })))
       throw new SocketDenied();
     return ctx;
@@ -300,8 +299,8 @@ export function defineServiceSocket<
         );
       },
     },
-    async connect(request, user) {
-      const initial = await context(request, user);
+    async connect(request) {
+      const initial = await context(request);
       const rooms = [
         ...new Set(config.rooms ? await config.rooms({ ctx: initial }) : []),
       ];
@@ -316,7 +315,7 @@ export function defineServiceSocket<
           const schema = Object.hasOwn(input, event) ? input[event] : undefined;
           if (!schema || !getCompiledCheck(schema).Check(data))
             throw new SocketDenied();
-          const ctx = await context(request, user);
+          const ctx = await context(request);
           if (!socket.isOpen) return;
           // The schema and event were checked together before dispatch.
           const handler = handlers[event as keyof I];
@@ -328,7 +327,7 @@ export function defineServiceSocket<
           });
         },
         async join(room) {
-          const ctx = await context(request, user);
+          const ctx = await context(request);
           return !!config.join && (await config.join({ ctx, room }));
         },
         async close(socket, code, reason) {
@@ -402,7 +401,6 @@ export function mountSockets(
   sockets: { service: string; path: string; definition: RegisteredSocket }[],
   broker: SocketBroker,
   secret?: string,
-  resolveUser?: (request: Request) => unknown,
 ): void {
   if (secret === "") throw new Error("Brick: sockets.secret can't be empty");
   // A sequence is signed for its room, so a client resumes only a room it was sent that sequence in.
@@ -617,10 +615,7 @@ export function mountSockets(
         )
           return new Response("Socket origin refused", { status: 403 });
         try {
-          sessions.set(
-            request,
-            await definition.connect(resolved, await resolveUser?.(resolved)),
-          );
+          sessions.set(request, await definition.connect(resolved));
         } catch (error) {
           if (!(error instanceof SocketDenied))
             logger.error({ error, service, socket: definition.schema.name });

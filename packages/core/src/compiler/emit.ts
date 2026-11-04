@@ -4,8 +4,8 @@ import type { RouteIR } from "./ir";
 export function emitHandlerFactory(route: RouteIR): string {
   const name = JSON.stringify(route.action);
   const fields = route.input
-    ? "params, body, query, headers, request, set, user"
-    : "headers, request, set, user";
+    ? "params, body, query, headers, request, set"
+    : "headers, request, set";
   const input: string[] = ["let input;"];
   if (route.input) {
     input.push("let coercedQuery = query;");
@@ -80,7 +80,7 @@ const requestId = (headers && headers["x-request-id"]) || "req_" + seq;
 if (set?.headers) { set.headers["x-trace-id"] = traceId; set.headers["x-request-id"] = requestId; }
 ${input.join("\n")}
 const ctx = { request: request instanceof Request ? request : defaultRequest, traceId, requestId,
-  db: cachedDb ?? service.getDb(), logger, services: emptyServices, deps: service.deps ?? emptyServices, metadata: { headers }, _resolved: true, user };
+  db: cachedDb ?? service.getDb(), logger, services: emptyServices, deps: service.deps ?? emptyServices, metadata: { headers }, _resolved: true };
 try {
 ${context}
 ${validation}

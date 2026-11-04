@@ -230,9 +230,7 @@ export type {
   McpRegistry,
   McpRegistryOptions,
   McpHandlerOptions,
-  McpOptions,
 } from "./mcp";
-export type { AuthOptions } from "./access";
 
 export { toErrorResponse } from "./error-response";
 export type { ErrorEnvelope } from "./error-response";

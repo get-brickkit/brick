@@ -150,7 +150,7 @@ export async function executeCompiledRoute(
   plan: CompiledRoutePlan,
   elysiaCtx: any,
 ) {
-  const { params, body, query, headers, request, set, user } = elysiaCtx;
+  const { params, body, query, headers, request, set } = elysiaCtx;
   const seq = (++_srvSeq).toString(36);
   const traceId = (headers && headers["x-trace-id"]) || `tr_${seq}`;
   const requestId = (headers && headers["x-request-id"]) || `req_${seq}`;
@@ -241,7 +241,6 @@ export async function executeCompiledRoute(
     deps: plan.service.deps ?? EMPTY_SERVICES,
     metadata: { headers },
     _resolved: true,
-    user,
   };
 
   try {

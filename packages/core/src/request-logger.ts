@@ -27,23 +27,6 @@ function thrownStatus(error: unknown): number | undefined {
 }
 
 /**
- * Log one request answered before routing (by `auth.handler`), which never
- * reaches the plugin's handle hooks.
- */
-export function logRequest(
-  opts: RequestLoggingOptions,
-  request: Request,
-  status: number,
-  startedAt: number,
-): void {
-  if (opts.enabled === false) return;
-  const path = new URL(request.url).pathname;
-  (opts.logger ?? console.log)(
-    formatLog(request.method, path, status, Date.now() - startedAt),
-  );
-}
-
-/**
  * Elysia plugin that logs each request as `METHOD path → status (elapsedms)`.
  * Timing is tracked per-Request via a WeakMap. The onError hook only logs and
  * returns undefined so existing error mapping is preserved. Logging only —

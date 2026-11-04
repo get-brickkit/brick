@@ -178,6 +178,8 @@ describe("tools", () => {
     expect(success.result.content).toEqual([
       { type: "text", text: "hi:alice" },
     ]);
+    // A string output travels wrapped, matching its outputSchema.
+    expect(success.result.structuredContent).toEqual({ result: "hi:alice" });
     const denied = await (
       await handler(
         rpc("tools/call", { name: "echo", arguments: { message: "hi" } }),

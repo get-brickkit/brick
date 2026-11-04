@@ -3,36 +3,7 @@ title: Access Control and Policies
 description: Secure actions and CRUD operations with role-based authorization and row scoping.
 ---
 
-Brick-TS provides two complementary layers of access control: operation-level authorization guards on actions and row-level scoping on CRUD resources. Both read `ctx.user`, which `brick({ auth })` fills in.
-
-## Signing users in
-
-`brick({ auth })` connects any authentication provider (Better Auth, Auth.js, your own JWT check) to the app:
-
-- `resolve(request)` returns the principal behind a request, or `null` for an anonymous one. Brick runs it for every HTTP action, every socket handshake, and every MCP request, and sets the result as `ctx.user`.
-- `handler(request)` (optional) serves the provider's own routes, such as sign-in and OAuth. It runs before routing: return a `Response` to answer, or `undefined` to let the request through.
-
-```ts title="src/app.ts"
-import { brick } from "@brickkit/core";
-import { auth } from "./auth"; // a Better Auth instance
-import { articlesService } from "./services/articles";
-
-export default brick({
-  services: [articlesService],
-  auth: {
-    resolve: async (request) =>
-      (await auth.api.getSession({ headers: request.headers }))?.user ?? null,
-    handler: (request) =>
-      new URL(request.url).pathname.startsWith("/api/auth/")
-        ? auth.handler(request)
-        : undefined,
-  },
-});
-```
-
-A service `context` runs after `resolve`, sees `user`, and can add fields (a tenant, roles) or replace it. Calls between services pass `ctx.user` along, so `resolve` runs once per request.
-
-`handler` answers before Elysia's route hooks run, so `beforeHandle` and `afterHandle` don't see its responses. Brick still logs them with `requestLogging` and records a request span for them with `telemetry`. Headers set in a middleware that runs earlier, such as a plugin's `middleware`, still reach them, and so do [`brick({ cors })`](/docs/reference/configuration#cors) headers: CORS runs first, so provider routes answer cross-origin calls and preflights. Don't read the request body in `resolve`: the MCP handler reads it next. Clone the request if your provider needs the body.
+Brick-TS provides two complementary layers of access control: operation-level authorization guards on actions and row-level scoping on CRUD resources.
 
 ## Action Authorization (`authorize`)
 
