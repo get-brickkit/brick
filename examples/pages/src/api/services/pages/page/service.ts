@@ -1,14 +1,30 @@
 import { crud } from "@brickkit/crud";
 import { ActionExecutionError, defineService, eq } from "@brickkit/core";
 
+import { getAuth } from "../../../auth";
 import { appDb } from "../../../db";
 import { pagesTable } from "./model";
 
 export * from "./model";
 
-// 2. Define Service with the shared Postgres database. ctx.user comes from the
-// app's `auth.resolve` (session cookie or MCP access token), see app.ts.
+// 2. Define Service with the shared Postgres database + better-auth session loading.
+// The context resolver runs once per request: it reads the session cookie
+// via better-auth and injects user/session for all actions. An MCP call
+// arrives with its access token's user already set (see ../../../mcp.ts), so
+// that one is kept instead of being reset by the missing cookie.
 export const pagesService = defineService("pages", {
+  context: async ({ request, user }) => {
+    const session = user
+      ? null
+      : await getAuth().api.getSession({ headers: request.headers });
+    return {
+      session: session?.session ?? null,
+      user:
+        (user as NonNullable<typeof session>["user"] | undefined) ??
+        session?.user ??
+        null,
+    };
+  },
   database: appDb,
 });
 
