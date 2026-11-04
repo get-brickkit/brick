@@ -392,11 +392,11 @@ export function drizzleSchema(
 ): Record<string, unknown> {
   const schema: Record<string, unknown> = {};
   for (const table of tables) {
-    schema[`table:${getTableName(table)}`] = table;
     // What getTableConfig(table).schema reads, for tables of any engine.
     const namespace = (table as any)[Symbol.for("drizzle:Schema")] as
       | string
       | undefined;
+    schema[`table:${namespace ?? "public"}.${getTableName(table)}`] = table;
     if (namespace && namespace !== "public")
       schema[`schema:${namespace}`] = pgSchema(namespace);
     for (const column of Object.values(getTableColumns(table)) as any[])

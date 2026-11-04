@@ -104,3 +104,14 @@ suite("syncSchema on Postgres", () => {
     }
   });
 });
+
+describe("drizzleSchema", () => {
+  it("keeps same-named tables in different Postgres schemas apart", () => {
+    const a = pgSchema("ns_a").table("items", { id: text("id").primaryKey() });
+    const b = pgSchema("ns_b").table("items", { id: text("id").primaryKey() });
+    const tables = Object.entries(drizzleSchema([a, b]))
+      .filter(([key]) => key.startsWith("table:"))
+      .map(([, table]) => table);
+    expect(tables).toEqual([a, b]);
+  });
+});
