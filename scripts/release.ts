@@ -249,10 +249,10 @@ writeFileSync(
   crateToml.replace(CRATE_VERSION, `version = "${version}"`),
 );
 for (const lock of CARGO_LOCKS)
-  if (existsSync(lock))
-    writeFileSync(
-      lock,
-      readFileSync(lock, "utf-8").replace(LOCKED_CRATE, `$1${version}"`),
-    );
+  if (existsSync(lock)) {
+    const text = readFileSync(lock, "utf-8");
+    if (!LOCKED_CRATE.test(text)) fail(`${lock} has no brickkit entry to bump`);
+    writeFileSync(lock, text.replace(LOCKED_CRATE, `$1${version}"`));
+  }
 sh(["bun", "install"]);
 console.log(`prepared ${tag}; release refs and registry are unchanged`);

@@ -64,7 +64,7 @@ jobs:
         run: bun test scripts
       # Fail before anything is published, not halfway through the release.
       - name: Require the crates.io token for the Rust SDK
-        if: github.event_name == 'workflow_dispatch' && inputs.dry_run != true
+        if: github.event_name != 'pull_request' && inputs.dry_run != true
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
@@ -89,6 +89,11 @@ jobs:
           tag="v${version}"
           if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "$tag" ]]; then
             echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
+          crate="$(sed -n 's/^version = "\(.*\)"$/\1/p' sdk/rust/brick/Cargo.toml | head -n 1)"
+          if [[ "$crate" != "$version" ]]; then
+            echo "::error::sdk/rust/brick/Cargo.toml has version $crate, not $version"
             exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
