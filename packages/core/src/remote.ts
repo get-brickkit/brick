@@ -6,13 +6,8 @@ import { kebabCase } from "./kebab";
 import { toErrorResponse } from "./error-response";
 import { createLogger } from "./logger";
 import type { NamedService } from "./rpc";
-import { ActionExecutionError, type BaseContext } from "./types";
-
-/** What a remote service's `context` hook may resolve for the gateway to forward. */
-export interface RemoteContext {
-  user?: unknown;
-  tenantId?: string;
-}
+import { ActionExecutionError } from "./types";
+import type { CorsOptions } from "./cors";
 
 export interface RemoteServiceOptions<N extends string = string> {
   /** The service name: the gateway serves it at `/api/<kebab-name>/<action>`. */
@@ -26,18 +21,11 @@ export interface RemoteServiceOptions<N extends string = string> {
    * `run` starts it (`brick start`). Both run in `dir`.
    */
   build?: { command: string; run: string };
-  /** The loopback port the child listens on (default: a free port at spawn). */
+  /** The port the child listens on (default: a free port at spawn; `brick build --deploy`: 4001, 4002, ...). */
   port?: number;
-  /**
-   * Works out the caller from the public request, as a TS service's `context`
-   * hook does: the gateway forwards `user` and `tenantId` to the child.
-   */
-  context?: (
-    ctx: Pick<BaseContext, "request" | "requestId" | "traceId">,
-  ) => RemoteContext | undefined | Promise<RemoteContext | undefined>;
 }
 
-/** A Go or Rust service, run as its own process and served through the Bun gateway. */
+/** A Go or Rust service, run as its own process: behind the Bun gateway in dev, behind a reverse proxy in production. */
 export interface RemoteService<
   N extends string = string,
 > extends NamedService<N> {
@@ -54,7 +42,7 @@ const remotes = new Map<string, RemoteService>();
  * `useService` to call it from TS. Its actions are validated by the service
  * itself, not by Bun.
  *
- * @param options - `name`, `dir`, `dev`, and optionally `build`, `port` and `context`.
+ * @param options - `name`, `dir`, `dev`, and optionally `build` and `port`.
  * @returns The remote service.
  * @example
  * export const billing = remoteService({
@@ -62,7 +50,6 @@ const remotes = new Map<string, RemoteService>();
  *   dir: "services/billing",
  *   dev: "go run .",
  *   build: { command: "go build -o bin/billing .", run: "./bin/billing" },
- *   context: ({ request }) => ({ user: userFrom(request) }),
  * });
  */
 export function remoteService<const N extends string>(
@@ -221,28 +208,24 @@ let gatewaySeq = 0;
 const gatewayLogger = createLogger("[brick:gateway]");
 
 /**
- * The gateway handler for one remote service: resolves the caller with the
- * service's `context` hook, strips every `x-brick-*` header the client sent,
- * adds the trusted ones with the internal token, and proxies to the child.
+ * The dev gateway for one remote service: what the reverse proxy does in
+ * production. It strips every `x-brick-*` header the client sent and proxies
+ * the rest, `Authorization` included, so the child verifies the caller's JWT
+ * itself, exactly as when it is reached directly. The child adds request ids,
+ * tracing and CORS; Bun's own CORS headers replace the child's.
  */
 export function remoteGateway(remote: RemoteService, base: string) {
   return async (request: Request): Promise<Response> => {
-    const seq = (++gatewaySeq).toString(36);
-    const requestId = request.headers.get("x-request-id") || `req_g${seq}`;
-    const traceId = request.headers.get("x-trace-id") || `tr_g${seq}`;
-    const ids = { "x-request-id": requestId, "x-trace-id": traceId };
+    const requestId =
+      request.headers.get("x-request-id") ||
+      `req_g${(++gatewaySeq).toString(36)}`;
     try {
       const url = new URL(request.url);
       const headers = new Headers();
       for (const [key, value] of request.headers)
         if (!key.startsWith("x-brick-") && !HOP_BY_HOP.includes(key))
           headers.set(key, value);
-      const resolved = await remote.options.context?.({
-        request,
-        requestId,
-        traceId,
-      });
-      envelopeHeaders({ requestId, traceId, ...resolved }, headers);
+      headers.set("x-request-id", requestId);
       const target = `${remoteUrl(remote)}${url.pathname.slice(base.length) || "/"}${url.search}`;
       const hasBody = request.method !== "GET" && request.method !== "HEAD";
       const body = hasBody ? await request.arrayBuffer() : undefined;
@@ -260,26 +243,62 @@ export function remoteGateway(remote: RemoteService, base: string) {
           { cause },
         );
       });
-      const out = new Headers(response.headers);
-      for (const key of HOP_BY_HOP) out.delete(key);
-      out.delete("content-encoding");
-      for (const [key, value] of Object.entries(ids)) out.set(key, value);
+      const out = new Headers();
+      for (const [key, value] of response.headers)
+        if (
+          !HOP_BY_HOP.includes(key) &&
+          key !== "content-encoding" &&
+          !key.startsWith("access-control-")
+        )
+          out.append(key, value);
       return new Response(response.body, {
         status: response.status,
         headers: out,
       });
     } catch (err) {
-      // A context hook's own failure (UNAUTHORIZED, say) keeps its code; anything else is a logged 500.
       const envelope = toErrorResponse(err, {
         logger: gatewayLogger,
         requestId,
       });
       return Response.json(envelope, {
         status: envelope.status,
-        headers: ids,
+        headers: { "x-request-id": requestId },
       });
     }
   };
+}
+
+// Process-wide: the Vite plugin loads the app through its own copy of this module.
+const corsOf: WeakMap<object, CorsOptions> = ((globalThis as any)[
+  Symbol.for("brick.remoteCors")
+] ??= new WeakMap());
+
+/** Remember an app's `cors` for `remoteEnv` (called by `brick()` with remote services only). */
+export function rememberRemoteCors(definition: object, cors: CorsOptions) {
+  corsOf.set(definition, cors);
+}
+
+/**
+ * The environment a Go or Rust service needs from the app: `BRICK_CORS`, the
+ * origins of `brick({ cors })` as JSON. An origin predicate can't cross
+ * processes and `true` means the app's own origin, which a same-origin proxy
+ * needs no CORS for, so both are left out.
+ */
+export function remoteEnv(definition: object): Record<string, string> {
+  const cors = corsOf.get(definition);
+  if (cors === undefined) return {};
+  const { origin = true, credentials = false } =
+    typeof cors === "object" && !Array.isArray(cors)
+      ? (cors as { origin?: unknown; credentials?: boolean })
+      : { origin: cors };
+  const list =
+    typeof origin === "string"
+      ? [origin]
+      : Array.isArray(origin)
+        ? [...origin]
+        : undefined;
+  if (!list) return {};
+  return { BRICK_CORS: JSON.stringify({ origin: list, credentials }) };
 }
 
 /** A free loopback port. */

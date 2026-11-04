@@ -4,6 +4,7 @@ import {
   brick,
   defineService,
   internalToken,
+  remoteEnv,
   remoteService,
   resetGlobalRegistry,
   t,
@@ -33,10 +34,16 @@ const child = Bun.serve({
         },
         { status: 402 },
       );
-    return Response.json({
-      path: url.pathname,
-      body: JSON.parse(body || "{}"),
-    });
+    // A child adds its own CORS headers; the gateway leaves CORS to Bun.
+    return Response.json(
+      { path: url.pathname, body: JSON.parse(body || "{}") },
+      {
+        headers: {
+          "access-control-allow-origin": "https://child.example",
+          "x-request-id": headers["x-request-id"] ?? "",
+        },
+      },
+    );
   },
 });
 afterAll(() => child.stop(true));
@@ -46,10 +53,6 @@ const billing = remoteService({
   dir: ".",
   dev: "true",
   port: child.port,
-  context: ({ request }) => {
-    const auth = request.headers.get("authorization");
-    return auth ? { user: { id: auth.slice(7) }, tenantId: "t1" } : undefined;
-  },
 });
 
 beforeEach(() => {
@@ -89,7 +92,7 @@ const post = (path: string, body: unknown, headers: HeadersInit = {}) =>
   );
 
 describe("remote services", () => {
-  it("proxies /api/<service>/* to the child with the trusted envelope", async () => {
+  it("proxies /api/<service>/* to the child like the production proxy", async () => {
     const response = await post(
       "/api/billing/charge?x=1",
       { amount: 3 },
@@ -115,20 +118,29 @@ describe("remote services", () => {
     );
     const [request] = seen;
     expect(request!.path).toBe("/charge?x=1");
-    expect(request!.headers["x-brick-internal"]).toBe(internalToken());
-    expect(
-      JSON.parse(atob(request!.headers["x-brick-user"]!)) as unknown,
-    ).toEqual({ id: "alice" });
-    expect(request!.headers["x-brick-tenant"]).toBe("t1");
-    expect(request!.headers["x-brick-caller"]).toBeUndefined();
+    // The child verifies the JWT itself; no x-brick-* header reaches it.
+    expect(request!.headers.authorization).toBe("Bearer alice");
+    for (const key of Object.keys(request!.headers))
+      expect(key.startsWith("x-brick-")).toBe(false);
     expect(request!.headers["x-request-id"]).toBe("req-1");
     expect(request!.headers.traceparent).toBe("00-abc-def-01");
-    expect(request!.headers["x-trace-id"]).toBeTruthy();
   });
 
-  it("strips spoofed x-brick-* headers when there is no user", async () => {
-    await post("/api/billing/charge", {}, { "x-brick-user": "e30=" });
-    expect(seen[0]!.headers["x-brick-user"]).toBeUndefined();
+  it("mints a request id for the child", async () => {
+    await post("/api/billing/charge", {});
+    expect(seen[0]!.headers["x-request-id"]).toStartWith("req_g");
+  });
+
+  it("gives the children the app's CORS origins", () => {
+    expect(remoteEnv(app().definition)).toEqual({
+      BRICK_CORS: '{"origin":["https://app.example.com"],"credentials":false}',
+    });
+    const tsOnly = brick({
+      services: [],
+      docs: false,
+      cors: { origin: "https://a.example" },
+    });
+    expect(remoteEnv(tsOnly.definition)).toEqual({});
   });
 
   it("passes the child's error envelope through unchanged", async () => {

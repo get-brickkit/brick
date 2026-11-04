@@ -46,9 +46,9 @@ export {
   isRemoteService,
   startRemoteServices,
   internalToken,
+  remoteEnv,
   type RemoteService,
   type RemoteServiceOptions,
-  type RemoteContext,
   type RemoteProcesses,
   type StartRemoteOptions,
 } from "./remote";

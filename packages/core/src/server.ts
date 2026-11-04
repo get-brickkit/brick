@@ -46,7 +46,12 @@ import type { EventsOptions } from "./events/types";
 import { localBroker, mountSockets, socketPath } from "./socket";
 import type { SocketBroker } from "./socket-types";
 import { corsHook, type CorsOptions } from "./cors";
-import { remoteGateway, trustedEnvelope, type RemoteService } from "./remote";
+import {
+  rememberRemoteCors,
+  remoteGateway,
+  trustedEnvelope,
+  type RemoteService,
+} from "./remote";
 import { kebabCase } from "./kebab";
 import { ownerPath } from "./routes";
 import { toErrorResponse } from "./error-response";
@@ -131,9 +136,9 @@ export interface CreateServerOptions {
    */
   cors?: false | CorsOptions;
   /**
-   * Go and Rust services from `remoteService`. Each is served at
-   * `${prefix}/<name>/*` by proxying to its process on 127.0.0.1, after CORS,
-   * request ids and the service's `context` hook. It also mounts
+   * Go and Rust services from `remoteService`. In dev each is served at
+   * `${prefix}/<name>/*` by proxying to its process (in production a reverse
+   * proxy routes there directly; see `brick build --deploy`). It also mounts
    * `POST /_brick/call/<service>/<action>`, where those services call TS
    * actions with the internal token.
    */
@@ -557,6 +562,8 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
       await lifecycle.stop();
     }
   }) as typeof brickApp.stop;
+  if (remote.length && options.cors)
+    rememberRemoteCors(definition, options.cors);
   getGlobalRegistry().setApplicationRoutes(definition);
 
   // Serialize stable metadata once; registry changes invalidate the snapshot.
