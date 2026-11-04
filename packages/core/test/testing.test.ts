@@ -1,5 +1,6 @@
 import { expect, it } from "bun:test";
 import { defineService, getGlobalRegistry, t } from "../src";
+import { compileBrickApplication } from "../src/compiler";
 import { createTestApp } from "../src/testing";
 
 it("defines services in an empty registry and calls them through a typed client", async () => {
@@ -32,4 +33,22 @@ it("defines services in an empty registry and calls them through a typed client"
   await cleanup();
   expect(app.server).toBeFalsy();
   expect(getGlobalRegistry().list()).toEqual([]);
+});
+
+it("points the client at the prefix a compilation gives the app", async () => {
+  const { app, client, cleanup } = createTestApp(() => {
+    const orders = defineService("orders");
+    const ship = orders.action({ name: "ship", execute: () => "shipped" });
+    return {
+      services: [orders],
+      compilation: compileBrickApplication({
+        services: [orders],
+        prefix: "/v1",
+      }),
+      contract: { orders: { ship } },
+    };
+  });
+  expect(app.definition.prefix).toBe("/v1");
+  expect(await client.orders.ship()).toBe("shipped");
+  await cleanup();
 });

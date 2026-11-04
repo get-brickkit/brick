@@ -49,7 +49,7 @@ export function createTestApp<
     app,
     client: createBrickClient<TContract>({
       baseUrl: "http://localhost",
-      prefix: appOptions.prefix,
+      prefix: app.definition.prefix,
       contract,
       fetch: fetch as typeof globalThis.fetch,
     }),
