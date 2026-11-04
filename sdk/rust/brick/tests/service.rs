@@ -44,11 +44,106 @@ fn service() -> Service {
                 user: ctx.user(),
             })
         })
+        .action("me", |ctx: Ctx, _input: serde_json::Value| async move {
+            ctx.require_user::<serde_json::Value>()
+        })
+}
+
+/// One request to the service, without the internal token unless `headers` has it.
+async fn send(method: &str, path: &str, headers: &[(&str, &str)]) -> axum::response::Response {
+    // SAFETY: tests in this file set the same values.
+    unsafe {
+        std::env::set_var("BRICK_INTERNAL_TOKEN", "secret");
+        std::env::set_var(
+            "BRICK_CORS",
+            r#"{"origin":["https://app.test"],"credentials":true}"#,
+        );
+    }
+    let mut request = Request::builder().method(method).uri(path);
+    for (k, v) in headers {
+        request = request.header(*k, *v);
+    }
+    service()
+        .router()
+        .oneshot(request.body(Body::from("{}")).unwrap())
+        .await
+        .unwrap()
+}
+
+async fn text(response: axum::response::Response) -> (u16, String) {
+    let status = response.status().as_u16();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (status, String::from_utf8(bytes.to_vec()).unwrap())
+}
+
+const UNAUTHORIZED: &str = r#"{"name":"ActionExecutionError","code":"UNAUTHORIZED","message":"Access denied for action 'me'","status":401,"requestId":"r1"}"#;
+
+#[tokio::test]
+async fn trusts_x_brick_headers_only_with_the_token() {
+    let spoofed = [
+        ("x-request-id", "r1"),
+        ("x-brick-user", "eyJpZCI6Im1hbGxvcnkifQ=="),
+        ("x-brick-caller", "admin"),
+    ];
+    let (status, body) = text(send("POST", "/api/people/me", &spoofed).await).await;
+    assert_eq!((status, body.as_str()), (401, UNAUTHORIZED));
+    let mut with_token = spoofed.to_vec();
+    with_token.push(("x-brick-internal", "secret"));
+    let (status, body) = text(send("POST", "/me", &with_token).await).await;
+    assert_eq!((status, body.as_str()), (200, r#"{"id":"mallory"}"#));
+}
+
+#[tokio::test]
+async fn does_the_gateway_s_work() {
+    let response = send(
+        "POST",
+        "/api/people/me",
+        &[
+            (
+                "traceparent",
+                "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+            ),
+            ("origin", "https://app.test"),
+        ],
+    )
+    .await;
+    let h = response.headers();
+    assert!(h["x-request-id"].to_str().unwrap().starts_with("req_"));
+    assert_eq!(h["x-trace-id"], "0af7651916cd43dd8448eb211c80319c");
+    assert_eq!(h["access-control-allow-origin"], "https://app.test");
+    assert_eq!(h["access-control-allow-credentials"], "true");
+    let preflight = [
+        ("origin", "https://app.test"),
+        ("access-control-request-method", "POST"),
+        (
+            "access-control-request-headers",
+            "authorization, content-type",
+        ),
+    ];
+    let response = send("OPTIONS", "/api/people/me", &preflight).await;
+    assert_eq!(response.status().as_u16(), 204);
+    assert_eq!(
+        response.headers()["access-control-allow-headers"],
+        "authorization, content-type"
+    );
+    let evil = [("origin", "https://evil.test"), preflight[1]];
+    let response = send("OPTIONS", "/api/people/me", &evil).await;
+    assert!(
+        !response
+            .headers()
+            .contains_key("access-control-allow-origin")
+    );
 }
 
 async fn call(body: &str, headers: &[(&str, &str)]) -> (u16, String) {
-    // SAFETY: tests in this file share one token value.
-    unsafe { std::env::set_var("BRICK_INTERNAL_TOKEN", "secret") };
+    // SAFETY: tests in this file set the same values.
+    unsafe {
+        std::env::set_var("BRICK_INTERNAL_TOKEN", "secret");
+        std::env::set_var(
+            "BRICK_CORS",
+            r#"{"origin":["https://app.test"],"credentials":true}"#,
+        );
+    }
     let mut request = Request::post("/greet-person");
     if !headers.iter().any(|(k, _)| *k == "x-brick-internal") {
         request = request.header("x-brick-internal", "secret");
@@ -78,10 +173,10 @@ async fn validation_matches_typebox() {
         body,
         r#"{"name":"ValidationError","code":"VALIDATION_FAILED","message":"Validation failed for action 'greetPerson' input","status":400,"errors":[{"path":"/name","message":"Expected string length greater or equal to 3","value":"ab"},{"path":"/age","message":"Expected integer to be less or equal to 150","value":200},{"path":"/role","message":"Expected union value","value":"nope"}],"requestId":"r1"}"#
     );
-    let (_, body) = call("{}", &[]).await;
+    let (_, body) = call("{}", &[("x-request-id", "r0")]).await;
     assert_eq!(
         body,
-        r#"{"name":"ValidationError","code":"VALIDATION_FAILED","message":"Validation failed for action 'greetPerson' input","status":400,"errors":[{"path":"/name","message":"Expected required property"},{"path":"/age","message":"Expected required property"},{"path":"/role","message":"Expected required property"},{"path":"/name","message":"Expected string"},{"path":"/age","message":"Expected integer"},{"path":"/role","message":"Expected union value"}],"requestId":""}"#
+        r#"{"name":"ValidationError","code":"VALIDATION_FAILED","message":"Validation failed for action 'greetPerson' input","status":400,"errors":[{"path":"/name","message":"Expected required property"},{"path":"/age","message":"Expected required property"},{"path":"/role","message":"Expected required property"},{"path":"/name","message":"Expected string"},{"path":"/age","message":"Expected integer"},{"path":"/role","message":"Expected union value"}],"requestId":"r0"}"#
     );
 }
 

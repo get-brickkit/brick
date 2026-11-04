@@ -1,4 +1,5 @@
 use crate::{Ctx, Error, SERVICE_NAME, kebab};
+use base64::Engine;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{collections::HashMap, sync::OnceLock};
 
@@ -12,7 +13,7 @@ fn urls() -> &'static HashMap<String, String> {
     })
 }
 
-fn http() -> &'static reqwest::Client {
+pub(crate) fn http() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(reqwest::Client::new)
 }
@@ -46,11 +47,15 @@ pub async fn call<I: Serialize, O: DeserializeOwned>(
             SERVICE_NAME.get().map(String::as_str).unwrap_or_default(),
         )
         .body(serde_json::to_vec(input)?);
+    let user = ctx
+        .user
+        .as_ref()
+        .map(|u| base64::engine::general_purpose::STANDARD.encode(u.to_string()));
     for (name, value) in [
         ("x-request-id", Some(&ctx.request_id)),
         ("x-trace-id", Some(&ctx.trace_id)),
         ("traceparent", Some(&ctx.traceparent)),
-        ("x-brick-user", ctx.user.as_ref()),
+        ("x-brick-user", user.as_ref()),
         ("x-brick-tenant", ctx.tenant_id.as_ref()),
     ] {
         if let Some(value) = value.filter(|v| !v.is_empty()) {

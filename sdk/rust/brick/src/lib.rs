@@ -1,8 +1,10 @@
 //! Write Brick services in Rust. A Rust service runs as its own process next to
-//! the Bun app, which is the only public server: Bun proxies
-//! `/api/<service>/<action>` to it over loopback, after CORS and auth, and
-//! forwards the user, caller and request id. Rust trusts Bun: requests are
-//! accepted only with the per-run internal token.
+//! the Bun app. Browsers reach it directly, through a reverse proxy in
+//! production or the Bun gateway in `brick dev`: it serves
+//! `/api/<service>/<action>` (and `/<action>`), verifies the caller's Better
+//! Auth JWT itself, and adds request ids, the W3C trace and CORS. Other
+//! services call it with the internal token, which alone makes their
+//! `x-brick-*` headers (caller, user, tenant) trusted.
 //!
 //! ```no_run
 //! use brick::{Ctx, Error, ErrorDef, Service};
@@ -30,7 +32,9 @@
 //! }
 //! ```
 
+mod auth;
 mod client;
+mod http;
 mod validate;
 
 pub use client::call;
@@ -143,20 +147,27 @@ impl ErrorDef {
     }
 }
 
-/// The context of one action call. Bun has already worked out the user and
-/// checked the caller; a request carries them only with the internal token.
+/// The context of one action call: its ids, and its user from the caller's
+/// JWT, or, for a call from another service, the caller, user and tenant that
+/// service forwarded.
 #[derive(Debug, Clone, Default)]
 pub struct Ctx {
+    action: String,
     request_id: String,
     trace_id: String,
     traceparent: String,
     caller: Option<String>,
     tenant_id: Option<String>,
-    user: Option<String>,
+    user: Option<Value>,
 }
 
 impl Ctx {
-    fn from_headers(headers: &HeaderMap, trust: bool) -> Self {
+    async fn from_request(
+        action: &str,
+        headers: &HeaderMap,
+        trust: bool,
+        auth: Option<&auth::Verifier>,
+    ) -> Self {
         let get = |name: &str| {
             headers
                 .get(name)
@@ -164,13 +175,23 @@ impl Ctx {
                 .filter(|v| !v.is_empty())
                 .map(String::from)
         };
+        let user = if trust {
+            get("x-brick-user")
+                .and_then(|u| base64::engine::general_purpose::STANDARD.decode(u).ok())
+                .and_then(|raw| serde_json::from_slice(&raw).ok())
+        } else if let Some(auth) = auth {
+            auth.user(headers).await
+        } else {
+            None
+        };
         Ctx {
+            action: action.into(),
             request_id: get("x-request-id").unwrap_or_default(),
             trace_id: get("x-trace-id").unwrap_or_default(),
             traceparent: get("traceparent").unwrap_or_default(),
             caller: get("x-brick-caller").filter(|_| trust),
             tenant_id: get("x-brick-tenant").filter(|_| trust),
-            user: get("x-brick-user").filter(|_| trust),
+            user,
         }
     }
 
@@ -179,27 +200,41 @@ impl Ctx {
         &self.request_id
     }
 
-    /// The trace id Bun assigned.
+    /// The id of the trace this call is part of.
     pub fn trace_id(&self) -> &str {
         &self.trace_id
     }
 
-    /// The service that called this action, or `None` for a call through the gateway.
+    /// The service that called this action, or `None` for a call from outside.
     pub fn caller(&self) -> Option<&str> {
         self.caller.as_deref()
     }
 
-    /// The tenant the gateway's context hook resolved, if any.
+    /// The tenant the calling service forwarded, if any.
     pub fn tenant_id(&self) -> Option<&str> {
         self.tenant_id.as_deref()
     }
 
-    /// The user Bun resolved, decoded into `T`, or `None` without one.
+    /// The caller's user decoded into `T` (the claims of a valid JWT, or the
+    /// user a calling service forwarded), or `None` without one.
     pub fn user<T: DeserializeOwned>(&self) -> Option<T> {
-        let raw = base64::engine::general_purpose::STANDARD
-            .decode(self.user.as_ref()?)
-            .ok()?;
-        serde_json::from_slice(&raw).ok()
+        serde_json::from_value(self.user.clone()?).ok()
+    }
+
+    /// The user, or the 401 a TS action's `authorize` gives without one:
+    /// `let user: User = ctx.require_user()?;`
+    // The same Error every action returns, so `?` works in a handler.
+    #[allow(clippy::result_large_err)]
+    pub fn require_user<T: DeserializeOwned>(&self) -> Result<T, Error> {
+        let unauthorized = || {
+            Error::new(
+                "UNAUTHORIZED",
+                401,
+                &format!("Access denied for action '{}'", self.action),
+            )
+        };
+        let user = self.user.clone().ok_or_else(unauthorized)?;
+        serde_json::from_value(user).map_err(|_| unauthorized())
     }
 }
 
@@ -213,6 +248,7 @@ struct ActionEntry {
     output: Value,
     validator: jsonschema::Validator,
     handler: Handler,
+    auth: Option<Arc<auth::Verifier>>,
 }
 
 /// A Rust Brick service: a name, its actions and its declared errors.
@@ -220,6 +256,7 @@ pub struct Service {
     name: String,
     actions: Vec<Arc<ActionEntry>>,
     errors: Vec<ErrorDef>,
+    auth: Option<Arc<auth::Verifier>>,
 }
 
 fn schema_of<T: JsonSchema>() -> Value {
@@ -242,6 +279,7 @@ impl Service {
             name: name.into(),
             actions: Vec::new(),
             errors: Vec::new(),
+            auth: auth::Verifier::from_env().map(Arc::new),
         }
     }
 
@@ -291,6 +329,7 @@ impl Service {
             output,
             validator,
             handler,
+            auth: self.auth.clone(),
         }));
         self
     }
@@ -315,18 +354,27 @@ impl Service {
         })
     }
 
-    /// The service's HTTP routes, for tests or a server of your own.
+    /// The service's HTTP routes, for tests or a server of your own: each
+    /// action at `POST /<kebab-name>` for other services, and at
+    /// `POST $BRICK_PREFIX/<kebab-service>/<kebab-name>` (prefix default
+    /// `/api`) for the proxy, which then needs no path rewriting. Request ids,
+    /// tracing and CORS are added around them.
     pub fn router(self) -> Router {
         let mut router = Router::new().route("/_health", get(|| async { r#"{"status":"ok"}"# }));
+        let prefix = std::env::var("BRICK_PREFIX").unwrap_or_else(|_| "/api".into());
+        let base = format!("{}/{}", prefix.trim_end_matches('/'), kebab(&self.name));
         for action in self.actions {
-            let path = format!("/{}", kebab(&action.name));
-            router = router.route(&path, post(handle).with_state(action));
+            let path = kebab(&action.name);
+            router = router
+                .route(&format!("/{path}"), post(handle).with_state(action.clone()))
+                .route(&format!("{base}/{path}"), post(handle).with_state(action));
         }
-        router
+        http::wrap(router)
     }
 
     /// Print the manifest and exit when run with `--brick-manifest` (or
-    /// `BRICK_MANIFEST=1`). Otherwise listen on `127.0.0.1:$BRICK_PORT`.
+    /// `BRICK_MANIFEST=1`). Otherwise listen on `$BRICK_HOST:$BRICK_PORT`
+    /// (default `127.0.0.1`; `0.0.0.0` in a container).
     pub async fn serve(self) -> std::io::Result<()> {
         if std::env::args().any(|a| a == "--brick-manifest")
             || std::env::var("BRICK_MANIFEST").as_deref() == Ok("1")
@@ -335,7 +383,9 @@ impl Service {
             std::process::exit(0);
         }
         let port = std::env::var("BRICK_PORT").unwrap_or_else(|_| "0".into());
-        let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}")).await?;
+        let host = std::env::var("BRICK_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+        let listener =
+            tokio::net::TcpListener::bind((host.as_str(), port.parse().unwrap_or(0))).await?;
         eprintln!(
             "[brick] {} (rust) listening on http://{}",
             self.name,
@@ -345,26 +395,25 @@ impl Service {
     }
 }
 
-/// Serve and trust a request only with this run's internal token. With no
-/// token configured (the binary run by hand), calls are served but their
-/// `x-brick-*` headers are not trusted.
+/// Trust a request's `x-brick-*` headers only with the internal token, which
+/// only other services of the app have. A request without the header is a
+/// public call (its user comes from its JWT); a wrong token is refused, so a
+/// misconfigured service fails loudly instead of running as nobody.
 fn check_token(headers: &HeaderMap) -> (bool, bool) {
-    match std::env::var("BRICK_INTERNAL_TOKEN") {
-        Ok(token) if !token.is_empty() => {
-            let given = headers
-                .get("x-brick-internal")
-                .map(|v| v.as_bytes())
-                .unwrap_or_default();
-            let ok = given.len() == token.len()
-                && given
-                    .iter()
-                    .zip(token.as_bytes())
-                    .fold(0u8, |acc, (a, b)| acc | (a ^ b))
-                    == 0;
-            (ok, ok)
-        }
-        _ => (true, false),
-    }
+    let mut given = headers.get_all("x-brick-internal").iter();
+    let Some(first) = given.next() else {
+        return (true, false);
+    };
+    let token = std::env::var("BRICK_INTERNAL_TOKEN").unwrap_or_default();
+    let given = first.as_bytes();
+    let ok = !token.is_empty()
+        && given.len() == token.len()
+        && given
+            .iter()
+            .zip(token.as_bytes())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+            == 0;
+    (ok, ok)
 }
 
 async fn handle(
@@ -373,11 +422,11 @@ async fn handle(
     body: Bytes,
 ) -> Response {
     let (serve, trust) = check_token(&headers);
-    let ctx = Ctx::from_headers(&headers, trust);
+    let ctx = Ctx::from_request(&action.name, &headers, trust, action.auth.as_deref()).await;
     let request_id = ctx.request_id.clone();
     if !serve {
         return error_response(
-            Error::new("UNAUTHORIZED", 401, "Missing or invalid internal token"),
+            Error::new("UNAUTHORIZED", 401, "Invalid internal token"),
             request_id,
         );
     }
