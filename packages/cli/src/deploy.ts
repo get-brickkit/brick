@@ -1,9 +1,9 @@
 // `brick build --deploy <targets>`: production routing for every deploy
 // target, all generated from one routing table. Browsers reach the Go and
 // Rust services directly through the proxy; everything else goes to Bun.
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { kebabCase, remoteEnv, type BrickApp } from "@brickkit/core";
 import {
   DEPLOY_TARGETS,
@@ -36,6 +36,16 @@ export interface Upstream {
   /** Go and Rust: the service folder and its build, from `remoteService`. */
   dir?: string;
   build?: { command: string; run: string };
+  /**
+   * Go and Rust: the Docker build context, relative to the project root. It is
+   * the project root, or a folder above it when a Go `replace` or Cargo `path`
+   * dependency points outside it (an SDK checkout, a monorepo package).
+   */
+  context?: string;
+  /** Go and Rust: the folders the Dockerfile copies, relative to `context`; the service's own last. */
+  sources?: string[];
+  /** Go and Rust: the project root, relative to `context`. */
+  project?: string;
   /** The process's environment in compose and Kubernetes. */
   env: Record<string, string>;
 }
@@ -61,6 +71,36 @@ export interface RoutingTableOptions extends DeployOptions {
   addresses?: Record<string, string>;
   /** Where the remote services' `dir`s are relative to (default the working directory). */
   cwd?: string;
+}
+
+/** The folders outside `dir` its Go `replace` or Cargo `path` dependencies point to. */
+function localDependencies(dir: string, language: "go" | "rust"): string[] {
+  const manifest = readFileSync(
+    join(dir, language === "go" ? "go.mod" : "Cargo.toml"),
+    "utf8",
+  );
+  const paths =
+    language === "go"
+      ? [...manifest.matchAll(/=>\s*(\.\.?\/[^\s]*)/g)]
+      : [...manifest.matchAll(/\bpath\s*=\s*"([^"]+)"/g)];
+  return paths
+    .map((match) => resolve(dir, match[1]!))
+    .filter((path) => relative(dir, path).startsWith(".."));
+}
+
+/** The build context and what to copy: the closest folder holding the project and every local dependency. */
+function buildContext(root: string, dir: string, language: "go" | "rust") {
+  const service = resolve(root, dir);
+  const folders = [...localDependencies(service, language), service];
+  let context = resolve(root);
+  for (const folder of folders)
+    while (folder !== context && !folder.startsWith(context + sep))
+      context = dirname(context);
+  return {
+    context: relative(root, context) || ".",
+    sources: folders.map((folder) => relative(context, folder)),
+    project: relative(context, root) || ".",
+  };
 }
 
 function languageOf(dir: string): "go" | "rust" {
@@ -113,23 +153,28 @@ export function routingTable(
         ...(remote.length ? shared : {}),
       },
     },
-    ...remotes.map(({ service, name, port }) => ({
-      name,
-      address: address(name, port),
-      port,
-      language: languageOf(resolve(options.cwd ?? ".", service.options.dir)),
-      dir: service.options.dir,
-      build: service.options.build,
-      env: {
-        ...shared,
-        BRICK_HOST: "0.0.0.0",
-        BRICK_PORT: String(port),
-        BRICK_PREFIX: base || "/",
-        BRICK_JWT_ISSUER: `\${BRICK_JWT_ISSUER:-${issuer}}`,
-        BRICK_JWKS_URL: `${appUrl}/api/auth/jwks`,
-        ...remoteEnv(app.definition),
-      },
-    })),
+    ...remotes.map(({ service, name, port }) => {
+      const root = resolve(options.cwd ?? ".");
+      const language = languageOf(resolve(root, service.options.dir));
+      return {
+        name,
+        address: address(name, port),
+        port,
+        language,
+        dir: service.options.dir,
+        build: service.options.build,
+        ...buildContext(root, service.options.dir, language),
+        env: {
+          ...shared,
+          BRICK_HOST: "0.0.0.0",
+          BRICK_PORT: String(port),
+          BRICK_PREFIX: base || "/",
+          BRICK_JWT_ISSUER: `\${BRICK_JWT_ISSUER:-${issuer}}`,
+          BRICK_JWKS_URL: `${appUrl}/api/auth/jwks`,
+          ...remoteEnv(app.definition),
+        },
+      };
+    }),
   ];
   return {
     ...(options.domain ? { domain: options.domain } : {}),
@@ -160,14 +205,19 @@ export function routesJson(table: RoutingTable): string {
   return `${JSON.stringify(table, null, 2)}\n`;
 }
 
+/** Idle keep-alive connections each proxy keeps per upstream. */
+const KEEPALIVE = 256;
+
 /**
- * Caddyfile: automatic HTTPS for the domain, keep-alive is Caddy's default.
+ * Caddyfile: automatic HTTPS for the domain, and a keep-alive pool per upstream.
  *
  * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
  */
 export function caddyfile(table: RoutingTable): string {
   const handles = table.routes.map(({ path, upstream }) => {
-    const proxy = `reverse_proxy ${upstreamOf(table, upstream).address}`;
+    // Caddy keeps 32 idle upstream connections by default: past 32 concurrent
+    // requests it would open and close one per request, until ports run out.
+    const proxy = `reverse_proxy ${upstreamOf(table, upstream).address} {\n\t\t\ttransport http {\n\t\t\t\tkeepalive_idle_conns_per_host ${KEEPALIVE}\n\t\t\t}\n\t\t}`;
     return path === "/"
       ? `\thandle {\n\t\t${proxy}\n\t}`
       : `\thandle ${path}* {\n\t\t${proxy}\n\t}`;
@@ -189,7 +239,7 @@ ${handles.join("\n\n")}
 export function nginxConf(table: RoutingTable): string {
   const upstreams = table.upstreams.map(
     (u) =>
-      `    upstream ${ident(u.name)} {\n        server ${u.address};\n        keepalive 32;\n    }`,
+      `    upstream ${ident(u.name)} {\n        server ${u.address};\n        keepalive ${KEEPALIVE};\n    }`,
   );
   const locations = table.routes.map(
     ({ path, upstream }) =>
@@ -364,13 +414,19 @@ ${tls}  rules:
 ${paths.join("\n")}`);
   return `# ${HEADER}
 # Create the token first: kubectl create secret generic brick --from-literal=BRICK_INTERNAL_TOKEN=$(openssl rand -hex 24)
+# An Ingress can't remove request headers, so x-brick-* reaches the services: each
+# one ignores them without BRICK_INTERNAL_TOKEN, and answers a wrong token with 401.
+# To also strip them at the edge, route with the Gateway API and a RequestHeaderModifier.
 ${docs.map((doc) => `---\n${doc}\n`).join("")}`;
 }
 
-const TOOLCHAIN = { go: "golang:1.26", rust: "rust:1" };
+// The runtime image's Debian matches the toolchains', so a binary linked to glibc runs.
+const TOOLCHAIN = { go: "golang:1.26-trixie", rust: "rust:1-trixie" };
 
 /**
- * One Dockerfile per process, built from the project root.
+ * One Dockerfile per process. Bun builds from the project root; a Go or Rust
+ * service from its `context`, copying only its own folder and its local
+ * dependencies, so a `replace` or `path` outside the project builds too.
  *
  * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
  */
@@ -389,16 +445,18 @@ CMD ["/bin/sh", "-c", ${JSON.stringify(table.app.start)}]
     throw new Error(
       `Brick: remote service "${u.name}" needs build.command and build.run for --deploy compose.`,
     );
-  const binary = join(u.dir!, u.build.run);
+  const sources = u.sources ?? [u.dir!];
+  const dir = sources.at(-1)!;
   return `# ${HEADER}
 FROM ${TOOLCHAIN[u.language]} AS build
 WORKDIR /src
-COPY . .
-WORKDIR /src/${u.dir}
+${sources.map((source) => `COPY ${source} ${source}`).join("\n")}
+WORKDIR /src/${dir}
 RUN ${u.build.command}
 
-FROM debian:bookworm-slim
-COPY --from=build /src/${binary} /usr/local/bin/service
+FROM debian:trixie-slim
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=build /src/${join(dir, u.build.run)} /usr/local/bin/service
 ENV BRICK_HOST=0.0.0.0 BRICK_PORT=${u.port}
 EXPOSE ${u.port}
 CMD ["/usr/local/bin/service"]
@@ -436,8 +494,8 @@ export function composeYaml(table: RoutingTable, proxy: ProxyTarget): string {
   const services = table.upstreams.map(
     (u) => `  ${u.name}:
     build:
-      context: ../..
-      dockerfile: deploy/compose/${u.name}.Dockerfile
+      context: ${join("../..", u.context ?? ".")}
+      dockerfile: ${join(u.project ?? ".", "deploy/compose", `${u.name}.Dockerfile`)}
     restart: unless-stopped
     environment:
 ${yamlEnv(u.env, "      ").join("\n")}`,
@@ -484,8 +542,13 @@ export function deployFiles(
     files["kubernetes/brick.yaml"] = kubernetesYaml(table);
   if (wanted.has("compose")) {
     files["compose/compose.yaml"] = composeYaml(table, proxy);
-    for (const u of table.upstreams)
+    for (const u of table.upstreams) {
       files[`compose/${u.name}.Dockerfile`] = dockerfile(table, u);
+      // Docker reads <Dockerfile>.dockerignore: keep build output out of a large context.
+      if (u.language !== "ts")
+        files[`compose/${u.name}.Dockerfile.dockerignore`] =
+          "**/target\n**/node_modules\n**/.git\n";
+    }
   }
   return files;
 }
