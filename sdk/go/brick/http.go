@@ -14,7 +14,7 @@ import (
 // What the Bun gateway does for a TS request, done here for calls that reach
 // the service directly: a request id, the W3C trace, and CORS.
 
-var traceparentRe = regexp.MustCompile(`^[0-9a-f]{2}-([0-9a-f]{32})-[0-9a-f]{16}-([0-9a-f]{2})$`)
+var traceparentRe = regexp.MustCompile(`^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$`)
 
 func randomHex(n int) string {
 	b := make([]byte, n)
@@ -23,10 +23,12 @@ func randomHex(n int) string {
 }
 
 // continueTrace keeps the trace of a valid traceparent with a new span id for
-// this service, or starts a new trace.
+// this service, or starts a new trace. Version ff and all-zero ids are invalid
+// (W3C Trace Context).
 func continueTrace(parent string) (traceparent, traceID string) {
-	if m := traceparentRe.FindStringSubmatch(parent); m != nil && m[1] != "00000000000000000000000000000000" {
-		return "00-" + m[1] + "-" + randomHex(8) + "-" + m[2], m[1]
+	if m := traceparentRe.FindStringSubmatch(parent); m != nil && m[1] != "ff" &&
+		m[2] != "00000000000000000000000000000000" && m[3] != "0000000000000000" {
+		return "00-" + m[2] + "-" + randomHex(8) + "-" + m[4], m[2]
 	}
 	traceID = randomHex(16)
 	return "00-" + traceID + "-" + randomHex(8) + "-01", traceID

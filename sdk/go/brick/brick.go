@@ -24,6 +24,7 @@ import (
 	"cmp"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -33,6 +34,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
@@ -93,7 +95,11 @@ func Action[I, O any](s *Service, name string, fn func(ctx *Ctx, in I) (O, error
 			writeError(w, ctx, &Error{Name: "ActionExecutionError", Code: "UNAUTHORIZED", Message: "Invalid internal token", Status: 401})
 			return
 		}
-		body, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
+		if tooLarge := (*http.MaxBytesError)(nil); errors.As(err, &tooLarge) {
+			writeError(w, ctx, &Error{Name: "ActionExecutionError", Code: "PAYLOAD_TOO_LARGE", Message: "Request body too large", Status: 413})
+			return
+		}
 		if err != nil {
 			writeError(w, ctx, internalError())
 			return
@@ -186,7 +192,8 @@ func (s *Service) Serve() error {
 		return err
 	}
 	log.Printf("[brick] %s (go) listening on http://%s", s.name, ln.Addr())
-	return http.Serve(ln, s.Handler())
+	srv := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second}
+	return srv.Serve(ln)
 }
 
 type manifestAction struct {

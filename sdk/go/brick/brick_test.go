@@ -97,3 +97,37 @@ func TestKebab(t *testing.T) {
 		}
 	}
 }
+
+func TestOversizedBody(t *testing.T) {
+	rec := call(testService(t), `{"name":"`+strings.Repeat("a", maxBody)+`"}`, nil)
+	if rec.Code != 413 || !strings.Contains(rec.Body.String(), "PAYLOAD_TOO_LARGE") {
+		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMalformedForwardedUser(t *testing.T) {
+	rec := call(testService(t), `{"name":"alice","age":1,"role":"user"}`, map[string]string{"x-brick-user": "eyJpZCI6"})
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"user":null`) {
+		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestJSNumber(t *testing.T) {
+	for in, want := range map[float64]string{3: "3", 0.5: "0.5", 1e-7: "1e-7", 1.5e-10: "1.5e-10", 1e21: "1e+21", -2.5e22: "-2.5e+22", 0.000001: "0.000001", 0: "0"} {
+		if got := jsNumber(in); got != want {
+			t.Fatalf("jsNumber(%v) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+func TestContinueTrace(t *testing.T) {
+	const trace = "0af7651916cd43dd8448eb211c80319c"
+	if _, id := continueTrace("00-" + trace + "-b7ad6b7169203331-01"); id != trace {
+		t.Fatalf("valid traceparent restarted: %s", id)
+	}
+	for _, bad := range []string{"ff-" + trace + "-b7ad6b7169203331-01", "00-" + trace + "-0000000000000000-01", "00-00000000000000000000000000000000-b7ad6b7169203331-01"} {
+		if _, id := continueTrace(bad); id == trace || id == "00000000000000000000000000000000" {
+			t.Fatalf("%s continued", bad)
+		}
+	}
+}

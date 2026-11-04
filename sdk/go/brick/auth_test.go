@@ -205,3 +205,22 @@ func TestGatewayDuties(t *testing.T) {
 		t.Fatalf("evil preflight allowed: %v", pre.Header())
 	}
 }
+
+func TestJWKSOutageBacksOff(t *testing.T) {
+	k1, _ := keyPair(t, "k1")
+	calls := 0
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(down.Close)
+	svc := authService(t, down.URL)
+	for range 3 {
+		if rec := me(svc, sign(t, k1, nil)); rec.Code != 401 {
+			t.Fatalf("got %d", rec.Code)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("%d JWKS fetches during the outage, want 1", calls)
+	}
+}

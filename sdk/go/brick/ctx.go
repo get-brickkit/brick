@@ -35,7 +35,9 @@ func newCtx(r *http.Request, action string, trusted bool, auth *verifier) *Ctx {
 		c.caller = r.Header.Get("x-brick-caller")
 		c.tenantID = r.Header.Get("x-brick-tenant")
 		if user := r.Header.Get("x-brick-user"); user != "" {
-			c.user, _ = base64.StdEncoding.DecodeString(user)
+			if raw, err := base64.StdEncoding.DecodeString(user); err == nil && json.Valid(raw) {
+				c.user = raw
+			}
 		}
 	} else if auth != nil {
 		c.user = auth.user(r)

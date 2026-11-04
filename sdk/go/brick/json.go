@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"strconv"
+	"strings"
 )
 
 // object is a JSON object that keeps its key order, so schemas list
@@ -147,6 +149,11 @@ func writeJSON(b *bytes.Buffer, v any) {
 
 // jsNumber formats a number as JavaScript prints it, for the common cases.
 func jsNumber(f float64) string {
+	if abs := math.Abs(f); abs != 0 && (abs < 1e-6 || abs >= 1e21) {
+		// JavaScript's exponent form has no leading zero: 1e-7, 1e+21.
+		s := strconv.FormatFloat(f, 'e', -1, 64)
+		return strings.Replace(strings.Replace(s, "e-0", "e-", 1), "e+0", "e+", 1)
+	}
 	if f == float64(int64(f)) && f < 1e21 && f > -1e21 {
 		return strconv.FormatInt(int64(f), 10)
 	}
