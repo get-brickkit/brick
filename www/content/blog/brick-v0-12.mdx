@@ -249,7 +249,7 @@ Brick itself now runs CI on every pull request, against real Postgres and Redis 
 - **Elysia 2.0 RC.** Brick runs on `elysia@2.0.0-rc.1`, where lifecycle hooks are `on*` again. That only matters if you add Elysia hooks to the app yourself: see [the table](#every-breaking-change).
 - **TypeScript 7.** The packages build and type-check with TypeScript 7.
 - **drizzle-orm is a peer dependency** of `@brickkit/core` and `@brickkit/crud`. Your app and Brick now share one copy, so tables built with `drizzle-orm/pg-core` work as well as those from `@brickkit/core/pg`. The Pages example dropped the script that rewrote Better Auth's generated schema for exactly that reason.
-- **Everything else on latest,** including postgres.js 4, `@opentelemetry/core` 3 and Vitest 5.
+- **Everything else on latest,** including postgres.js 4 and OpenTelemetry SDK 3. The world packages stay on Vitest 4, which `@workflow/world-testing` requires.
 - **The world packages share their code.** `@brickkit/bullmq-world` carried a copy of `@brickkit/redis-world`'s storage, streams and retention. It now depends on redis-world instead: about 4,000 lines of source and 3,700 of tests live once. Both packages' public exports are unchanged.
 
 ## Upgrade checklist
