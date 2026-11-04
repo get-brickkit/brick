@@ -14,7 +14,7 @@ export interface TestApp<TContract> {
   client: BrickClient<TContract>;
   /** `fetch` against the app: `await fetch("/api/orders/ship", { method: "POST" })`. */
   fetch(path: string | URL, init?: RequestInit): Promise<Response>;
-  /** Stops the app if it was listening and empties the global registry. */
+  /** Stops the app if it was listening, stops its events hub, and empties the global registry. */
   cleanup(): Promise<void>;
 }
 
@@ -56,6 +56,7 @@ export function createTestApp<
     fetch,
     async cleanup() {
       if (app.server) await app.stop(true);
+      await app.events?.stop();
       resetGlobalRegistry();
     },
   };

@@ -1,5 +1,5 @@
-import { expect, it } from "bun:test";
-import { defineService, getGlobalRegistry, t } from "../src";
+import { expect, it, spyOn } from "bun:test";
+import { defineListener, defineService, getGlobalRegistry, t } from "../src";
 import { compileBrickApplication } from "../src/compiler";
 import { createTestApp } from "../src/testing";
 
@@ -51,4 +51,18 @@ it("points the client at the prefix a compilation gives the app", async () => {
   expect(app.definition.prefix).toBe("/v1");
   expect(await client.orders.ship()).toBe("shipped");
   await cleanup();
+});
+
+it("stops the events hub on cleanup", async () => {
+  const { app, cleanup } = createTestApp({
+    services: [],
+    events: {
+      dispatch: { timer: false },
+      listeners: [defineListener({ name: "h", on: "x", run: () => {} })],
+    },
+  });
+  app.events!.start();
+  const stop = spyOn(app.events!, "stop");
+  await cleanup();
+  expect(stop).toHaveBeenCalledTimes(1);
 });
