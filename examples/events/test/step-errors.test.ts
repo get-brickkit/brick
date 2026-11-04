@@ -1,4 +1,11 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  setDefaultTimeout,
+} from "bun:test";
 import {
   brick,
   defineDatabase,
@@ -19,6 +26,8 @@ import {
 
 const REDIS_URL = process.env.REDIS_URL;
 const root = new URL("..", import.meta.url).pathname;
+// The test polls for up to 15s, past bun's 5s default.
+setDefaultTimeout(20_000);
 
 // A typed step error crosses the Workflow SDK's serialization and is not retried.
 describe.skipIf(!REDIS_URL)("a typed step error", () => {

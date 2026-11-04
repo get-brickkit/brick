@@ -6,7 +6,6 @@ import { brickClient } from "../src/vite";
 
 it("loads any default-exported BrickApp and reloads edits to its action dependencies", async () => {
   const root = await mkdtemp(resolve(import.meta.dir, "../.brick-vite-test-"));
-  const cli = "@brickkit/core";
   const actions = (
     value: string,
   ) => `import { defineService, t } from "@brickkit/core";
@@ -17,7 +16,7 @@ export default service;
   await Bun.write(join(root, "actions.ts"), actions("before"));
   await Bun.write(
     join(root, "any-name.ts"),
-    `import { brick } from ${JSON.stringify(cli)};
+    `import { brick } from "@brickkit/core";
 import service from "./actions";
 export default brick({ services: [service], requestLogging: false });
 `,

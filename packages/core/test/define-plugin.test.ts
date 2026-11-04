@@ -335,6 +335,11 @@ describe("app part and lifecycle", () => {
     expect(app.events?.describe().listeners).toEqual([
       { name: "flow-listener", on: ["pages.*"], kind: "workflow" },
     ]);
+    // The workflow runtime reads this tag to run the steps with the plugin's deps.
+    const listener = (app.events as any).byName.get("flow-listener");
+    expect(listener[Symbol.for("brickkit.plugin.deps")]).toEqual({
+      mailer: "plugin",
+    });
   });
 
   it("refuses a plugin passed to brick() that a resource already installed", () => {
