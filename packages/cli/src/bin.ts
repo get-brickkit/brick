@@ -6,6 +6,7 @@ import { DEFAULT_DASHBOARD_PORT } from "./dev-dashboard";
 import { DEFAULT_HISTORY_DAYS } from "./dev-history";
 import { buildApplication } from "./build";
 import { writeClientContract } from "./client-contract-file";
+import { buildRemoteServices, writePolyglotContract } from "./polyglot";
 import { generateOpenApiSpec, getGlobalRegistry } from "@brickkit/core";
 import { parsePort, resolveDevPort } from "./port-utils";
 import { loadBrickApp } from "./app-entry";
@@ -151,6 +152,7 @@ Usage:
   brick build <app.ts> [--outdir <dir>] [--port <number>] [--no-aot]  Compile a default-exported BrickApp into a Bun server
   brick gen openapi <entry> [--output <file>]            Generate OpenAPI 3.1 JSON specification
   brick gen client <entry> [--output <file>]             Generate a typed browser client contract
+  brick gen contract <entry> [--output <file>]           Merge every service (TS, Go, Rust) into _brick/contract.json and write the TS, Go and Rust clients
   brick gen manifest                                     Write <generated>/services.gen.ts
   brick db generate [entry] [--out <dir>] [--name <name>]  Write a SQL migration for the schema changes
   brick db migrate [entry] [--out <dir>]                 Apply the migrations that have not run yet
@@ -352,6 +354,7 @@ ${PORT_RESOLUTION_HELP}`,
           aot: opts.aot === false ? false : build?.aot,
           dashboard: configDashboard(project, opts.dashboardExtension),
         });
+        buildRemoteServices(await loadBrickApp(entry));
         for (const warning of result.ir.diagnostics)
           console.warn(`[Brick compiler] ${warning}`);
         console.log(
@@ -382,7 +385,11 @@ ${PORT_RESOLUTION_HELP}`,
       const manifest = await writeServiceManifest(project);
       console.log(`Services manifest written to ${manifest}`);
       const client = fromRoot(project, project.config.client?.output);
-      if (client) {
+      // An app with Go or Rust services gets the merged contract and their clients.
+      const polyglot = await writePolyglotContract(project.entry, client);
+      if (polyglot) {
+        for (const file of polyglot) console.log(`Written ${file}`);
+      } else if (client) {
         await writeClientContract(project.entry, client);
         console.log(`Client contract written to ${client}`);
       }
@@ -454,6 +461,42 @@ ${PORT_RESOLUTION_HELP}`,
             (project && join(project.generated, "contract.ts")),
         );
         console.log(`Client contract written to ${output}`);
+      },
+    );
+
+  gen
+    .command("contract")
+    .description(
+      "Merge every service (TS, Go, Rust) into _brick/contract.json and write the TS, Go and Rust clients",
+    )
+    .argument("[entry]", "Application entry file")
+    .option("--config <path>", CONFIG_HELP)
+    .option(
+      "--output <file>",
+      "Write the TS contract to file (default _brick/contract.ts)",
+      (v: string) =>
+        parseFileOption(
+          v,
+          "Usage: brick gen contract <entry> [--output <file>]",
+        ),
+    )
+    .action(
+      async (
+        entry: string | undefined,
+        opts: ConfigOpts & { output?: string },
+        command: Command,
+      ) => {
+        const project = await loadConfig(configOf(command));
+        const target = requireEntry(command, entry, project);
+        const output =
+          opts.output ?? fromRoot(project, project?.config.client?.output);
+        const written = await writePolyglotContract(target, output);
+        if (!written) {
+          await writeClientContract(target, output);
+          console.log("No remote services: wrote the TS contract only.");
+          return;
+        }
+        for (const file of written) console.log(`Written ${file}`);
       },
     );
 

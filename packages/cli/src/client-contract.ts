@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  kebabCase,
   getActionRoute,
   getPluginActionRoute,
   serializeSocketSchema,
@@ -10,13 +11,55 @@ import type {
   BrickClientSocket,
 } from "@brickkit/core/client";
 import type { BrickApp } from "@brickkit/core";
+import { readContractRemotes, type ServiceManifest } from "./polyglot";
 
-/** Generate browser metadata and transport types from the app's selected services. */
-export function generateClientContract(app: BrickApp): string {
+/**
+ * Generate browser metadata and transport types from the app's selected
+ * services. Remote (Go and Rust) services come from their manifests, by
+ * default those `brick gen` last wrote to `_brick/contract.json`.
+ */
+export function generateClientContract(
+  app: BrickApp,
+  remote: readonly ServiceManifest[] = readContractRemotes(app),
+): string {
   const { services, prefix } = app.definition;
   const contract: Record<string, any> = Object.create(null);
   const types: Record<string, any> = Object.create(null);
   const schemas = new SchemaTypes();
+  for (const manifest of remote) {
+    const namespace: Record<string, any> = (contract[manifest.name] =
+      Object.create(null));
+    const namespaceTypes: Record<string, any> = (types[manifest.name] =
+      Object.create(null));
+    for (const action of manifest.actions) {
+      let type: string;
+      try {
+        type = actionType(
+          action.input ? schemas.generate(action.input) : "unknown",
+          action.output ? schemas.generate(action.output) : "unknown",
+          manifest.errors,
+        );
+      } catch (error) {
+        throw new Error(
+          `Brick client: cannot generate '${manifest.name}.${action.name}': ${(error as Error).message}`,
+        );
+      }
+      insertAction(
+        namespace,
+        namespaceTypes,
+        {
+          kind: "action",
+          name: action.name,
+          serviceName: manifest.name,
+          config: {
+            path: `${prefix.replace(/\/$/, "")}/${kebabCase(manifest.name)}/${kebabCase(action.name)}`,
+            method: "POST",
+          },
+        },
+        type,
+      );
+    }
+  }
   for (const service of services) {
     addServiceActions(service, prefix, contract, types, schemas);
     for (const socket of service.listSockets()) {
@@ -414,6 +457,9 @@ class SchemaTypes {
         return `(${(schema.anyOf ?? schema.oneOf).map((child: any) => emit(child, false, currentBase)).join(" | ")})`;
       if (schema.allOf)
         return `(${schema.allOf.map((child: any) => emit(child, false, currentBase)).join(" & ")})`;
+      // Go and Rust describe nullable fields as `type: [T, "null"]`.
+      if (Array.isArray(schema.type))
+        return `(${schema.type.map((type: string) => emitInline({ ...schema, type }, inline, currentBase)).join(" | ")})`;
       switch (schema.type) {
         case "string":
           return "string";

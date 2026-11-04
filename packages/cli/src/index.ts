@@ -15,3 +15,12 @@ export {
   type LoadedConfig,
 } from "./config";
 export { renderManifest, writeServiceManifest } from "./manifest";
+export {
+  writePolyglotContract,
+  buildRemoteServices,
+  readRemoteManifest,
+  goClient,
+  rustClient,
+  type PolyglotContract,
+  type ServiceManifest,
+} from "./polyglot";

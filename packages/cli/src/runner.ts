@@ -6,7 +6,11 @@ import {
   brick,
   getActionRoute,
   isBrickApp,
+  internalToken,
+  startRemoteServices,
   type ApiDocument,
+  type RemoteProcesses,
+  type RemoteService,
   type ArchitectureSchema,
   type BrickApp,
   type DocumentationOptions,
@@ -25,6 +29,7 @@ import { parsePort } from "./port-utils";
 import { writeServiceManifest } from "./manifest";
 import { buildAppWorkflows, registerWorkflowTransform } from "./workflows";
 import { startProductionDashboard } from "./production-dashboard";
+import { startDevRemotes } from "./polyglot";
 import type {
   SerializedError,
   TelemetryRecord,
@@ -132,6 +137,13 @@ export function finishDeliveriesOnSignal(
   for (const signal of signals) process.on(signal, stop);
 }
 
+/** What the dev worker tells the supervisor about the app's remote services. */
+interface RemoteMessage {
+  type: "brick:remote";
+  remote: { name: string; dir: string; dev: string; port?: number }[];
+  services: string[];
+}
+
 export async function startProdServer(options: DevServerOptions = {}) {
   const entry = options.entry;
 
@@ -191,6 +203,14 @@ export async function startProdServer(options: DevServerOptions = {}) {
   }
 
   await buildAppWorkflows(app);
+  const remote = app.definition.remote ?? [];
+  const children = remote.length
+    ? await startRemoteServices(remote, {
+        mode: "start",
+        appUrl: `http://127.0.0.1:${port}`,
+        services: services.map((service) => service.name),
+      })
+    : undefined;
   // Before listening, so the first request is already traced and its logs kept.
   const dashboard = await startProductionDashboard(app, {
     appPort: port,
@@ -204,8 +224,13 @@ export async function startProdServer(options: DevServerOptions = {}) {
     stop: async () => {
       await app.events?.stop();
       await app.stop();
+      await children?.stop();
     },
   });
+  for (const service of remote)
+    console.log(
+      `   • ${service.name} (remote) -> ${children!.urls[service.name]}`,
+    );
 
   console.log(`\n⚡ API Gateway running on: http://localhost:${port}`);
   console.log(`🩺 Health check:        http://localhost:${port}/_health`);
@@ -381,6 +406,25 @@ export async function startDevServer(options: DevServerOptions = {}) {
   const intentionalExits = new WeakSet<ReturnType<typeof Bun.spawn>>();
   let generationCount = 0;
   let childGeneration = 0;
+  // Go and Rust services: started once, restarted only when their own files change.
+  internalToken();
+  let children: Promise<RemoteProcesses> | undefined;
+  const startChildren = async (
+    message: RemoteMessage,
+    worker: ReturnType<typeof Bun.spawn>,
+  ) => {
+    // shortcut: remote services added after the first start need a `brick dev` restart.
+    children ??= startDevRemotes(
+      message.remote.map((options) => ({
+        kind: "remote" as const,
+        name: options.name,
+        options,
+      })) as RemoteService[],
+      { appUrl: `http://127.0.0.1:${appPort()}`, services: message.services },
+    );
+    const processes = await children;
+    if (!stopped) worker.send({ type: "brick:services", urls: processes.urls });
+  };
   const launch = () => {
     const generation = ++generationCount;
     childGeneration = generation;
@@ -399,11 +443,24 @@ export async function startDevServer(options: DevServerOptions = {}) {
       ],
       {
         cwd: process.cwd(),
+        // Explicit, so the worker sees the internal token and BRICK_SERVICES set above.
+        env: { ...process.env },
         stdout: "inherit",
         stderr: "inherit",
         ipc(message) {
           if (!message || typeof message !== "object" || !("type" in message))
             return;
+          if (message.type === "brick:remote" && "remote" in message) {
+            void startChildren(
+              message as unknown as RemoteMessage,
+              application,
+            ).catch((error: unknown) =>
+              console.error(
+                "[Brick-TS] Could not start remote services:",
+                error,
+              ),
+            );
+          }
           if (
             telemetry &&
             message.type === "brick:telemetry" &&
@@ -666,6 +723,7 @@ export async function startDevServer(options: DevServerOptions = {}) {
     dashboard?.stop();
     docs?.close();
     history?.close();
+    void children?.then((processes) => processes.stop());
     child.kill();
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);

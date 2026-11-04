@@ -99,6 +99,23 @@ try {
     clientOutput: process.argv[5] || undefined,
   });
   startupComplete = true;
+  // The supervisor runs the Go and Rust services and answers with their addresses.
+  if (app.definition.remote?.length) {
+    process.on("message", (message: { type?: string; urls?: unknown }) => {
+      if (message?.type === "brick:services")
+        process.env.BRICK_SERVICES = JSON.stringify(message.urls);
+    });
+    process.send?.({
+      type: "brick:remote",
+      remote: app.definition.remote.map(({ options }) => ({
+        name: options.name,
+        dir: options.dir,
+        dev: options.dev,
+        port: options.port,
+      })),
+      services: app.definition.services.map((service) => service.name),
+    });
+  }
   if (telemetry) {
     void sendToSupervisor({
       type: "brick:architecture",

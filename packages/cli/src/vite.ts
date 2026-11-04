@@ -10,6 +10,7 @@ import {
   type EnvironmentModuleNode,
 } from "vite";
 import { generateClientContract } from "./client-contract";
+import { startDevRemotes } from "./polyglot";
 import { requireBrickApp } from "./app-entry";
 import { startViteDashboard, type ViteDashboard } from "./dev-vite-dashboard";
 import {
@@ -139,6 +140,16 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
       const app = (await runner.import(entry)).default;
       await writeContract(app);
       dashboard?.architecture(requireBrickApp(app));
+      // Go and Rust services run beside the dev server, restarted on their own
+      // changes. A middleware-mode server (no httpServer) only reads the app.
+      const { remote = [], services } = requireBrickApp(app).definition;
+      if (remote.length && server.httpServer) {
+        const children = await startDevRemotes(remote, {
+          appUrl: `http://127.0.0.1:${server.config.server.port ?? 5173}`,
+          services: services.map((service) => service.name),
+        });
+        server.httpServer?.once("close", () => void children.stop());
+      }
       dependencies.clear();
       collectDependencies(environment.moduleGraph.getModuleById(entry));
       dependencies.add(entry);
