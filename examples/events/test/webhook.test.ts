@@ -1,4 +1,11 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  setDefaultTimeout,
+} from "bun:test";
 import {
   brick,
   defineDatabase,
@@ -19,6 +26,9 @@ import {
 
 const REDIS_URL = process.env.REDIS_URL;
 const root = new URL("..", import.meta.url).pathname;
+
+// Bundling the workflows on a cold CI runner can pass bun's 5s hook default.
+setDefaultTimeout(20_000);
 
 // A workflow that waits for a webhook is resumed by a request to the Brick server:
 // the route, and the URL the Workflow SDK builds for it, are what is checked here.
