@@ -12,6 +12,12 @@
 //		return ChargeOutput{}, errNoFunds.New(nil)
 //	})
 //	log.Fatal(svc.Serve())
+//
+// Experimental: polyglot services are new in Brick 0.13. The API, the wire
+// format and the environment variables may change in any release. Install it
+// at the version of the @brickkit npm packages:
+//
+//	go get github.com/get-brickkit/brick/sdk/go@v0.13.0
 package brick
 
 import (
