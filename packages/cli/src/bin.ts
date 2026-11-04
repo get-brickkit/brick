@@ -7,6 +7,7 @@ import { DEFAULT_HISTORY_DAYS } from "./dev-history";
 import { buildApplication } from "./build";
 import { writeClientContract } from "./client-contract-file";
 import { buildRemoteServices, writePolyglotContract } from "./polyglot";
+import { parseDeployTargets, writeDeploy } from "./deploy";
 import { generateOpenApiSpec, getGlobalRegistry } from "@brickkit/core";
 import { parsePort, resolveDevPort } from "./port-utils";
 import { loadBrickApp } from "./app-entry";
@@ -149,7 +150,7 @@ Usage:
   brick dev [entry] [--port <number>] [--dashboard-port <number>] [--history-days <number>] [--no-dashboard]  Start development server with live reload and dashboard
   brick start [entry] [--port <number>]                  Start production server
   brick worker <entry>                                   Deliver events without serving HTTP
-  brick build <app.ts> [--outdir <dir>] [--port <number>] [--no-aot]  Compile a default-exported BrickApp into a Bun server
+  brick build <app.ts> [--outdir <dir>] [--port <number>] [--no-aot] [--deploy <targets>] [--domain <host>]  Compile a default-exported BrickApp into a Bun server
   brick gen openapi <entry> [--output <file>]            Generate OpenAPI 3.1 JSON specification
   brick gen client <entry> [--output <file>]             Generate a typed browser client contract
   brick gen contract <entry> [--output <file>]           Merge every service (TS, Go, Rust) into _brick/contract.json and write the TS, Go and Rust clients
@@ -311,6 +312,21 @@ ${PORT_RESOLUTION_HELP}`,
       "Dashboard extension module to build into <outdir>/dashboard",
     )
     .option(
+      "--deploy <targets>",
+      "Also write production routing into deploy/<target>/: caddy, nginx, traefik, kubernetes, compose, routes (comma-separated)",
+      (v: string) => {
+        try {
+          return parseDeployTargets(v);
+        } catch (err) {
+          throw new InvalidArgumentError((err as Error).message);
+        }
+      },
+    )
+    .option(
+      "--domain <host>",
+      "Public host name for --deploy (HTTPS in Caddy and Traefik, TLS in Kubernetes)",
+    )
+    .option(
       "--prefix <path>",
       "DEPRECATED: configure prefix in brick() app instead",
     )
@@ -328,6 +344,8 @@ ${PORT_RESOLUTION_HELP}`,
           prefix?: string;
           requestLogging?: boolean;
           dashboardExtension?: string;
+          deploy?: ReturnType<typeof parseDeployTargets>;
+          domain?: string;
         },
         command: Command,
       ) => {
@@ -354,7 +372,19 @@ ${PORT_RESOLUTION_HELP}`,
           aot: opts.aot === false ? false : build?.aot,
           dashboard: configDashboard(project, opts.dashboardExtension),
         });
-        buildRemoteServices(await loadBrickApp(entry));
+        const app = await loadBrickApp(entry);
+        buildRemoteServices(app);
+        const deploy = project?.config.deploy;
+        const targets = opts.deploy ?? deploy?.targets;
+        if (targets?.length) {
+          const written = await writeDeploy(app, {
+            ...deploy,
+            targets,
+            domain: opts.domain ?? deploy?.domain,
+            root: project?.root,
+          });
+          for (const file of written) console.log(`Deploy: ${file}`);
+        }
         for (const warning of result.ir.diagnostics)
           console.warn(`[Brick compiler] ${warning}`);
         console.log(

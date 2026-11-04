@@ -24,3 +24,21 @@ export {
   type PolyglotContract,
   type ServiceManifest,
 } from "./polyglot";
+export {
+  routingTable,
+  deployFiles,
+  writeDeploy,
+  caddyfile,
+  nginxConf,
+  traefikConfig,
+  kubernetesYaml,
+  composeYaml,
+  routesJson,
+  type RoutingTable,
+  type Upstream,
+} from "./deploy";
+export {
+  DEPLOY_TARGETS,
+  type DeployOptions,
+  type DeployTarget,
+} from "./config";

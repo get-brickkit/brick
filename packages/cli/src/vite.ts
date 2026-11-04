@@ -10,6 +10,7 @@ import {
   type EnvironmentModuleNode,
 } from "vite";
 import { generateClientContract } from "./client-contract";
+import { remoteEnv } from "@brickkit/core";
 import { startDevRemotes } from "./polyglot";
 import { requireBrickApp } from "./app-entry";
 import { startViteDashboard, type ViteDashboard } from "./dev-vite-dashboard";
@@ -147,6 +148,7 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
         const children = await startDevRemotes(remote, {
           appUrl: `http://127.0.0.1:${server.config.server.port ?? 5173}`,
           services: services.map((service) => service.name),
+          env: remoteEnv(requireBrickApp(app).definition),
         });
         server.httpServer?.once("close", () => void children.stop());
       }

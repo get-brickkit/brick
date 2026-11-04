@@ -368,7 +368,11 @@ export function buildRemoteServices(app: BrickApp, cwd = process.cwd()): void {
  */
 export async function startDevRemotes(
   remote: readonly RemoteService[],
-  options: { appUrl: string; services: readonly string[] },
+  options: {
+    appUrl: string;
+    services: readonly string[];
+    env?: Record<string, string>;
+  },
 ): Promise<RemoteProcesses> {
   const processes = await startRemoteServices(remote, {
     mode: "dev",

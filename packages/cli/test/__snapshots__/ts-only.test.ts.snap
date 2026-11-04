@@ -1,0 +1,10 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`builds and generates a TS-only app exactly as before 1`] = `
+"Services manifest written to <root>/_brick/services.gen.ts
+Client contract written to <root>/_brick/contract.ts
+Compiled 1 services / 1 routes
+IR: <root>/dist/brick-ir.json
+Run: bun <root>/dist/server.js
+"
+`;

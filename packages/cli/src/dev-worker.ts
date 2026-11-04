@@ -1,4 +1,4 @@
-import { getGlobalRegistry, stopAllEvents } from "@brickkit/core";
+import { getGlobalRegistry, remoteEnv, stopAllEvents } from "@brickkit/core";
 import { startInspector } from "./dev-inspector";
 import { startDevApplication } from "./runner";
 import { parsePort } from "./port-utils";
@@ -114,6 +114,7 @@ try {
         port: options.port,
       })),
       services: app.definition.services.map((service) => service.name),
+      env: remoteEnv(app.definition),
     });
   }
   if (telemetry) {

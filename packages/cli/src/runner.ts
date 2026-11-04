@@ -7,6 +7,7 @@ import {
   getActionRoute,
   isBrickApp,
   internalToken,
+  remoteEnv,
   startRemoteServices,
   type ApiDocument,
   type RemoteProcesses,
@@ -142,6 +143,7 @@ interface RemoteMessage {
   type: "brick:remote";
   remote: { name: string; dir: string; dev: string; port?: number }[];
   services: string[];
+  env: Record<string, string>;
 }
 
 export async function startProdServer(options: DevServerOptions = {}) {
@@ -209,6 +211,7 @@ export async function startProdServer(options: DevServerOptions = {}) {
         mode: "start",
         appUrl: `http://127.0.0.1:${port}`,
         services: services.map((service) => service.name),
+        env: remoteEnv(app.definition),
       })
     : undefined;
   // Before listening, so the first request is already traced and its logs kept.
@@ -420,7 +423,11 @@ export async function startDevServer(options: DevServerOptions = {}) {
         name: options.name,
         options,
       })) as RemoteService[],
-      { appUrl: `http://127.0.0.1:${appPort()}`, services: message.services },
+      {
+        appUrl: `http://127.0.0.1:${appPort()}`,
+        services: message.services,
+        env: message.env,
+      },
     );
     const processes = await children;
     if (!stopped) worker.send({ type: "brick:services", urls: processes.urls });

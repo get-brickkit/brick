@@ -9,6 +9,26 @@ import type {
 
 export type { DashboardExtensionOptions, DashboardTheme };
 
+export const DEPLOY_TARGETS = [
+  "caddy",
+  "nginx",
+  "traefik",
+  "kubernetes",
+  "compose",
+  "routes",
+] as const;
+export type DeployTarget = (typeof DEPLOY_TARGETS)[number];
+
+/** `deploy` in brick.config.ts. */
+export interface DeployOptions {
+  /** What `brick build` writes into `deploy/<target>/`. */
+  targets?: DeployTarget[];
+  /** The public host name: Caddy and Traefik get HTTPS for it, Kubernetes a TLS Ingress. */
+  domain?: string;
+  /** The Bun app in compose and Kubernetes: its build and start commands, and port (default 3000). */
+  app?: { build?: string; start?: string; port?: number };
+}
+
 export type LintSeverity = "error" | "warn" | "off";
 export type LintPreset = "recommended" | "layout" | "strict" | "plugin";
 
@@ -34,6 +54,8 @@ export interface BrickConfig {
   };
   build?: { outdir?: string; aot?: boolean; requestLogging?: boolean };
   dashboard?: DashboardExtensionOptions;
+  /** Production routing `brick build` writes into `deploy/<target>/` (for apps with Go or Rust services). */
+  deploy?: DeployOptions;
   lint?: {
     presets?: LintPreset[];
     rules?: Record<string, LintSeverity>;
@@ -149,6 +171,18 @@ const SCHEMA: Shape = {
         sans: [isString, "must be a font-family value"],
         mono: [isString, "must be a font-family value"],
       },
+    },
+  },
+  deploy: {
+    targets: [
+      isArrayOf((v) => DEPLOY_TARGETS.includes(v as never)),
+      `must list targets from ${DEPLOY_TARGETS.join(", ")}`,
+    ],
+    domain: [isString, "must be a host name"],
+    app: {
+      build: [isString, "must be a command"],
+      start: [isString, "must be a command"],
+      port: [isPort, "must be a port number"],
     },
   },
   lint: {
