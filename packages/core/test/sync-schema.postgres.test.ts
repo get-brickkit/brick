@@ -1,7 +1,14 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { integer, pgEnum, pgTable, serial, text } from "drizzle-orm/pg-core";
-import { defineDatabase, outboxTable, syncSchema } from "../src";
+import {
+  integer,
+  pgEnum,
+  pgSchema,
+  pgTable,
+  serial,
+  text,
+} from "drizzle-orm/pg-core";
+import { defineDatabase, drizzleSchema, outboxTable, syncSchema } from "../src";
 
 const url = process.env.TEST_DATABASE_URL;
 const suite = url ? describe : describe.skip;
@@ -58,5 +65,21 @@ suite("syncSchema on Postgres", () => {
     expect(count).toBe(0);
     // Idempotent.
     await syncSchema(database.tables, db);
+  });
+
+  it("creates a table's own Postgres schema, and reuses one that exists", async () => {
+    const namespace = pgSchema(`ns_${suffix}`);
+    const first = namespace.table("first", { id: text("id").primaryKey() });
+    const second = namespace.table("second", { id: text("id").primaryKey() });
+    expect(drizzleSchema([first])[`schema:ns_${suffix}`]).toBeDefined();
+    try {
+      await syncSchema([first], db);
+      // The schema exists now, without the second table.
+      await syncSchema([second], db);
+      await db.insert(second).values({ id: "x" });
+      expect(await db.select().from(second)).toEqual([{ id: "x" }]);
+    } finally {
+      await db.$client.unsafe(`DROP SCHEMA IF EXISTS ns_${suffix} CASCADE`);
+    }
   });
 });

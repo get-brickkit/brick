@@ -11,7 +11,7 @@ import {
   type PostgresDatabase,
 } from "./postgres";
 import { getTableColumns, getTableName, sql, type Table } from "drizzle-orm";
-import { getTableConfig, isPgEnum } from "drizzle-orm/pg-core";
+import { getTableConfig, isPgEnum, pgSchema } from "drizzle-orm/pg-core";
 import { migrate as migratePostgres } from "drizzle-orm/postgres-js/migrator";
 import { migrate as migrateSQLite } from "drizzle-orm/bun-sqlite/migrator";
 
@@ -381,8 +381,8 @@ export function buildFtsMatchQuery(search: string): string | null {
 }
 
 /**
- * The schema drizzle-kit reads: the tables, plus the Postgres enums their
- * columns use (drizzle-kit only creates enums it is handed).
+ * The schema drizzle-kit reads: the tables, plus the Postgres schemas
+ * (namespaces) and enums they use, which drizzle-kit only creates when handed.
  *
  * @param tables - Drizzle tables, all of one engine.
  * @returns A record to pass to drizzle-kit's API (`pushSchema`, `generateDrizzleJson`).
@@ -393,6 +393,12 @@ export function drizzleSchema(
   const schema: Record<string, unknown> = {};
   for (const table of tables) {
     schema[`table:${getTableName(table)}`] = table;
+    // What getTableConfig(table).schema reads, for tables of any engine.
+    const namespace = (table as any)[Symbol.for("drizzle:Schema")] as
+      | string
+      | undefined;
+    if (namespace && namespace !== "public")
+      schema[`schema:${namespace}`] = pgSchema(namespace);
     for (const column of Object.values(getTableColumns(table)) as any[])
       if (isPgEnum(column.enum))
         schema[`enum:${column.enum.enumName}`] = column.enum;
@@ -502,9 +508,18 @@ async function createMissingPostgresTables(
   if (existing.length === tables.length) return;
   // Diff the tables that exist against all of them: only the missing tables
   // (and what only they use) come out, as CREATE statements.
+  const before = drizzleSchema(existing);
+  const after = drizzleSchema(tables);
+  // A namespace may exist without any of these tables: don't create it again.
+  const namespaces: { name: string }[] = await db.execute(
+    sql`select schema_name as name from information_schema.schemata`,
+  );
+  for (const { name } of namespaces)
+    if (after[`schema:${name}`])
+      before[`schema:${name}`] = after[`schema:${name}`];
   const statements = await kit.generateMigration(
-    kit.generateDrizzleJson(drizzleSchema(existing)),
-    kit.generateDrizzleJson(drizzleSchema(tables)),
+    kit.generateDrizzleJson(before),
+    kit.generateDrizzleJson(after),
   );
   await db.transaction(async (tx: any) => {
     for (const statement of statements) await tx.execute(sql.raw(statement));
