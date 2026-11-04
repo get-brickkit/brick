@@ -4,7 +4,14 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { SQL } from "bun";
-import { getTableName } from "@brickkit/core";
+import {
+  brick as createApp,
+  defineDatabase,
+  defineService,
+  getTableName,
+  sqliteTable,
+  text,
+} from "@brickkit/core";
 import { appDatabases } from "../src/db";
 import app from "./fixtures/db-app";
 
@@ -48,6 +55,25 @@ describe("brick db: table discovery", () => {
     ]);
   });
 
+  it("refuses two databases with one name, which would share a migrations folder", () => {
+    const service = (name: string) =>
+      defineService(name, {
+        database: defineDatabase({
+          name: "main",
+          path: ":memory:",
+          tables: { t: sqliteTable(name, { id: text("id").primaryKey() }) },
+        }),
+      });
+    expect(() =>
+      appDatabases(
+        createApp({
+          services: [service("a"), service("b")],
+          requestLogging: false,
+        }),
+      ),
+    ).toThrow('two databases are named "main"');
+  });
+
   it("lists the db commands in help", async () => {
     const child = Bun.spawn([process.execPath, cli, "db", "--help"], {
       stdout: "pipe",
@@ -62,9 +88,10 @@ describe("brick db on SQLite", () => {
   it("generates, migrates, and generates only the change next time", async () => {
     const root = await tempRoot();
     const out = join(root, "drizzle");
+    const notes = join(out, "notes");
     const env = { BRICK_DB_FILE: join(root, "app.db") };
     expect((await brick(["generate", "--out", out], env)).code).toBe(0);
-    const first = await readFile(join(out, "0000_migration.sql"), "utf8");
+    const first = await readFile(join(notes, "0000_migration.sql"), "utf8");
     for (const table of ["notes", "tags", "tag_audit_log", "brick_outbox"])
       expect(first).toContain(`CREATE TABLE \`${table}\``);
     expect((await brick(["migrate", "--out", out], env)).code).toBe(0);
@@ -75,14 +102,14 @@ describe("brick db on SQLite", () => {
       v2,
     );
     expect(second.out).toContain("0001_add_title.sql");
-    expect(await readFile(join(out, "0001_add_title.sql"), "utf8")).toBe(
+    expect(await readFile(join(notes, "0001_add_title.sql"), "utf8")).toBe(
       "ALTER TABLE `notes` ADD `title` text;",
     );
     expect((await brick(["migrate", "--out", out], v2)).code).toBe(0);
     expect((await brick(["generate", "--out", out], v2)).out).toContain(
       "no schema changes",
     );
-    expect((await readdir(join(out, "meta"))).sort()).toEqual([
+    expect((await readdir(join(notes, "meta"))).sort()).toEqual([
       "0000_snapshot.json",
       "0001_snapshot.json",
       "_journal.json",
@@ -90,6 +117,21 @@ describe("brick db on SQLite", () => {
     const db = new Database(env.BRICK_DB_FILE);
     db.run("INSERT INTO notes (id, body, title) VALUES ('1', 'b', 't')");
     db.close();
+  });
+
+  it("keeps a database's migrations folder when the app gains a second database", async () => {
+    const root = await tempRoot();
+    const out = join(root, "drizzle");
+    const env = { BRICK_DB_FILE: join(root, "app.db") };
+    expect((await brick(["generate", "--out", out], env)).out).toContain(
+      join(out, "notes", "0000_migration.sql"),
+    );
+    const both = await brick(["generate", "--out", out], {
+      ...env,
+      BRICK_DB_BILLING: join(root, "billing.db"),
+    });
+    expect(both.out).toContain("notes (sqlite): no schema changes");
+    expect(both.out).toContain(join(out, "billing", "0000_migration.sql"));
   });
 
   it("refuses to migrate without migrations", async () => {
@@ -109,6 +151,10 @@ describe("brick db on SQLite", () => {
     db.run("INSERT INTO other VALUES (1)");
     db.run("CREATE VIRTUAL TABLE notes_fts USING fts5(body)");
     const env = { BRICK_DB_FILE: file };
+    // push writes no files, so it takes no --out.
+    expect((await brick(["push", "--out", root], env)).out).toContain(
+      "unknown option '--out'",
+    );
     expect((await brick(["push"], env)).out).toContain("applied");
     expect((await brick(["push"], { ...env, BRICK_DB_V2: "1" })).code).toBe(0);
     db.run("INSERT INTO notes VALUES ('1', 'b', 't')");
@@ -144,7 +190,10 @@ const url = process.env.TEST_DATABASE_URL;
     const root = await tempRoot();
     const out = join(root, "drizzle");
     expect((await brick(["generate", "--out", out], env)).code).toBe(0);
-    const first = await readFile(join(out, "0000_migration.sql"), "utf8");
+    const first = await readFile(
+      join(out, "notes", "0000_migration.sql"),
+      "utf8",
+    );
     for (const table of ["notes", "tags", "tag_audit_log", "brick_outbox"])
       expect(first).toContain(`CREATE TABLE "${table}"`);
     const migrated = await brick(["migrate", "--out", out], env);

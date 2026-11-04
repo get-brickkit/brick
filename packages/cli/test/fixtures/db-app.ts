@@ -10,7 +10,8 @@ import {
 import { pgTable, text as pgText } from "@brickkit/core/pg";
 
 // `brick db` fixture: Postgres when BRICK_DB_URL is set, else a SQLite file.
-// BRICK_DB_V2 adds a column, for a second migration.
+// BRICK_DB_V2 adds a column, for a second migration. BRICK_DB_BILLING adds a
+// second SQLite database at that path.
 const url = process.env.BRICK_DB_URL;
 const table = (url ? pgTable : sqliteTable) as typeof sqliteTable;
 const text = (url ? pgText : sqliteText) as typeof sqliteText;
@@ -42,4 +43,24 @@ const database = url
 const service = defineService("notes", { database });
 service.resource({ name: "tag", table: tags, id: tags.id }).use(audit());
 
-export default brick({ services: [service], requestLogging: false });
+const billingFile = process.env.BRICK_DB_BILLING;
+const billing = billingFile
+  ? [
+      defineService("billing", {
+        database: defineDatabase({
+          name: "billing",
+          path: billingFile,
+          tables: {
+            invoices: sqliteTable("invoices", {
+              id: sqliteText("id").primaryKey(),
+            }),
+          },
+        }),
+      }),
+    ]
+  : [];
+
+export default brick({
+  services: [service, ...billing],
+  requestLogging: false,
+});

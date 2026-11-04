@@ -135,7 +135,7 @@ brick db generate --name add_users
 brick db migrate
 ```
 
-It covers every table Brick knows on each database: the tables passed to `defineDatabase`, resource tables, plugin tables and the [outbox table](/docs/events). The migrations folder (`drizzle/` by default) uses Drizzle Kit's layout, so `drizzle-kit` and Drizzle's migrator read it too. To apply migrations from code, call `migrateDatabase(database, "./drizzle")`.
+It covers every table Brick knows on each database: the tables passed to `defineDatabase`, resource tables, plugin tables and the [outbox table](/docs/events). Each database gets a subfolder of the migrations folder (`drizzle/` by default), named after the database, in Drizzle Kit's layout, so `drizzle-kit` and Drizzle's migrator read it too. To apply migrations from code, call `migrateDatabase(database, "./drizzle/<name>")`.
 
 On a development database, `brick db push` applies the changes directly without migration files, and refuses changes that drop data unless you pass `--force`.
 

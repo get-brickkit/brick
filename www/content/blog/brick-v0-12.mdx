@@ -35,8 +35,8 @@ brick db push                        # development: make the database match, no 
 ```
 
 ```text
-pages (postgres): wrote drizzle/0001_add_title.sql
-pages (postgres): migrations in drizzle applied
+pages (postgres): wrote drizzle/pages/0001_add_title.sql
+pages (postgres): migrations in drizzle/pages applied
 ```
 
 `brick db` loads your app the way `brick gen client` does, so it sees the real tables: the ones passed to `defineDatabase`, every resource table, the outbox table and the tables plugins own. It needs no `drizzle.config.ts` and no schema file, and the connection comes from the app's `defineDatabase` handle.
@@ -44,7 +44,7 @@ pages (postgres): migrations in drizzle applied
 - **One layout.** `generate` writes Drizzle Kit's folder layout (`0001_add_title.sql`, `meta/_journal.json`), so Drizzle Kit and Drizzle's migrator still read it.
 - **Safe to repeat.** `migrate` records what ran in `__drizzle_migrations`, so it can run on every deploy.
 - **Careful push.** `push` only touches the tables the app knows, and stops before a change that drops data unless you pass `--force`.
-- **Several databases.** Each one gets its own subfolder (`drizzle/billing/`, `drizzle/pages/`).
+- **One folder per database.** Each database gets its own subfolder (`drizzle/pages/`, `drizzle/billing/`), even when there is only one, so adding a database never moves the existing migrations.
 
 To migrate from code instead, at startup or in a deploy script:
 
@@ -52,7 +52,7 @@ To migrate from code instead, at startup or in a deploy script:
 import { migrateDatabase } from "@brickkit/core";
 import { database } from "./database";
 
-await migrateDatabase(database, "./drizzle");
+await migrateDatabase(database, "./drizzle/pages");
 ```
 
 ### `syncSchema` on Postgres

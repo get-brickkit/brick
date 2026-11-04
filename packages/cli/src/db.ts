@@ -21,6 +21,7 @@ export interface AppDatabase {
 /**
  * The app's databases and their tables: those passed to `defineDatabase`
  * (outbox tables included), resource tables, and the tables plugins own.
+ * Throws when two handles share a name, since the name picks the migrations folder.
  */
 export function appDatabases(app: BrickApp): AppDatabase[] {
   const found = new Map<
@@ -41,6 +42,14 @@ export function appDatabases(app: BrickApp): AppDatabase[] {
     ])
       entry.tables.set(getTableName(table), table);
   }
+  const names = new Map<string, DatabaseHandle<unknown>>();
+  for (const [database, entry] of found) {
+    if (names.has(entry.name))
+      throw new Error(
+        `Brick: two databases are named "${entry.name}"; give each \`defineDatabase({ name })\` its own name, or share one handle between the services.`,
+      );
+    names.set(entry.name, database);
+  }
   return [...found]
     .filter(([, entry]) => entry.tables.size > 0)
     .map(([database, entry]) => ({
@@ -51,7 +60,7 @@ export function appDatabases(app: BrickApp): AppDatabase[] {
 }
 
 export interface DbCommandOptions {
-  /** Migrations folder; one subfolder per database when there are several. */
+  /** Migrations folder; each database writes to its own `<out>/<name>` subfolder. */
   out: string;
   /** `generate`: the migration's name. */
   name?: string;
@@ -72,8 +81,8 @@ export async function runDbCommand(
     throw new Error("Brick: the app has no database with tables.");
   try {
     for (const entry of databases) {
-      const folder =
-        databases.length > 1 ? join(options.out, entry.name) : options.out;
+      // One layout for any database count, so adding a database never moves another's migrations.
+      const folder = join(options.out, entry.name);
       const label = `${entry.name} (${entry.database.engine})`;
       if (command === "generate") {
         const file = await generate(entry, folder, options.name);

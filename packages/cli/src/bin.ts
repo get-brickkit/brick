@@ -487,11 +487,10 @@ ${PORT_RESOLUTION_HELP}`,
       .command(name)
       .description(description)
       .argument("[entry]", "Application entry file")
-      .option("--config <path>", CONFIG_HELP)
-      .option(
-        "--out <dir>",
-        "Migrations folder (default drizzle, beside brick.config.ts); one subfolder per database when the app has several",
-      );
+      .option("--config <path>", CONFIG_HELP);
+  // push writes no files, so only generate and migrate take --out.
+  const OUT_HELP =
+    "Migrations folder (default drizzle, beside brick.config.ts); each database gets a subfolder named after it";
   const dbAction =
     (name: "generate" | "migrate" | "push") =>
     async (
@@ -514,11 +513,12 @@ ${PORT_RESOLUTION_HELP}`,
     "generate",
     "Write a SQL migration for the schema changes since the last one",
   )
+    .option("--out <dir>", OUT_HELP)
     .option("--name <name>", "Migration name (default migration)")
     .action(dbAction("generate"));
-  dbCommand("migrate", "Apply the migrations that have not run yet").action(
-    dbAction("migrate"),
-  );
+  dbCommand("migrate", "Apply the migrations that have not run yet")
+    .option("--out <dir>", OUT_HELP)
+    .action(dbAction("migrate"));
   dbCommand(
     "push",
     "Change the database to match the schema directly, without migration files (development)",
