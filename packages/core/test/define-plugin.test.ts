@@ -41,7 +41,7 @@ function host(engine: "sqlite" | "postgres" = "sqlite") {
 
 const notes = definePlugin({
   name: "@acme/brick-notes",
-  brick: "^0.10.0 || ^0.11.0",
+  brick: ">=0.10.0",
   options: t.Object({
     maxLength: t.Integer({ default: 2000, minimum: 1 }),
     access: t.Union([t.Literal("public"), t.Literal("signed-in")], {
