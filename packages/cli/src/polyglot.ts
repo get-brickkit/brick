@@ -331,8 +331,8 @@ export function rustClient(contract: PolyglotContract, self: string): string {
         ? rustType(action.output, `${base}Output`)
         : "serde_json::Value";
       funcs.push(`/// Calls ${service.name}.${action.name} (${service.language}).
-pub async fn ${snake(service.name)}_${snake(action.name)}(ctx: &brick::Ctx, input: &${input}) -> Result<${output}, brick::Error> {
-    brick::call(ctx, ${JSON.stringify(service.name)}, ${JSON.stringify(action.name)}, input).await
+pub async fn ${snake(service.name)}_${snake(action.name)}(ctx: &brickkit::Ctx, input: &${input}) -> Result<${output}, brickkit::Error> {
+    brickkit::call(ctx, ${JSON.stringify(service.name)}, ${JSON.stringify(action.name)}, input).await
 }`);
     }
   }

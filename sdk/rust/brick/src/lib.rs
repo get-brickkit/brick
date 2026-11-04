@@ -1,3 +1,6 @@
+//! **Experimental.** Polyglot services are new in Brick 0.13; the API, the
+//! wire format and the environment variables may change in any release.
+//!
 //! Write Brick services in Rust. A Rust service runs as its own process next to
 //! the Bun app. Browsers reach it directly, through a reverse proxy in
 //! production or the Bun gateway in `brick dev`: it serves
@@ -7,7 +10,7 @@
 //! `x-brick-*` headers (caller, user, tenant) trusted.
 //!
 //! ```no_run
-//! use brick::{Ctx, Error, ErrorDef, Service};
+//! use brickkit::{Ctx, Error, ErrorDef, Service};
 //! use schemars::JsonSchema;
 //! use serde::{Deserialize, Serialize};
 //!

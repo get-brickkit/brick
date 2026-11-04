@@ -2,7 +2,7 @@
 //! db, the same three APIs as the TS bench service, and me (test/jwt.test.ts).
 mod brick_client;
 
-use brick::{Ctx, Error, ErrorDef, Service};
+use brickkit::{Ctx, Error, ErrorDef, Service};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

@@ -1,6 +1,6 @@
 use axum::body::{Body, to_bytes};
 use axum::http::Request;
-use brick::{Ctx, Error, ErrorDef, Service, kebab};
+use brickkit::{Ctx, Error, ErrorDef, Service, kebab};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tower::ServiceExt;

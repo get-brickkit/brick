@@ -238,6 +238,42 @@ mod tests {
         }
     }
 
+    /// rustls is on: an https JWKS URL starts a TLS handshake instead of
+    /// failing with "scheme is not http" before connecting.
+    #[tokio::test]
+    async fn fetches_the_jwks_over_https() {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!(
+            "https://127.0.0.1:{}/jwks",
+            listener.local_addr().unwrap().port()
+        );
+        let hello = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut head = [0u8; 3];
+            socket.read_exact(&mut head).await.unwrap();
+            head
+        });
+        let fetched = Verifier::new(&url, ISSUER, ISSUER).fetch().await;
+        // Without TLS support the fetch fails before connecting, and nothing was read.
+        assert!(hello.is_finished(), "no connection: https is not supported");
+        // A TLS record of type handshake (0x16), protocol 3.x.
+        assert_eq!(&hello.await.unwrap()[..2], &[0x16, 0x03]);
+        assert!(
+            fetched.is_err(),
+            "the test server never answers the handshake"
+        );
+    }
+
+    /// A real https JWKS, verified against the system's roots. Needs the network:
+    /// `cargo test -- --ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn fetches_a_public_https_jwks() {
+        let v = Verifier::new("https://www.googleapis.com/oauth2/v3/certs", ISSUER, ISSUER);
+        assert!(!v.fetch().await.unwrap().keys.is_empty());
+    }
+
     #[tokio::test]
     async fn refetches_the_jwks_on_key_rotation() {
         let (k1, k2) = (Key::new("k1", 1), Key::new("k2", 3));

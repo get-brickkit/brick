@@ -5,7 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
-brick = { path = "../brick" }
+brickkit = { path = "../brick" }
 schemars = { version = "1.2.3", features = ["preserve_order"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }

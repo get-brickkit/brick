@@ -1,7 +1,7 @@
 //! The Rust side of the cross-language conformance test (sdk/conformance).
 mod brick_client;
 
-use brick::{Ctx, Error, ErrorDef, Service};
+use brickkit::{Ctx, Error, ErrorDef, Service};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

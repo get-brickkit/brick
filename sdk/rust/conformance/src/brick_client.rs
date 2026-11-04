@@ -96,80 +96,80 @@ pub struct ConfGoChainOutput {
 
 /// Calls confTs.validate (ts).
 pub async fn conf_ts_validate(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &ConfTsValidateInput,
-) -> Result<ConfTsValidateOutput, brick::Error> {
-    brick::call(ctx, "confTs", "validate", input).await
+) -> Result<ConfTsValidateOutput, brickkit::Error> {
+    brickkit::call(ctx, "confTs", "validate", input).await
 }
 
 /// Calls confTs.fail (ts).
 pub async fn conf_ts_fail(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &ConfTsFailInput,
-) -> Result<serde_json::Value, brick::Error> {
-    brick::call(ctx, "confTs", "fail", input).await
+) -> Result<serde_json::Value, brickkit::Error> {
+    brickkit::call(ctx, "confTs", "fail", input).await
 }
 
 /// Calls confTs.whoami (ts).
 pub async fn conf_ts_whoami(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &ConfTsWhoamiInput,
-) -> Result<serde_json::Value, brick::Error> {
-    brick::call(ctx, "confTs", "whoami", input).await
+) -> Result<serde_json::Value, brickkit::Error> {
+    brickkit::call(ctx, "confTs", "whoami", input).await
 }
 
 /// Calls confTs.me (ts).
 pub async fn conf_ts_me(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &ConfTsMeInput,
-) -> Result<serde_json::Value, brick::Error> {
-    brick::call(ctx, "confTs", "me", input).await
+) -> Result<serde_json::Value, brickkit::Error> {
+    brickkit::call(ctx, "confTs", "me", input).await
 }
 
 /// Calls confTs.chain (ts).
 pub async fn conf_ts_chain(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &ConfTsChainInput,
-) -> Result<serde_json::Value, brick::Error> {
-    brick::call(ctx, "confTs", "chain", input).await
+) -> Result<serde_json::Value, brickkit::Error> {
+    brickkit::call(ctx, "confTs", "chain", input).await
 }
 
 /// Calls confGo.validate (go).
 pub async fn conf_go_validate(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &ConfGoValidateInput,
-) -> Result<ConfGoValidateOutput, brick::Error> {
-    brick::call(ctx, "confGo", "validate", input).await
+) -> Result<ConfGoValidateOutput, brickkit::Error> {
+    brickkit::call(ctx, "confGo", "validate", input).await
 }
 
 /// Calls confGo.fail (go).
 pub async fn conf_go_fail(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &ConfGoFailInput,
-) -> Result<ConfGoFailOutput, brick::Error> {
-    brick::call(ctx, "confGo", "fail", input).await
+) -> Result<ConfGoFailOutput, brickkit::Error> {
+    brickkit::call(ctx, "confGo", "fail", input).await
 }
 
 /// Calls confGo.whoami (go).
 pub async fn conf_go_whoami(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &ConfGoWhoamiInput,
-) -> Result<ConfGoWhoamiOutput, brick::Error> {
-    brick::call(ctx, "confGo", "whoami", input).await
+) -> Result<ConfGoWhoamiOutput, brickkit::Error> {
+    brickkit::call(ctx, "confGo", "whoami", input).await
 }
 
 /// Calls confGo.me (go).
 pub async fn conf_go_me(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &ConfGoMeInput,
-) -> Result<serde_json::Value, brick::Error> {
-    brick::call(ctx, "confGo", "me", input).await
+) -> Result<serde_json::Value, brickkit::Error> {
+    brickkit::call(ctx, "confGo", "me", input).await
 }
 
 /// Calls confGo.chain (go).
 pub async fn conf_go_chain(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &ConfGoChainInput,
-) -> Result<ConfGoChainOutput, brick::Error> {
-    brick::call(ctx, "confGo", "chain", input).await
+) -> Result<ConfGoChainOutput, brickkit::Error> {
+    brickkit::call(ctx, "confGo", "chain", input).await
 }

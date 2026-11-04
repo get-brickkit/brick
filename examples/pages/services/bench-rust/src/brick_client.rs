@@ -388,141 +388,144 @@ pub struct BenchGoMeInput {}
 
 /// Calls pages.page.list (ts).
 pub async fn pages_page_list(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &PagesPageListInput,
-) -> Result<PagesPageListOutput, brick::Error> {
-    brick::call(ctx, "pages", "page.list", input).await
+) -> Result<PagesPageListOutput, brickkit::Error> {
+    brickkit::call(ctx, "pages", "page.list", input).await
 }
 
 /// Calls pages.page.get (ts).
 pub async fn pages_page_get(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &PagesPageGetInput,
-) -> Result<PagesPageGetOutput, brick::Error> {
-    brick::call(ctx, "pages", "page.get", input).await
+) -> Result<PagesPageGetOutput, brickkit::Error> {
+    brickkit::call(ctx, "pages", "page.get", input).await
 }
 
 /// Calls pages.page.create (ts).
 pub async fn pages_page_create(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &PagesPageCreateInput,
-) -> Result<PagesPageCreateOutput, brick::Error> {
-    brick::call(ctx, "pages", "page.create", input).await
+) -> Result<PagesPageCreateOutput, brickkit::Error> {
+    brickkit::call(ctx, "pages", "page.create", input).await
 }
 
 /// Calls pages.page.update (ts).
 pub async fn pages_page_update(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &PagesPageUpdateInput,
-) -> Result<PagesPageUpdateOutput, brick::Error> {
-    brick::call(ctx, "pages", "page.update", input).await
+) -> Result<PagesPageUpdateOutput, brickkit::Error> {
+    brickkit::call(ctx, "pages", "page.update", input).await
 }
 
 /// Calls pages.page.delete (ts).
 pub async fn pages_page_delete(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &PagesPageDeleteInput,
-) -> Result<PagesPageDeleteOutput, brick::Error> {
-    brick::call(ctx, "pages", "page.delete", input).await
+) -> Result<PagesPageDeleteOutput, brickkit::Error> {
+    brickkit::call(ctx, "pages", "page.delete", input).await
 }
 
 /// Calls pages.page.findOne (ts).
 pub async fn pages_page_find_one(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &PagesPageFindOneInput,
-) -> Result<serde_json::Value, brick::Error> {
-    brick::call(ctx, "pages", "page.findOne", input).await
+) -> Result<serde_json::Value, brickkit::Error> {
+    brickkit::call(ctx, "pages", "page.findOne", input).await
 }
 
 /// Calls pages.page.count (ts).
 pub async fn pages_page_count(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &PagesPageCountInput,
-) -> Result<PagesPageCountOutput, brick::Error> {
-    brick::call(ctx, "pages", "page.count", input).await
+) -> Result<PagesPageCountOutput, brickkit::Error> {
+    brickkit::call(ctx, "pages", "page.count", input).await
 }
 
 /// Calls pages.page.exists (ts).
 pub async fn pages_page_exists(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &PagesPageExistsInput,
-) -> Result<PagesPageExistsOutput, brick::Error> {
-    brick::call(ctx, "pages", "page.exists", input).await
+) -> Result<PagesPageExistsOutput, brickkit::Error> {
+    brickkit::call(ctx, "pages", "page.exists", input).await
 }
 
 /// Calls pages.echo (ts).
-pub async fn pages_echo(ctx: &brick::Ctx, input: &PagesEchoInput) -> Result<String, brick::Error> {
-    brick::call(ctx, "pages", "echo", input).await
+pub async fn pages_echo(
+    ctx: &brickkit::Ctx,
+    input: &PagesEchoInput,
+) -> Result<String, brickkit::Error> {
+    brickkit::call(ctx, "pages", "echo", input).await
 }
 
 /// Calls pages.get_public_page (ts).
 pub async fn pages_get_public_page(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &PagesGetPublicPageInput,
-) -> Result<PagesGetPublicPageOutput, brick::Error> {
-    brick::call(ctx, "pages", "get_public_page", input).await
+) -> Result<PagesGetPublicPageOutput, brickkit::Error> {
+    brickkit::call(ctx, "pages", "get_public_page", input).await
 }
 
 /// Calls bench.echo (ts).
 pub async fn bench_echo(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &serde_json::Value,
-) -> Result<serde_json::Value, brick::Error> {
-    brick::call(ctx, "bench", "echo", input).await
+) -> Result<serde_json::Value, brickkit::Error> {
+    brickkit::call(ctx, "bench", "echo", input).await
 }
 
 /// Calls bench.validate (ts).
 pub async fn bench_validate(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &BenchValidateInput,
-) -> Result<BenchValidateOutput, brick::Error> {
-    brick::call(ctx, "bench", "validate", input).await
+) -> Result<BenchValidateOutput, brickkit::Error> {
+    brickkit::call(ctx, "bench", "validate", input).await
 }
 
 /// Calls bench.db (ts).
 pub async fn bench_db(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &BenchDbInput,
-) -> Result<BenchDbOutput, brick::Error> {
-    brick::call(ctx, "bench", "db", input).await
+) -> Result<BenchDbOutput, brickkit::Error> {
+    brickkit::call(ctx, "bench", "db", input).await
 }
 
 /// Calls benchAuth.me (ts).
 pub async fn bench_auth_me(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &BenchAuthMeInput,
-) -> Result<serde_json::Value, brick::Error> {
-    brick::call(ctx, "benchAuth", "me", input).await
+) -> Result<serde_json::Value, brickkit::Error> {
+    brickkit::call(ctx, "benchAuth", "me", input).await
 }
 
 /// Calls benchGo.echo (go).
 pub async fn bench_go_echo(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &serde_json::Value,
-) -> Result<serde_json::Value, brick::Error> {
-    brick::call(ctx, "benchGo", "echo", input).await
+) -> Result<serde_json::Value, brickkit::Error> {
+    brickkit::call(ctx, "benchGo", "echo", input).await
 }
 
 /// Calls benchGo.validate (go).
 pub async fn bench_go_validate(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &BenchGoValidateInput,
-) -> Result<BenchGoValidateOutput, brick::Error> {
-    brick::call(ctx, "benchGo", "validate", input).await
+) -> Result<BenchGoValidateOutput, brickkit::Error> {
+    brickkit::call(ctx, "benchGo", "validate", input).await
 }
 
 /// Calls benchGo.db (go).
 pub async fn bench_go_db(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &BenchGoDbInput,
-) -> Result<BenchGoDbOutput, brick::Error> {
-    brick::call(ctx, "benchGo", "db", input).await
+) -> Result<BenchGoDbOutput, brickkit::Error> {
+    brickkit::call(ctx, "benchGo", "db", input).await
 }
 
 /// Calls benchGo.me (go).
 pub async fn bench_go_me(
-    ctx: &brick::Ctx,
+    ctx: &brickkit::Ctx,
     input: &BenchGoMeInput,
-) -> Result<std::collections::HashMap<String, serde_json::Value>, brick::Error> {
-    brick::call(ctx, "benchGo", "me", input).await
+) -> Result<std::collections::HashMap<String, serde_json::Value>, brickkit::Error> {
+    brickkit::call(ctx, "benchGo", "me", input).await
 }
