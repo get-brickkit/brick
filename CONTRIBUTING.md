@@ -68,4 +68,4 @@ The hooks are defined in `lefthook.yml` and run on pre-commit. They check staged
 
 - Describe what changes and how you verified it. Link the run output or the command you used.
 - Keep generated files out of the diff. `_brick/` contract output is ignored by Git.
-- Do not run `bun run release`. Releases run from a clean `main` checkout through `scripts/release.ts` and the `publish-npm.yml` workflow.
+- Do not run `bun run release`. Releases run from a clean `main` (stable) or `beta` checkout through `scripts/release.ts` and the `publish-npm.yml` workflow.

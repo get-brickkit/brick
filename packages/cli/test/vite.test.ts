@@ -6,7 +6,6 @@ import { brickClient } from "../src/vite";
 
 it("loads any default-exported BrickApp and reloads edits to its action dependencies", async () => {
   const root = await mkdtemp(resolve(import.meta.dir, "../.brick-vite-test-"));
-  const cli = resolve(import.meta.dir, "../src/server.ts");
   const actions = (
     value: string,
   ) => `import { defineService, t } from "@brickkit/core";
@@ -17,7 +16,7 @@ export default service;
   await Bun.write(join(root, "actions.ts"), actions("before"));
   await Bun.write(
     join(root, "any-name.ts"),
-    `import { brick } from ${JSON.stringify(cli)};
+    `import { brick } from "@brickkit/core";
 import service from "./actions";
 export default brick({ services: [service], requestLogging: false });
 `,
@@ -86,7 +85,7 @@ it("rejects a non-BrickApp default export and prevents browser imports of the ba
     ).rejects.toThrow("default-export a BrickApp");
     await Bun.write(
       join(root, "good.ts"),
-      `import { brick } from ${JSON.stringify(resolve(import.meta.dir, "../src/server.ts"))};
+      `import { brick } from "@brickkit/core";
 export default brick({ services: [], requestLogging: false });`,
     );
     await expect(

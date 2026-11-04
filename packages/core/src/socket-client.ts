@@ -13,8 +13,10 @@ import {
   type BrickClientSocket,
   type BrickSocketClient,
   type BrickSocketConnectOptions,
+  type BrickSocketHandlerError,
   type BrickSocketStatus,
 } from "./socket-types";
+import { ActionExecutionError } from "./types";
 
 /** Normal close, policy and auth refusals, protocol errors: retrying would not help. */
 const STOP_CODES = new Set([1000, 1003, 1007, 1008, 1009, 4000, 4401, 4403]);
@@ -68,6 +70,10 @@ export function connectSocket(
   );
   const events = new Map<string, Set<(value: unknown) => void>>();
   const errors = new Set<(error: BrickSocketError) => void>();
+  type Untyped = Record<string, unknown>;
+  const failures = new Set<
+    (error: BrickSocketHandlerError<Untyped, Untyped>) => void
+  >();
   const closes = new Set<(info: { code: number; reason: string }) => void>();
   const leaves = new Set<(room: string, reason?: string) => void>();
   const statuses = new Set<(status: BrickSocketStatus) => void>();
@@ -138,6 +144,7 @@ export function connectSocket(
       events.clear();
       for (const listeners of [
         errors,
+        failures,
         closes,
         leaves,
         statuses,
@@ -316,6 +323,23 @@ export function connectSocket(
   /** Checks a room acknowledgement or removal; returns the work to run once it passed. */
   const control = (event: string, data: unknown): (() => void) => {
     const fields = (data ?? {}) as Record<string, unknown>;
+    if (event === "$error") {
+      const { event: input, code, message, status, details } = fields;
+      if (
+        typeof input !== "string" ||
+        typeof code !== "string" ||
+        typeof message !== "string" ||
+        typeof status !== "number"
+      )
+        throw new Error("Invalid control message");
+      return () => {
+        const failure = Object.assign(
+          new ActionExecutionError(code, message, status, details),
+          { event: input },
+        );
+        for (const listener of failures) listener(failure);
+      };
+    }
     const { room, seq } = fields;
     if (!isSocketRoom(room) || (seq !== undefined && !isSocketSeq(seq)))
       throw new Error("Invalid control message");
@@ -418,10 +442,7 @@ export function connectSocket(
       listeners.delete(listener);
     };
   };
-  const api: BrickSocketClient<
-    Record<string, unknown>,
-    Record<string, unknown>
-  > = {
+  const api: BrickSocketClient<Untyped, Untyped, Untyped> = {
     ready: ready.promise,
     get status() {
       return status;
@@ -482,6 +503,7 @@ export function connectSocket(
     onStatus: (listener) => listen(statuses, listener),
     onReconnect: (listener) => listen(reconnects, listener),
     onError: (listener) => listen(errors, listener),
+    onHandlerError: (listener) => listen(failures, listener),
     onClose: (listener) => listen(closes, listener),
   };
   if (signal?.aborted) {

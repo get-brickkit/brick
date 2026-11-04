@@ -23,9 +23,12 @@ it("generates and runs a typed, browser-safe socket contract alongside HTTP acti
     input: { say: t.String() },
     output: { message: output },
     allowMissingOrigin: true,
+    errors: { TOO_LONG: { message: "Too long", status: 422 } },
     handlers: {
-      say: ({ input, socket }) =>
-        socket.send("message", { text: input, __brick_kind: "preserved" }),
+      say: ({ input, socket, error }) => {
+        if (input.length > 10) error.TOO_LONG();
+        socket.send("message", { text: input, __brick_kind: "preserved" });
+      },
     },
   });
   const app = brick({
@@ -56,6 +59,9 @@ it("generates and runs a typed, browser-safe socket contract alongside HTTP acti
       text: "hello",
       __brick_kind: "preserved",
     });
+    const failed = new Promise((resolve) => live.onHandlerError(resolve));
+    live.send("say", "far too long");
+    expect(await failed).toMatchObject({ event: "say", code: "TOO_LONG" });
     live.close();
     expect(
       getGlobalRegistry().exportArchitecture(app.definition).services[0]!
@@ -102,6 +108,7 @@ live.send('say',42);
 live.send('message',{text:'x'});
 // @ts-expect-error Unknown output
 live.on('say',()=>{});
+live.onHandlerError(e=>{const code:'TOO_LONG'|'FORBIDDEN'|'BAD_REQUEST'|'UNAUTHORIZED'|'NOT_FOUND'|'CONFLICT'|'INTERNAL_SERVER_ERROR'=e.code;const event:'say'=e.event;void [code,event];});
 `,
     );
     await Bun.write(

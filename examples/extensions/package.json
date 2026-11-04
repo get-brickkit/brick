@@ -17,7 +17,7 @@
     "@brickkit/cli": "workspace:*"
   },
   "devDependencies": {
-    "oxfmt": "^0.73.0",
-    "oxlint": "^1.88.0"
+    "oxfmt": "^0.76.0",
+    "oxlint": "^1.91.0"
   }
 }

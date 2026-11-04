@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import {
-  brick,
   defineDatabase,
   defineService,
   getTableName,
@@ -9,6 +8,7 @@ import {
   text,
   ValidationError,
 } from "@brickkit/core";
+import { createTestApp } from "@brickkit/core/testing";
 import { crud } from "@brickkit/crud";
 import { comments } from "../src/extensions/comments";
 
@@ -79,11 +79,11 @@ test("deleting the host record deletes its comments in the same transaction", as
   ).toEqual(["b"]);
 });
 
-test("comments.added joins the host's catalog and dashboard extension is declared", () => {
+test("comments.added joins the host's catalog and dashboard extension is declared", async () => {
   const { service } = setup("comment_events");
   const catalog: Record<string, { name: string }> = service.events;
   expect(catalog["comments.added"]?.name).toBe("comment_events.comments.added");
-  const app = brick({ services: [service], requestLogging: false });
+  const { app, cleanup } = createTestApp({ services: [service] });
   expect(app.definition.plugins).toEqual([
     {
       name: "@brick-examples/comments",
@@ -94,4 +94,5 @@ test("comments.added joins the host's catalog and dashboard extension is declare
       dashboard: expect.stringMatching(/extensions\/comments\/dashboard\.tsx$/),
     },
   ]);
+  await cleanup();
 });

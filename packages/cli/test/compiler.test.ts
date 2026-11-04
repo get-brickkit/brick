@@ -2,12 +2,14 @@ import { beforeEach, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { defineService, resetGlobalRegistry, t } from "@brickkit/core";
 import {
+  defineService,
+  resetGlobalRegistry,
+  t,
   compileBrickApplication,
-  emitCompiledApplication,
-} from "../src/compiler";
-import { brick } from "../src/server";
+  brick,
+} from "@brickkit/core";
+import { emitCompiledApplication } from "../src/compiler";
 
 beforeEach(resetGlobalRegistry);
 
@@ -253,12 +255,12 @@ it("loads emitted handler functions and rejects stale schemas rather than using 
   const dir = await mkdtemp(join(tmpdir(), "brick-compiler-"));
   try {
     const path = join(dir, "routes.mjs");
-    // Use the source module for this repository test; published artifacts use the package subpath.
+    // The temp dir can't resolve the package name, so point at the resolved module.
     await Bun.write(
       path,
       emitCompiledApplication(
         compilation.ir,
-        new URL("../src/compiler.ts", import.meta.url).href,
+        import.meta.resolve("@brickkit/core"),
       ),
     );
     const emitted = await import(path);

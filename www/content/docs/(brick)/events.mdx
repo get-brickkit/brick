@@ -206,7 +206,7 @@ const charge = defineListener({
 });
 ```
 
-`error` is a union with one member per declared code (`code`, `message`, typed `details`), plus `{ code: "UNKNOWN", message, cause }` for anything else the handler threw. Without `retry`, every failure retries until `maxAttempts`, as before. `"retry"` cannot extend `maxAttempts`, and a `retry` that throws counts as `"retry"`. Workflow steps do not take `errors` yet.
+`error` is a union with one member per declared code (`code`, `message`, typed `details`), plus `{ code: "UNKNOWN", message, cause }` for anything else the handler threw. Without `retry`, every failure retries until `maxAttempts`, as before. `"retry"` cannot extend `maxAttempts`, and a `retry` that throws counts as `"retry"`. Workflow steps raise typed errors too: see [Typed errors in steps](#typed-errors-in-steps).
 
 ## Delivery settings
 
@@ -310,6 +310,53 @@ A delivery counts as done once its run has started. After that the workflow owns
 Your steps run in your app, as the same module instances the rest of the app uses. A step can use the database client, config and other state your modules set up, exactly as a handler can.
 
 A process that only records events (`dispatch: false`) does not start the world. A process that delivers does, and it also runs the steps and replays of every run in the world, including runs another process started.
+
+A [plugin](/docs/plugins/build-plugin#lifecycle-middleware-and-listeners) can add a workflow listener too. `useDeps()` in that workflow's steps returns the plugin's deps, not the app's. One workflow can't be run by both an app listener and a plugin listener, or by two installs of a plugin with different deps: its steps could see only one set, so the world refuses to start.
+
+### Typed errors in steps
+
+A step raises the errors it declares with `stepErrors`, and the workflow reads them with `stepFailure`. Both come from `@brickkit/core/workflow`, with `defineError` and `t`. Workflow code runs in the Workflow SDK's sandbox, where Node modules are not available, so import from that path whatever the workflow function itself uses; `@brickkit/core` would pull in the server. Imports only steps use, such as `useDeps`, are fine:
+
+```ts title="src/workflows/fulfil-order.ts"
+import { useDeps, type WorkflowEvent } from "@brickkit/core";
+import {
+  defineError,
+  stepErrors,
+  stepFailure,
+  t,
+} from "@brickkit/core/workflow";
+
+export const carrierErrors = {
+  ...defineError("CARRIER_REJECTED", {
+    status: 422,
+    message: "The carrier refused the parcel",
+    details: t.Object({ reason: t.String() }),
+  }),
+};
+const error = stepErrors(carrierErrors);
+
+export async function fulfilOrder(event: WorkflowEvent<Shipped>) {
+  "use workflow";
+  try {
+    await bookCarrier(event.payload.id);
+  } catch (caught) {
+    const failure = stepFailure(caught, carrierErrors);
+    if (failure.code !== "CARRIER_REJECTED") throw caught;
+    await tellSupport(event.payload.id, failure.details.reason);
+  }
+}
+
+async function bookCarrier(orderId: string) {
+  "use step";
+  const booking = await useDeps(ordersDeps).carrier.book(orderId);
+  if (!booking.ok)
+    error.CARRIER_REJECTED(undefined, { reason: booking.reason });
+}
+```
+
+`error.CODE(message?, details?, { cause }?)` checks `details` against the declared schema in types, as in an action. A declared error is an outcome, not a glitch, so the Workflow SDK does not retry the step: the workflow's `await` rejects at once. Throw a plain error (or the SDK's `RetryableError`) for failures worth retrying.
+
+`stepFailure(caught, errors)` returns the same union a listener's `retry` receives: one member per declared code (`code`, `message`, typed `details`), plus `{ code: "UNKNOWN", message, cause }` for anything else, including a step that ran out of retries. It reads the error after the SDK has serialized it, which keeps only an error's name, message, stack and `cause`, so check failures with `stepFailure` rather than `instanceof`.
 
 ### In tests and scripts
 

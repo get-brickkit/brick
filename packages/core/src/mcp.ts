@@ -5,6 +5,8 @@ export interface McpToolDefinition {
   title?: string;
   description: string;
   inputSchema: unknown;
+  /** The tool's `output` schema; a non-object one is wrapped as `{ result }`. */
+  outputSchema?: unknown;
   annotations: ToolAnnotations;
 }
 
@@ -58,6 +60,9 @@ export function createMcpRegistry(options: McpRegistryOptions): McpRegistry {
           properties: {},
           additionalProperties: false,
         },
+        ...(tool.config.output
+          ? { outputSchema: outputSchema(tool.config.output) }
+          : {}),
         annotations: tool.config.annotations ?? {},
       })),
     async callTool(name, args = {}, ctx) {
@@ -66,6 +71,19 @@ export function createMcpRegistry(options: McpRegistryOptions): McpRegistry {
       return tool({ input: args, ctx });
     },
   };
+}
+
+// MCP requires an object outputSchema, so other outputs travel as `{ result }`.
+const WRAP_RESULT = "x-brick-wrap-result";
+function outputSchema(schema: { type?: unknown }) {
+  return schema.type === "object"
+    ? schema
+    : {
+        type: "object",
+        properties: { result: schema },
+        required: ["result"],
+        [WRAP_RESULT]: true,
+      };
 }
 
 export interface McpHandlerOptions {
@@ -150,6 +168,11 @@ export function createMcpHandler(options: McpHandlerOptions) {
             params.arguments as Record<string, unknown> | undefined,
             { ...ctx, request },
           );
+          const schema = options.registry
+            .listTools()
+            .find((tool) => tool.name === params.name)?.outputSchema as
+            | Record<string, unknown>
+            | undefined;
           return result(id, {
             content: [
               {
@@ -160,6 +183,13 @@ export function createMcpHandler(options: McpHandlerOptions) {
                     : (JSON.stringify(value, null, 2) ?? "null"),
               },
             ],
+            ...(schema
+              ? {
+                  structuredContent: schema[WRAP_RESULT]
+                    ? { result: value }
+                    : value,
+                }
+              : {}),
           });
         } catch (error) {
           if (error instanceof UnknownToolError)

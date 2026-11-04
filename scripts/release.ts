@@ -54,11 +54,9 @@ const GIT = resolveBin("git");
 const CORE_PKG = join(ROOT, "packages/core/package.json");
 const CLI_PKG = join(ROOT, "packages/cli/package.json");
 const CRUD_PKG = join(ROOT, "packages/crud/package.json");
-// The worlds depend on no other @brickkit package, so only their version is
-// bumped.
-const STANDALONE_PKGS = ["bullmq-world", "redis-world"].map((name) =>
-  join(ROOT, `packages/${name}/package.json`),
-);
+const BULLMQ_WORLD_PKG = join(ROOT, "packages/bullmq-world/package.json");
+// redis-world depends on no other @brickkit package, so only its version is bumped.
+const REDIS_WORLD_PKG = join(ROOT, "packages/redis-world/package.json");
 
 function sh(cmd: string[], cwd = ROOT): string {
   if (DRY) {
@@ -167,11 +165,13 @@ if (!PREPARE) {
 const coreJson = readJson(CORE_PKG);
 const cliJson = readJson(CLI_PKG);
 const crudJson = readJson(CRUD_PKG);
+const bullmqWorldJson = readJson(BULLMQ_WORLD_PKG);
 const releases = [
   { file: CORE_PKG, data: coreJson },
   { file: CLI_PKG, data: cliJson },
   { file: CRUD_PKG, data: crudJson },
-  ...STANDALONE_PKGS.map((file) => ({ file, data: readJson(file) })),
+  { file: BULLMQ_WORLD_PKG, data: bullmqWorldJson },
+  { file: REDIS_WORLD_PKG, data: readJson(REDIS_WORLD_PKG) },
 ];
 if (releases.some((r) => r.data.version !== coreJson.version))
   fail("core, cli, crud and world versions must match");
@@ -179,6 +179,8 @@ const version = bumpVersion(coreJson.version, bump);
 const tag = `v${version}`;
 cliJson.dependencies["@brickkit/core"] = `^${version}`;
 crudJson.peerDependencies["@brickkit/core"] = `^${version}`;
+// bullmq-world imports redis-world/internal, which changes in lockstep: pin it exactly.
+bullmqWorldJson.dependencies["@brickkit/redis-world"] = version;
 const exists = execFileSync(GIT, ["ls-remote", "origin", `refs/tags/${tag}`], {
   cwd: ROOT,
   encoding: "utf-8",

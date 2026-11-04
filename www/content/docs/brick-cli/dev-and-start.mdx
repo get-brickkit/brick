@@ -81,7 +81,7 @@ brick dev src/server.ts --history-days 0        # live requests only, nothing on
 brick dev src/server.ts --no-dashboard          # API only
 ```
 
-The Overview tab draws the app as a graph of clients, services, and databases. Each service shows its actions and tools, each database its name, engine, and tables, and the calls, durations, and health fill in from recent requests. Below it are each HTTP route with its action and recent request and failure counts, and the services with their databases and resources. SQL statements appear as child spans under the action that ran them, with the statement text on hover. Spans are colored by type: request, action, service call, and SQL. When the app sets [`legacyRoutes`](/docs/routes#legacyroutes), the Overview also shows how many recent calls used a v0.10 path.
+The Overview tab draws the app as a graph of clients, services, and databases. Each service shows its actions and tools, each database its name, engine, and tables, and the calls, durations, and health fill in from recent requests. Below it are each HTTP route with its action and recent request and failure counts, and the services with their databases and resources. SQL statements appear as child spans under the action that ran them, with the statement text on hover. Spans are colored by type: request, action, service call, and SQL.
 
 ### API Reference
 

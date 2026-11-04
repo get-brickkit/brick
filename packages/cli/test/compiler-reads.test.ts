@@ -8,10 +8,10 @@ import {
   text,
   integer,
   eq,
+  brick,
+  compileBrickApplication,
 } from "@brickkit/core";
 import { crud } from "@brickkit/crud";
-import { brick } from "../src/server";
-import { compileBrickApplication } from "../src/compiler";
 
 beforeEach(resetGlobalRegistry);
 const table = sqliteTable("compiled_read_rows", {

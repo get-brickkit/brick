@@ -34,9 +34,17 @@
       "import": "./dist/pg.js",
       "types": "./dist/pg.d.ts"
     },
+    "./workflow": {
+      "import": "./dist/workflow.js",
+      "types": "./dist/workflow.d.ts"
+    },
     "./tanstack-query": {
       "import": "./dist/tanstack-query.js",
       "types": "./dist/tanstack-query.d.ts"
+    },
+    "./testing": {
+      "import": "./dist/testing.js",
+      "types": "./dist/testing.d.ts"
     }
   },
   "publishConfig": {
@@ -60,30 +68,36 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/api": "^1.9.0",
     "@sinclair/typebox": "^0.34.52",
-    "drizzle-orm": "^0.45.2",
-    "elysia": "2.0.0-beta.29",
-    "postgres": "^3.4.9"
+    "elysia": "2.0.0-rc.1",
+    "postgres": "^4.0.0"
   },
   "devDependencies": {
-    "@opentelemetry/context-async-hooks": "^2.12.0",
-    "@opentelemetry/core": "^2.12.0",
-    "@opentelemetry/sdk-trace-base": "^2.12.0",
-    "@tanstack/query-core": "5.104.3",
-    "@tanstack/vue-query": "5.104.3",
-    "@types/bun": "^1.4.3",
-    "oxfmt": "^0.73.0",
-    "oxlint": "^1.88.0",
-    "tsdown": "^0.23.1",
-    "typescript": "^5.7.0",
-    "vue": "^3.5.13"
+    "@opentelemetry/context-async-hooks": "^3.0.0",
+    "@opentelemetry/core": "^3.0.0",
+    "@opentelemetry/sdk-trace": "^3.0.0",
+    "@tanstack/query-core": "5.105.3",
+    "@tanstack/vue-query": "5.105.3",
+    "@types/bun": "^1.4.4",
+    "drizzle-kit": "0.31.11",
+    "drizzle-orm": "^0.45.4",
+    "oxfmt": "^0.76.0",
+    "oxlint": "^1.91.0",
+    "tsdown": "^0.23.5",
+    "typescript": "^7.0.2",
+    "vue": "^3.5.44"
   },
   "peerDependencies": {
-    "@tanstack/query-core": "^5.0.0"
+    "@tanstack/query-core": "^5.0.0",
+    "drizzle-kit": "^0.31.0",
+    "drizzle-orm": "^0.45.2"
   },
   "peerDependenciesMeta": {
     "@tanstack/query-core": {
+      "optional": true
+    },
+    "drizzle-kit": {
       "optional": true
     }
   }

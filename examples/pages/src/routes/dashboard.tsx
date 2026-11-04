@@ -23,7 +23,7 @@ export const Route = createFileRoute("/dashboard")({
 /**
  * Port of app/src/routes/dashboard.vue (requiresAuth).
  * Canonical collection+actions: useLiveQuery(pageCollection) for the list,
- * deletePageAction().isPersisted.promise for optimistic deletes.
+ * deletePageAction().when("settled") for optimistic deletes.
  */
 function DashboardPage() {
   const router = useRouter();
@@ -49,7 +49,7 @@ function DashboardPage() {
 
   async function removePage(page: PageListItem) {
     if (!confirm(`Delete "${page.title}"?`)) return;
-    await deletePageAction({ id: page.id }).isPersisted.promise;
+    await deletePageAction({ id: page.id }).when("settled");
     toast.success("Page deleted");
   }
 

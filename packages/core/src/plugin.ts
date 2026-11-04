@@ -319,14 +319,6 @@ function pathOf(binding: Binding, prefix: string) {
     binding.path,
   );
 }
-/** v0.10 mounted resource scope at `${prefix}/${resource}`, with names as declared. */
-function legacyPathOf(binding: Binding, prefix: string) {
-  const scope =
-    binding.scope === "app"
-      ? ""
-      : `/${binding.scope === "resource" ? binding.resource!.name : binding.service.name}`;
-  return joinRoute(`${prefix.replace(/\/$/, "")}${scope}`, binding.path);
-}
 /**
  * Where a plugin mounted an action over HTTP, for the OpenAPI generator, the
  * compiler, and the typed client.
@@ -335,7 +327,7 @@ function legacyPathOf(binding: Binding, prefix: string) {
  * @param prefix - The application's route prefix (default `/api`).
  * @returns `undefined` when no plugin bound the action (it uses its own route),
  * `false` when the plugin's route was switched off, otherwise the route's
- * `path`, the v0.10 `legacyPath`, `method`, the `clientPath` the typed client uses, and the owning
+ * `path`, `method`, the `clientPath` the typed client uses, and the owning
  * `plugin` and `resource`.
  */
 export function getPluginActionRoute(
@@ -350,7 +342,6 @@ export function getPluginActionRoute(
   if (!binding.enabled) return false;
   return {
     path: pathOf(binding, prefix),
-    legacyPath: legacyPathOf(binding, prefix),
     method: binding.method,
     clientPath: binding.clientPath,
     plugin: binding.plugin,
@@ -374,7 +365,6 @@ export function getPluginEndpoints(
     .endpoints.filter((binding) => binding.enabled)
     .map((binding) => ({
       path: pathOf(binding, prefix),
-      legacyPath: legacyPathOf(binding, prefix),
       method: binding.method,
       service,
       plugin: binding.plugin,

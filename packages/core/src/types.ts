@@ -748,47 +748,6 @@ export interface ResourceActionConfig<
     | (TOut extends TSchema ? Static<TOut> : any);
 }
 
-export interface ServiceAuthOptions {
-  requireAuth?: boolean;
-  allowedRoles?: string[];
-  policy?: (ctx: ActionContext) => boolean | Promise<boolean>;
-}
-
-export interface RateLimitOptions {
-  maxRequests: number;
-  window: number | string;
-  scope?: "ip" | "user" | "tenant";
-}
-
-export interface CacheOptions {
-  driver?: "memory" | "redis";
-  defaultTtl?: number;
-}
-
-export interface ResilienceOptions {
-  timeoutMs?: number;
-  retry?: {
-    attempts: number;
-    backoff: "linear" | "exponential";
-    delayMs: number;
-  };
-  circuitBreaker?: {
-    errorThresholdPercentage: number;
-    resetTimeoutMs: number;
-  };
-}
-
-export interface TelemetryOptions {
-  traceQueries?: boolean;
-  auditLog?: boolean;
-  tags?: Record<string, string>;
-}
-
-export interface LifecycleOptions {
-  onInit?: (ctx: { db?: any; logger?: Logger }) => Promise<void>;
-  onDestroy?: () => Promise<void>;
-}
-
 export interface ServiceOptions<
   TServiceContext extends Record<string, any> = Record<string, any>,
   TDb = any,
@@ -802,12 +761,6 @@ export interface ServiceOptions<
   context?: (
     baseCtx: BaseContext<TDb> & { user?: unknown },
   ) => Promise<TServiceContext> | TServiceContext;
-  auth?: ServiceAuthOptions;
-  rateLimit?: RateLimitOptions;
-  cache?: CacheOptions;
-  resilience?: ResilienceOptions;
-  telemetry?: TelemetryOptions;
-  lifecycle?: LifecycleOptions;
   /**
    * The service's event catalog: payload schema by event name. Each becomes
    * `service.events.<name>`, recorded as `<service>.<name>`.
@@ -924,8 +877,12 @@ export interface Service<
 
   build(): this;
 
-  socket<const I extends SocketSchemas, const O extends SocketSchemas>(
-    config: BrickSocketConfig<I, O, BaseContext<TDb> & TServiceContext>,
+  socket<
+    const I extends SocketSchemas,
+    const O extends SocketSchemas,
+    const E extends Record<string, ActionErrorDefinition> = {},
+  >(
+    config: BrickSocketConfig<I, O, BaseContext<TDb> & TServiceContext, E>,
   ): BrickSocketHandle<SocketPayloads<O>>;
   listSockets(): RegisteredSocket[];
 

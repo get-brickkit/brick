@@ -81,7 +81,6 @@ export function OverviewView({
     }
     return result;
   }, [services, traces]);
-  const legacyCalls = traces.filter((trace) => trace.legacyRoute).length;
 
   return (
     <>
@@ -97,15 +96,6 @@ export function OverviewView({
       ) : (
         <>
           <ServiceGraphPanel architecture={architecture} traces={traces} />
-          {legacyCalls > 0 && (
-            <p className="text-xs text-muted-foreground">
-              <span className="font-medium text-foreground tabular-nums">
-                {legacyCalls}
-              </span>{" "}
-              recent {legacyCalls === 1 ? "call" : "calls"} used a v0.10 path (
-              <code>legacyRoutes</code>).
-            </p>
-          )}
           <Panel>
             {rows.length === 0 ? (
               <Empty title="No HTTP routes are registered" />

@@ -15,7 +15,7 @@ import {
   emitHandlerFactory,
   compilerRuntime,
 } from "../src";
-import { createBrickClient } from "../src/client";
+import { createTestApp } from "../src/testing";
 
 for (const compiler of [true, false]) {
   for (const scenario of [
@@ -43,10 +43,10 @@ for (const compiler of [true, false]) {
           user: scenario === "signed-in" ? { id: "u" } : undefined,
         }),
       }).action(action);
-      const app = brick({
+      const { app, client } = createTestApp({
         services: [service],
-        requestLogging: false,
         compiler,
+        contract: { errors: { fail: action } },
       });
       const input = { value: scenario === "validation" ? 1 : "ok" };
       const expected =
@@ -80,12 +80,6 @@ for (const compiler of [true, false]) {
         expect(envelope).toMatchObject({
           ...expected,
           requestId: "test-request",
-        });
-        const client = createBrickClient<{ errors: { fail: typeof action } }>({
-          baseUrl: "http://localhost",
-          contract: { errors: { fail: action } },
-          fetch: async (url, init) =>
-            app.handle(new Request(String(url), init)),
         });
         const remote = await client.errors
           .fail(input as never)

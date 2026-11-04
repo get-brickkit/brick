@@ -2,8 +2,13 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Elysia } from "elysia";
 import { websocket } from "elysia/websocket";
 import { createLogger } from "./logger";
-import { joinRoute, kebabCase, legacyPath, ownerPath } from "./routes";
-import type { BaseContext } from "./types";
+import { joinRoute, kebabCase, ownerPath } from "./routes";
+import { buildErrorHelpers } from "./action";
+import {
+  ActionExecutionError,
+  type ActionErrorDefinition,
+  type BaseContext,
+} from "./types";
 import { getCompiledCheck } from "./typebox";
 import { inTransaction, onTransactionCommit } from "./events/transaction";
 import {
@@ -44,6 +49,8 @@ export interface RegisteredSocket {
   schema: BrickSocketSchema;
   input: SocketSchemas;
   output: SocketSchemas;
+  /** The errors its handlers declare, for the client contract. */
+  errors?: Record<string, ActionErrorDefinition>;
   allowedOrigins?: readonly string[];
   allowMissingOrigin?: boolean;
   maxRooms: number;
@@ -154,9 +161,10 @@ export function defineServiceSocket<
   I extends SocketSchemas,
   O extends SocketSchemas,
   Ctx extends BaseContext,
+  E extends Record<string, ActionErrorDefinition> = {},
 >(
   service: string,
-  config: BrickSocketConfig<I, O, Ctx>,
+  config: BrickSocketConfig<I, O, Ctx, E>,
   resolve: (request: Request) => Promise<Ctx>,
 ): RegisteredSocket {
   if (
@@ -212,6 +220,7 @@ export function defineServiceSocket<
   }
   const typed = (socket: SocketSender): BrickSocketSender<SocketPayloads<O>> =>
     socket;
+  const error = buildErrorHelpers(config.errors);
   const context = async (request: Request) => {
     const ctx = await resolve(request);
     if (config.authorize && !(await config.authorize({ ctx })))
@@ -247,6 +256,7 @@ export function defineServiceSocket<
     },
     input,
     output,
+    ...(config.errors ? { errors: { ...config.errors } } : {}),
     allowedOrigins: config.allowedOrigins
       ? [...config.allowedOrigins]
       : undefined,
@@ -313,6 +323,7 @@ export function defineServiceSocket<
             input: data as SocketPayloads<I>[keyof I],
             ctx,
             socket: typed(socket),
+            error,
           });
         },
         async join(room) {
@@ -344,17 +355,8 @@ export function socketPath(
   );
 }
 
-/** The v0.10 route, served too by `brick({ legacyRoutes: true })`. */
-export function legacySocketPath(
-  prefix: string,
-  service: string,
-  socket: RegisteredSocket,
-): string | undefined {
-  return legacyPath(prefix, service, socket.schema.name, socket.schema.path);
-}
-
 /** The origin a browser saw, so TLS-terminating proxies still pass the same-origin check. */
-function publicOrigin(request: Request): string {
+export function publicOrigin(request: Request): string {
   // Browsers cannot set X-Forwarded-* on a WebSocket handshake, so a cross-site page cannot forge a match.
   const forwarded = (name: string) =>
     request.headers.get(name)?.split(",")[0]?.trim() || undefined;
@@ -422,7 +424,7 @@ export function mountSockets(
   )
     throw new Error("Brick: the socket broker does not support replay");
   for (const { definition } of sockets) definition.brokers.add(broker);
-  app.cleanup(async () => {
+  app.onStop(async () => {
     for (const { definition } of sockets) definition.brokers.delete(broker);
     await broker.close?.();
   });
@@ -434,15 +436,7 @@ export function mountSockets(
       closeOnBackpressureLimit: true,
     }),
   );
-  // A socket also served on its v0.10 path shares one set of rooms, so a
-  // broker message reaches each connection once.
-  const paths = new Map<RegisteredSocket, string[]>();
-  for (const { path, definition } of sockets)
-    paths.set(definition, [...(paths.get(definition) ?? []), path]);
-  for (const { service, definition } of sockets) {
-    const routes = paths.get(definition);
-    if (!routes) continue;
-    paths.delete(definition);
+  for (const { service, path, definition } of sockets) {
     const logger = createLogger(
       `[Brick socket ${service}.${definition.schema.name}]`,
     );
@@ -593,6 +587,8 @@ export function mountSockets(
         ...(seq !== undefined ? { seq } : {}),
       });
     };
+    // The codes a handler can raise with `error.CODE()`: declared plus standard.
+    const raisable = buildErrorHelpers(definition.errors);
     const fail = (ws: Peer, error: unknown) => {
       if (!(error instanceof SocketDenied))
         logger.error({ error, service, socket: definition.schema.name });
@@ -604,143 +600,173 @@ export function mountSockets(
           : "Socket handler failed",
       );
     };
-    for (const path of routes)
-      app.ws(path, {
-        async beforeHandle({ request }) {
-          if (sessions.has(request)) return;
-          const { token, request: resolved } = tokenRequest(request);
-          const origin = request.headers.get("origin");
-          if (
-            origin
-              ? !(
-                  definition.allowedOrigins ?? [publicOrigin(request)]
-                ).includes(origin)
-              : // Without cookies a missing Origin is no hijacking risk.
-                !(definition.allowMissingOrigin ?? token)
-          )
-            return new Response("Socket origin refused", { status: 403 });
-          try {
-            sessions.set(request, await definition.connect(resolved));
-          } catch (error) {
-            if (!(error instanceof SocketDenied))
-              logger.error({ error, service, socket: definition.schema.name });
-            return new Response("Socket connection refused", {
-              status: error instanceof SocketDenied ? 403 : 500,
-            });
-          }
-        },
-        upgrade: ({ request }: { request: Request }) =>
-          protocols(request).includes("brick.v1")
-            ? { "Sec-WebSocket-Protocol": "brick.v1" }
-            : undefined,
-        async open(ws) {
-          const session = sessions.get(ws.request);
-          if (!session) {
-            ws.close(1011, "Missing socket session");
-            return;
-          }
-          const sender: SocketSender = {
-            get isOpen() {
-              return !state.closed && ws.readyState === 1;
-            },
-            close() {
-              ws.close(1000, "");
-            },
-            send(event, data) {
-              if (!sender.isOpen) throw new Error("Socket is closed");
-              const result = ws.send(
-                outputFrame(definition.output, event, data),
+    app.ws(path, {
+      async beforeHandle({ request }) {
+        if (sessions.has(request)) return;
+        const { token, request: resolved } = tokenRequest(request);
+        const origin = request.headers.get("origin");
+        if (
+          origin
+            ? !(definition.allowedOrigins ?? [publicOrigin(request)]).includes(
+                origin,
+              )
+            : // Without cookies a missing Origin is no hijacking risk.
+              !(definition.allowMissingOrigin ?? token)
+        )
+          return new Response("Socket origin refused", { status: 403 });
+        try {
+          sessions.set(request, await definition.connect(resolved));
+        } catch (error) {
+          if (!(error instanceof SocketDenied))
+            logger.error({ error, service, socket: definition.schema.name });
+          return new Response("Socket connection refused", {
+            status: error instanceof SocketDenied ? 403 : 500,
+          });
+        }
+      },
+      upgrade: ({ request }: { request: Request }) =>
+        protocols(request).includes("brick.v1")
+          ? { "Sec-WebSocket-Protocol": "brick.v1" }
+          : undefined,
+      async open(ws) {
+        const session = sessions.get(ws.request);
+        if (!session) {
+          ws.close(1011, "Missing socket session");
+          return;
+        }
+        const sender: SocketSender = {
+          get isOpen() {
+            return !state.closed && ws.readyState === 1;
+          },
+          close() {
+            ws.close(1000, "");
+          },
+          send(event, data) {
+            if (!sender.isOpen) throw new Error("Socket is closed");
+            const result = ws.send(outputFrame(definition.output, event, data));
+            if (result === 0) {
+              ws.close(1013, "Socket buffer full");
+              throw new Error("Socket buffer full");
+            }
+          },
+        };
+        const state: Connection = {
+          ws,
+          session,
+          sender,
+          tail: Promise.resolve(),
+          pending: 0,
+          bytes: 0,
+          closed: false,
+          rooms: new Set(),
+          requested: new Set(),
+        };
+        connections.set(ws.request, state);
+        try {
+          await Promise.all(
+            session.rooms.map((room) => enter(state, definition.topic(room))),
+          );
+          await session.open(sender);
+        } catch (error) {
+          fail(ws, error);
+        }
+      },
+      message(ws, value: unknown) {
+        const state = connections.get(ws.request);
+        if (!state || state.closed || ws.readyState !== 1) return;
+        if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
+          ws.close(1003, "Only JSON text is supported");
+          return;
+        }
+        if (typeof value === "string") {
+          ws.close(1007, "Expected JSON envelope");
+          return;
+        }
+        if (!isSocketEnvelope(value)) {
+          ws.close(1008, "Invalid socket envelope");
+          return;
+        }
+        const size = bytes(JSON.stringify(value));
+        if (size > SOCKET_MAX_BYTES) {
+          ws.close(1009, "Message too large");
+          return;
+        }
+        if (state.pending >= 32 || state.bytes + size > SOCKET_BUFFER_BYTES) {
+          ws.close(1013, "Socket queue full");
+          return;
+        }
+        state.pending++;
+        state.bytes += size;
+        state.tail = state.tail
+          .then(async () => {
+            if (state.closed || ws.readyState !== 1) return;
+            if (value.event === "$join" || value.event === "$leave")
+              await room(state, value.event, value.data);
+            else
+              await state.session.message(
+                value.event,
+                value.data,
+                state.sender,
               );
-              if (result === 0) {
-                ws.close(1013, "Socket buffer full");
-                throw new Error("Socket buffer full");
+          })
+          .catch((error: unknown) => {
+            // A declared error answers a handler message; the connection stays
+            // open. A failed $join or $leave, or an error with an undeclared
+            // code (from a nested action, say), is logged and closes it, which
+            // also rejects the client's pending joins.
+            if (
+              error instanceof ActionExecutionError &&
+              !state.closed &&
+              value.event !== "$join" &&
+              value.event !== "$leave" &&
+              Object.hasOwn(raisable, error.code)
+            )
+              try {
+                const frame = JSON.stringify({
+                  event: "$error",
+                  data: {
+                    event: value.event,
+                    code: error.code,
+                    message: error.message,
+                    status: error.status,
+                    ...(error.details !== undefined
+                      ? { details: error.details }
+                      : {}),
+                  },
+                });
+                if (bytes(frame) > SOCKET_MAX_BYTES)
+                  throw new Error("Socket error too large", { cause: error });
+                if (ws.readyState === 1) ws.send(frame);
+                return;
+              } catch (unsent) {
+                return fail(ws, unsent);
               }
-            },
-          };
-          const state: Connection = {
-            ws,
-            session,
-            sender,
-            tail: Promise.resolve(),
-            pending: 0,
-            bytes: 0,
-            closed: false,
-            rooms: new Set(),
-            requested: new Set(),
-          };
-          connections.set(ws.request, state);
-          try {
-            await Promise.all(
-              session.rooms.map((room) => enter(state, definition.topic(room))),
-            );
-            await session.open(sender);
-          } catch (error) {
             fail(ws, error);
-          }
-        },
-        message(ws, value: unknown) {
-          const state = connections.get(ws.request);
-          if (!state || state.closed || ws.readyState !== 1) return;
-          if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
-            ws.close(1003, "Only JSON text is supported");
-            return;
-          }
-          if (typeof value === "string") {
-            ws.close(1007, "Expected JSON envelope");
-            return;
-          }
-          if (!isSocketEnvelope(value)) {
-            ws.close(1008, "Invalid socket envelope");
-            return;
-          }
-          const size = bytes(JSON.stringify(value));
-          if (size > SOCKET_MAX_BYTES) {
-            ws.close(1009, "Message too large");
-            return;
-          }
-          if (state.pending >= 32 || state.bytes + size > SOCKET_BUFFER_BYTES) {
-            ws.close(1013, "Socket queue full");
-            return;
-          }
-          state.pending++;
-          state.bytes += size;
-          state.tail = state.tail
-            .then(async () => {
-              if (state.closed || ws.readyState !== 1) return;
-              if (value.event === "$join" || value.event === "$leave")
-                await room(state, value.event, value.data);
-              else
-                await state.session.message(
-                  value.event,
-                  value.data,
-                  state.sender,
-                );
-            })
-            .catch((error: unknown) => fail(ws, error))
-            .finally(() => {
-              state.pending--;
-              state.bytes -= size;
-            });
-          // Brick owns the queue. Returning the tail here makes native close wait on application work.
-        },
-        async close(ws, code = 1006, reason = "") {
-          const state = connections.get(ws.request);
-          sessions.delete(ws.request);
-          if (!state || state.closed) return;
-          state.closed = true;
-          for (const topic of state.rooms) exit(state, topic);
-          try {
-            await state.session.close(state.sender, code, reason);
-          } catch (error) {
-            logger.error({
-              error,
-              service,
-              socket: definition.schema.name,
-              phase: "cleanup",
-            });
-          }
-          connections.delete(ws.request);
-        },
-      });
+          })
+          .finally(() => {
+            state.pending--;
+            state.bytes -= size;
+          });
+        // Brick owns the queue. Returning the tail here makes native close wait on application work.
+      },
+      async close(ws, code = 1006, reason = "") {
+        const state = connections.get(ws.request);
+        sessions.delete(ws.request);
+        if (!state || state.closed) return;
+        state.closed = true;
+        for (const topic of state.rooms) exit(state, topic);
+        try {
+          await state.session.close(state.sender, code, reason);
+        } catch (error) {
+          logger.error({
+            error,
+            service,
+            socket: definition.schema.name,
+            phase: "cleanup",
+          });
+        }
+        connections.delete(ws.request);
+      },
+    });
   }
 }

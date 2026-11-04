@@ -84,7 +84,6 @@ it("mounts service actions, explicit relative paths, sockets and plugin scopes o
   expect(getActionRoute(summary)).toEqual({
     method: "GET",
     path: "/api/order-billing/get-summary",
-    legacyPath: "/api/orderBilling/getSummary",
   });
   const app = brick({ services: [service], docs: false });
   expect(routesOf(app)).toEqual([
@@ -114,47 +113,4 @@ it("fails at startup when an action, a resource and a socket share a segment", (
   expect(() => brick({ services: [socketAndAction] })).toThrow(
     /duplicate name "live" in service "chat": socket "live" and action "live"/,
   );
-});
-
-it("serves v0.10 paths only with legacyRoutes, and never in place of a current route", async () => {
-  const service = defineService("orderBilling");
-  service.action({ name: "getSummary", execute: () => "new" });
-  service.action({
-    name: "legacyAbsolute",
-    method: "GET",
-    path: "/api/old/summary",
-    execute: () => "abs",
-  });
-  service.socket({
-    name: "live",
-    input: {},
-    output: {},
-    handlers: {},
-    allowMissingOrigin: true,
-  });
-  const app = brick({ services: [service], docs: false, legacyRoutes: true });
-  const legacy = await app.handle(
-    new Request("http://localhost/api/orderBilling/getSummary", {
-      method: "POST",
-    }),
-  );
-  expect(await legacy.text()).toBe("new");
-  expect(legacy.headers.get("link")).toBe(
-    '</api/order-billing/get-summary>; rel="successor-version"',
-  );
-  // An explicit path that still starts with the prefix keeps its old URL too.
-  const absolute = await app.handle(
-    new Request("http://localhost/api/old/summary"),
-  );
-  expect(await absolute.text()).toBe("abs");
-  expect(absolute.headers.get("link")).toBe(
-    '</api/order-billing/api/old/summary>; rel="successor-version"',
-  );
-  expect(routesOf(app)).toEqual([
-    "POST /api/order-billing/get-summary",
-    "GET /api/order-billing/api/old/summary",
-  ]);
-  expect(app.definition.sockets.map((socket) => socket.path)).toEqual([
-    "/api/order-billing/live",
-  ]);
 });

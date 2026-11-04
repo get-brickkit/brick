@@ -10,7 +10,10 @@ import {
   type PostgresDatabaseConfig,
   type PostgresDatabase,
 } from "./postgres";
-import { getTableColumns, getTableName, sql } from "drizzle-orm";
+import { getTableColumns, getTableName, sql, type Table } from "drizzle-orm";
+import { getTableConfig, isPgEnum, pgSchema } from "drizzle-orm/pg-core";
+import { migrate as migratePostgres } from "drizzle-orm/postgres-js/migrator";
+import { migrate as migrateSQLite } from "drizzle-orm/bun-sqlite/migrator";
 
 export * from "./sqlite";
 export * from "./postgres";
@@ -87,6 +90,26 @@ export function createDatabase<
   }
 
   throw new Error(`[Brick-TS DB] Unsupported database engine: '${engine}'`);
+}
+
+/**
+ * Apply the migrations in a folder that have not run yet, in order, and record
+ * them in the database's `__drizzle_migrations` table. The folder is the one
+ * `brick db generate` (or drizzle-kit) writes: `<out>/<database name>`.
+ *
+ * @param database - A handle from `defineDatabase`.
+ * @param migrationsFolder - The folder holding `meta/_journal.json`.
+ * @example
+ * await migrateDatabase(database, "./drizzle/pages");
+ */
+export async function migrateDatabase(
+  database: DatabaseHandle<unknown>,
+  migrationsFolder: string,
+): Promise<void> {
+  const db = database.getDb() as any;
+  if (database.engine === "postgres")
+    await migratePostgres(db, { migrationsFolder });
+  else migrateSQLite(db, { migrationsFolder });
 }
 
 /** Attach a defined database. Schema changes remain the caller's responsibility. */
@@ -358,9 +381,69 @@ export function buildFtsMatchQuery(search: string): string | null {
 }
 
 /**
- * Explicit SQLite development/test schema preparation helper.
- * Never called by services, resources, auth, or server startup.
- * Not a migration runner; PostgreSQL schema management is caller-owned.
+ * The schema drizzle-kit reads: the tables, plus the Postgres schemas
+ * (namespaces) and enums they use, which drizzle-kit only creates when handed.
+ *
+ * @param tables - Drizzle tables, all of one engine.
+ * @returns A record to pass to drizzle-kit's API (`pushSchema`, `generateDrizzleJson`).
+ */
+export function drizzleSchema(
+  tables: readonly Table[],
+): Record<string, unknown> {
+  const schema: Record<string, unknown> = {};
+  for (const table of tables) {
+    // What getTableConfig(table).schema reads, for tables of any engine.
+    const namespace = (table as any)[Symbol.for("drizzle:Schema")] as
+      | string
+      | undefined;
+    schema[`table:${namespace ?? "public"}.${getTableName(table)}`] = table;
+    if (namespace && namespace !== "public")
+      schema[`schema:${namespace}`] = pgSchema(namespace);
+    for (const column of Object.values(getTableColumns(table)) as any[])
+      if (isPgEnum(column.enum))
+        schema[`enum:${column.enum.enumName}`] = column.enum;
+  }
+  return schema;
+}
+
+/** drizzle-kit's programmatic API, an optional peer dependency. */
+async function loadDrizzleKit(): Promise<typeof import("drizzle-kit/api")> {
+  // A variable specifier keeps `brick build` from bundling drizzle-kit (and
+  // every driver it can load) into the app server.
+  const specifier = "drizzle-kit/api";
+  let kit: typeof import("drizzle-kit/api");
+  try {
+    kit = await import(specifier);
+  } catch (err: any) {
+    throw new Error(
+      `[Brick-TS DB] Postgres schema tools need drizzle-kit: run \`bun add -d drizzle-kit\`, or use \`brick db push\`. (${err?.message ?? err})`,
+    );
+  }
+  // drizzle-kit assigns helpers to built-in prototypes when imported
+  // (Array.prototype.random, String.prototype.camelCase, ...). Hide them from
+  // for...in loops in this process, which break Elysia's AOT compiler among others.
+  for (const proto of [
+    Object.prototype,
+    Array.prototype,
+    String.prototype,
+    Function.prototype,
+  ])
+    for (const key of Reflect.ownKeys(proto))
+      if (Object.getOwnPropertyDescriptor(proto, key)?.enumerable)
+        Object.defineProperty(proto, key, { enumerable: false });
+  return kit;
+}
+
+/**
+ * Create the declared tables that do not exist yet. A development and test
+ * helper: never called by services, resources or server startup, and never
+ * changes a table that exists. Use `brick db generate` / `brick db migrate`
+ * for production schema changes.
+ *
+ * SQLite: `CREATE TABLE IF NOT EXISTS` per table, synchronously.
+ * Postgres: drizzle-kit (an optional peer dependency) writes the DDL for the
+ * missing tables, their enums, indexes and foreign keys, applied in one
+ * transaction. Returns a promise to await.
  */
 export function syncSchema(
   tablesOrService: Map<string, any> | any[] | Record<string, any> | Service,
@@ -406,15 +489,48 @@ export function syncSchema(
     return;
   }
 
-  // Postgres async mode
-  return (async () => {
-    for (const table of tables) {
-      try {
-        const _tableName = getTableName(table);
-        // Postgres sync or migration runner if configured
-      } catch (err: any) {
-        console.warn(`[Brick-TS DB] Postgres syncSchema error:`, err.message);
-      }
-    }
-  })();
+  return createMissingPostgresTables(db, tables);
+}
+
+async function createMissingPostgresTables(
+  db: any,
+  tables: Table[],
+): Promise<void> {
+  const kit = await loadDrizzleKit();
+  const rows: { schema: string; name: string }[] = await db.execute(
+    sql`select table_schema as schema, table_name as name from information_schema.tables`,
+  );
+  const present = new Set(rows.map((row) => `${row.schema}.${row.name}`));
+  const existing = tables.filter((table) => {
+    const { schema = "public", name } = getTableConfig(table as any);
+    return present.has(`${schema}.${name}`);
+  });
+  if (existing.length === tables.length) return;
+  // Diff the tables that exist against all of them: only the missing tables
+  // (and what only they use) come out, as CREATE statements.
+  const before = drizzleSchema(existing);
+  const after = drizzleSchema(tables);
+  // A namespace may exist without any of these tables: don't create it again.
+  const namespaces: { name: string }[] = await db.execute(
+    sql`select schema_name as name from information_schema.schemata`,
+  );
+  for (const { name } of namespaces)
+    if (after[`schema:${name}`])
+      before[`schema:${name}`] = after[`schema:${name}`];
+  // Likewise an enum that exists while only missing tables use it.
+  const enums: { schema: string; name: string }[] = await db.execute(
+    sql`select n.nspname as schema, t.typname as name from pg_type t join pg_namespace n on n.oid = t.typnamespace where t.typtype = 'e'`,
+  );
+  for (const { schema, name } of enums) {
+    const pgEnumValue = after[`enum:${name}`] as any;
+    if (pgEnumValue && (pgEnumValue.schema ?? "public") === schema)
+      before[`enum:${name}`] = pgEnumValue;
+  }
+  const statements = await kit.generateMigration(
+    kit.generateDrizzleJson(before),
+    kit.generateDrizzleJson(after),
+  );
+  await db.transaction(async (tx: any) => {
+    for (const statement of statements) await tx.execute(sql.raw(statement));
+  });
 }

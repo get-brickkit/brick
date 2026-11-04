@@ -209,6 +209,22 @@ jobs:
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
+      - name: Wait for the @brickkit packages it depends on
+        if: steps.published.outputs.skip != 'true'
+        working-directory: packages/${{ matrix.pkg }}
+        env:
+          PACKAGE_VERSION: ${{ steps.meta.outputs.version }}
+        # The matrix publishes in parallel: bullmq-world pins redis-world and cli
+        # needs core, so never publish one before the version it depends on.
+        run: |
+          for dep in $(node -p "Object.keys(require('./package.json').dependencies ?? {}).filter((name) => name.startsWith('@brickkit/')).join(' ')"); do
+            for attempt in $(seq 60); do
+              npm view "$dep@$PACKAGE_VERSION" version >/dev/null 2>&1 && continue 2
+              sleep 10
+            done
+            echo "::error::$dep@$PACKAGE_VERSION is not on npm; publish it first"
+            exit 1
+          done
       - name: Publish the validated tarball
         if: steps.published.outputs.skip != 'true'
         env:

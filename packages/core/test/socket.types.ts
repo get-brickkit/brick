@@ -85,6 +85,41 @@ createBrickClient({
 }).chat.live.connect({ reconnect: false });
 mobile.onGap((room: string) => void room);
 service.socket({
+  name: "typedErrors",
+  input: { say: t.String() },
+  output: {},
+  errors: {
+    TOO_LONG: { message: "Too long", details: t.Object({ max: t.Number() }) },
+  },
+  handlers: {
+    say({ error }) {
+      error.TOO_LONG(undefined, { max: 280 });
+      error.FORBIDDEN();
+      // @ts-expect-error details must match the schema
+      error.TOO_LONG(undefined, { max: "280" });
+    },
+  },
+});
+declare const typedContract: {
+  chat: {
+    typedErrors: BrickClientSocket<
+      { say: string },
+      {},
+      Record<"TOO_LONG", { message: string; status?: number }>
+    >;
+  };
+};
+createBrickClient({ baseUrl: "https://example.test", contract: typedContract })
+  .chat.typedErrors.connect()
+  .onHandlerError((failure) => {
+    const event: "say" = failure.event;
+    const details: unknown = failure.details;
+    void [event, details];
+    if (failure.code === "TOO_LONG" || failure.code === "FORBIDDEN") return;
+    // @ts-expect-error not a code this socket can raise
+    if (failure.code === "SLUG_EXISTS") return;
+  });
+service.socket({
   name: "replayed",
   input: {},
   output: {},

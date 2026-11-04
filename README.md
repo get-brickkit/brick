@@ -100,20 +100,6 @@ bun run check
 
 `bun run check` runs lint, format check, build, typecheck, and tests. The worlds' own tests need Redis and run separately with `bun run test:worlds` (point `REDIS_TEST_URL` at a server, or let it start a container). Each package also has `lint`, `lint:fix`, `format`, and `format:check`. Shared config lives in `.oxlintrc.json` and `.oxfmtrc.json`.
 
-## Release
-
-Releases run from a clean, up-to-date `main` checkout:
-
-```sh
-bun run release patch
-```
-
-The GitHub `publish-npm.yml` workflow stages candidate versions without changing Git refs. Its `validate` matrix builds, typechecks, tests, and packs `core`, `crud`, `cli`, `redis-world`, and `bullmq-world` separately. Only when all five validations pass does it publish each validated tarball. After all five npm publishes succeed, it commits and tags the version, then creates the GitHub release. A failed validation or publish does not create a release commit. No builds or tests run again inside the individual publish jobs, so a later test failure cannot leave only some packages published.
-
-Set `dry_run` to validate and pack the next version without creating a commit, tag, or npm release. Beta releases run from `beta`. If npm itself fails after some uploads, rerun the failed jobs for that same candidate; already-published package versions are skipped.
-
-The local `scripts/release.ts` command dispatches this same workflow, so it also waits for publication before creating a release commit. `--dry-run` previews the next version locally. The internal `--prepare` mode changes only package manifests and the lockfile for workflow validation.
-
 ## Star history
 
 [![Star History Chart](https://api.star-history.com/svg?repos=get-brickkit/brick&type=date&legend=top-left)](https://www.star-history.com/?repos=get-brickkit%2Fbrick&type=date&legend=top-left)

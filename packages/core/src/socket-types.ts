@@ -1,4 +1,9 @@
 import type { Static, TSchema } from "@sinclair/typebox";
+import type {
+  ActionErrorDefinition,
+  ActionExecutionError,
+  ErrorBuilder,
+} from "./types";
 
 export type SocketSchemas = Record<string, TSchema>;
 export type SocketPayloads<S extends SocketSchemas> = {
@@ -18,6 +23,7 @@ export interface BrickSocketConfig<
   I extends SocketSchemas,
   O extends SocketSchemas,
   Ctx,
+  E extends Record<string, ActionErrorDefinition> = {},
 > {
   name: string;
   path?: string;
@@ -38,11 +44,19 @@ export interface BrickSocketConfig<
   maxRooms?: number;
   /** Keep recent emits per room so a reconnecting client gets what it missed. Off by default. */
   replay?: SocketReplay;
+  /**
+   * Errors handlers may raise with `error.CODE()`, as an action declares them.
+   * A raised error, with a declared or standard code, reaches the client's
+   * `onHandlerError` and the connection stays open; anything else a handler
+   * throws, or any error deciding a join, closes it with `1011` and is logged.
+   */
+  errors?: E;
   handlers: {
     [K in keyof I]: (params: {
       input: Static<I[K]>;
       ctx: Ctx;
       socket: BrickSocketSender<SocketPayloads<O>>;
+      error: ErrorBuilder<E>;
     }) => void | Promise<void>;
   };
   open?: (params: {
@@ -157,9 +171,28 @@ export class BrickSocketError extends Error {
   }
 }
 
+/** The framework codes every socket handler can raise, besides its declared ones. */
+type StandardSocketErrorCode =
+  | "BAD_REQUEST"
+  | "UNAUTHORIZED"
+  | "FORBIDDEN"
+  | "NOT_FOUND"
+  | "CONFLICT"
+  | "INTERNAL_SERVER_ERROR";
+
+/** An error a socket handler raised with `error.CODE()`, for the message `event` it was handling. */
+export type BrickSocketHandlerError<
+  Input = unknown,
+  Errors = {},
+> = ActionExecutionError & {
+  event: keyof Input & string;
+  code: Extract<keyof Errors, string> | StandardSocketErrorCode;
+};
+
 export interface BrickSocketClient<
   Input,
   Output,
+  Errors = {},
 > extends BrickSocketSender<Input> {
   /** Resolves on the first open; rejects if the client closes before it. */
   readonly ready: Promise<void>;
@@ -179,19 +212,27 @@ export interface BrickSocketClient<
   /** Replay could not cover what this client missed in a room while away: refetch it. */
   onGap(listener: (room: string) => void): () => void;
   onError(listener: (error: BrickSocketError) => void): () => void;
+  /** A handler raised a declared error for a message this client sent. The connection stays open. */
+  onHandlerError(
+    listener: (error: BrickSocketHandlerError<Input, Errors>) => void,
+  ): () => void;
   onClose(
     listener: (info: { code: number; reason: string }) => void,
   ): () => void;
 }
 
 /** Browser metadata. Schemas retain TypeBox kinds as JSON-safe annotations. */
-export interface BrickClientSocket<Input = unknown, Output = unknown> {
+export interface BrickClientSocket<
+  Input = unknown,
+  Output = unknown,
+  Errors = {},
+> {
   kind: "socket";
   name: string;
   serviceName: string;
   config: { path: string };
   output: Record<string, unknown>;
-  readonly __types?: { input: Input; output: Output };
+  readonly __types?: { input: Input; output: Output; errors: Errors };
 }
 
 export interface BrickSocketSchema {

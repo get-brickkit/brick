@@ -1,0 +1,5 @@
+{
+  // Declaration build for dashboard/kit.ts. Kept at the package root so the
+  // TS 7 emit root covers ../src imports (else their .d.ts land in src/).
+  "extends": "./dashboard/tsconfig.json"
+}

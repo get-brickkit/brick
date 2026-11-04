@@ -98,6 +98,6 @@ export function createChatApp(
   app.all("/api/auth/*", ({ request }: { request: Request }) =>
     auth.handler(request),
   );
-  app.cleanup(() => store.close());
+  app.onStop(() => store.close());
   return app;
 }

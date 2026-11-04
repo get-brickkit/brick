@@ -1,6 +1,6 @@
 ---
 title: Database Migrations
-description: Database configuration in development and caller-owned PostgreSQL migrations.
+description: Database configuration in development and production migrations with brick db.
 ---
 
 <Callout type="info">
@@ -8,7 +8,7 @@ description: Database configuration in development and caller-owned PostgreSQL m
   Migrations](/docs/database)**.
 </Callout>
 
-Brick-TS uses explicit `syncSchema` helpers for SQLite in development and caller-owned migrations via Drizzle Kit for PostgreSQL.
+Brick-TS uses the explicit `syncSchema` helper in development and tests, and `brick db generate` / `brick db migrate` for production migrations on SQLite and PostgreSQL. See [Database Schema](/docs/brick-cli/db).
 
 Please see the canonical guide: **[Database Management & Migrations](/docs/database)**.
 

@@ -1,0 +1,79 @@
+---
+title: Database Schema
+description: Generate, apply and push schema changes for every table the app uses with brick db.
+---
+
+`brick db` manages the schema of your app's databases with [Drizzle Kit](https://orm.drizzle.team/docs/kit-overview). It loads the app the same way `brick gen client` does, so it sees the real tables, including those you never export from a schema file:
+
+- the tables passed to `defineDatabase({ tables })`, including the [outbox table](/docs/events),
+- the table of every resource (`service.resource({ table })`),
+- the tables [plugins](/docs/plugins/build-plugin#owned-tables) own.
+
+It works with Postgres and SQLite, and needs no `drizzle.config.ts`: the connection comes from the app's `defineDatabase` handle, so the same secrets and environment variables apply.
+
+```bash
+brick db generate [entry] [--out <dir>] [--name <name>] [--config <path>]
+brick db migrate  [entry] [--out <dir>] [--config <path>]
+brick db push     [entry] [--force] [--config <path>]
+```
+
+With a [`brick.config.ts`](/docs/brick-cli/config), the entry comes from the config file and the migrations folder defaults to `drizzle/` beside it. Each database writes to its own subfolder, named after `defineDatabase({ name })` or else the one service that uses it, such as `drizzle/pages/`. A handle that several services share needs a `name`.
+
+## Migrations for production
+
+Write a migration whenever the schema changes, commit it, and apply it on deploy:
+
+```bash
+# 1. Diff the app's tables against the last migration and write the SQL
+brick db generate --name add_title
+
+# 2. Apply the migrations that have not run yet
+brick db migrate
+```
+
+Output:
+
+```text
+pages (postgres): wrote drizzle/pages/0001_add_title.sql
+pages (postgres): migrations in drizzle/pages applied
+```
+
+`generate` writes the same folder layout as `drizzle-kit generate` (`0001_add_title.sql`, `meta/0001_snapshot.json` and `meta/_journal.json`), so the folder still works with Drizzle Kit and Drizzle's own migrator. Review the SQL before you commit it; edit it when you need a data migration. When a column looks renamed, Drizzle Kit asks whether it was renamed or replaced, so run `generate` in a terminal.
+
+`migrate` records applied migrations in the database's `__drizzle_migrations` table, so it is safe to run on every deploy. To migrate from code instead, for example at server startup, call `migrateDatabase`:
+
+```ts title="src/migrate.ts"
+import { migrateDatabase } from "@brickkit/core";
+import { database } from "./database";
+
+await migrateDatabase(database, "./drizzle/pages");
+```
+
+## Push for development
+
+`push` changes the database to match the app's tables directly, without migration files. Use it on a development database:
+
+```bash
+brick db push
+```
+
+It only touches the tables the app knows. Tables of other apps, and the SQLite search tables `ensureSQLiteFts` creates, are left alone. When a change would lose data (dropping a column or table), `push` prints what would be lost and stops; rerun it with `--force` to apply it.
+
+## Several databases
+
+Each `defineDatabase` handle is migrated on its own, in its own subfolder (`drizzle/billing/`, `drizzle/pages/`). The layout is the same for one database or several, so adding a database never moves another's migrations. Two handles with the same name would share a folder, so `brick db` refuses them. Give each physical database one handle and share it between the services that use it. `migrate` checks every database's migrations first, so a missing folder stops it before any database changes.
+
+## Tests and quick scripts
+
+For tests, `syncSchema` creates the tables that do not exist yet, without migration files. It never changes an existing table. On Postgres it uses Drizzle Kit, so install `drizzle-kit` (it comes with `@brickkit/cli`) and `await` it. `database.tables` holds only the tables given to `defineDatabase`; resource and plugin tables are in `service.tables`, so pass both:
+
+```ts title="test/setup.ts"
+import { syncSchema } from "@brickkit/core";
+import { database } from "../src/database";
+import { service } from "../src/service";
+
+await syncSchema(
+  [...Object.values(database.tables), ...service.tables.values()],
+  database.getDb(),
+);
+```

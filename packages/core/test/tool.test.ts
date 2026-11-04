@@ -59,6 +59,13 @@ describe("tools", () => {
         description: "Echo for the current user",
         annotations: { readOnlyHint: true, openWorldHint: false },
         inputSchema: echo.config.input,
+        // MCP needs an object outputSchema, so the string is wrapped.
+        outputSchema: {
+          type: "object",
+          properties: { result: echo.config.output },
+          required: ["result"],
+          "x-brick-wrap-result": true,
+        },
       },
     ]);
     expect(generateOpenApiSpec({ services: [service] }).paths).toEqual({});
@@ -171,6 +178,8 @@ describe("tools", () => {
     expect(success.result.content).toEqual([
       { type: "text", text: "hi:alice" },
     ]);
+    // A string output travels wrapped, matching its outputSchema.
+    expect(success.result.structuredContent).toEqual({ result: "hi:alice" });
     const denied = await (
       await handler(
         rpc("tools/call", { name: "echo", arguments: { message: "hi" } }),

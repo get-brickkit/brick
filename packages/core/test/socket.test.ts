@@ -1,7 +1,8 @@
-import { afterEach, expect, it } from "bun:test";
+import { afterEach, expect, it, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import {
+  ActionExecutionError,
   brick,
   defineService,
   resetGlobalRegistry,
@@ -101,6 +102,130 @@ for (const compiler of [true, false])
     live.close();
     expect(() => live.send("say", "again")).toThrow(BrickSocketError);
   });
+
+it("sends a declared handler error to the client and keeps the connection open", async () => {
+  const service = defineService("chat");
+  service.socket({
+    name: "live",
+    input: { say: t.String() },
+    output: { message: t.String() },
+    allowMissingOrigin: true,
+    errors: {
+      TOO_LONG: {
+        message: "Too long",
+        status: 422,
+        details: t.Object({ max: t.Number() }),
+      },
+    },
+    handlers: {
+      say: ({ input, socket, error }) => {
+        if (input === "crash") throw new Error("private failure");
+        if (input.length > 3) error.TOO_LONG(undefined, { max: 3 });
+        socket.send("message", input);
+      },
+    },
+  });
+  const api = createBrickClient({
+    baseUrl: start(service),
+    contract: contract as unknown as {
+      chat: {
+        live: BrickClientSocket<
+          { say: string },
+          { message: string },
+          Record<"TOO_LONG", { message: string }>
+        >;
+      };
+    },
+  });
+  const live = api.chat.live.connect({ reconnect: false });
+  const failed = new Promise<any>((resolve) => live.onHandlerError(resolve));
+  const received = new Promise((resolve) => live.on("message", resolve));
+  const closed = new Promise((resolve) =>
+    live.onClose(({ code }) => resolve(code)),
+  );
+  await live.ready;
+  live.send("say", "too long");
+  expect(await failed).toMatchObject({
+    name: "ActionExecutionError",
+    event: "say",
+    code: "TOO_LONG",
+    message: "Too long",
+    status: 422,
+    details: { max: 3 },
+  });
+  live.send("say", "ok");
+  expect(await received).toBe("ok");
+  expect(live.status).toBe("open");
+  const log = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    live.send("say", "crash");
+    expect(await closed).toBe(1011);
+  } finally {
+    log.mockRestore();
+  }
+});
+
+it("closes on an error code the socket does not declare, and logs it", async () => {
+  const service = defineService("chat");
+  service.socket({
+    name: "live",
+    input: { say: t.String() },
+    output: { message: t.String() },
+    allowMissingOrigin: true,
+    handlers: {
+      say: ({ input, error }) => {
+        if (input === "standard") error.FORBIDDEN();
+        // As a nested action's own code would arrive.
+        throw new ActionExecutionError("HTTP_ERROR", "Upstream failed", 502);
+      },
+    },
+  });
+  const live = createBrickClient({
+    baseUrl: start(service),
+    contract,
+  }).chat.live.connect({ reconnect: false });
+  const failed = new Promise<any>((resolve) => live.onHandlerError(resolve));
+  const closed = new Promise((resolve) =>
+    live.onClose(({ code }) => resolve(code)),
+  );
+  await live.ready;
+  // A standard code is part of every socket's errors.
+  live.send("say", "standard");
+  expect(await failed).toMatchObject({ event: "say", code: "FORBIDDEN" });
+  const log = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    live.send("say", "other");
+    expect(await closed).toBe(1011);
+    expect(JSON.stringify(log.mock.calls)).toContain("Upstream failed");
+  } finally {
+    log.mockRestore();
+  }
+});
+
+it("rejects the client's join when deciding it throws an action error", async () => {
+  const service = defineService("chat");
+  service.socket({
+    name: "live",
+    input: {},
+    output: { message: t.String() },
+    allowMissingOrigin: true,
+    join: () => {
+      throw new ActionExecutionError("FORBIDDEN", "No access", 403);
+    },
+    handlers: {},
+  });
+  const live = createBrickClient({
+    baseUrl: start(service),
+    contract,
+  }).chat.live.connect({ reconnect: false });
+  await live.ready;
+  const log = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    await expect(live.join("doc:1")).rejects.toBeInstanceOf(BrickSocketError);
+  } finally {
+    log.mockRestore();
+  }
+});
 
 it("resolves fresh context and rechecks authorization before every message", async () => {
   let active = true;
@@ -561,37 +686,6 @@ it("kicks only connections also in another room", async () => {
   live.emit("user:a", "message", "direct");
   expect(await fromB).toBe("doc");
   expect(await fromA).toBe("direct");
-});
-
-it("delivers once to connections on the current and v0.10 paths", async () => {
-  const service = defineService("chat");
-  const feed = service.socket({
-    name: "liveFeed",
-    input: {},
-    output: { message: t.String() },
-    allowMissingOrigin: true,
-    rooms: () => ["user:anon"],
-    handlers: {},
-  });
-  const app = brick({
-    services: [service],
-    prefix: "/v2",
-    docs: false,
-    requestLogging: false,
-    legacyRoutes: true,
-  }).listen(0);
-  apps.push(app);
-  const url = `http://localhost:${app.server!.port}/v2/chat`;
-  const current = await open(`${url}/live-feed`);
-  const legacy = await open(`${url}/liveFeed`);
-  const received: string[] = [];
-  for (const ws of [current, legacy])
-    ws.addEventListener("message", ({ data }) =>
-      received.push(JSON.parse(String(data)).data),
-    );
-  feed.emit("user:anon", "message", "once");
-  await Bun.sleep(20);
-  expect(received).toEqual(["once", "once"]);
 });
 
 it("refuses joins over the room cap and keeps server rooms", async () => {

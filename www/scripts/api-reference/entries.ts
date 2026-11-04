@@ -46,6 +46,22 @@ export const ENTRY_POINTS: EntryPoint[] = [
       "Postgres databases for Brick services, with Drizzle's table builders.",
   },
   {
+    slug: "core-workflow",
+    specifier: "@brickkit/core/workflow",
+    file: "packages/core/src/workflow.ts",
+    tsconfig: "packages/core/tsconfig.build.json",
+    description:
+      "Typed errors for workflow steps, safe to import in workflow code.",
+  },
+  {
+    slug: "core-testing",
+    specifier: "@brickkit/core/testing",
+    file: "packages/core/src/testing.ts",
+    tsconfig: "packages/core/tsconfig.build.json",
+    description:
+      "createTestApp: an app per test with a typed client and a cleanup.",
+  },
+  {
     slug: "cli",
     specifier: "@brickkit/cli",
     file: "packages/cli/src/index.ts",
@@ -58,7 +74,8 @@ export const ENTRY_POINTS: EntryPoint[] = [
     specifier: "@brickkit/cli/compiler",
     file: "packages/cli/src/compiler.ts",
     tsconfig: "packages/cli/tsconfig.build.json",
-    description: "Compile and bind a Brick application's routes ahead of time.",
+    description:
+      "Emit the JavaScript module of a compiled application's route handlers, and each handler factory, for an ahead-of-time build.",
   },
   {
     slug: "cli-dashboard",

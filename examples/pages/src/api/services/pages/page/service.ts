@@ -9,15 +9,20 @@ export * from "./model";
 
 // 2. Define Service with the shared Postgres database + better-auth session loading.
 // The context resolver runs once per request: it reads the session cookie
-// (or bearer token) via better-auth and injects user/session for all actions.
+// via better-auth and injects user/session for all actions. An MCP call
+// arrives with its access token's user already set (see ../../../mcp.ts), so
+// that one is kept instead of being reset by the missing cookie.
 export const pagesService = defineService("pages", {
-  context: async ({ request }) => {
-    const session = await getAuth().api.getSession({
-      headers: request.headers,
-    });
+  context: async ({ request, user }) => {
+    const session = user
+      ? null
+      : await getAuth().api.getSession({ headers: request.headers });
     return {
       session: session?.session ?? null,
-      user: session?.user ?? null,
+      user:
+        (user as NonNullable<typeof session>["user"] | undefined) ??
+        session?.user ??
+        null,
     };
   },
   database: appDb,
@@ -66,8 +71,8 @@ export const pagesResource = pagesService
             : eq(pagesTable.userId, (ctx as { user: { id: string } }).user.id),
       },
       hooks: {
-        beforeCreate: async ({ data, ctx }) => {
-          const exists = await ctx.db
+        beforeCreate: async ({ data, ctx, tx }) => {
+          const exists = await tx
             .select()
             .from(pagesTable)
             .where(eq(pagesTable.slug, String(data.slug)));

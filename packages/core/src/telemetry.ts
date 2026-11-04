@@ -86,20 +86,17 @@ export function traceRoute<T>(
  * Wrap one HTTP request in a server span. The span continues the caller's
  * trace when a W3C `traceparent` arrives. Without an `x-trace-id` header, the
  * request id Brick returns is the span's trace id, so clients can find the
- * request in the dashboard. `extra` adds attributes, such as
- * `brick.legacy_route` on a v0.10 path.
+ * request in the dashboard.
  */
 export function traceHttpRequest<T>(
   request: HttpContext,
   method: string,
   route: string,
   fn: () => T,
-  extra?: Attributes,
 ): T {
   const attributes: Attributes = {
     "http.request.method": method,
     "http.route": route,
-    ...extra,
   };
   if (request.request) {
     attributes["url.path"] = new URL(request.request.url).pathname;

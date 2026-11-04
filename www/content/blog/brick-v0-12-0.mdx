@@ -1,0 +1,266 @@
+---
+title: "Brick v0.12: production-ready on Postgres"
+description: "brick db migrations, syncSchema on Postgres and cursor pagination, plus brick({ cors }), typed errors for workflow steps and sockets, createTestApp, CI on real Postgres and Redis, and every breaking change."
+date: "2026-11-04"
+category: release
+version: "0.12.0"
+---
+
+v0.11 gave Brick its shape. v0.12 is about running it in production, and it started from three things we kept hitting once real apps moved to Postgres:
+
+- **Postgres schema was your problem.** `syncSchema` did nothing on Postgres, and every app carried its own Drizzle Kit config next to the tables Brick already knew.
+- **Every app wired CORS by hand.** It was a page of glue, and easy to get wrong.
+- **Errors lost their types at the edges.** Actions had typed errors; workflow steps and socket handlers threw strings.
+
+This release fixes all three, and drops what v0.11 kept only for compatibility.
+
+| Item             | Value                                                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------------------------ |
+| Previous release | `v0.11.0`                                                                                              |
+| Current release  | `v0.12.0`                                                                                              |
+| Packages         | `@brickkit/core`, `@brickkit/crud`, `@brickkit/cli`, `@brickkit/redis-world`, `@brickkit/bullmq-world` |
+
+There are breaking changes. They're all listed at the [end of this post](#every-breaking-change), each with what to do.
+
+## 1. Postgres: migrations, schema sync and cursors
+
+### `brick db`
+
+Three commands manage the schema of every database your app uses:
+
+```bash
+brick db generate --name add_title   # diff the tables against the last migration, write the SQL
+brick db migrate                     # apply the migrations that have not run yet
+brick db push                        # development: make the database match, no migration files
+```
+
+```text
+pages (postgres): wrote drizzle/pages/0001_add_title.sql
+pages (postgres): migrations in drizzle/pages applied
+```
+
+`brick db` loads your app the way `brick gen client` does, so it sees the real tables: the ones passed to `defineDatabase`, every resource table, the outbox table and the tables plugins own. It needs no `drizzle.config.ts` and no schema file, and the connection comes from the app's `defineDatabase` handle.
+
+- **One layout.** `generate` writes Drizzle Kit's folder layout (`0001_add_title.sql`, `meta/_journal.json`), so Drizzle Kit and Drizzle's migrator still read it.
+- **Safe to repeat.** `migrate` records what ran in `__drizzle_migrations`, so it can run on every deploy.
+- **Careful push.** `push` only touches the tables the app knows, and stops before a change that drops data unless you pass `--force`.
+- **One folder per database.** Each database gets its own subfolder (`drizzle/pages/`, `drizzle/billing/`), even when there is only one, so adding a database never moves the existing migrations.
+
+To migrate from code instead, at startup or in a deploy script:
+
+```ts
+import { migrateDatabase } from "@brickkit/core";
+import { database } from "./database";
+
+await migrateDatabase(database, "./drizzle/pages");
+```
+
+### `syncSchema` on Postgres
+
+`syncSchema` used to be a no-op on Postgres. It now creates the tables that don't exist yet, with their enums, indexes and foreign keys, in one transaction. As on SQLite, it never changes a table that exists, so it stays a helper for tests and scripts:
+
+```ts
+await syncSchema(database.tables, database.getDb());
+```
+
+It uses Drizzle Kit's programmatic API. `drizzle-kit` is an optional peer dependency of `@brickkit/core` and comes with `@brickkit/cli`; without it, `syncSchema` throws and points you to `brick db push`.
+
+### Cursor pagination
+
+Offset pages get slow deep into a list, and they skip or repeat rows when rows are added in between. CRUD `list` now pages by cursor too. Pass `cursor: null` for the first page, then the `nextCursor` of the previous one:
+
+```ts
+const first = await api.pages.page.list({
+  orderBy: [{ field: "publishedAt", direction: "desc" }],
+  limit: 20,
+  cursor: null,
+});
+
+const second = await api.pages.page.list({
+  orderBy: [{ field: "publishedAt", direction: "desc" }],
+  limit: 20,
+  cursor: first.nextCursor,
+});
+```
+
+Rows are ordered by the `orderBy` fields and then by the ID, so ties never repeat or skip a row. A cursor made for another `orderBy`, or one that was edited, fails with `BAD_REQUEST`. `nextCursor` is `null` on the last page, which is exactly what TanStack's `getNextPageParam` wants. Offset pagination is unchanged.
+
+## 2. CORS and structured MCP results
+
+### `brick({ cors })`
+
+```ts
+brick({
+  services,
+  cors: { origin: "https://app.example.com", credentials: true },
+});
+```
+
+`origin` takes `true` (the app's own origin, the default), an exact origin, a list, or a predicate `(origin, request) => boolean` for rules such as preview deployments. An allowed origin is echoed with `Vary: Origin`. Any other origin gets no CORS headers, so the browser blocks it. Brick never reflects an origin the rule doesn't allow, and `"*"` is refused at startup.
+
+Preflights are answered with `204` before routing. Error responses carry the headers too, so the browser can read the error.
+
+### Structured MCP results
+
+`createMcpHandler`'s `tools/list` now gives every tool with an `output` schema an `outputSchema`, and `tools/call` returns the result as `structuredContent` as well as text. Agents get typed results instead of parsing prose. MCP requires an object schema, so a tool whose output is a string, array or union is described as `{ result: <schema> }` and returns `{ result: value }`.
+
+## 3. Typed errors for workflow steps and sockets
+
+### Workflow steps
+
+A step declares the errors it can raise, and the workflow reads them back typed:
+
+```ts
+import {
+  defineError,
+  stepErrors,
+  stepFailure,
+  t,
+} from "@brickkit/core/workflow";
+
+export const carrierErrors = {
+  ...defineError("CARRIER_REJECTED", {
+    status: 422,
+    message: "The carrier refused the parcel",
+    details: t.Object({ reason: t.String() }),
+  }),
+};
+const error = stepErrors(carrierErrors);
+
+export async function fulfilOrder(event: WorkflowEvent<Shipped>) {
+  "use workflow";
+  try {
+    await bookCarrier(event.payload.id);
+  } catch (caught) {
+    const failure = stepFailure(caught, carrierErrors);
+    if (failure.code !== "CARRIER_REJECTED") throw caught;
+    await tellSupport(event.payload.id, failure.details.reason);
+  }
+}
+
+async function bookCarrier(orderId: string) {
+  "use step";
+  const booking = await useDeps(ordersDeps).carrier.book(orderId);
+  if (!booking.ok)
+    error.CARRIER_REJECTED(undefined, { reason: booking.reason });
+}
+```
+
+A declared error is an outcome, not a glitch, so the Workflow SDK doesn't retry the step. The workflow's `await` rejects at once. `stepFailure` returns the same union a listener's `retry` receives, plus `UNKNOWN` for anything else. The SDK keeps only an error's name, message, stack and cause, so Brick carries the code and details in the cause, and you check failures with `stepFailure` rather than `instanceof`.
+
+Workflow code runs in the SDK's sandbox, without Node modules. So the helpers live in a new `@brickkit/core/workflow` entry, with `defineError` and `t` and no server imports. `defineError` is still exported from `@brickkit/core` too.
+
+### Sockets
+
+A socket declares `errors` like an action, and its handlers raise them:
+
+```ts
+chat.socket({
+  name: "live",
+  input: { say: t.Object({ text: t.String() }) },
+  output: { message: t.Object({ text: t.String() }) },
+  errors: { ...TooLong },
+  handlers: {
+    say: ({ input, socket, error }) => {
+      if (input.text.length > 280) error.TOO_LONG(undefined, { max: 280 });
+      socket.send("message", input);
+    },
+  },
+});
+
+// client
+live.onHandlerError((error) => {
+  if (error.code === "TOO_LONG") showLimit(error.details);
+});
+```
+
+The connection stays open. The client gets an `ActionExecutionError` with the input `event` it answers, and the generated contract carries the socket's codes, so `error.code` is typed. Anything else a handler throws still closes the connection with `1011`.
+
+### Plugin workflow listeners
+
+`listeners()` in a plugin's `app` part used to refuse workflow listeners, because their steps would see the app's deps. The runtime now picks the deps per workflow, so `useDeps()` in a plugin workflow's steps returns the plugin's deps. A workflow run by listeners with different deps fails at start instead of guessing.
+
+## 4. Testing and CI
+
+`@brickkit/core/testing` builds an app per test, with a typed client that calls `app.handle` directly. No port, so tests run in parallel:
+
+```ts
+import { expect, test } from "bun:test";
+import { defineService, t } from "@brickkit/core";
+import { createTestApp } from "@brickkit/core/testing";
+
+test("ships an order", async () => {
+  const { client, cleanup } = createTestApp(() => {
+    const orders = defineService("orders");
+    const ship = orders.action({
+      name: "ship",
+      input: t.Object({ id: t.String() }),
+      execute: ({ input }) => ({ tracking: `trk_${input.id}` }),
+    });
+    return { services: [orders], contract: { orders: { ship } } };
+  });
+
+  expect(await client.orders.ship({ id: "o1" })).toEqual({
+    tracking: "trk_o1",
+  });
+  await cleanup();
+});
+```
+
+Pass a function and Brick empties the service registry before it runs, so tests that define a service with the same name don't clash. `createTestApp` takes everything `brick()` takes, so fakes go in `deps`. It also returns a `fetch` for raw requests.
+
+Brick itself now runs CI on every pull request, against real Postgres and Redis services. The Postgres outbox, CRUD transaction and cursor tests, the Redis socket broker tests and the events example's workflow tests all run there, not only on our machines.
+
+## 5. Upgrades
+
+- **Elysia 2.0 RC.** Brick runs on `elysia@2.0.0-rc.1`, where lifecycle hooks are `on*` again. That only matters if you add Elysia hooks to the app yourself: see [the table](#every-breaking-change).
+- **TypeScript 7.** The packages build and type-check with TypeScript 7.
+- **drizzle-orm is a peer dependency** of `@brickkit/core` and `@brickkit/crud`. Your app and Brick now share one copy, so tables built with `drizzle-orm/pg-core` work as well as those from `@brickkit/core/pg`. The Pages example dropped the script that rewrote Better Auth's generated schema for exactly that reason.
+- **Everything else on latest,** including postgres.js 4 and OpenTelemetry SDK 3. The world packages stay on Vitest 4, which `@workflow/world-testing` requires.
+- **The world packages share their code.** `@brickkit/bullmq-world` carried a copy of `@brickkit/redis-world`'s storage, streams and retention. It now depends on redis-world instead: about 4,000 lines of source and 3,700 of tests live once. Both packages' public exports are unchanged.
+
+## Upgrade checklist
+
+1. Add `drizzle-orm` to your app's dependencies if it isn't there.
+2. Remove `legacyRoutes` from `brick()`.
+3. Import `brick` and the rest of the runtime from `@brickkit/core`, not `@brickkit/cli`.
+4. Delete the `auth`, `rateLimit`, `cache`, `resilience`, `telemetry` and `lifecycle` options from `defineService`.
+5. Rename Elysia hooks you call on the app (`app.request` → `app.onRequest`, `app.cleanup` → `app.onStop`).
+6. Replace hand-written CORS with `brick({ cors })`.
+7. Switch Postgres schema changes to `brick db generate` and `brick db migrate`.
+
+The [Migrating to v0.12](/docs/routes#migrating-to-v012) guide covers the same steps.
+
+## Every breaking change
+
+Most of these remove what v0.11 kept for compatibility. Before and after:
+
+```ts
+// v0.11
+import { brick } from "@brickkit/cli";
+
+const pages = defineService("pages", { database, rateLimit, cache });
+const app = brick({ services: [pages], legacyRoutes: true });
+app.request(handleCors);
+app.cleanup(() => store.close());
+
+// v0.12
+import { brick } from "@brickkit/core";
+
+const pages = defineService("pages", { database });
+const app = brick({
+  services: [pages],
+  cors: { origin: "https://app.example.com", credentials: true },
+});
+app.onStop(() => store.close());
+```
+
+| Change                                                                                                                                                                                             | What to do                                                                                                                   |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `brick({ legacyRoutes })` is removed, and the v0.10 paths are no longer served. `ActionRoute.legacyPath` and the `legacyPath` export are gone.                                                     | Remove the option. Clients must call the current `/prefix/service/…` URLs.                                                   |
+| `@brickkit/cli` no longer re-exports the runtime (`brick`, `BrickApp`, `CreateServerOptions`, the endpoint, docs and request-logging helpers, the compiler runtime).                               | Import them from `@brickkit/core`. `@brickkit/cli/compiler` exports only `emitCompiledApplication` and `emitHandlerFactory`. |
+| `defineService` no longer accepts `auth`, `rateLimit`, `cache`, `resilience`, `telemetry` or `lifecycle`, and their option types are gone. They never had an effect.                               | Delete them. Use `authorize` and `access` for access control, and `brick({ telemetry })` for tracing.                        |
+| `drizzle-orm` is a peer dependency of `@brickkit/core` and `@brickkit/crud`.                                                                                                                       | Add `drizzle-orm` (`^0.45.2`) to your app.                                                                                   |
+| Brick runs on Elysia `2.0.0-rc.1`, where hooks are `on*`: `request`, `beforeHandle`, `afterHandle`, `error` and `cleanup` are `onRequest`, `onBeforeHandle`, `onAfterHandle`, `onError`, `onStop`. | Rename the hooks you call on the app, and bump `elysia` if your app depends on it directly.                                  |
+| `@brickkit/core` depends on postgres.js 4.                                                                                                                                                         | Check the postgres.js 4 notes if you use the client (`db.$client`) directly.                                                 |
+| An `ActionExecutionError` thrown in a socket handler reaches the client as a handler error, and the connection stays open. It used to close with `1011`.                                           | Handle it in `onHandlerError`, or throw another error to close the connection.                                               |

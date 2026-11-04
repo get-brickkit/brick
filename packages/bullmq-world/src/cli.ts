@@ -1,4 +1,4 @@
-import { loadOptionalEnvFile } from "./internal/env.js";
+import { loadOptionalEnvFile } from "@brickkit/redis-world/internal";
 import { Redis } from "ioredis";
 
 async function setupRedis() {

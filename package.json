@@ -16,9 +16,9 @@
     "check": "bun run lint && bun run format:check && bun run build && bun run typecheck && bun run build:worlds && bun run typecheck:worlds && bun run test",
     "build": "bun run --filter @brickkit/core build && bun run --filter @brickkit/crud build && bun run --filter @brickkit/cli build",
     "release": "bun scripts/release.ts",
-    "test": "bun test packages examples/extensions/test examples/events/test examples/websocket/test scripts --path-ignore-patterns='**/*-world/**'",
+    "test": "bun test packages examples/extensions/test examples/websocket/test scripts --path-ignore-patterns='**/*-world/**' && bun run --cwd examples/events test",
     "typecheck": "bun run --filter @brickkit/core typecheck && bun run --filter @brickkit/crud typecheck && bun run --filter @brickkit/cli typecheck && bun run --filter @brickkit/workflow-inspector typecheck",
-    "build:worlds": "bun run --filter '@brickkit/*-world' build",
+    "build:worlds": "bun run --filter @brickkit/redis-world build && bun run --filter @brickkit/bullmq-world build",
     "typecheck:worlds": "bun run --filter '@brickkit/*-world' typecheck",
     "test:worlds": "bun run --filter '@brickkit/*-world' test",
     "lint": "oxlint .",
@@ -31,17 +31,27 @@
     "pages:build": "bun run build && bun run --cwd examples/pages build"
   },
   "overrides": {
-    "drizzle-orm": "0.45.2",
+    "@hono/node-server": "2.1.6",
+    "@workflow/world-local": {
+      "undici": "7.30.1"
+    },
+    "@workflow/world-vercel": {
+      "undici": "7.30.1"
+    },
+    "drizzle-orm": "0.45.4",
     "esbuild": "0.28.2",
-    "mdast-util-to-markdown": "2.1.2",
-    "postcss-selector-parser": "7.1.6"
+    "fflate": "0.7.5",
+    "hono": "4.13.16",
+    "mdast-util-to-markdown": "2.2.2",
+    "postcss-selector-parser": "7.1.7",
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@types/bun": "^1.4.3",
-    "elysia": "2.0.0-beta.29",
+    "@types/bun": "^1.4.4",
+    "elysia": "2.0.0-rc.1",
     "lefthook": "^2.2.2",
-    "oxfmt": "^0.73.0",
-    "oxlint": "^1.88.0",
-    "typescript": "^5.7.0"
+    "oxfmt": "^0.76.0",
+    "oxlint": "^1.91.0",
+    "typescript": "^7.0.2"
   }
 }

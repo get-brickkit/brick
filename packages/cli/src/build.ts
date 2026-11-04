@@ -1,6 +1,7 @@
 import { mkdtemp, mkdir, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { compileBrickApplication, emitCompiledApplication } from "./compiler";
+import { compileBrickApplication } from "@brickkit/core";
+import { emitCompiledApplication } from "./compiler";
 import { brickAot } from "./compiler/aot";
 import { loadBrickApp } from "./app-entry";
 import { buildAppWorkflows, workflowTransformPlugin } from "./workflows";

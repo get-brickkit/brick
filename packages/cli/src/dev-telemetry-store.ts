@@ -43,8 +43,6 @@ export interface TraceSummary {
   action?: string;
   /** Why it failed, when it did. */
   message?: string;
-  /** The request used a v0.10 path that `brick({ legacyRoutes: true })` still serves. */
-  legacyRoute?: boolean;
   spans: TraceSpan[];
 }
 
@@ -494,11 +492,6 @@ function summarize(entry: TraceEntry): TraceSummary {
     service: stringAttribute(actionSpan?.attributes, "brick.service"),
     action: stringAttribute(actionSpan?.attributes, "brick.action"),
     message: entry.message,
-    ...(entry.spans.get(entry.rootSpanId ?? "")?.attributes[
-      "brick.legacy_route"
-    ] === true
-      ? { legacyRoute: true }
-      : {}),
     spans,
   };
 }

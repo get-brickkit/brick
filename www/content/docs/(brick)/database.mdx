@@ -1,9 +1,9 @@
 ---
 title: Database Management & Migrations
-description: Configure SQLite and PostgreSQL databases, development sync, and production migrations.
+description: Configure SQLite and PostgreSQL databases, development sync, and production migrations with brick db.
 ---
 
-Brick-TS provides database configuration handles for SQLite and PostgreSQL, with development table synchronization and caller-owned production migrations via Drizzle ORM.
+Brick-TS provides database configuration handles for SQLite and PostgreSQL, with development table synchronization and production migrations through `brick db`, which wraps Drizzle Kit.
 
 ## Minimal Example
 
@@ -99,16 +99,22 @@ export const postgresDb = defineDatabase({
 | `url`         | Postgres | `undefined`  | PostgreSQL connection string URL (`postgres://...`) or `SecretRef`. Falls back to `DATABASE_URL` when omitted. |
 | `ssl`         | Postgres | `undefined`  | SSL mode or certificate configuration.                                                                         |
 
-## SQLite Schema Synchronization (`syncSchema`)
+## Development Schema Synchronization (`syncSchema`)
 
-For local development and unit tests, Brick provides an explicit schema preparation utility:
+For local development and unit tests, `syncSchema` creates the declared tables that do not exist yet. It never changes a table that exists:
 
 ```ts title="src/setup.ts"
 import { syncSchema } from "@brickkit/core";
 import { usersService } from "./services/users";
 
-// Automatically generates SQLite DDL and creates tables if they don't exist:
+// SQLite: runs CREATE TABLE IF NOT EXISTS for each table, synchronously.
 syncSchema(usersService);
+```
+
+On PostgreSQL, `syncSchema` returns a promise. It uses Drizzle Kit's programmatic API to write the DDL for the missing tables, with their enums, indexes and foreign keys, and applies it in one transaction. `drizzle-kit` is an optional peer dependency of `@brickkit/core` (it comes with `@brickkit/cli`); without it, `syncSchema` throws and points you to `brick db push`:
+
+```ts title="test/setup.ts"
+await syncSchema(database.tables, database.getDb());
 ```
 
 <Callout type="warn">
@@ -117,44 +123,27 @@ syncSchema(usersService);
   server boot. Do not call `syncSchema` in production environments.
 </Callout>
 
-## Production Schema Migrations (PostgreSQL)
+## Production Schema Migrations (`brick db`)
 
-In production, database migrations are **caller-owned**. Manage migrations with Drizzle Kit:
-
-### 1. Configure Drizzle Kit
-
-Create `drizzle.config.ts` in your project root:
-
-```ts title="drizzle.config.ts"
-import { defineConfig } from "drizzle-kit";
-
-export default defineConfig({
-  schema: "./src/schema/**/*.ts",
-  out: "./drizzle",
-  dialect: "postgresql",
-  dbCredentials: {
-    url: process.env.DATABASE_URL!,
-  },
-});
-```
-
-### 2. Generate and Apply Migrations
-
-Use standard Drizzle Kit commands in your deployment pipeline:
+In production, change the schema with migrations. [`brick db`](/docs/brick-cli/db) wraps Drizzle Kit and reads the tables from your app, so it needs no `drizzle.config.ts` and no schema file:
 
 ```bash
-# 1. Generate migration SQL files from schema diffs
-bunx drizzle-kit generate
+# 1. Generate migration SQL from the schema changes since the last migration
+brick db generate --name add_users
 
-# 2. Apply pending migrations to the target database
-bunx drizzle-kit migrate
+# 2. Apply pending migrations to the database the app is configured for
+brick db migrate
 ```
+
+It covers every table Brick knows on each database: the tables passed to `defineDatabase`, resource tables, plugin tables and the [outbox table](/docs/events). Each database gets a subfolder of the migrations folder (`drizzle/` by default), named after the database, in Drizzle Kit's layout, so `drizzle-kit` and Drizzle's migrator read it too. To apply migrations from code, call `migrateDatabase(database, "./drizzle/<name>")`.
+
+On a development database, `brick db push` applies the changes directly without migration files, and refuses changes that drop data unless you pass `--force`.
 
 This workflow gives you full version control, rollback inspection, and zero runtime lock-in.
 
 ### Tables owned by plugins
 
-A plugin made with `definePlugin` can own tables (such as `page_comments`). Brick adds them to the host service's database, so `syncSchema` creates them and `database.tables` lists them. For Drizzle Kit, export them by name from a schema file that imports your services, and run it with Bun: `bunx --bun drizzle-kit generate`. See [Owned tables](/docs/plugins/build-plugin#owned-tables).
+A plugin made with `definePlugin` can own tables (such as `page_comments`). Brick adds them to the host service's database, so `syncSchema` creates them, `database.tables` lists them, and `brick db generate` includes them in migrations. See [Owned tables](/docs/plugins/build-plugin#owned-tables).
 
 ## Secondary Indexes and Search Optimizations
 

@@ -166,6 +166,42 @@ Socket connections require the runtime `contract` option. A type-only contract c
 
 Unknown events, incorrect payloads, and reversed message directions fail TypeScript checking. Incoming server messages are also validated before listeners receive them.
 
+## Typed errors
+
+A socket declares `errors` as an action does, and its handlers raise them with `error.CODE()`. The standard codes (`BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`, `INTERNAL_SERVER_ERROR`) are always there:
+
+```ts
+const TooLong = defineError("TOO_LONG", {
+  status: 422,
+  message: "Message too long",
+  details: t.Object({ max: t.Number() }),
+});
+
+chat.socket({
+  name: "live",
+  input: { say: t.Object({ text: t.String() }) },
+  output: { message: t.Object({ text: t.String() }) },
+  errors: { ...TooLong },
+  handlers: {
+    say: ({ input, socket, error }) => {
+      if (input.text.length > 280) error.TOO_LONG(undefined, { max: 280 });
+      socket.send("message", input);
+    },
+  },
+});
+```
+
+The client receives the error in `onHandlerError`, and the connection stays open:
+
+```ts
+live.onHandlerError((error) => {
+  // error.event is "say"; error.code is "TOO_LONG" or a standard code.
+  if (error.code === "TOO_LONG") showLimit(error.details);
+});
+```
+
+The error is an `ActionExecutionError` with `code`, `message`, `status`, `details` and the input `event` it answers. The generated contract carries the socket's codes, so `error.code` is typed. Only an `ActionExecutionError` whose code the socket declares, or a standard code, reaches the client. Anything else a handler throws, including an action error with another code (from a nested action, say), closes the connection with `1011` and stays in the server logs. So does an error while Brick decides a room join or leave; the client's pending `join()` calls then reject.
+
 ## Authorization and origins
 
 Brick resolves context and runs `authorize` before upgrading, then repeats both before every message handler. A resolver that checks the current session store can reject a revoked session on the next message. The request headers remain those of the original handshake; a reconnect sends fresh ones.
@@ -272,7 +308,7 @@ Brick processes message handlers in arrival order within each connection. Separa
 
 Only JSON-compatible TypeBox schemas are supported. Transforms, custom formats, non-JSON types such as `Date`, and unresolved schema references fail during declaration or generation. Use strings for dates and encode application values before sending them. Self-contained recursive schemas retain their validation metadata in generated contracts.
 
-Unknown input events and invalid payloads close with `1008`. Malformed JSON closes with `1007`, binary frames with `1003`, and overloaded queues with `1013`. Oversized messages close with `1009` when Brick detects them; frames rejected by the native transport can appear as an abnormal `1006` close. Unexpected handler errors and invalid server output close with `1011`; detailed errors stay in server logs. The browser client closes invalid server messages with the application code `4000` and reports a protocol error.
+Unknown input events and invalid payloads close with `1008`. Malformed JSON closes with `1007`, binary frames with `1003`, and overloaded queues with `1013`. Oversized messages close with `1009` when Brick detects them; frames rejected by the native transport can appear as an abnormal `1006` close. Unexpected handler errors and invalid server output close with `1011`; detailed errors stay in server logs. Declared handler errors do not close the connection: they reach [`onHandlerError`](#typed-errors). The browser client closes invalid server messages with the application code `4000` and reports a protocol error.
 
 `send()` means the local connection accepted the message. It does not acknowledge remote processing. Sending before `ready`, while reconnecting, or after closure throws. Brick does not buffer messages sent while disconnected.
 

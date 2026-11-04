@@ -92,8 +92,6 @@ Brick: duplicate action "ship" in service "orders"
 
 The same name defined again from the same file replaces the old definition. That is how `brick dev` reloads an edited file.
 
-`ServiceOptions` also declares `auth`, `rateLimit`, `cache`, `resilience`, `telemetry`, and `lifecycle`. The runtime doesn't act on them today: no lifecycle hooks run and no rate limits or auth defaults are enforced. They're only echoed in the service's introspection output (`/_brick/services`). Enforce access with `authorize` on actions and `access` on CRUD resources.
-
 ## Actions (`service.action` / `defineAction`)
 
 Actions are the core unit of compute in Brick-TS. Every action is registered with TypeBox schemas and an execution function.

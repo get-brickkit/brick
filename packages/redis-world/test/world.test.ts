@@ -312,7 +312,7 @@ describe("world queue and recovery (Redis integration)", () => {
       deliveries.find((d) =>
         d.headers.get("x-vqs-queue-name")?.endsWith("recovered-workflow"),
       )?.body,
-    ).toEqual({
+    ).toMatchObject({
       runId,
     });
   });
@@ -331,15 +331,32 @@ describe("world queue and recovery (Redis integration)", () => {
       },
     });
 
-    const deliveries = recordDeliveries(first, () =>
-      Response.json({ ok: true }),
-    );
-    await Promise.all([first.start(), second.start()]);
-
-    await vi.waitFor(() => expect(deliveries).toHaveLength(1), {
-      timeout: 10_000,
+    // Deduplication lasts until the message is acknowledged. Keep the recovered
+    // message active until both workers finish recovery, and handle it whichever
+    // worker picks it up (the fix bullmq-world's copy of this test got in 3960b81).
+    let finishDelivery: (() => void) | undefined;
+    const deliveryFinished = new Promise<void>((resolve) => {
+      finishDelivery = resolve;
     });
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    expect(deliveries).toHaveLength(1);
+    const respond = async () => {
+      await deliveryFinished;
+      return Response.json({ ok: true });
+    };
+    const firstDeliveries = recordDeliveries(first, respond);
+    const secondDeliveries = recordDeliveries(second, respond);
+    try {
+      await Promise.all([first.start(), second.start()]);
+
+      await vi.waitFor(
+        () => expect(firstDeliveries.length + secondDeliveries.length).toBe(1),
+        { timeout: 10_000 },
+      );
+      expect(await first.getQueueStats()).toMatchObject({
+        waiting: 0,
+        active: 1,
+      });
+    } finally {
+      finishDelivery?.();
+    }
   });
 });

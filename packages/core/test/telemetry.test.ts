@@ -17,10 +17,10 @@ import {
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import {
-  BasicTracerProvider,
+  TracerProvider,
   InMemorySpanExporter,
   SimpleSpanProcessor,
-} from "@opentelemetry/sdk-trace-base";
+} from "@opentelemetry/sdk-trace";
 import { sql } from "drizzle-orm";
 import postgres from "postgres";
 import {
@@ -37,8 +37,8 @@ const exporter = new InMemorySpanExporter();
 
 beforeAll(() => {
   trace.setGlobalTracerProvider(
-    new BasicTracerProvider({
-      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    new TracerProvider({
+      spanProcessors: [new SimpleSpanProcessor({ exporter })],
     }),
   );
   context.setGlobalContextManager(
@@ -129,31 +129,6 @@ describe("telemetry spans", () => {
     expect(action.attributes["brick.action"]).toBe("getUser");
     expect(root.attributes["http.response.status_code"]).toBe(200);
     expect(root.status.code).toBe(SpanStatusCode.UNSET);
-  });
-
-  it("marks calls to v0.10 paths with brick.legacy_route", async () => {
-    resetGlobalRegistry();
-    const users = defineService("users");
-    users.action({ name: "getUser", execute: () => ({ ok: true }) });
-    const app = brick({
-      services: [users],
-      requestLogging: false,
-      telemetry: true,
-      legacyRoutes: true,
-    });
-    const response = await post(app, "/api/users/getUser", {});
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("deprecation")).toBe("true");
-    const root = spanNamed("POST /api/users/getUser");
-    expect(root.attributes["brick.legacy_route"]).toBe(true);
-    expect(spanNamed("action users.getUser").parentSpanContext?.spanId).toBe(
-      root.spanContext().spanId,
-    );
-    await post(app, "/api/users/get-user", {});
-    expect(
-      spanNamed("POST /api/users/get-user").attributes["brick.legacy_route"],
-    ).toBeUndefined();
   });
 
   it("marks server faults on the action and request spans with the code and exception", async () => {
@@ -387,4 +362,15 @@ describe("trace context and database spans", () => {
       }
     },
   );
+});
+
+it("accepts the OpenTelemetry API of hosts on SDK 2.x", async () => {
+  // A second, newer API copy would see the host's provider as incompatible and
+  // turn every Brick span into a no-op. Core uses nothing newer than 1.9.
+  const manifest = await Bun.file(
+    new URL("../package.json", import.meta.url),
+  ).json();
+  expect(
+    Bun.semver.satisfies("1.9.0", manifest.dependencies["@opentelemetry/api"]),
+  ).toBe(true);
 });

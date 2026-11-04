@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import { defineService, resetGlobalRegistry } from "@brickkit/core";
-import { brick } from "../src/server";
+import { defineService, resetGlobalRegistry, brick } from "@brickkit/core";
 
 const token = "0123456789abcdef-secret";
 

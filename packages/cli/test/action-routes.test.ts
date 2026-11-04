@@ -1,7 +1,11 @@
 import { beforeEach, expect, it } from "bun:test";
-import { defineService, resetGlobalRegistry, t } from "@brickkit/core";
-import { compileBrickApplication } from "../src/compiler";
-import { brick } from "../src/server";
+import {
+  defineService,
+  resetGlobalRegistry,
+  t,
+  compileBrickApplication,
+  brick,
+} from "@brickkit/core";
 
 beforeEach(resetGlobalRegistry);
 

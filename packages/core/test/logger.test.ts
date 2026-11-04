@@ -10,10 +10,10 @@ import {
 import { context, trace } from "@opentelemetry/api";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import {
-  BasicTracerProvider,
+  TracerProvider,
   InMemorySpanExporter,
   SimpleSpanProcessor,
-} from "@opentelemetry/sdk-trace-base";
+} from "@opentelemetry/sdk-trace";
 import { createLogger, DEFAULT_LOG_PREFIXES, stripAnsi } from "../src/logger";
 
 const CAPTURE = Symbol.for("brickkit.logs.capture");
@@ -24,8 +24,8 @@ const capture = (on: boolean) => {
 
 beforeAll(() => {
   trace.setGlobalTracerProvider(
-    new BasicTracerProvider({
-      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    new TracerProvider({
+      spanProcessors: [new SimpleSpanProcessor({ exporter })],
     }),
   );
   context.setGlobalContextManager(

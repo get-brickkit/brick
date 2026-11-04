@@ -63,6 +63,10 @@ app.post("/mcp", ({ request }) => mcpHandler(request));
 app.listen(4000);
 ```
 
+### Output schemas
+
+`tools/list` gives each tool with an `output` schema an `outputSchema`, and `tools/call` returns the result as `structuredContent` as well as text. MCP requires an object schema, so a tool whose output is a string, array or union is described as `{ result: <schema> }` and returns `{ result: value }`.
+
 ## Tools (`defineTool` / `service.tool`)
 
 Tools are specialized actions designed for invocation by Large Language Models:
@@ -120,8 +124,8 @@ console.log(toolList.map((t) => t.name)); // ["search_docs", "delete_user"]
 
 - `initialize`: Returns `{ capabilities: { tools: {} }, protocolVersion, serverInfo }`. The client's requested version is echoed if it is in `protocolVersions` (default `["2025-06-18"]`); otherwise the first listed version is returned.
 - `ping`: Returns `{}`.
-- `tools/list`: Returns each tool's `name`, `title` (if set), `description`, `inputSchema`, and `annotations`.
-- `tools/call`: Validates and executes the tool, returning `{ content: [{ type: "text", text }] }`. Strings are returned as-is; other values are JSON-stringified. A thrown error becomes a result with `isError: true` and the error message as text. An unknown tool name returns JSON-RPC error `-32602`.
+- `tools/list`: Returns each tool's `name`, `title` (if set), `description`, `inputSchema`, `outputSchema` (if it has an `output`), and `annotations`.
+- `tools/call`: Validates and executes the tool, returning `{ content: [{ type: "text", text }] }`, plus `structuredContent` when the tool has an `output`. Strings are returned as-is; other values are JSON-stringified. A thrown error becomes a result with `isError: true` and the error message as text. An unknown tool name returns JSON-RPC error `-32602`.
 
 The handler performs no authentication. Wrap it with your own auth, and pass an optional `ctx` (for example `{ user }`) as the second argument; it is forwarded to the tool's execution context along with the `request`.
 
