@@ -210,6 +210,12 @@ async fn typed_error_and_context() {
 async fn rejects_without_token() {
     let (status, _) = call("{}", &[("x-brick-internal", "wrong")]).await;
     assert_eq!(status, 401);
+    let repeated = [
+        ("x-brick-internal", "secret"),
+        ("x-brick-internal", "secret"),
+    ];
+    let (status, _) = call(r#"{"name":"alice","age":1,"role":"user"}"#, &repeated).await;
+    assert_eq!(status, 401, "a repeated token is refused, as in Go");
 }
 
 #[test]

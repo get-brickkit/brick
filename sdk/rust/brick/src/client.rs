@@ -13,9 +13,15 @@ fn urls() -> &'static HashMap<String, String> {
     })
 }
 
+/// The shared client. A call that gets no answer in 30s fails as SERVICE_UNAVAILABLE.
 pub(crate) fn http() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT.get_or_init(reqwest::Client::new)
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("http client")
+    })
 }
 
 /// Run another service's action directly (TypeScript, Go or Rust), not through

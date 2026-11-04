@@ -1,7 +1,7 @@
 use crate::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::{collections::HashMap, sync::Mutex, sync::OnceLock};
+use std::{collections::HashMap, sync::Arc, sync::Mutex, sync::OnceLock};
 
 /// One validation problem, as Brick's TypeScript actions report it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -330,11 +330,21 @@ fn visit_object(
 
 /// Patterns are checked by `jsonschema`'s regex engine through a one-pattern schema, cached.
 fn pattern_matches(pattern: &str, text: &str) -> bool {
-    static CACHE: OnceLock<Mutex<HashMap<String, jsonschema::Validator>>> = OnceLock::new();
-    let mut cache = CACHE.get_or_init(Default::default).lock().unwrap();
-    let validator = cache.entry(pattern.to_string()).or_insert_with(|| {
-        jsonschema::validator_for(&serde_json::json!({ "type": "string", "pattern": pattern }))
-            .expect("valid pattern")
-    });
+    static CACHE: OnceLock<Mutex<HashMap<String, Arc<jsonschema::Validator>>>> = OnceLock::new();
+    // The lock covers the lookup only, not the match.
+    let validator = CACHE
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .entry(pattern.to_string())
+        .or_insert_with(|| {
+            Arc::new(
+                jsonschema::validator_for(
+                    &serde_json::json!({ "type": "string", "pattern": pattern }),
+                )
+                .expect("valid pattern"),
+            )
+        })
+        .clone();
     validator.is_valid(&Value::String(text.to_string()))
 }

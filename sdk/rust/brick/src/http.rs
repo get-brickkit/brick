@@ -45,7 +45,9 @@ fn continue_trace(parent: Option<&str>) -> (String, String) {
         && hex(trace, 32)
         && hex(span, 16)
         && hex(flags, 2)
+        && version != "ff"
         && trace.bytes().any(|b| b != b'0')
+        && span.bytes().any(|b| b != b'0')
     {
         return (
             format!("00-{trace}-{}-{flags}", random_hex(8)),
@@ -166,5 +168,12 @@ mod tests {
         let (fresh, trace) = continue_trace(Some("garbage"));
         assert_eq!(trace.len(), 32);
         assert!(fresh.ends_with("-01"));
+        for invalid in [
+            "ff-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+            "00-0af7651916cd43dd8448eb211c80319c-0000000000000000-01",
+        ] {
+            let (_, trace) = continue_trace(Some(invalid));
+            assert_ne!(trace, "0af7651916cd43dd8448eb211c80319c", "{invalid}");
+        }
     }
 }

@@ -21,6 +21,10 @@ axum = { version = "0.8.9", default-features = false, features = [
 ] }
 base64 = "0.23.1"
 jsonschema = { version = "0.60.2", default-features = false }
+# rust_crypto pulls in p256/p384 -> elliptic-curve 0.13 -> crypto-bigint 0.5.5
+# (RUSTSEC-2026-0387, non-constant-time ops; fixed only in 0.7). Not reachable
+# with a secret here: the SDK only verifies signatures with public JWKS keys.
+# Upgrade when jsonwebtoken (11.1.0 is the latest) moves to elliptic-curve 0.14.
 jsonwebtoken = { version = "11", default-features = false, features = [
   "rust_crypto",
 ] }

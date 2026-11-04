@@ -17,8 +17,14 @@ pub(crate) struct Verifier {
     /// How often a token with an unknown key id (key rotation) may refetch the JWKS.
     min_refresh: Duration,
     max_age: Duration,
-    keys: Mutex<Option<(JwkSet, Instant)>>,
+    /// The cached keys with when they were fetched, and the last fetch attempt.
+    keys: Mutex<(Option<Fetched>, Option<Instant>)>,
 }
+
+type Fetched = (JwkSet, Instant);
+
+/// How long a JWKS fetch may take.
+const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl Verifier {
     pub(crate) fn new(url: &str, issuer: &str, audience: &str) -> Self {
@@ -28,7 +34,7 @@ impl Verifier {
             audience: audience.into(),
             min_refresh: Duration::from_secs(10),
             max_age: Duration::from_secs(600),
-            keys: Mutex::new(None),
+            keys: Mutex::new((None, None)),
         }
     }
 
@@ -47,6 +53,7 @@ impl Verifier {
     async fn fetch(&self) -> Result<JwkSet, reqwest::Error> {
         crate::client::http()
             .get(&self.url)
+            .timeout(FETCH_TIMEOUT)
             .send()
             .await?
             .error_for_status()?
@@ -55,7 +62,8 @@ impl Verifier {
     }
 
     async fn key_set(&self, kid: &str) -> Option<JwkSet> {
-        let mut keys = self.keys.lock().await;
+        let mut guard = self.keys.lock().await;
+        let (keys, tried) = &mut *guard;
         let stale = match &*keys {
             None => true,
             Some((set, at)) => {
@@ -63,16 +71,14 @@ impl Verifier {
                     || (set.find(kid).is_none() && at.elapsed() >= self.min_refresh)
             }
         };
-        if stale {
+        // A failed fetch is retried after min_refresh, so an outage or unknown
+        // key ids can't make every request fetch.
+        if stale && tried.is_none_or(|t| t.elapsed() >= self.min_refresh) {
+            *tried = Some(Instant::now());
             match self.fetch().await {
                 Ok(set) => *keys = Some((set, Instant::now())),
-                Err(err) => {
-                    eprintln!("[brick] JWKS fetch from {} failed: {err}", self.url);
-                    // Keep the keys we have; try again after min_refresh.
-                    if let Some((_, at)) = keys.as_mut() {
-                        *at = Instant::now() - self.max_age + self.min_refresh;
-                    }
-                }
+                // Keep the keys we have.
+                Err(err) => eprintln!("[brick] JWKS fetch from {} failed: {err}", self.url),
             }
         }
         keys.as_ref().map(|(set, _)| set.clone())
@@ -286,5 +292,27 @@ mod tests {
         *keys.lock().unwrap() = vec![k1.jwk(), k2.jwk()];
         assert!(v.user(&bearer(&k2.sign(claims(|_| {})))).await.is_some());
         assert_eq!(calls.load(Ordering::SeqCst), 2, "refetched once");
+    }
+
+    #[tokio::test]
+    async fn backs_off_while_the_jwks_is_down() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let c = calls.clone();
+        let app = Router::new().route(
+            "/jwks",
+            get(move || {
+                c.fetch_add(1, Ordering::SeqCst);
+                async { axum::http::StatusCode::INTERNAL_SERVER_ERROR }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/jwks", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let v = Verifier::new(&url, ISSUER, ISSUER);
+        let key = Key::new("k1", 1);
+        for _ in 0..3 {
+            assert_eq!(v.user(&bearer(&key.sign(claims(|_| {})))).await, None);
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "one fetch per min_refresh");
     }
 }

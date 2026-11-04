@@ -385,10 +385,17 @@ impl Service {
             println!("{}", self.manifest());
             std::process::exit(0);
         }
-        let port = std::env::var("BRICK_PORT").unwrap_or_else(|_| "0".into());
+        let port: u16 = match std::env::var("BRICK_PORT") {
+            Ok(port) if !port.is_empty() => port.parse().map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("BRICK_PORT {port:?}: {e}"),
+                )
+            })?,
+            _ => 0,
+        };
         let host = std::env::var("BRICK_HOST").unwrap_or_else(|_| "127.0.0.1".into());
-        let listener =
-            tokio::net::TcpListener::bind((host.as_str(), port.parse().unwrap_or(0))).await?;
+        let listener = tokio::net::TcpListener::bind((host.as_str(), port)).await?;
         eprintln!(
             "[brick] {} (rust) listening on http://{}",
             self.name,
@@ -408,8 +415,11 @@ fn check_token(headers: &HeaderMap) -> (bool, bool) {
         return (true, false);
     };
     let token = std::env::var("BRICK_INTERNAL_TOKEN").unwrap_or_default();
+    // Exactly one value, as the Go SDK requires.
+    let single = given.next().is_none();
     let given = first.as_bytes();
-    let ok = !token.is_empty()
+    let ok = single
+        && !token.is_empty()
         && given.len() == token.len()
         && given
             .iter()
