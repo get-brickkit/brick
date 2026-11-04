@@ -6,6 +6,8 @@
 // --prepare stages manifests and the lockfile for CI validation without shipping.
 // A stable bump from X.Y.Z-beta.N promotes it to X.Y.Z.
 // All packages use the same version and ship under one v<version> tag.
+// The Rust crate (sdk/rust/brick/Cargo.toml) shares it, and the Go module
+// (sdk/go, which has no version in go.mod) is tagged sdk/go/v<version>.
 //
 // Prerequisites (checked up front):
 //   - clean tracked tree, on main (stable) or beta, in sync with origin
@@ -57,6 +59,14 @@ const CRUD_PKG = join(ROOT, "packages/crud/package.json");
 const BULLMQ_WORLD_PKG = join(ROOT, "packages/bullmq-world/package.json");
 // redis-world depends on no other @brickkit package, so only its version is bumped.
 const REDIS_WORLD_PKG = join(ROOT, "packages/redis-world/package.json");
+// The brickkit crate, and the lockfiles that record its version.
+const CRATE_TOML = join(ROOT, "sdk/rust/brick/Cargo.toml");
+const CARGO_LOCKS = [
+  join(ROOT, "sdk/rust/Cargo.lock"),
+  join(ROOT, "examples/pages/services/bench-rust/Cargo.lock"),
+];
+const CRATE_VERSION = /^version = "([^"]+)"/m;
+const LOCKED_CRATE = /(\nname = "brickkit"\nversion = ")[^"]+"/;
 
 function sh(cmd: string[], cwd = ROOT): string {
   if (DRY) {
@@ -175,8 +185,12 @@ const releases = [
 ];
 if (releases.some((r) => r.data.version !== coreJson.version))
   fail("core, cli, crud and world versions must match");
+const crateToml = readFileSync(CRATE_TOML, "utf-8");
+if (CRATE_VERSION.exec(crateToml)?.[1] !== coreJson.version)
+  fail(`${CRATE_TOML} version must match the packages (${coreJson.version})`);
 const version = bumpVersion(coreJson.version, bump);
 const tag = `v${version}`;
+const goTag = `sdk/go/${tag}`;
 cliJson.dependencies["@brickkit/core"] = `^${version}`;
 crudJson.peerDependencies["@brickkit/core"] = `^${version}`;
 // bullmq-world imports redis-world/internal, which changes in lockstep: pin it exactly.
@@ -186,12 +200,20 @@ const exists = execFileSync(GIT, ["ls-remote", "origin", `refs/tags/${tag}`], {
   encoding: "utf-8",
 }).trim();
 if (exists) fail(`tag ${tag} already exists on origin`);
+const goExists = execFileSync(
+  GIT,
+  ["ls-remote", "origin", `refs/tags/${goTag}`],
+  { cwd: ROOT, encoding: "utf-8" },
+).trim();
+if (goExists) fail(`tag ${goTag} already exists on origin`);
 
 console.log("releasing:");
 for (const r of releases)
   console.log(
     `  ${r.data.name}  ${r.data.version} -> ${version}  (tag ${tag})`,
   );
+console.log(`  brickkit (crate)  ${coreJson.version} -> ${version}`);
+console.log(`  sdk/go (module)  tag ${goTag}`);
 if (DRY) {
   console.log("dry-run only — no changes made");
   process.exit(0);
@@ -222,5 +244,15 @@ for (const r of releases) {
   r.data.version = version;
   writeJson(r.file, r.data);
 }
+writeFileSync(
+  CRATE_TOML,
+  crateToml.replace(CRATE_VERSION, `version = "${version}"`),
+);
+for (const lock of CARGO_LOCKS)
+  if (existsSync(lock))
+    writeFileSync(
+      lock,
+      readFileSync(lock, "utf-8").replace(LOCKED_CRATE, `$1${version}"`),
+    );
 sh(["bun", "install"]);
 console.log(`prepared ${tag}; release refs and registry are unchanged`);

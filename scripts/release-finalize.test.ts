@@ -38,6 +38,14 @@ test("post-publication commit preserves branch updates and tags the validated so
       );
     }
     await writeFile(join(checkout, "bun.lock"), "original lockfile\n");
+    for (const file of [
+      "sdk/rust/brick/Cargo.toml",
+      "sdk/rust/Cargo.lock",
+      "examples/pages/services/bench-rust/Cargo.lock",
+    ]) {
+      await mkdir(join(checkout, file, ".."), { recursive: true });
+      await writeFile(join(checkout, file), "crate\n");
+    }
     await writeFile(join(checkout, "source.txt"), "validated source\n");
     git(checkout, "add", ".");
     git(checkout, "commit", "-m", "validated source");

@@ -47,6 +47,15 @@ test("prepares candidates and dispatches releases without creating release refs"
         }),
       );
     }
+    await mkdir(join(checkout, "sdk/rust/brick"), { recursive: true });
+    await writeFile(
+      join(checkout, "sdk/rust/brick/Cargo.toml"),
+      '[package]\nname = "brickkit"\nversion = "0.7.2"\n\n[dependencies]\nserde = { version = "1" }\n',
+    );
+    await writeFile(
+      join(checkout, "sdk/rust/Cargo.lock"),
+      '[[package]]\nname = "brickkit"\nversion = "0.7.2"\n\n[[package]]\nname = "serde"\nversion = "1.0.0"\n',
+    );
     execFileSync(process.execPath, ["install"], {
       cwd: checkout,
       stdio: "pipe",
@@ -77,6 +86,15 @@ test("prepares candidates and dispatches releases without creating release refs"
       if (name === "bullmq-world")
         expect(manifest.dependencies["@brickkit/redis-world"]).toBe("0.7.3");
     }
+    // The crate moves in lockstep; the Go module has no version to bump.
+    expect(
+      await Bun.file(join(checkout, "sdk/rust/brick/Cargo.toml")).text(),
+    ).toContain(
+      'version = "0.7.3"\n\n[dependencies]\nserde = { version = "1" }',
+    );
+    expect(await Bun.file(join(checkout, "sdk/rust/Cargo.lock")).text()).toBe(
+      '[[package]]\nname = "brickkit"\nversion = "0.7.3"\n\n[[package]]\nname = "serde"\nversion = "1.0.0"\n',
+    );
     expect(git("rev-parse", "HEAD")).toBe(head);
     expect(git("tag", "--list")).toBe("");
     expect(git("--git-dir", origin, "rev-parse", "main")).toBe(head);

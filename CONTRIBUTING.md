@@ -56,6 +56,14 @@ bun run pages:typecheck
 TEST_DATABASE_URL=postgresql://localhost:5432/drafton_test bun run pages:test
 ```
 
+For the Go and Rust SDKs (`sdk/go`, `sdk/rust`) and their conformance test, which needs `go` and `cargo`:
+
+```sh
+(cd sdk/go && go vet ./... && go test ./...)
+(cd sdk/rust && cargo clippy --all-targets -- -D warnings && cargo test)
+bun test sdk
+```
+
 The pages tests create the test database if it is missing and truncate its tables between tests. Use a dedicated test database. Postgres setup and environment variables are documented in `examples/pages/README.md`.
 
 Format with `bun run format` from the package directory or the root. Shared config lives in `.oxlintrc.json` and `.oxfmtrc.json`. Generated files and build output are excluded.
@@ -69,3 +77,15 @@ The hooks are defined in `lefthook.yml` and run on pre-commit. They check staged
 - Describe what changes and how you verified it. Link the run output or the command you used.
 - Keep generated files out of the diff. `_brick/` contract output is ignored by Git.
 - Do not run `bun run release`. Releases run from a clean `main` (stable) or `beta` checkout through `scripts/release.ts` and the `publish-npm.yml` workflow.
+
+## Release the Go and Rust SDKs
+
+The Rust crate `brickkit` (`sdk/rust/brick`) and the Go module `github.com/get-brickkit/brick/sdk/go` ship with every npm release, under the same version. `scripts/release.ts` bumps the crate's `Cargo.toml` with the packages. After npm, the `publish-sdks` job in `publish-npm.yml` runs `cargo publish` from the release commit, then pushes the tag `sdk/go/v<version>`, which is the Go module's version.
+
+A maintainer sets this up once, before the first release that includes them:
+
+1. Claim the crate name: sign in to crates.io with the GitHub account that owns the release, and publish `brickkit` once by hand from `sdk/rust` (`cargo publish -p brickkit`), or let the first release do it. Then add the other maintainers with `cargo owner --add <github-user> brickkit`.
+2. Create a crates.io API token (Account Settings, API Tokens) with the `publish-update` scope, limited to the `brickkit` crate (and `publish-new` for the first publish).
+3. Add it as the repository secret `CARGO_REGISTRY_TOKEN` (Settings, Secrets and variables, Actions). Without it a release stops in the `prepare` job, before anything is published.
+
+The Go module needs no registry: the tag is enough, and `proxy.golang.org` picks it up on the first `go get`.

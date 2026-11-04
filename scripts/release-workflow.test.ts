@@ -7,6 +7,7 @@ type Step = {
   with?: Record<string, string>;
 };
 type Job = {
+  permissions?: Record<string, string>;
   "runs-on": string;
   needs?: string | string[];
   if?: string;
@@ -19,6 +20,7 @@ const workflow: { jobs: Record<string, Job> } = Bun.YAML.parse(
   ).text(),
 );
 const { prepare, validate, commit, publish, release } = workflow.jobs;
+const sdks = workflow.jobs["publish-sdks"];
 const PACKAGES = ["core", "crud", "cli", "bullmq-world", "redis-world"];
 
 test("every package must build, typecheck, test, and pack before publishing, with the release commit last", () => {
@@ -116,4 +118,31 @@ test("a package publishes only after the @brickkit versions it depends on", () =
   expect(publish!.steps[wait]!.run).toContain(
     'npm view "$dep@$PACKAGE_VERSION"',
   );
+});
+
+test("the Rust crate and the Go module ship after npm, from the release commit", () => {
+  expect(sdks!.needs).toEqual(["prepare", "publish", "commit"]);
+  expect(sdks!.if).toContain("inputs.dry_run != true");
+  expect(sdks!.if).toContain("github.event_name != 'pull_request'");
+  const names = sdks!.steps.map((step) => step.name ?? step.uses ?? "");
+  // A missing token fails first, with a message, and before anything ships.
+  expect(names[0]).toBe("Require the crates.io token");
+  expect(sdks!.steps[0]!.run).toContain("::error::The CARGO_REGISTRY_TOKEN");
+  expect(
+    prepare!.steps.find(
+      (step) => step.name === "Require the crates.io token for the Rust SDK",
+    )?.run,
+  ).toContain("::error::The CARGO_REGISTRY_TOKEN");
+  const commands = sdks!.steps.map((step) => step.run ?? "").join("\n");
+  expect(commands).toContain("cargo publish -p brickkit --locked");
+  expect(commands).toContain('go_tag="sdk/go/$RELEASE_TAG"');
+  expect(names.indexOf("Publish the brickkit crate")).toBeLessThan(
+    names.indexOf("Tag the Go module"),
+  );
+  expect(
+    sdks!.steps.find((step) => step.uses?.startsWith("actions/checkout@"))?.with
+      ?.ref,
+  ).toBe("${{ needs.commit.outputs.sha }}");
+  const committed = commit!.steps.map((step) => step.run ?? "").join("\n");
+  expect(committed).toContain("sdk/rust/brick/Cargo.toml sdk/rust/Cargo.lock");
 });
