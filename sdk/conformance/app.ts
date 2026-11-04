@@ -8,17 +8,74 @@ import {
   useService,
 } from "@brickkit/core";
 
-const userFrom = (request: Request) => {
-  const auth = request.headers.get("authorization");
-  return auth?.startsWith("Bearer ") ? { id: auth.slice(7) } : undefined;
+// A stand-in for Better Auth's jwt plugin: an Ed25519 key served as a JWKS
+// at /jwks, and EdDSA tokens with the user's fields as claims.
+export const ISSUER = "http://conformance.test";
+const keys = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
+  "sign",
+  "verify",
+])) as CryptoKeyPair;
+const jwk = {
+  ...(await crypto.subtle.exportKey("jwk", keys.publicKey)),
+  kid: "conf-1",
+  alg: "EdDSA",
 };
+const b64 = (data: string | ArrayBuffer) =>
+  Buffer.from(data as ArrayBuffer).toString("base64url");
+
+export async function signJwt(user: { id: string }, ttlSeconds = 900) {
+  const now = Math.floor(Date.now() / 1000);
+  const head = b64(JSON.stringify({ alg: "EdDSA", kid: jwk.kid, typ: "JWT" }));
+  const body = b64(
+    JSON.stringify({
+      ...user,
+      sub: user.id,
+      iss: ISSUER,
+      aud: ISSUER,
+      iat: now,
+      exp: now + ttlSeconds,
+    }),
+  );
+  const signature = await crypto.subtle.sign(
+    "Ed25519",
+    keys.privateKey,
+    new TextEncoder().encode(`${head}.${body}`),
+  );
+  return `${head}.${body}.${b64(signature)}`;
+}
+
+/** The TS side verifies the same token, so all three languages see one user. */
+async function userFrom(request: Request) {
+  const auth = request.headers.get("authorization");
+  const [head, body, signature] = auth?.startsWith("Bearer ")
+    ? auth.slice(7).split(".")
+    : [];
+  if (!head || !body || !signature) return undefined;
+  const valid = await crypto.subtle.verify(
+    "Ed25519",
+    keys.publicKey,
+    Buffer.from(signature, "base64url"),
+    new TextEncoder().encode(`${head}.${body}`),
+  );
+  if (!valid) return undefined;
+  const {
+    sub: _sub,
+    iss,
+    aud,
+    iat: _iat,
+    exp,
+    ...user
+  } = JSON.parse(Buffer.from(body, "base64url").toString());
+  return iss === ISSUER && aud === ISSUER && exp > Date.now() / 1000
+    ? (user as { id: string })
+    : undefined;
+}
 
 export const confGo = remoteService({
   name: "confGo",
   dir: "../go/conformance",
   dev: "go run .",
   build: { command: "go build -o bin/conformance .", run: "./bin/conformance" },
-  context: ({ request }) => ({ user: userFrom(request) }),
 });
 
 export const confRust = remoteService({
@@ -26,12 +83,13 @@ export const confRust = remoteService({
   dir: "../rust/conformance",
   dev: "cargo run -q",
   build: { command: "cargo build -q", run: "../target/debug/conformance" },
-  context: ({ request }) => ({ user: userFrom(request) }),
 });
 
 // A call from Go or Rust carries its user in the envelope: keep it.
 const confTs = defineService("confTs", {
-  context: ({ request, user }) => ({ user: user ?? userFrom(request) }),
+  context: async ({ request, user }) => ({
+    user: user ?? (await userFrom(request)),
+  }),
 });
 
 const who = (ctx: { user?: unknown; caller?: string; requestId?: string }) => ({
@@ -66,6 +124,13 @@ confTs.action({
 });
 
 confTs.action({
+  name: "me",
+  input: t.Object({}),
+  authorize: ({ user }) => user != null,
+  execute: ({ ctx }) => ctx.user,
+});
+
+confTs.action({
   name: "chain",
   input: t.Object({}),
   execute: async ({ ctx }) => {
@@ -78,9 +143,12 @@ confTs.action({
   },
 });
 
-export default brick({
+const app = brick({
   services: [confTs],
   remote: [confGo, confRust],
   docs: false,
   requestLogging: false,
 });
+app.get("/jwks", () => ({ keys: [jwk] }));
+
+export default app;

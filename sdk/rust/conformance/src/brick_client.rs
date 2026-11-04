@@ -27,6 +27,9 @@ pub struct ConfTsFailInput {}
 pub struct ConfTsWhoamiInput {}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ConfTsMeInput {}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ConfTsChainInput {}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -72,6 +75,9 @@ pub struct ConfGoWhoamiOutput {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ConfGoMeInput {}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ConfGoChainInput {}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -112,6 +118,14 @@ pub async fn conf_ts_whoami(
     brick::call(ctx, "confTs", "whoami", input).await
 }
 
+/// Calls confTs.me (ts).
+pub async fn conf_ts_me(
+    ctx: &brick::Ctx,
+    input: &ConfTsMeInput,
+) -> Result<serde_json::Value, brick::Error> {
+    brick::call(ctx, "confTs", "me", input).await
+}
+
 /// Calls confTs.chain (ts).
 pub async fn conf_ts_chain(
     ctx: &brick::Ctx,
@@ -142,6 +156,14 @@ pub async fn conf_go_whoami(
     input: &ConfGoWhoamiInput,
 ) -> Result<ConfGoWhoamiOutput, brick::Error> {
     brick::call(ctx, "confGo", "whoami", input).await
+}
+
+/// Calls confGo.me (go).
+pub async fn conf_go_me(
+    ctx: &brick::Ctx,
+    input: &ConfGoMeInput,
+) -> Result<serde_json::Value, brick::Error> {
+    brick::call(ctx, "confGo", "me", input).await
 }
 
 /// Calls confGo.chain (go).

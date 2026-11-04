@@ -66,6 +66,9 @@ async fn main() -> std::io::Result<()> {
         .action("whoami", |ctx: Ctx, _input: Empty| async move {
             Result::<_, Error>::Ok(who(&ctx, None))
         })
+        .action("me", |ctx: Ctx, _input: Empty| async move {
+            ctx.require_user::<Value>()
+        })
         .action("chain", |ctx: Ctx, _input: Empty| async move {
             let next =
                 brick_client::conf_ts_whoami(&ctx, &brick_client::ConfTsWhoamiInput {}).await?;

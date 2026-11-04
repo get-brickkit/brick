@@ -25,6 +25,9 @@ type ConfTsFailInput struct {
 type ConfTsWhoamiInput struct {
 }
 
+type ConfTsMeInput struct {
+}
+
 type ConfTsChainInput struct {
 }
 
@@ -54,6 +57,9 @@ type ConfRustWhoamiOutput struct {
 	Caller    *string `json:"caller,omitempty"`
 	RequestId string  `json:"requestId"`
 	Next      any     `json:"next,omitempty"`
+}
+
+type ConfRustMeInput struct {
 }
 
 type ConfRustChainInput struct {
@@ -88,6 +94,13 @@ func ConfTsWhoami(ctx context.Context, in ConfTsWhoamiInput) (any, error) {
 	return out, err
 }
 
+// ConfTsMe calls confTs.me (ts).
+func ConfTsMe(ctx context.Context, in ConfTsMeInput) (any, error) {
+	var out any
+	err := brick.Call(ctx, "confTs", "me", in, &out)
+	return out, err
+}
+
 // ConfTsChain calls confTs.chain (ts).
 func ConfTsChain(ctx context.Context, in ConfTsChainInput) (any, error) {
 	var out any
@@ -113,6 +126,13 @@ func ConfRustFail(ctx context.Context, in ConfRustFailInput) (ConfRustFailOutput
 func ConfRustWhoami(ctx context.Context, in ConfRustWhoamiInput) (ConfRustWhoamiOutput, error) {
 	var out ConfRustWhoamiOutput
 	err := brick.Call(ctx, "confRust", "whoami", in, &out)
+	return out, err
+}
+
+// ConfRustMe calls confRust.me (rust).
+func ConfRustMe(ctx context.Context, in ConfRustMeInput) (any, error) {
+	var out any
+	err := brick.Call(ctx, "confRust", "me", in, &out)
 	return out, err
 }
 

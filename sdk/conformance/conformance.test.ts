@@ -11,7 +11,7 @@ import {
   type RemoteProcesses,
 } from "@brickkit/core";
 import { buildRemoteServices, writePolyglotContract } from "@brickkit/cli";
-import app, { confGo, confRust } from "./app";
+import app, { ISSUER, confGo, confRust, signJwt } from "./app";
 
 const dir = import.meta.dir;
 const toolchains = Boolean(Bun.which("go") && Bun.which("cargo"));
@@ -39,6 +39,7 @@ beforeAll(async () => {
     appUrl: base,
     services: ["confTs"],
     cwd: dir,
+    env: { BRICK_JWT_ISSUER: ISSUER, BRICK_JWKS_URL: `${base}/jwks` },
   });
   await children.ready();
 }, 600_000);
@@ -58,11 +59,16 @@ const post = (path: string, body: unknown, headers: HeadersInit = {}) =>
 
 const SERVICES = ["conf-ts", "conf-go", "conf-rust"];
 
-async function sameEverywhere(action: string, input: unknown) {
+async function sameEverywhere(
+  action: string,
+  input: unknown,
+  headers: Record<string, string> = {},
+) {
   const bodies = await Promise.all(
     SERVICES.map(async (service) => {
       const response = await post(`/api/${service}/${action}`, input, {
         "x-request-id": "conf-1",
+        ...headers,
       });
       return `${response.status} ${await response.text()}`;
     }),
@@ -122,7 +128,10 @@ describe.skipIf(!toolchains)("polyglot conformance", () => {
     const response = await post(
       "/api/conf-ts/chain",
       {},
-      { authorization: "Bearer alice", "x-request-id": "chain-1" },
+      {
+        authorization: `Bearer ${await signJwt({ id: "alice" })}`,
+        "x-request-id": "chain-1",
+      },
     );
     const user = { id: "alice" };
     expect(await response.json()).toMatchObject({
@@ -150,13 +159,14 @@ describe.skipIf(!toolchains)("polyglot conformance", () => {
     });
   });
 
-  it("resolves the user at the gateway and strips spoofed x-brick-* headers", async () => {
+  it("verifies the JWT in Go and Rust, and the gateway strips spoofed x-brick-* headers", async () => {
+    const token = await signJwt({ id: "bob" });
     for (const service of ["conf-go", "conf-rust"]) {
       const response = await post(
         `/api/${service}/whoami`,
         {},
         {
-          authorization: "Bearer bob",
+          authorization: `Bearer ${token}`,
           "x-request-id": "who-1",
           "x-brick-caller": "admin",
           "x-brick-user": btoa('{"id":"mallory"}'),
@@ -168,21 +178,43 @@ describe.skipIf(!toolchains)("polyglot conformance", () => {
     }
   });
 
-  it("refuses direct calls to a child without the internal token", async () => {
+  it("trusts x-brick-* on a direct call only with the internal token", async () => {
     for (const url of Object.values(children.urls).filter(
       (u) => !u.startsWith(base),
     )) {
-      const denied = await fetch(`${url}/whoami`, {
+      const spoofed = { "x-brick-user": btoa('{"id":"mallory"}') };
+      const anonymous = await fetch(`${url}/whoami`, {
         method: "POST",
         body: "{}",
+        headers: spoofed,
       });
-      expect(denied.status).toBe(401);
-      const allowed = await fetch(`${url}/whoami`, {
+      expect(anonymous.status).toBe(200);
+      expect((await anonymous.json()).user).toBeNull();
+      const trusted = await fetch(`${url}/whoami`, {
         method: "POST",
         body: "{}",
-        headers: { "x-brick-internal": internalToken() },
+        headers: { ...spoofed, "x-brick-internal": internalToken() },
       });
-      expect(allowed.status).toBe(200);
+      expect((await trusted.json()).user).toEqual({ id: "mallory" });
+      const wrong = await fetch(`${url}/whoami`, {
+        method: "POST",
+        body: "{}",
+        headers: { "x-brick-internal": "guess" },
+      });
+      expect(wrong.status).toBe(401);
     }
+  });
+
+  it("answers a missing, expired or foreign user with the same 401 as TS", async () => {
+    const unauthorized = `401 {"name":"ActionExecutionError","code":"UNAUTHORIZED","message":"Access denied for action 'me'","status":401,"requestId":"conf-1"}`;
+    expect(await sameEverywhere("me", {})).toBe(unauthorized);
+    const expired = await signJwt({ id: "bob" }, -120);
+    expect(
+      await sameEverywhere("me", {}, { authorization: `Bearer ${expired}` }),
+    ).toBe(unauthorized);
+    const valid = await signJwt({ id: "bob" });
+    expect(
+      await sameEverywhere("me", {}, { authorization: `Bearer ${valid}` }),
+    ).toBe('200 {"id":"bob"}');
   });
 });

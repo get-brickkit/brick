@@ -46,6 +46,11 @@ func main() {
 	brick.Action(svc, "whoami", func(ctx *brick.Ctx, in empty) (who, error) {
 		return whoami(ctx, nil), nil
 	})
+	brick.Action(svc, "me", func(ctx *brick.Ctx, in empty) (any, error) {
+		var user any
+		err := ctx.RequireUser(&user)
+		return user, err
+	})
 	brick.Action(svc, "chain", func(ctx *brick.Ctx, in empty) (who, error) {
 		next, err := brickclient.ConfRustChain(ctx, brickclient.ConfRustChainInput{})
 		if err != nil {
