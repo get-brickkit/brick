@@ -9,11 +9,11 @@ import {
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import {
-  BasicTracerProvider,
+  TracerProvider,
   type ReadableSpan,
   type Span,
   type SpanProcessor,
-} from "@opentelemetry/sdk-trace-base";
+} from "@opentelemetry/sdk-trace";
 import type {
   ApiDocument,
   ArchitectureSchema,
@@ -108,7 +108,7 @@ export function installTracing(
 ): boolean {
   const batcher = new RecordBatcher(onRecords);
   const registered = trace.setGlobalTracerProvider(
-    new BasicTracerProvider({
+    new TracerProvider({
       spanProcessors: [new SupervisorSpanProcessor(batcher)],
     }),
   );

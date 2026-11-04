@@ -17,10 +17,10 @@ import {
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import {
-  BasicTracerProvider,
+  TracerProvider,
   InMemorySpanExporter,
   SimpleSpanProcessor,
-} from "@opentelemetry/sdk-trace-base";
+} from "@opentelemetry/sdk-trace";
 import { sql } from "drizzle-orm";
 import postgres from "postgres";
 import {
@@ -37,8 +37,8 @@ const exporter = new InMemorySpanExporter();
 
 beforeAll(() => {
   trace.setGlobalTracerProvider(
-    new BasicTracerProvider({
-      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    new TracerProvider({
+      spanProcessors: [new SimpleSpanProcessor({ exporter })],
     }),
   );
   context.setGlobalContextManager(
