@@ -12,6 +12,7 @@ import {
   sqliteTable,
   text,
 } from "@brickkit/core";
+import { pgSchema, text as pgText } from "@brickkit/core/pg";
 import { appDatabases } from "../src/db";
 import app from "./fixtures/db-app";
 
@@ -74,6 +75,57 @@ describe("brick db: table discovery", () => {
     ).toThrow('two databases are named "main"');
   });
 
+  it("ignores a database without tables when it checks names", () => {
+    const empty = defineService("empty", {
+      database: defineDatabase({ name: "main", path: ":memory:" }),
+    });
+    const full = defineService("full", {
+      database: defineDatabase({
+        name: "main",
+        path: ":memory:",
+        tables: { t: sqliteTable("t", { id: text("id").primaryKey() }) },
+      }),
+    });
+    const found = appDatabases(
+      createApp({ services: [empty, full], requestLogging: false }),
+    );
+    expect(found.map((entry) => entry.name)).toEqual(["main"]);
+  });
+
+  it("refuses an unnamed database that several services share, whose folder would follow service order", () => {
+    const database = defineDatabase({
+      path: ":memory:",
+      tables: { t: sqliteTable("t", { id: text("id").primaryKey() }) },
+    });
+    const services = [
+      defineService("one", { database }),
+      defineService("two", { database }),
+    ];
+    expect(() =>
+      appDatabases(createApp({ services, requestLogging: false })),
+    ).toThrow("defineDatabase({ name })");
+  });
+
+  it("keeps same-named tables in different Postgres schemas apart", () => {
+    const a = pgSchema("ns_a").table("items", {
+      id: pgText("id").primaryKey(),
+    });
+    const b = pgSchema("ns_b").table("items", {
+      id: pgText("id").primaryKey(),
+    });
+    const service = defineService("namespaced", {
+      database: defineDatabase({
+        engine: "postgres",
+        url: "postgres://localhost/unused",
+        tables: { a, b },
+      }),
+    });
+    const [found] = appDatabases(
+      createApp({ services: [service], requestLogging: false }),
+    );
+    expect(found.tables).toEqual([a, b]);
+  });
+
   it("lists the db commands in help", async () => {
     const child = Bun.spawn([process.execPath, cli, "db", "--help"], {
       stdout: "pipe",
@@ -132,6 +184,26 @@ describe("brick db on SQLite", () => {
     });
     expect(both.out).toContain("notes (sqlite): no schema changes");
     expect(both.out).toContain(join(out, "billing", "0000_migration.sql"));
+  });
+
+  it("checks every database's migrations before it migrates any", async () => {
+    const root = await tempRoot();
+    const out = join(root, "drizzle");
+    const file = join(root, "app.db");
+    expect(
+      (await brick(["generate", "--out", out], { BRICK_DB_FILE: file })).code,
+    ).toBe(0);
+    const result = await brick(["migrate", "--out", out], {
+      BRICK_DB_FILE: file,
+      BRICK_DB_BILLING: join(root, "billing.db"),
+    });
+    expect(result.code).toBe(1);
+    expect(result.out).toContain(join(out, "billing"));
+    const db = new Database(file);
+    expect(
+      db.query("SELECT name FROM sqlite_master WHERE name = 'notes'").all(),
+    ).toEqual([]);
+    db.close();
   });
 
   it("refuses to migrate without migrations", async () => {

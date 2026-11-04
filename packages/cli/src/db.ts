@@ -26,37 +26,46 @@ export interface AppDatabase {
 export function appDatabases(app: BrickApp): AppDatabase[] {
   const found = new Map<
     DatabaseHandle<unknown>,
-    { name: string; tables: Map<string, Table> }
+    { name: string; services: number; tables: Set<Table> }
   >();
   for (const service of app.definition.services) {
     const database = service.getDatabaseHandle?.();
     if (!database) continue;
     let entry = found.get(database);
     if (!entry) {
-      entry = { name: database.name ?? service.name, tables: new Map() };
+      entry = {
+        name: database.name ?? service.name,
+        services: 0,
+        tables: new Set(),
+      };
       found.set(database, entry);
     }
+    entry.services++;
+    // By table object: same-named tables in different Postgres schemas both count.
     for (const table of [
       ...Object.values(database.tables),
       ...service.tables.values(),
     ])
-      entry.tables.set(getTableName(table), table);
+      entry.tables.add(table);
   }
+  const databases = [...found].filter(([, entry]) => entry.tables.size > 0);
   const names = new Map<string, DatabaseHandle<unknown>>();
-  for (const [database, entry] of found) {
+  for (const [database, entry] of databases) {
+    if (!database.name && entry.services > 1)
+      throw new Error(
+        `Brick: services share a database without a name, so its migrations folder would follow service order; give it \`defineDatabase({ name })\`.`,
+      );
     if (names.has(entry.name))
       throw new Error(
         `Brick: two databases are named "${entry.name}"; give each \`defineDatabase({ name })\` its own name, or share one handle between the services.`,
       );
     names.set(entry.name, database);
   }
-  return [...found]
-    .filter(([, entry]) => entry.tables.size > 0)
-    .map(([database, entry]) => ({
-      name: entry.name,
-      database,
-      tables: [...entry.tables.values()],
-    }));
+  return databases.map(([database, entry]) => ({
+    name: entry.name,
+    database,
+    tables: [...entry.tables],
+  }));
 }
 
 export interface DbCommandOptions {
@@ -80,6 +89,15 @@ export async function runDbCommand(
   if (!databases.length)
     throw new Error("Brick: the app has no database with tables.");
   try {
+    // All or nothing: a missing journal stops migrate before any database moves.
+    if (command === "migrate")
+      for (const entry of databases) {
+        const folder = join(options.out, entry.name);
+        if (!existsSync(join(folder, "meta", "_journal.json")))
+          throw new Error(
+            `Brick: no migrations in ${folder}; run \`brick db generate\` first.`,
+          );
+      }
     for (const entry of databases) {
       // One layout for any database count, so adding a database never moves another's migrations.
       const folder = join(options.out, entry.name);
@@ -88,10 +106,6 @@ export async function runDbCommand(
         const file = await generate(entry, folder, options.name);
         log(file ? `${label}: wrote ${file}` : `${label}: no schema changes`);
       } else if (command === "migrate") {
-        if (!existsSync(join(folder, "meta", "_journal.json")))
-          throw new Error(
-            `Brick: no migrations in ${folder}; run \`brick db generate\` first.`,
-          );
         await migrateDatabase(entry.database, folder);
         log(`${label}: migrations in ${folder} applied`);
       } else {
