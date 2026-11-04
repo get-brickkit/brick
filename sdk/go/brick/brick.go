@@ -1,0 +1,205 @@
+// Package brick writes Brick services in Go. A Go service runs as its own
+// process next to the Bun app, which is the only public server: Bun proxies
+// /api/<service>/<action> to it over loopback, after CORS and auth, and
+// forwards the user, caller and request id. Go trusts Bun: requests are
+// accepted only with the per-run internal token.
+//
+//	svc := brick.NewService("billing")
+//	errNoFunds := svc.DefineError("INSUFFICIENT_FUNDS", 402, "Not enough funds")
+//	brick.Action(svc, "charge", func(ctx *brick.Ctx, in ChargeInput) (ChargeOutput, error) {
+//		return ChargeOutput{}, errNoFunds.New(nil)
+//	})
+//	log.Fatal(svc.Serve())
+package brick
+
+import (
+	"crypto/subtle"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"reflect"
+	"slices"
+	"strings"
+
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/go-chi/chi/v5"
+)
+
+const maxBody = 1 << 20
+
+// Service is a Go Brick service: a name, its actions and its declared errors.
+type Service struct {
+	name     string
+	registry huma.Registry
+	router   chi.Router
+	actions  []manifestAction
+	errors   []*ErrorDef
+}
+
+// NewService starts a service. Its name must match the remoteService name in the Bun app.
+func NewService(name string) *Service {
+	s := &Service{
+		name:     name,
+		registry: huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer),
+		router:   chi.NewRouter(),
+	}
+	s.router.Get("/_health", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	serviceName = name
+	return s
+}
+
+// Name is the service name.
+func (s *Service) Name() string { return s.name }
+
+// DefineError declares an error the service's actions return: `return out, def.New(details)`.
+func (s *Service) DefineError(code string, status int, message string) *ErrorDef {
+	def := &ErrorDef{Code: code, Status: status, Message: message}
+	s.errors = append(s.errors, def)
+	return def
+}
+
+// Action registers a typed action. Its input and output schemas come from the
+// Go types through Huma (struct tags such as minLength, maximum and enum);
+// the input is validated against that schema before fn runs, with the same
+// error envelope a TypeScript action gives. It is served at POST /<kebab-name>.
+func Action[I, O any](s *Service, name string, fn func(ctx *Ctx, in I) (O, error)) {
+	input := s.schema(reflect.TypeFor[I](), pascal(name)+"Input")
+	output := s.schema(reflect.TypeFor[O](), pascal(name)+"Output")
+	s.actions = append(s.actions, manifestAction{Name: name, Input: input, Output: output})
+	s.router.Post("/"+kebab(name), func(w http.ResponseWriter, r *http.Request) {
+		serve, trust := checkToken(r)
+		ctx := newCtx(r, trust)
+		if !serve {
+			writeError(w, ctx, &Error{Name: "ActionExecutionError", Code: "UNAUTHORIZED", Message: "Missing or invalid internal token", Status: 401})
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
+		if err != nil {
+			writeError(w, ctx, internalError())
+			return
+		}
+		if len(strings.TrimSpace(string(body))) == 0 {
+			body = []byte("{}")
+		}
+		value, err := decodeOrdered(body)
+		if err != nil {
+			writeError(w, ctx, &Error{Name: "ActionExecutionError", Code: "BAD_REQUEST", Message: "Invalid JSON body", Status: 400})
+			return
+		}
+		if issues := validate(input, value); len(issues) > 0 {
+			writeError(w, ctx, validationError(name, issues))
+			return
+		}
+		var in I
+		if err := json.Unmarshal(body, &in); err != nil {
+			writeError(w, ctx, validationError(name, []Issue{{Path: "", Message: err.Error()}}))
+			return
+		}
+		out, err := fn(ctx, in)
+		if err != nil {
+			e, ok := asError(err)
+			if !ok {
+				log.Printf("[%s:%s] unexpected error (requestId %s): %v", s.name, name, ctx.requestID, err)
+				e = internalError()
+			}
+			writeError(w, ctx, e)
+			return
+		}
+		data, err := marshal(out)
+		if err != nil {
+			writeError(w, ctx, internalError())
+			return
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write(data)
+	})
+}
+
+// checkToken serves and trusts a request only with this run's internal token.
+// With no token configured (the binary run by hand), calls are served but
+// their x-brick-* headers are not trusted.
+func checkToken(r *http.Request) (serve, trust bool) {
+	token := os.Getenv("BRICK_INTERNAL_TOKEN")
+	if token == "" {
+		return true, false
+	}
+	ok := subtle.ConstantTimeCompare([]byte(r.Header.Get("x-brick-internal")), []byte(token)) == 1
+	return ok, ok
+}
+
+func writeError(w http.ResponseWriter, ctx *Ctx, e *Error) {
+	envelope := *e
+	envelope.RequestID = ctx.requestID
+	if envelope.Name == "" {
+		envelope.Name = "ActionExecutionError"
+	}
+	data, _ := marshal(&envelope)
+	w.Header().Set("content-type", "application/json")
+	w.WriteHeader(envelope.Status)
+	_, _ = w.Write(data)
+}
+
+// Handler is the service's HTTP handler, for tests or a server of your own.
+func (s *Service) Handler() http.Handler { return s.router }
+
+// Serve prints the manifest and exits when run with --brick-manifest (or
+// BRICK_MANIFEST=1). Otherwise it listens on 127.0.0.1:$BRICK_PORT.
+func (s *Service) Serve() error {
+	if slices.Contains(os.Args[1:], "--brick-manifest") || os.Getenv("BRICK_MANIFEST") == "1" {
+		data, err := json.Marshal(s.Manifest())
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		os.Exit(0)
+	}
+	port := os.Getenv("BRICK_PORT")
+	if port == "" {
+		port = "0"
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:"+port)
+	if err != nil {
+		return err
+	}
+	log.Printf("[brick] %s (go) listening on http://%s", s.name, ln.Addr())
+	return http.Serve(ln, s.router)
+}
+
+type manifestAction struct {
+	Name   string  `json:"name"`
+	Input  *object `json:"input"`
+	Output *object `json:"output"`
+}
+
+type manifestError struct {
+	Status  int    `json:"status"`
+	Message string `json:"message"`
+}
+
+// Manifest describes the service for `brick gen`: its actions with input and
+// output JSON Schema, and its errors.
+type Manifest struct {
+	Name     string           `json:"name"`
+	Language string           `json:"language"`
+	Actions  []manifestAction `json:"actions"`
+	Errors   *object          `json:"errors"`
+}
+
+// Manifest returns what --brick-manifest prints.
+func (s *Service) Manifest() Manifest {
+	errs := newObject()
+	for _, e := range s.errors {
+		errs.set(e.Code, manifestError{Status: e.Status, Message: e.Message})
+	}
+	actions := s.actions
+	if actions == nil {
+		actions = []manifestAction{}
+	}
+	return Manifest{Name: s.name, Language: "go", Actions: actions, Errors: errs}
+}

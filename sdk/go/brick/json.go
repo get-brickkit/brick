@@ -1,0 +1,154 @@
+package brick
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
+	"strconv"
+)
+
+// object is a JSON object that keeps its key order, so schemas list
+// properties as declared and error values print as the client sent them.
+type object struct {
+	keys []string
+	vals map[string]any
+}
+
+func newObject() *object { return &object{vals: map[string]any{}} }
+
+func (o *object) set(key string, value any) {
+	if _, ok := o.vals[key]; !ok {
+		o.keys = append(o.keys, key)
+	}
+	o.vals[key] = value
+}
+
+func (o *object) get(key string) (any, bool) {
+	v, ok := o.vals[key]
+	return v, ok
+}
+
+// MarshalJSON writes the keys in order.
+func (o *object) MarshalJSON() ([]byte, error) {
+	var b bytes.Buffer
+	writeJSON(&b, o)
+	return b.Bytes(), nil
+}
+
+// decodeOrdered parses JSON into nil, bool, json.Number, string, []any and *object.
+func decodeOrdered(data []byte) (any, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	v, err := readValue(dec)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, errors.New("invalid character after top-level value")
+	}
+	return v, nil
+}
+
+func readValue(dec *json.Decoder) (any, error) {
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	delim, ok := tok.(json.Delim)
+	if !ok {
+		return tok, nil
+	}
+	switch delim {
+	case '{':
+		o := newObject()
+		for dec.More() {
+			key, err := dec.Token()
+			if err != nil {
+				return nil, err
+			}
+			v, err := readValue(dec)
+			if err != nil {
+				return nil, err
+			}
+			o.set(key.(string), v)
+		}
+		_, err = dec.Token()
+		return o, err
+	case '[':
+		arr := []any{}
+		for dec.More() {
+			v, err := readValue(dec)
+			if err != nil {
+				return nil, err
+			}
+			arr = append(arr, v)
+		}
+		_, err = dec.Token()
+		return arr, err
+	}
+	return nil, errors.New("unexpected delimiter")
+}
+
+// marshal is json.Marshal without HTML escaping or a trailing newline, as
+// JavaScript's JSON.stringify writes it.
+func marshal(v any) ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
+}
+
+func writeJSON(b *bytes.Buffer, v any) {
+	switch t := v.(type) {
+	case nil:
+		b.WriteString("null")
+	case bool:
+		b.WriteString(strconv.FormatBool(t))
+	case json.Number:
+		f, err := t.Float64()
+		if err != nil {
+			b.WriteString(t.String())
+		} else {
+			b.WriteString(jsNumber(f))
+		}
+	case string:
+		s, _ := marshal(t)
+		b.Write(s)
+	case []any:
+		b.WriteByte('[')
+		for i, item := range t {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			writeJSON(b, item)
+		}
+		b.WriteByte(']')
+	case *object:
+		b.WriteByte('{')
+		for i, key := range t.keys {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			k, _ := marshal(key)
+			b.Write(k)
+			b.WriteByte(':')
+			writeJSON(b, t.vals[key])
+		}
+		b.WriteByte('}')
+	default:
+		s, _ := marshal(t)
+		b.Write(s)
+	}
+}
+
+// jsNumber formats a number as JavaScript prints it, for the common cases.
+func jsNumber(f float64) string {
+	if f == float64(int64(f)) && f < 1e21 && f > -1e21 {
+		return strconv.FormatInt(int64(f), 10)
+	}
+	return strconv.FormatFloat(f, 'f', -1, 64)
+}
