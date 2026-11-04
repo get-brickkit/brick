@@ -2,6 +2,7 @@ import { afterEach, expect, it, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import {
+  ActionExecutionError,
   brick,
   defineService,
   resetGlobalRegistry,
@@ -159,6 +160,68 @@ it("sends a declared handler error to the client and keeps the connection open",
   try {
     live.send("say", "crash");
     expect(await closed).toBe(1011);
+  } finally {
+    log.mockRestore();
+  }
+});
+
+it("closes on an error code the socket does not declare, and logs it", async () => {
+  const service = defineService("chat");
+  service.socket({
+    name: "live",
+    input: { say: t.String() },
+    output: { message: t.String() },
+    allowMissingOrigin: true,
+    handlers: {
+      say: ({ input, error }) => {
+        if (input === "standard") error.FORBIDDEN();
+        // As a nested action's own code would arrive.
+        throw new ActionExecutionError("HTTP_ERROR", "Upstream failed", 502);
+      },
+    },
+  });
+  const live = createBrickClient({
+    baseUrl: start(service),
+    contract,
+  }).chat.live.connect({ reconnect: false });
+  const failed = new Promise<any>((resolve) => live.onHandlerError(resolve));
+  const closed = new Promise((resolve) =>
+    live.onClose(({ code }) => resolve(code)),
+  );
+  await live.ready;
+  // A standard code is part of every socket's errors.
+  live.send("say", "standard");
+  expect(await failed).toMatchObject({ event: "say", code: "FORBIDDEN" });
+  const log = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    live.send("say", "other");
+    expect(await closed).toBe(1011);
+    expect(JSON.stringify(log.mock.calls)).toContain("Upstream failed");
+  } finally {
+    log.mockRestore();
+  }
+});
+
+it("rejects the client's join when deciding it throws an action error", async () => {
+  const service = defineService("chat");
+  service.socket({
+    name: "live",
+    input: {},
+    output: { message: t.String() },
+    allowMissingOrigin: true,
+    join: () => {
+      throw new ActionExecutionError("FORBIDDEN", "No access", 403);
+    },
+    handlers: {},
+  });
+  const live = createBrickClient({
+    baseUrl: start(service),
+    contract,
+  }).chat.live.connect({ reconnect: false });
+  await live.ready;
+  const log = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    await expect(live.join("doc:1")).rejects.toBeInstanceOf(BrickSocketError);
   } finally {
     log.mockRestore();
   }

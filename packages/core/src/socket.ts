@@ -597,6 +597,8 @@ export function mountSockets(
         ...(seq !== undefined ? { seq } : {}),
       });
     };
+    // The codes a handler can raise with `error.CODE()`: declared plus standard.
+    const raisable = buildErrorHelpers(definition.errors);
     const fail = (ws: Peer, error: unknown) => {
       if (!(error instanceof SocketDenied))
         logger.error({ error, service, socket: definition.schema.name });
@@ -724,8 +726,17 @@ export function mountSockets(
                 );
             })
             .catch((error: unknown) => {
-              // A declared error answers the message; the connection stays open.
-              if (error instanceof ActionExecutionError && !state.closed)
+              // A declared error answers a handler message; the connection stays
+              // open. A failed $join or $leave, or an error with an undeclared
+              // code (from a nested action, say), is logged and closes it, which
+              // also rejects the client's pending joins.
+              if (
+                error instanceof ActionExecutionError &&
+                !state.closed &&
+                value.event !== "$join" &&
+                value.event !== "$leave" &&
+                Object.hasOwn(raisable, error.code)
+              )
                 try {
                   const frame = JSON.stringify({
                     event: "$error",

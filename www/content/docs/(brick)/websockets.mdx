@@ -200,7 +200,7 @@ live.onHandlerError((error) => {
 });
 ```
 
-The error is an `ActionExecutionError` with `code`, `message`, `status`, `details` and the input `event` it answers. The generated contract carries the socket's codes, so `error.code` is typed. Only errors raised with `error.CODE()` (or another `ActionExecutionError`) reach the client; anything else a handler throws still closes the connection with `1011` and stays in the server logs.
+The error is an `ActionExecutionError` with `code`, `message`, `status`, `details` and the input `event` it answers. The generated contract carries the socket's codes, so `error.code` is typed. Only an `ActionExecutionError` whose code the socket declares, or a standard code, reaches the client. Anything else a handler throws, including an action error with another code (from a nested action, say), closes the connection with `1011` and stays in the server logs. So does an error while Brick decides a room join or leave; the client's pending `join()` calls then reject.
 
 ## Authorization and origins
 

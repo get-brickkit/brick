@@ -46,8 +46,9 @@ export interface BrickSocketConfig<
   replay?: SocketReplay;
   /**
    * Errors handlers may raise with `error.CODE()`, as an action declares them.
-   * A raised error reaches the client's `onHandlerError` and the connection
-   * stays open; anything else a handler throws still closes it with `1011`.
+   * A raised error, with a declared or standard code, reaches the client's
+   * `onHandlerError` and the connection stays open; anything else a handler
+   * throws, or any error deciding a join, closes it with `1011` and is logged.
    */
   errors?: E;
   handlers: {
