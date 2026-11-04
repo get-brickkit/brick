@@ -1,5 +1,6 @@
 // Cross-language conformance: the same actions in TS, Go and Rust behind one
-// Bun gateway must answer identically. Needs `go` and `cargo`; skipped without.
+// Bun gateway must answer identically. Needs `go` and `cargo`; skipped without
+// them, except under CI.
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -15,6 +16,8 @@ import app, { ISSUER, confGo, confRust, signJwt } from "./app";
 
 const dir = import.meta.dir;
 const toolchains = Boolean(Bun.which("go") && Bun.which("cargo"));
+if (!toolchains && process.env.CI)
+  throw new Error("CI must install go and cargo for the conformance test");
 const generated = [
   join(dir, "../go/conformance/brickclient/client.go"),
   join(dir, "../rust/conformance/src/brick_client.rs"),
