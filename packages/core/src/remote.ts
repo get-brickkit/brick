@@ -9,6 +9,7 @@ import type { NamedService } from "./rpc";
 import { ActionExecutionError } from "./types";
 import type { CorsOptions } from "./cors";
 
+/** @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release. */
 export interface RemoteServiceOptions<N extends string = string> {
   /** The service name: the gateway serves it at `/api/<kebab-name>/<action>`. */
   name: N;
@@ -25,7 +26,11 @@ export interface RemoteServiceOptions<N extends string = string> {
   port?: number;
 }
 
-/** A Go or Rust service, run as its own process: behind the Bun gateway in dev, behind a reverse proxy in production. */
+/**
+ * A Go or Rust service, run as its own process: behind the Bun gateway in dev, behind a reverse proxy in production.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export interface RemoteService<
   N extends string = string,
 > extends NamedService<N> {
@@ -51,6 +56,8 @@ const remotes = new Map<string, RemoteService>();
  *   dev: "go run .",
  *   build: { command: "go build -o bin/billing .", run: "./bin/billing" },
  * });
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
  */
 export function remoteService<const N extends string>(
   options: RemoteServiceOptions<N>,
@@ -69,7 +76,11 @@ export function getRemoteService(name: string): RemoteService | undefined {
   return remotes.get(name);
 }
 
-/** True for what `remoteService` returned. */
+/**
+ * True for what `remoteService` returned.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export function isRemoteService(value: unknown): value is RemoteService {
   return (value as RemoteService | undefined)?.kind === "remote";
 }
@@ -77,6 +88,8 @@ export function isRemoteService(value: unknown): value is RemoteService {
 /**
  * The per-run token that marks a request as coming from inside the app:
  * `BRICK_INTERNAL_TOKEN`, or a random one this process makes and keeps in it.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
  */
 export function internalToken(): string {
   return (process.env.BRICK_INTERNAL_TOKEN ||= randomBytes(24).toString("hex"));
@@ -283,6 +296,8 @@ export function rememberRemoteCors(definition: object, cors: CorsOptions) {
  * origins of `brick({ cors })` as JSON. An origin predicate can't cross
  * processes and `true` means the app's own origin, which a same-origin proxy
  * needs no CORS for, so both are left out.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
  */
 export function remoteEnv(definition: object): Record<string, string> {
   const cors = corsOf.get(definition);
@@ -313,6 +328,7 @@ export function freePort(): Promise<number> {
   });
 }
 
+/** @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release. */
 export interface RemoteProcesses {
   /** `BRICK_SERVICES` as the children see it. */
   readonly urls: Record<string, string>;
@@ -323,6 +339,7 @@ export interface RemoteProcesses {
   stop(): Promise<void>;
 }
 
+/** @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release. */
 export interface StartRemoteOptions {
   /** `dev` runs each service's `dev` command; `start` its `build.run`. */
   mode: "dev" | "start";
@@ -340,6 +357,8 @@ export interface StartRemoteOptions {
  * Spawn the children of the remote services next to the app, each on a
  * loopback port, with `BRICK_SERVICES`, `BRICK_PORT` and `BRICK_INTERNAL_TOKEN`.
  * Also sets `BRICK_SERVICES` in this process so the gateway finds them.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
  */
 export async function startRemoteServices(
   services: readonly RemoteService[],

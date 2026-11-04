@@ -197,7 +197,11 @@ export type BrickApp = Elysia<any, any, any, any, any, any, any> & {
     readonly events?: EventsDefinition;
     /** Every `definePlugin` installation, in install order. */
     readonly plugins?: readonly InstalledPlugin[];
-    /** The Go and Rust services from `brick({ remote })`. */
+    /**
+     * The Go and Rust services from `brick({ remote })`.
+     *
+     * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+     */
     readonly remote?: readonly RemoteService[];
   };
   /**

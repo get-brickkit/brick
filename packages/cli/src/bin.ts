@@ -150,10 +150,10 @@ Usage:
   brick dev [entry] [--port <number>] [--dashboard-port <number>] [--history-days <number>] [--no-dashboard]  Start development server with live reload and dashboard
   brick start [entry] [--port <number>]                  Start production server
   brick worker <entry>                                   Deliver events without serving HTTP
-  brick build <app.ts> [--outdir <dir>] [--port <number>] [--no-aot] [--deploy <targets>] [--domain <host>]  Compile a default-exported BrickApp into a Bun server
+  brick build <app.ts> [--outdir <dir>] [--port <number>] [--no-aot] [--deploy <targets>] [--domain <host>]  Compile a default-exported BrickApp into a Bun server (--deploy is experimental)
   brick gen openapi <entry> [--output <file>]            Generate OpenAPI 3.1 JSON specification
   brick gen client <entry> [--output <file>]             Generate a typed browser client contract
-  brick gen contract <entry> [--output <file>]           Merge every service (TS, Go, Rust) into _brick/contract.json and write the TS, Go and Rust clients
+  brick gen contract <entry> [--output <file>]           Merge every service (TS, Go, Rust) into _brick/contract.json and write the TS, Go and Rust clients (experimental)
   brick gen manifest                                     Write <generated>/services.gen.ts
   brick db generate [entry] [--out <dir>] [--name <name>]  Write a SQL migration for the schema changes
   brick db migrate [entry] [--out <dir>]                 Apply the migrations that have not run yet
@@ -313,7 +313,7 @@ ${PORT_RESOLUTION_HELP}`,
     )
     .option(
       "--deploy <targets>",
-      "Also write production routing into deploy/<target>/: caddy, nginx, traefik, kubernetes, compose, routes (comma-separated)",
+      "Experimental: also write production routing into deploy/<target>/: caddy, nginx, traefik, kubernetes, compose, routes (comma-separated)",
       (v: string) => {
         try {
           return parseDeployTargets(v);
@@ -497,7 +497,7 @@ ${PORT_RESOLUTION_HELP}`,
   gen
     .command("contract")
     .description(
-      "Merge every service (TS, Go, Rust) into _brick/contract.json and write the TS, Go and Rust clients",
+      "Experimental: merge every service (TS, Go, Rust) into _brick/contract.json and write the TS, Go and Rust clients",
     )
     .argument("[entry]", "Application entry file")
     .option("--config <path>", CONFIG_HELP)

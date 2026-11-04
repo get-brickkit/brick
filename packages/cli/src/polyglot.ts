@@ -15,7 +15,11 @@ import { generateClientContract } from "./client-contract";
 import { writeContractSource } from "./client-contract-file";
 import { loadBrickApp } from "./app-entry";
 
-/** One service in `_brick/contract.json`: what `--brick-manifest` prints, for every language. */
+/**
+ * One service in `_brick/contract.json`: what `--brick-manifest` prints, for every language.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export interface ServiceManifest {
   name: string;
   language: "ts" | "go" | "rust";
@@ -23,6 +27,7 @@ export interface ServiceManifest {
   errors: Record<string, { status: number; message: string }>;
 }
 
+/** @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release. */
 export interface PolyglotContract {
   version: 1;
   services: ServiceManifest[];
@@ -30,7 +35,11 @@ export interface PolyglotContract {
 
 const run = promisify(execFile);
 
-/** Run a remote service's `dev` command with `BRICK_MANIFEST=1` and read the manifest it prints. */
+/**
+ * Run a remote service's `dev` command with `BRICK_MANIFEST=1` and read the manifest it prints.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export async function readRemoteManifest(
   remote: RemoteService,
   cwd = process.cwd(),
@@ -91,6 +100,8 @@ export function readContractRemotes(
  * (`<dir>/src/brick_client.rs`) into each remote service.
  *
  * @returns The files written, or `undefined` when the app has no remote services.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
  */
 export async function writePolyglotContract(
   entry: string,
@@ -188,7 +199,11 @@ function nullableOf(schema: any): any {
     : undefined;
 }
 
-/** A Go client package for every service but `self`. */
+/**
+ * A Go client package for every service but `self`.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export function goClient(contract: PolyglotContract, self: string): string {
   const decls: Decl = [];
   const goType = (schema: any, name: string): string => {
@@ -274,7 +289,11 @@ const RUST_KEYWORDS = new Set(
   ),
 );
 
-/** A Rust client module for every service but `self`. */
+/**
+ * A Rust client module for every service but `self`.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export function rustClient(contract: PolyglotContract, self: string): string {
   const decls: Decl = [];
   const rustType = (schema: any, name: string): string => {
@@ -346,8 +365,21 @@ ${[...decls, ...funcs].join("\n\n")}
 `;
 }
 
-/** Run each remote service's `build.command` in its folder (what `brick build` does). */
+/** The one line `brick dev`, `brick build` and `brick start` print, only for an app with Go or Rust services. */
+export function noticeExperimental(remote: readonly RemoteService[]): void {
+  if (remote.length)
+    console.warn(
+      `[Brick] Polyglot services (${remote.map((r) => r.name).join(", ")}) are experimental and may change in any release.`,
+    );
+}
+
+/**
+ * Run each remote service's `build.command` in its folder (what `brick build` does).
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export function buildRemoteServices(app: BrickApp, cwd = process.cwd()): void {
+  noticeExperimental(app.definition.remote ?? []);
   for (const remote of app.definition.remote ?? []) {
     const command = remote.options.build?.command;
     if (!command) continue;
@@ -374,6 +406,7 @@ export async function startDevRemotes(
     env?: Record<string, string>;
   },
 ): Promise<RemoteProcesses> {
+  noticeExperimental(remote);
   const processes = await startRemoteServices(remote, {
     mode: "dev",
     ...options,

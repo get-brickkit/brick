@@ -30,7 +30,7 @@ import { parsePort } from "./port-utils";
 import { writeServiceManifest } from "./manifest";
 import { buildAppWorkflows, registerWorkflowTransform } from "./workflows";
 import { startProductionDashboard } from "./production-dashboard";
-import { startDevRemotes } from "./polyglot";
+import { noticeExperimental, startDevRemotes } from "./polyglot";
 import type {
   SerializedError,
   TelemetryRecord,
@@ -206,6 +206,7 @@ export async function startProdServer(options: DevServerOptions = {}) {
 
   await buildAppWorkflows(app);
   const remote = app.definition.remote ?? [];
+  noticeExperimental(remote);
   const children = remote.length
     ? await startRemoteServices(remote, {
         mode: "start",

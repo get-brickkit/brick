@@ -141,6 +141,8 @@ export interface CreateServerOptions {
    * proxy routes there directly; see `brick build --deploy`). It also mounts
    * `POST /_brick/call/<service>/<action>`, where those services call TS
    * actions with the internal token.
+   *
+   * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
    */
   remote?: readonly RemoteService[];
 }

@@ -9,6 +9,7 @@ import type {
 
 export type { DashboardExtensionOptions, DashboardTheme };
 
+/** @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release. */
 export const DEPLOY_TARGETS = [
   "caddy",
   "nginx",
@@ -17,9 +18,14 @@ export const DEPLOY_TARGETS = [
   "compose",
   "routes",
 ] as const;
+/** @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release. */
 export type DeployTarget = (typeof DEPLOY_TARGETS)[number];
 
-/** `deploy` in brick.config.ts. */
+/**
+ * `deploy` in brick.config.ts.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export interface DeployOptions {
   /** What `brick build` writes into `deploy/<target>/`. */
   targets?: DeployTarget[];
@@ -54,7 +60,11 @@ export interface BrickConfig {
   };
   build?: { outdir?: string; aot?: boolean; requestLogging?: boolean };
   dashboard?: DashboardExtensionOptions;
-  /** Production routing `brick build` writes into `deploy/<target>/` (for apps with Go or Rust services). */
+  /**
+   * Production routing `brick build` writes into `deploy/<target>/` (for apps with Go or Rust services).
+   *
+   * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+   */
   deploy?: DeployOptions;
   lint?: {
     presets?: LintPreset[];

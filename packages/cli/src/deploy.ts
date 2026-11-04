@@ -13,7 +13,11 @@ import {
 
 export { DEPLOY_TARGETS, type DeployOptions, type DeployTarget };
 
-/** Headers only another service may send, with the internal token. Every proxy strips them. */
+/**
+ * Headers only another service may send, with the internal token. Every proxy strips them.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export const BRICK_HEADERS = [
   "X-Brick-Internal",
   "X-Brick-User",
@@ -21,6 +25,7 @@ export const BRICK_HEADERS = [
   "X-Brick-Tenant",
 ];
 
+/** @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release. */
 export interface Upstream {
   /** Its name: `app`, or the kebab-case service name; the host name in compose and Kubernetes. */
   name: string;
@@ -35,7 +40,11 @@ export interface Upstream {
   env: Record<string, string>;
 }
 
-/** The neutral routing table: `deploy/routes/routes.json`, and the input of every generator. */
+/**
+ * The neutral routing table: `deploy/routes/routes.json`, and the input of every generator.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export interface RoutingTable {
   domain?: string;
   /** Request headers every proxy removes. */
@@ -46,6 +55,7 @@ export interface RoutingTable {
   app: { build: string; start: string };
 }
 
+/** @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release. */
 export interface RoutingTableOptions extends DeployOptions {
   /** Override `host:port` per upstream name (the benchmark points them at the host). */
   addresses?: Record<string, string>;
@@ -59,7 +69,11 @@ function languageOf(dir: string): "go" | "rust" {
   throw new Error(`Brick: ${dir} has neither go.mod nor Cargo.toml.`);
 }
 
-/** Build the routing table: `/api/<service>/` to each Go or Rust service, the rest to Bun. */
+/**
+ * Build the routing table: `/api/<service>/` to each Go or Rust service, the rest to Bun.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export function routingTable(
   app: BrickApp,
   options: RoutingTableOptions = {},
@@ -141,11 +155,16 @@ const upstreamOf = (table: RoutingTable, name: string) =>
   table.upstreams.find((u) => u.name === name)!;
 const ident = (name: string) => name.replace(/-/g, "_");
 
+/** @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release. */
 export function routesJson(table: RoutingTable): string {
   return `${JSON.stringify(table, null, 2)}\n`;
 }
 
-/** Caddyfile: automatic HTTPS for the domain, keep-alive is Caddy's default. */
+/**
+ * Caddyfile: automatic HTTPS for the domain, keep-alive is Caddy's default.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export function caddyfile(table: RoutingTable): string {
   const handles = table.routes.map(({ path, upstream }) => {
     const proxy = `reverse_proxy ${upstreamOf(table, upstream).address}`;
@@ -162,7 +181,11 @@ ${handles.join("\n\n")}
 `;
 }
 
-/** nginx.conf: one keep-alive upstream per process. */
+/**
+ * nginx.conf: one keep-alive upstream per process.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export function nginxConf(table: RoutingTable): string {
   const upstreams = table.upstreams.map(
     (u) =>
@@ -195,7 +218,11 @@ ${locations.join("\n\n")}
 `;
 }
 
-/** Traefik: the static config (`traefik.yml`) loads the routes from the file provider (`dynamic.yml`). */
+/**
+ * Traefik: the static config (`traefik.yml`) loads the routes from the file provider (`dynamic.yml`).
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export function traefikConfig(table: RoutingTable): Record<string, string> {
   const tls = table.domain !== undefined;
   const entryPoint = tls ? "websecure" : "web";
@@ -268,6 +295,8 @@ const yamlEnv = (env: Record<string, string>, indent: string) =>
  * by path. `BRICK_INTERNAL_TOKEN` comes from the Secret `brick`. The Ingress
  * API can't strip headers portably; the SDKs ignore `x-brick-*` without the
  * token, so that is the guard here.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
  */
 export function kubernetesYaml(table: RoutingTable): string {
   const docs = table.upstreams.flatMap((u) => {
@@ -340,7 +369,11 @@ ${docs.map((doc) => `---\n${doc}\n`).join("")}`;
 
 const TOOLCHAIN = { go: "golang:1.26", rust: "rust:1" };
 
-/** One Dockerfile per process, built from the project root. */
+/**
+ * One Dockerfile per process, built from the project root.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export function dockerfile(table: RoutingTable, u: Upstream): string {
   if (u.language === "ts")
     return `# ${HEADER}
@@ -391,9 +424,14 @@ const PROXY_IMAGES = {
   },
 } as const;
 
+/** @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release. */
 export type ProxyTarget = keyof typeof PROXY_IMAGES;
 
-/** compose.yaml: Bun, every Go and Rust service, and the proxy, which alone publishes ports. */
+/**
+ * compose.yaml: Bun, every Go and Rust service, and the proxy, which alone publishes ports.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export function composeYaml(table: RoutingTable, proxy: ProxyTarget): string {
   const services = table.upstreams.map(
     (u) => `  ${u.name}:
@@ -421,7 +459,11 @@ ${volumes.map((v) => `      - ${v}`).join("\n")}
 ${proxy === "nginx" ? "" : `\nvolumes:\n  ${proxy === "caddy" ? "caddy-data" : "traefik-acme"}:\n`}`;
 }
 
-/** Every file of the targets, by path under `deploy/`. Compose brings the config of its proxy. */
+/**
+ * Every file of the targets, by path under `deploy/`. Compose brings the config of its proxy.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export function deployFiles(
   table: RoutingTable,
   targets: readonly DeployTarget[],
@@ -448,7 +490,11 @@ export function deployFiles(
   return files;
 }
 
-/** Parse `--deploy caddy,compose`. */
+/**
+ * Parse `--deploy caddy,compose`.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export function parseDeployTargets(value: string): DeployTarget[] {
   const targets = value
     .split(",")
@@ -462,7 +508,11 @@ export function parseDeployTargets(value: string): DeployTarget[] {
   return targets as DeployTarget[];
 }
 
-/** Write the targets' files into `<root>/deploy/`, returning their paths. */
+/**
+ * Write the targets' files into `<root>/deploy/`, returning their paths.
+ *
+ * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
+ */
 export async function writeDeploy(
   app: BrickApp,
   options: DeployOptions & { targets: DeployTarget[]; root?: string },
