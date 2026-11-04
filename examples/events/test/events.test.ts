@@ -1,4 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  setDefaultTimeout,
+} from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +19,9 @@ const REDIS_URL = process.env.REDIS_URL;
 // Workflow listeners run on a Redis world. With REDIS_URL set, the workflow files
 // are transformed and bundled before the app is imported, so it is imported late.
 if (REDIS_URL) {
+  // A run waits out step retries and a 1s sleep, and its tests poll for up to
+  // 15s: past bun's 5s default on bullmq-world, whose delayed jobs are slower.
+  setDefaultTimeout(20_000);
   const { buildWorkflows, registerWorkflowTransform } =
     await import("@brickkit/cli/workflows");
   await registerWorkflowTransform(ROOT);
