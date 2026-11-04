@@ -3,6 +3,7 @@ import { appDb } from "./db";
 // Drizzle Kit's schema entry point, backed by the same runtime definition.
 export const {
   account,
+  benchItemsTable,
   jwks,
   oauthAccessToken,
   oauthClient,

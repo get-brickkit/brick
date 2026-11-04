@@ -33,6 +33,8 @@ const SKIP_DIRS = new Set([
   "dist",
   "build",
   "meta", // drizzle snapshots
+  "target", // Cargo
+  "bin", // Go binaries
 ]);
 const SKIP_FILES = new Set([
   "bun.lock",
@@ -53,6 +55,8 @@ const LANGS: Record<string, string> = {
   ".yaml": "yaml",
   ".html": "html",
   ".sh": "bash",
+  ".go": "go",
+  ".rs": "rust",
 };
 const MAX_FILE_BYTES = 40_000;
 

@@ -16,10 +16,15 @@ import {
   verification,
 } from "./auth/schema";
 import { databaseUrlSecret } from "./secrets";
+import { benchItemsTable } from "./services/bench/model";
 import { pagesTable } from "./services/pages/page/model";
 
 // The app owns one postgres-js pool; auth and pages reuse it.
-export const appSql = postgres(databaseUrlSecret.require(), { prepare: false });
+// Pool size 10, as the Go and Rust bench services use.
+export const appSql = postgres(databaseUrlSecret.require(), {
+  max: 10,
+  prepare: false,
+});
 
 // Postgres database shared by pages and auth (Node-safe: no bun:sqlite).
 export const appDb = defineDatabase({
@@ -27,6 +32,7 @@ export const appDb = defineDatabase({
   name: "pages",
   tables: {
     account,
+    benchItemsTable,
     jwks,
     oauthAccessToken,
     oauthClient,

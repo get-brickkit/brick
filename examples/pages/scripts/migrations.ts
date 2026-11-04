@@ -1,0 +1,56 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import postgres from "postgres";
+
+/**
+ * Create the database if it is missing, then apply the committed migrations
+ * (drizzle/) it has not run yet, recorded in `_applied_migrations`. Used by the
+ * tests and the benchmark on their own databases; the app never migrates.
+ */
+export async function applyMigrations(url: string): Promise<void> {
+  const name = new URL(url).pathname.replace(/^\//, "");
+  const adminUrl = new URL(url);
+  adminUrl.pathname = "/postgres";
+  const admin = postgres(adminUrl.toString(), { max: 1, onnotice: () => {} });
+  try {
+    const found =
+      await admin`SELECT 1 FROM pg_database WHERE datname = ${name}`;
+    if (found.length === 0)
+      await admin.unsafe(`CREATE DATABASE "${name.replaceAll('"', '""')}"`);
+  } finally {
+    await admin.end();
+  }
+  const sql = postgres(url, { max: 1, onnotice: () => {} });
+  try {
+    await sql`CREATE TABLE IF NOT EXISTS _applied_migrations (name text PRIMARY KEY)`;
+    const dir = join(import.meta.dir, "../drizzle");
+    const files = readdirSync(dir)
+      .filter((file) => file.endsWith(".sql"))
+      .sort();
+    const applied = new Set(
+      (await sql`SELECT name FROM _applied_migrations`).map((row) => row.name),
+    );
+    // A database migrated before this table existed has the first migration.
+    const legacy =
+      await sql`SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'pages'`;
+    if (legacy.length > 0 && !applied.has(files[0])) {
+      await sql`INSERT INTO _applied_migrations (name) VALUES (${files[0]!})`;
+      applied.add(files[0]);
+    }
+    for (const file of files) {
+      if (applied.has(file)) continue;
+      await sql.begin(async (tx) => {
+        for (const raw of readFileSync(join(dir, file), "utf8").split(
+          "--> statement-breakpoint",
+        )) {
+          const statement = raw.trim();
+          if (statement) await tx.unsafe(statement);
+        }
+        await tx`INSERT INTO _applied_migrations (name) VALUES (${file}) ON CONFLICT DO NOTHING`;
+      });
+    }
+  } finally {
+    await sql.end();
+  }
+}

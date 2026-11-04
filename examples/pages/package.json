@@ -13,7 +13,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:schema": "auth generate --config src/api/auth/cli.ts --output src/api/auth/schema.ts -y",
-    "test": "bun test test"
+    "test": "bun test test",
+    "bench": "bun bench/run.ts"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "^1.7.15",

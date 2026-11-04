@@ -98,6 +98,21 @@ through the real API, checks the public HTML viewer and anonymous access, and
 verifies injected-client identity. `bun run test` at the repository root runs
 framework tests without requiring the pages Postgres database.
 
+## Go and Rust services and the benchmark
+
+`services/bench-go` and `services/bench-rust` are Brick services in Go and Rust,
+wired into the app with `remoteService` in `src/api/services/bench/service.ts`.
+They have the same three APIs as the TS `bench` service: `echo`, `validate` and
+`db` (one `SELECT` from `bench_items`, which migrations 0001 and 0002 create and
+seed). `bun run dev` starts them with `go run .` and `cargo run -q`; you need Go
+and Rust installed.
+
+`bun run bench` builds the app for production and the services in release mode,
+calls each API 200 times one request at a time through Bun, calls the Go and
+Rust APIs 200 times directly, and writes `bench/results.json` (ignored by Git).
+It uses its own database, `drafton_bench` (set `BENCH_DATABASE_URL`), and
+migrates it on first run. `BENCH_SKIP_BUILD=1` reuses the last builds.
+
 ## Layout
 
 - `src/api/db.ts`: shared Postgres client, handle, and schema.

@@ -3,6 +3,7 @@ import { and, brick, eq, traceRoute } from "@brickkit/core";
 import { getAuth } from "./auth";
 import { registerMcpRoutes } from "./mcp";
 import { baseUrlSecret, portSecret } from "./secrets";
+import { benchGo, benchRust, benchService } from "./services/bench/service";
 import {
   pagesService,
   pagesTable,
@@ -29,7 +30,9 @@ const NOT_FOUND_HTML =
 export function buildApp() {
   const port = portSecret.require();
   const app = brick({
-    services: [pagesService],
+    services: [pagesService, benchService],
+    // Go and Rust services: Bun proxies /api/bench-go/* and /api/bench-rust/*.
+    remote: [benchGo, benchRust],
     cors: {
       origin: new URL(baseUrlSecret.value() as string).origin,
       credentials: true,
