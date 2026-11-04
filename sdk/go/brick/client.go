@@ -3,6 +3,7 @@ package brick
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -50,11 +51,15 @@ func Call(ctx context.Context, service, action string, in, out any) error {
 	req.Header.Set("x-brick-internal", os.Getenv("BRICK_INTERNAL_TOKEN"))
 	req.Header.Set("x-brick-caller", serviceName)
 	if c, ok := FromContext(ctx); ok {
+		user := ""
+		if len(c.user) > 0 {
+			user = base64.StdEncoding.EncodeToString(c.user)
+		}
 		for key, value := range map[string]string{
 			"x-request-id":   c.requestID,
 			"x-trace-id":     c.traceID,
 			"traceparent":    c.traceparent,
-			"x-brick-user":   c.user,
+			"x-brick-user":   user,
 			"x-brick-tenant": c.tenantID,
 		} {
 			if value != "" {

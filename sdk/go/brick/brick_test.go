@@ -47,8 +47,8 @@ func TestValidationMatchesTypeBox(t *testing.T) {
 	if rec.Code != 400 || rec.Body.String() != want {
 		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
 	}
-	rec = call(testService(t), `{}`, nil)
-	want = `{"name":"ValidationError","code":"VALIDATION_FAILED","message":"Validation failed for action 'greetPerson' input","status":400,"errors":[{"path":"/name","message":"Expected required property"},{"path":"/age","message":"Expected required property"},{"path":"/role","message":"Expected required property"},{"path":"/name","message":"Expected string"},{"path":"/age","message":"Expected integer"},{"path":"/role","message":"Expected union value"}],"requestId":""}`
+	rec = call(testService(t), `{}`, map[string]string{"x-request-id": "r0"})
+	want = `{"name":"ValidationError","code":"VALIDATION_FAILED","message":"Validation failed for action 'greetPerson' input","status":400,"errors":[{"path":"/name","message":"Expected required property"},{"path":"/age","message":"Expected required property"},{"path":"/role","message":"Expected required property"},{"path":"/name","message":"Expected string"},{"path":"/age","message":"Expected integer"},{"path":"/role","message":"Expected union value"}],"requestId":"r0"}`
 	if rec.Body.String() != want {
 		t.Fatalf("got %s", rec.Body.String())
 	}

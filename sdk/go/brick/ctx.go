@@ -4,25 +4,29 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
 type ctxKey struct{}
 
-// Ctx is the context of one action call. Bun has already worked out the user
-// and checked the caller; a request carries them only with the internal token.
+// Ctx is the context of one action call: its ids, and its user from the
+// caller's JWT, or, for a call from another service, the caller, user and
+// tenant that service forwarded.
 type Ctx struct {
 	context.Context
+	action      string
 	requestID   string
 	traceID     string
 	traceparent string
 	caller      string
 	tenantID    string
-	user        string // base64 JSON, as forwarded
+	user        json.RawMessage
 }
 
-func newCtx(r *http.Request, trusted bool) *Ctx {
+func newCtx(r *http.Request, action string, trusted bool, auth *verifier) *Ctx {
 	c := &Ctx{
+		action:      action,
 		requestID:   r.Header.Get("x-request-id"),
 		traceID:     r.Header.Get("x-trace-id"),
 		traceparent: r.Header.Get("traceparent"),
@@ -30,7 +34,11 @@ func newCtx(r *http.Request, trusted bool) *Ctx {
 	if trusted {
 		c.caller = r.Header.Get("x-brick-caller")
 		c.tenantID = r.Header.Get("x-brick-tenant")
-		c.user = r.Header.Get("x-brick-user")
+		if user := r.Header.Get("x-brick-user"); user != "" {
+			c.user, _ = base64.StdEncoding.DecodeString(user)
+		}
+	} else if auth != nil {
+		c.user = auth.user(r)
 	}
 	c.Context = context.WithValue(r.Context(), ctxKey{}, c)
 	return c
@@ -48,27 +56,33 @@ func FromContext(ctx context.Context) (*Ctx, bool) {
 // RequestID is the id of the public request this call is part of.
 func (c *Ctx) RequestID() string { return c.requestID }
 
-// TraceID is the trace id Bun assigned.
+// TraceID is the id of the trace this call is part of.
 func (c *Ctx) TraceID() string { return c.traceID }
 
 // Caller is the name of the service that called this action, or "" for a
-// call from outside through the gateway.
+// call from outside.
 func (c *Ctx) Caller() string { return c.caller }
 
-// TenantID is the tenant the gateway's context hook resolved, if any.
+// TenantID is the tenant the calling service forwarded, if any.
 func (c *Ctx) TenantID() string { return c.tenantID }
 
 // HasUser reports whether the call carries a user.
-func (c *Ctx) HasUser() bool { return c.user != "" }
+func (c *Ctx) HasUser() bool { return len(c.user) > 0 }
 
-// User decodes the user Bun resolved into v. It returns false when there is none.
+// User decodes the caller's user into v: the claims of a valid JWT, or the
+// user a calling service forwarded. It returns false when there is none.
 func (c *Ctx) User(v any) (bool, error) {
-	if c.user == "" {
+	if len(c.user) == 0 {
 		return false, nil
 	}
-	raw, err := base64.StdEncoding.DecodeString(c.user)
-	if err != nil {
-		return false, err
+	return true, json.Unmarshal(c.user, v)
+}
+
+// RequireUser decodes the user into v, or returns the 401 a TS action's
+// authorize gives without one: `if err := ctx.RequireUser(&u); err != nil { return out, err }`.
+func (c *Ctx) RequireUser(v any) error {
+	if len(c.user) == 0 {
+		return &Error{Name: "ActionExecutionError", Code: "UNAUTHORIZED", Message: fmt.Sprintf("Access denied for action '%s'", c.action), Status: 401}
 	}
-	return true, json.Unmarshal(raw, v)
+	return json.Unmarshal(c.user, v)
 }

@@ -1,8 +1,10 @@
 // Package brick writes Brick services in Go. A Go service runs as its own
-// process next to the Bun app, which is the only public server: Bun proxies
-// /api/<service>/<action> to it over loopback, after CORS and auth, and
-// forwards the user, caller and request id. Go trusts Bun: requests are
-// accepted only with the per-run internal token.
+// process next to the Bun app. Browsers reach it directly, through a reverse
+// proxy in production or the Bun gateway in `brick dev`: it serves
+// /api/<service>/<action> (and /<action>), verifies the caller's Better Auth
+// JWT itself, and adds request ids, the W3C trace and CORS. Other services
+// call it with the internal token, which alone makes their x-brick-* headers
+// (caller, user, tenant) trusted.
 //
 //	svc := brick.NewService("billing")
 //	errNoFunds := svc.DefineError("INSUFFICIENT_FUNDS", 402, "Not enough funds")
@@ -13,6 +15,7 @@
 package brick
 
 import (
+	"cmp"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -38,6 +41,7 @@ type Service struct {
 	router   chi.Router
 	actions  []manifestAction
 	errors   []*ErrorDef
+	auth     *verifier
 }
 
 // NewService starts a service. Its name must match the remoteService name in the Bun app.
@@ -46,6 +50,7 @@ func NewService(name string) *Service {
 		name:     name,
 		registry: huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer),
 		router:   chi.NewRouter(),
+		auth:     verifierFromEnv(),
 	}
 	s.router.Get("/_health", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
@@ -67,16 +72,19 @@ func (s *Service) DefineError(code string, status int, message string) *ErrorDef
 // Action registers a typed action. Its input and output schemas come from the
 // Go types through Huma (struct tags such as minLength, maximum and enum);
 // the input is validated against that schema before fn runs, with the same
-// error envelope a TypeScript action gives. It is served at POST /<kebab-name>.
+// error envelope a TypeScript action gives. It is served at
+// POST /<kebab-name> for other services, and at
+// POST $BRICK_PREFIX/<kebab-service>/<kebab-name> (prefix default /api) for
+// the proxy, which then needs no path rewriting.
 func Action[I, O any](s *Service, name string, fn func(ctx *Ctx, in I) (O, error)) {
 	input := s.schema(reflect.TypeFor[I](), pascal(name)+"Input")
 	output := s.schema(reflect.TypeFor[O](), pascal(name)+"Output")
 	s.actions = append(s.actions, manifestAction{Name: name, Input: input, Output: output})
-	s.router.Post("/"+kebab(name), func(w http.ResponseWriter, r *http.Request) {
+	handler := func(w http.ResponseWriter, r *http.Request) {
 		serve, trust := checkToken(r)
-		ctx := newCtx(r, trust)
+		ctx := newCtx(r, name, trust, s.auth)
 		if !serve {
-			writeError(w, ctx, &Error{Name: "ActionExecutionError", Code: "UNAUTHORIZED", Message: "Missing or invalid internal token", Status: 401})
+			writeError(w, ctx, &Error{Name: "ActionExecutionError", Code: "UNAUTHORIZED", Message: "Invalid internal token", Status: 401})
 			return
 		}
 		body, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
@@ -118,18 +126,24 @@ func Action[I, O any](s *Service, name string, fn func(ctx *Ctx, in I) (O, error
 		}
 		w.Header().Set("content-type", "application/json")
 		_, _ = w.Write(data)
-	})
+	}
+	s.router.Post("/"+kebab(name), handler)
+	prefix := strings.TrimRight(cmp.Or(os.Getenv("BRICK_PREFIX"), "/api"), "/")
+	s.router.Post(prefix+"/"+kebab(s.name)+"/"+kebab(name), handler)
 }
 
-// checkToken serves and trusts a request only with this run's internal token.
-// With no token configured (the binary run by hand), calls are served but
-// their x-brick-* headers are not trusted.
+// checkToken trusts a request's x-brick-* headers only with the internal
+// token, which only other services of the app have. A request without the
+// header is a public call (its user comes from its JWT); a wrong token is
+// refused, so a misconfigured service fails loudly instead of running as
+// nobody.
 func checkToken(r *http.Request) (serve, trust bool) {
-	token := os.Getenv("BRICK_INTERNAL_TOKEN")
-	if token == "" {
+	given, present := r.Header["X-Brick-Internal"]
+	if !present {
 		return true, false
 	}
-	ok := subtle.ConstantTimeCompare([]byte(r.Header.Get("x-brick-internal")), []byte(token)) == 1
+	token := os.Getenv("BRICK_INTERNAL_TOKEN")
+	ok := token != "" && len(given) == 1 && subtle.ConstantTimeCompare([]byte(given[0]), []byte(token)) == 1
 	return ok, ok
 }
 
@@ -145,11 +159,9 @@ func writeError(w http.ResponseWriter, ctx *Ctx, e *Error) {
 	_, _ = w.Write(data)
 }
 
-// Handler is the service's HTTP handler, for tests or a server of your own.
-func (s *Service) Handler() http.Handler { return s.router }
-
 // Serve prints the manifest and exits when run with --brick-manifest (or
-// BRICK_MANIFEST=1). Otherwise it listens on 127.0.0.1:$BRICK_PORT.
+// BRICK_MANIFEST=1). Otherwise it listens on $BRICK_HOST:$BRICK_PORT
+// (default 127.0.0.1; 0.0.0.0 in a container).
 func (s *Service) Serve() error {
 	if slices.Contains(os.Args[1:], "--brick-manifest") || os.Getenv("BRICK_MANIFEST") == "1" {
 		data, err := json.Marshal(s.Manifest())
@@ -163,12 +175,12 @@ func (s *Service) Serve() error {
 	if port == "" {
 		port = "0"
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:"+port)
+	ln, err := net.Listen("tcp", net.JoinHostPort(cmp.Or(os.Getenv("BRICK_HOST"), "127.0.0.1"), port))
 	if err != nil {
 		return err
 	}
 	log.Printf("[brick] %s (go) listening on http://%s", s.name, ln.Addr())
-	return http.Serve(ln, s.router)
+	return http.Serve(ln, s.Handler())
 }
 
 type manifestAction struct {
