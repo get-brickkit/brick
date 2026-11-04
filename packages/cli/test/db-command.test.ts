@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -9,12 +9,16 @@ import {
   defineDatabase,
   defineService,
   getTableName,
+  resetGlobalRegistry,
   sqliteTable,
   text,
 } from "@brickkit/core";
 import { pgSchema, text as pgText } from "@brickkit/core/pg";
 import { appDatabases } from "../src/db";
 import app from "./fixtures/db-app";
+
+// Other test files leave services in the shared registry; names here repeat.
+beforeEach(resetGlobalRegistry);
 
 const cli = resolve(import.meta.dir, "../src/bin.ts");
 const entry = join(import.meta.dir, "fixtures/db-app.ts");
