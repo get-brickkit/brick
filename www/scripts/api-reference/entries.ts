@@ -74,7 +74,8 @@ export const ENTRY_POINTS: EntryPoint[] = [
     specifier: "@brickkit/cli/compiler",
     file: "packages/cli/src/compiler.ts",
     tsconfig: "packages/cli/tsconfig.build.json",
-    description: "Compile and bind a Brick application's routes ahead of time.",
+    description:
+      "Emit the JavaScript module of a compiled application's route handlers, and each handler factory, for an ahead-of-time build.",
   },
   {
     slug: "cli-dashboard",
