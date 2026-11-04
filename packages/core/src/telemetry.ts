@@ -93,6 +93,8 @@ export function traceHttpRequest<T>(
   method: string,
   route: string,
   fn: () => T,
+  /** When the request began, if before this call (epoch ms). */
+  startTime?: number,
 ): T {
   const attributes: Attributes = {
     "http.request.method": method,
@@ -107,7 +109,7 @@ export function traceHttpRequest<T>(
     .getTracer(INSTRUMENTATION_SCOPE)
     .startActiveSpan(
       `${method} ${route}`,
-      { kind: SpanKind.SERVER, attributes },
+      { kind: SpanKind.SERVER, attributes, startTime },
       parent,
       (span) => {
         if (!headers["x-trace-id"]) {

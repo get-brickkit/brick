@@ -203,6 +203,45 @@ describe("telemetry spans", () => {
   });
 });
 
+describe("auth.handler", () => {
+  it("traces and logs the requests auth.handler answers, and only those", async () => {
+    const lines: string[] = [];
+    const app = brick({
+      services: [],
+      telemetry: true,
+      requestLogging: { logger: (line) => lines.push(line) },
+      auth: {
+        resolve: () => null,
+        handler: (request) =>
+          new URL(request.url).pathname.startsWith("/auth/")
+            ? Response.json({ ok: false }, { status: 401 })
+            : undefined,
+      },
+    });
+    const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
+    const response = await app.handle(
+      new Request("http://localhost/auth/sign-in", {
+        method: "POST",
+        headers: { traceparent: `00-${traceId}-00f067aa0ba902b7-01` },
+      }),
+    );
+    expect(response.status).toBe(401);
+    const span = spanNamed("POST /auth/sign-in");
+    expect(span.spanContext().traceId).toBe(traceId);
+    expect(span.attributes["http.response.status_code"]).toBe(401);
+    expect(lines).toEqual([
+      expect.stringMatching(/^POST \/auth\/sign-in → 401 /),
+    ]);
+
+    // A request auth.handler lets through gets no auth span.
+    exporter.reset();
+    await app.handle(new Request("http://localhost/_health"));
+    expect(exporter.getFinishedSpans().map((span) => span.name)).not.toContain(
+      "GET /_health",
+    );
+  });
+});
+
 describe("trace context and database spans", () => {
   it("continues the caller's W3C trace and returns its ids", async () => {
     const app = buildApp(true);

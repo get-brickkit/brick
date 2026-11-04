@@ -19,6 +19,7 @@ import {
 import { generateOpenApiSpec } from "./openapi";
 import { resolveSecrets, type SecretSource } from "./secrets";
 import {
+  logRequest,
   requestLoggingPlugin,
   type RequestLoggingOptions,
 } from "./request-logger";
@@ -206,9 +207,34 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   if (options.cors) app.onRequest(corsHook(options.cors));
   for (const handler of plugins.middleware) app.onRequest(handler);
 
+  const requestLogging = options.requestLogging ?? true;
+  const logOptions = requestLogging === true ? {} : requestLogging || undefined;
+
   // App-level auth: the provider's routes first, then the principal per request.
   const authHandler = options.auth?.handler;
-  if (authHandler) app.onRequest(({ request }) => authHandler(request));
+  if (authHandler)
+    app.onRequest(async ({ request, set }) => {
+      const startedAt = Date.now();
+      const response = await authHandler(request);
+      if (!response) return;
+      // An onRequest answer skips route tracing and the request logger's
+      // hooks, so trace and log it here. shortcut: the span opens once the
+      // handler answered (most requests it lets through), backdated to its
+      // start, so spans the handler opens are not its children; upgrade if
+      // auth providers need nested traces.
+      const path = new URL(request.url).pathname;
+      if (telemetry)
+        traceHttpRequest(
+          { request, set, headers: Object.fromEntries(request.headers) },
+          request.method,
+          path,
+          () => response,
+          startedAt,
+        );
+      if (logOptions)
+        logRequest(logOptions, request, response.status, startedAt);
+      return response;
+    });
   const resolveUser = options.auth?.resolve;
 
   // Diagnostics & health
@@ -219,13 +245,8 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   }));
 
   // Request logging first so every route below is timed.
-  const requestLogging = options.requestLogging ?? true;
-  if (requestLogging !== false) {
-    const pluginOpts = requestLogging === true ? {} : requestLogging;
-    if (pluginOpts.enabled !== false) {
-      app.use(requestLoggingPlugin(pluginOpts));
-    }
-  }
+  if (logOptions && logOptions.enabled !== false)
+    app.use(requestLoggingPlugin(logOptions));
 
   // Scalar API reference page (opt-in): `reference: true`, or options with a path.
   const reference = options.reference ?? false;
