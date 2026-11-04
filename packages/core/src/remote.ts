@@ -161,7 +161,17 @@ export function trustedEnvelope(headers: Headers): CallEnvelope | undefined {
   if (!isInternalToken(headers.get("x-brick-internal"))) return undefined;
   const user = headers.get("x-brick-user");
   const envelope: CallEnvelope = {};
-  if (user) envelope.user = JSON.parse(Buffer.from(user, "base64").toString());
+  if (user) {
+    try {
+      envelope.user = JSON.parse(Buffer.from(user, "base64").toString());
+    } catch {
+      throw new ActionExecutionError(
+        "BAD_REQUEST",
+        "Invalid x-brick-user header",
+        400,
+      );
+    }
+  }
   const caller = headers.get("x-brick-caller");
   if (caller) envelope.caller = caller;
   const tenant = headers.get("x-brick-tenant");
@@ -199,7 +209,12 @@ export async function callRemoteAction(
     );
   }
   const text = await response.text();
-  const body = text ? JSON.parse(text) : undefined;
+  let body: any;
+  try {
+    body = text ? JSON.parse(text) : undefined;
+  } catch {
+    // Not JSON (a panic page, a proxy's 502): the status below still reports it.
+  }
   if (response.ok) return body;
   throw new ActionExecutionError(
     body?.code ?? "INTERNAL_SERVER_ERROR",
@@ -376,13 +391,16 @@ export async function startRemoteServices(
   const token = internalToken();
   const children = new Map<string, ChildProcess>();
 
-  const launch = (remote: RemoteService) => {
-    const command =
-      options.mode === "dev" ? remote.options.dev : remote.options.build?.run;
-    if (!command)
+  const commandOf = (remote: RemoteService) =>
+    options.mode === "dev" ? remote.options.dev : remote.options.build?.run;
+  // Checked before any child starts, so a missing one leaves no orphans.
+  for (const remote of services)
+    if (!commandOf(remote))
       throw new Error(
         `Brick: remote service "${remote.name}" has no build.run command for production.`,
       );
+  const launch = (remote: RemoteService) => {
+    const command = commandOf(remote)!;
     const child = spawn("/bin/sh", ["-c", command], {
       cwd: resolve(options.cwd ?? process.cwd(), remote.options.dir),
       // Its own process group, so `go run`/`cargo run` and the binary stop together.
@@ -417,14 +435,32 @@ export async function startRemoteServices(
     clearTimeout(timer);
   };
   for (const remote of services) launch(remote);
+  // Nothing async runs on exit: kill the children's groups there synchronously.
+  const killOnExit = () => {
+    for (const child of children.values())
+      try {
+        process.kill(-child.pid!, "SIGKILL");
+      } catch {}
+  };
+  process.once("exit", killOnExit);
+  // Restarts of one service run one after another, so overlapping ones can't
+  // launch two children on its port.
+  const restarts = new Map<string, Promise<void>>();
 
   return {
     urls,
-    async restart(name) {
+    restart(name) {
       const remote = services.find((service) => service.name === name);
-      if (!remote) return;
-      await kill(name);
-      launch(remote);
+      if (!remote) return Promise.resolve();
+      const next = (restarts.get(name) ?? Promise.resolve()).then(async () => {
+        await kill(name);
+        launch(remote);
+      });
+      restarts.set(
+        name,
+        next.catch(() => {}),
+      );
+      return next;
     },
     async ready(timeoutMs = 120_000) {
       const deadline = Date.now() + timeoutMs;
@@ -444,6 +480,7 @@ export async function startRemoteServices(
       }
     },
     async stop() {
+      process.off("exit", killOnExit);
       await Promise.all([...children.keys()].map(kill));
     },
   };

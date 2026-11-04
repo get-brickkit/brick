@@ -22,6 +22,11 @@ const child = Bun.serve({
     const body = await request.text();
     const headers = Object.fromEntries(request.headers);
     seen.push({ path: url.pathname + url.search, headers, body });
+    if (url.pathname === "/panic")
+      return new Response("<html>502 Bad Gateway</html>", {
+        status: 502,
+        statusText: "Bad Gateway",
+      });
     if (url.pathname === "/fail")
       return Response.json(
         {
@@ -189,6 +194,25 @@ describe("remote services", () => {
       status: 402,
       details: { missing: 5 },
     });
+    const panic = await client.panic({}).catch((e: unknown) => e);
+    expect(panic).toBeInstanceOf(ActionExecutionError);
+    expect(panic).toMatchObject({ status: 502, message: "Bad Gateway" });
+  });
+
+  it("rejects two remote services with the same name", () => {
+    expect(() =>
+      brick({ services: [], remote: [billing, billing], docs: false }),
+    ).toThrow('duplicate service "billing"');
+  });
+
+  it("answers 400 to a malformed forwarded user", async () => {
+    const response = await post(
+      "/_brick/call/orders/whoami",
+      { n: 1 },
+      { "x-brick-internal": internalToken(), "x-brick-user": "not-json" },
+    );
+    expect(response.status).toBe(400);
+    expect((await response.json()).code).toBe("BAD_REQUEST");
   });
 
   it("serves TS actions to children only with the internal token", async () => {
