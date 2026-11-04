@@ -15,7 +15,7 @@ import { crud } from "@brickkit/crud";
 export const comments = definePlugin({
   name: "@brick-examples/comments",
   description: "Comments on any resource, with CRUD routes of their own.",
-  brick: ">=0.10.0 <0.12.0",
+  brick: ">=0.10.0 <0.13.0",
   requires: ["@brickkit/crud"],
   options: t.Object({
     maxLength: t.Integer({

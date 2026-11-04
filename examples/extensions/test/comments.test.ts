@@ -87,7 +87,7 @@ test("comments.added joins the host's catalog and dashboard extension is declare
   expect(app.definition.plugins).toEqual([
     {
       name: "@brick-examples/comments",
-      brick: ">=0.10.0 <0.12.0",
+      brick: ">=0.10.0 <0.13.0",
       scope: "resource",
       service: "comment_events",
       resource: "page",
