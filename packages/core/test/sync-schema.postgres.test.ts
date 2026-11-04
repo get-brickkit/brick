@@ -67,6 +67,27 @@ suite("syncSchema on Postgres", () => {
     await syncSchema(database.tables, db);
   });
 
+  it("reuses an enum that exists while only missing tables use it", async () => {
+    const tone = pgEnum(`tone_${suffix}`, ["warm", "cold"]);
+    const notes = pgTable(`notes_${suffix}`, {
+      id: serial("id").primaryKey(),
+      tone: tone("tone").notNull(),
+    });
+    try {
+      await db.$client.unsafe(
+        `CREATE TYPE tone_${suffix} AS ENUM ('warm', 'cold')`,
+      );
+      await syncSchema([notes], db);
+      await syncSchema([notes], db);
+      await db.insert(notes).values({ tone: "cold" });
+      expect(await db.select().from(notes)).toEqual([{ id: 1, tone: "cold" }]);
+    } finally {
+      await db.$client.unsafe(
+        `DROP TABLE IF EXISTS notes_${suffix}; DROP TYPE IF EXISTS tone_${suffix};`,
+      );
+    }
+  });
+
   it("creates a table's own Postgres schema, and reuses one that exists", async () => {
     const namespace = pgSchema(`ns_${suffix}`);
     const first = namespace.table("first", { id: text("id").primaryKey() });

@@ -517,6 +517,15 @@ async function createMissingPostgresTables(
   for (const { name } of namespaces)
     if (after[`schema:${name}`])
       before[`schema:${name}`] = after[`schema:${name}`];
+  // Likewise an enum that exists while only missing tables use it.
+  const enums: { schema: string; name: string }[] = await db.execute(
+    sql`select n.nspname as schema, t.typname as name from pg_type t join pg_namespace n on n.oid = t.typnamespace where t.typtype = 'e'`,
+  );
+  for (const { schema, name } of enums) {
+    const pgEnumValue = after[`enum:${name}`] as any;
+    if (pgEnumValue && (pgEnumValue.schema ?? "public") === schema)
+      before[`enum:${name}`] = pgEnumValue;
+  }
   const statements = await kit.generateMigration(
     kit.generateDrizzleJson(before),
     kit.generateDrizzleJson(after),
