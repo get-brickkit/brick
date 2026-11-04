@@ -1,5 +1,6 @@
 import { defineService, eq, remoteService, t } from "@brickkit/core";
 
+import { getAuth } from "../../auth";
 import { appDb } from "../../db";
 import { benchItemsTable } from "./model";
 
@@ -48,6 +49,26 @@ benchService.action({
       .where(eq(benchItemsTable.id, input.id));
     return item ?? error.NOT_FOUND();
   },
+});
+
+// The signed-in user, from the Better Auth session cookie. Go and Rust have the
+// same action: they read the user from Better Auth's JWT instead
+// (test/jwt.test.ts). Its own service, so the bench APIs don't load a session.
+export const benchAuthService = defineService("benchAuth", {
+  context: async ({ request, user }) => ({
+    user:
+      user ??
+      (await getAuth().api.getSession({ headers: request.headers }))?.user ??
+      null,
+  }),
+});
+
+benchAuthService.action({
+  name: "me",
+  input: t.Object({}),
+  output: t.Unknown(),
+  authorize: ({ user }) => user != null,
+  execute: ({ ctx }) => ctx.user,
 });
 
 // Go (services/bench-go) and Rust (services/bench-rust), run next to the app.

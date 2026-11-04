@@ -3,7 +3,12 @@ import { and, brick, eq, traceRoute } from "@brickkit/core";
 import { getAuth } from "./auth";
 import { registerMcpRoutes } from "./mcp";
 import { baseUrlSecret, portSecret } from "./secrets";
-import { benchGo, benchRust, benchService } from "./services/bench/service";
+import {
+  benchAuthService,
+  benchGo,
+  benchRust,
+  benchService,
+} from "./services/bench/service";
 import {
   pagesService,
   pagesTable,
@@ -30,9 +35,11 @@ const NOT_FOUND_HTML =
 export function buildApp() {
   const port = portSecret.require();
   const app = brick({
-    services: [pagesService, benchService],
-    // Go and Rust services: Bun proxies /api/bench-go/* and /api/bench-rust/*.
-    remote: [benchGo, benchRust],
+    services: [pagesService, benchService, benchAuthService],
+    // The benchmark's Go and Rust services, only with BRICK_BENCH=1 (bench/run.ts
+    // sets it), so the app needs no Go or Rust toolchain. `brick dev` proxies
+    // /api/bench-go/* and /api/bench-rust/* to them.
+    remote: process.env.BRICK_BENCH === "1" ? [benchGo, benchRust] : [],
     cors: {
       origin: new URL(baseUrlSecret.value() as string).origin,
       credentials: true,

@@ -345,6 +345,9 @@ pub struct BenchDbOutput {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BenchAuthMeInput {}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BenchGoValidateInput {
     #[serde(rename = "name")]
     pub name: String,
@@ -379,6 +382,9 @@ pub struct BenchGoDbOutput {
     #[serde(rename = "value")]
     pub value: i64,
 }
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BenchGoMeInput {}
 
 /// Calls pages.page.list (ts).
 pub async fn pages_page_list(
@@ -481,6 +487,14 @@ pub async fn bench_db(
     brick::call(ctx, "bench", "db", input).await
 }
 
+/// Calls benchAuth.me (ts).
+pub async fn bench_auth_me(
+    ctx: &brick::Ctx,
+    input: &BenchAuthMeInput,
+) -> Result<serde_json::Value, brick::Error> {
+    brick::call(ctx, "benchAuth", "me", input).await
+}
+
 /// Calls benchGo.echo (go).
 pub async fn bench_go_echo(
     ctx: &brick::Ctx,
@@ -503,4 +517,12 @@ pub async fn bench_go_db(
     input: &BenchGoDbInput,
 ) -> Result<BenchGoDbOutput, brick::Error> {
     brick::call(ctx, "benchGo", "db", input).await
+}
+
+/// Calls benchGo.me (go).
+pub async fn bench_go_me(
+    ctx: &brick::Ctx,
+    input: &BenchGoMeInput,
+) -> Result<std::collections::HashMap<String, serde_json::Value>, brick::Error> {
+    brick::call(ctx, "benchGo", "me", input).await
 }

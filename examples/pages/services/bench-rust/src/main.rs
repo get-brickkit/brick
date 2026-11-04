@@ -1,5 +1,5 @@
 //! The benchmark's Rust service (see ../../bench/run.ts): echo, validate and
-//! db, the same three APIs as the TS bench service.
+//! db, the same three APIs as the TS bench service, and me (test/jwt.test.ts).
 mod brick_client;
 
 use brick::{Ctx, Error, ErrorDef, Service};
@@ -26,6 +26,9 @@ struct Person {
     age: i64,
     role: Role,
 }
+
+#[derive(Deserialize, JsonSchema)]
+struct Empty {}
 
 #[derive(Deserialize, JsonSchema)]
 struct ItemId {
@@ -67,6 +70,9 @@ async fn main() -> std::io::Result<()> {
                     .await?
                     .ok_or_else(|| NOT_FOUND.err())
             }
+        })
+        .action("me", |ctx: Ctx, _input: Empty| async move {
+            ctx.require_user::<Value>()
         })
         .serve()
         .await

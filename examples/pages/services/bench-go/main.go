@@ -1,5 +1,5 @@
 // The benchmark's Go service (see ../../bench/run.ts): echo, validate and db,
-// the same three APIs as the TS bench service.
+// the same three APIs as the TS bench service, and me (test/jwt.test.ts).
 package main
 
 import (
@@ -60,6 +60,11 @@ func main() {
 			return it, notFound.New(nil)
 		}
 		return it, err
+	})
+	brick.Action(svc, "me", func(ctx *brick.Ctx, in struct{}) (map[string]any, error) {
+		var user map[string]any
+		err := ctx.RequireUser(&user)
+		return user, err
 	})
 	log.Fatal(svc.Serve())
 }

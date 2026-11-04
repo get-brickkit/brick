@@ -1,11 +1,18 @@
 // Benchmark the same three APIs (echo, validate, db) in TS, Go and Rust.
 //
 // Starts the pages app in production mode (`vite build`, then the built server
-// on Bun) with release builds of the Go and Rust services, warms up, then calls
-// every API 200 times sequentially from the client side, browser → Bun:
-// fetch("http://localhost:<port>/api/<service>/<action>"). The Go and Rust APIs
-// are also called 200 times directly on their own ports, so the gateway's cost
-// shows separately. Writes bench/results.json.
+// on Bun, with BRICK_BENCH=1 so it has the Go and Rust services) and release
+// builds of the Go and Rust services, then Caddy in docker with the Caddyfile
+// `brick build --deploy caddy` writes. Warms up, then calls every API 200
+// times sequentially, by three paths:
+//
+//   proxy    client → Caddy → service      production (Bun for TS)
+//   direct   client → service port         no proxy
+//   gateway  client → Bun → Go/Rust        the `brick dev` path, for comparison
+//
+// With BENCH_CADDY_BIN=/path/to/caddy, also `proxy-native`: the same Caddyfile
+// on a Caddy binary on the host, without docker's network in the way.
+// Writes bench/results.json.
 //
 //   bun run --cwd examples/pages bench            # from the repository root
 //   BENCH_SKIP_BUILD=1 bun bench/run.ts           # reuse the last builds
@@ -13,12 +20,15 @@
 // Uses its own database (BENCH_DATABASE_URL, default drafton_bench), created
 // and migrated from drizzle/ on first run.
 import { spawn, spawnSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { randomBytes } from "node:crypto";
-import { cpus, arch, platform, release, totalmem } from "node:os";
+import { cpus, arch, platform, release, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 
 import { applyMigrations } from "../scripts/migrations";
-import { internalToken, startRemoteServices } from "@brickkit/core";
+import { brick, startRemoteServices } from "@brickkit/core";
+import { caddyfile, routingTable } from "@brickkit/cli";
 import postgres from "postgres";
 
 import { benchGo, benchRust } from "../src/api/services/bench/service";
@@ -31,7 +41,7 @@ const databaseUrl =
 
 type Language = "ts" | "go" | "rust";
 type Api = "echo" | "validate" | "db";
-type Path = "gateway" | "direct";
+type Path = "proxy" | "proxy-native" | "direct" | "gateway";
 
 const SERVICES: Record<Language, string> = {
   ts: "bench",
@@ -86,6 +96,14 @@ async function waitFor(url: string, timeoutMs = 60_000) {
   throw new Error(`${url} did not come up`);
 }
 
+const freePort = () =>
+  new Promise<number>((done) => {
+    const server = createServer().listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as { port: number };
+      server.close(() => done(port));
+    });
+  });
+
 const stats = (values: number[]) => {
   const sorted = [...values].sort((a, b) => a - b);
   // Nearest-rank percentile.
@@ -129,14 +147,62 @@ const app = spawn("bun", [".output/server/index.mjs"], {
   env: {
     ...process.env,
     NODE_ENV: "production",
+    BRICK_BENCH: "1",
     PORT: String(port),
     BASE_URL: appUrl,
     DATABASE_URL: databaseUrl,
     AUTH_SECRET,
   },
 });
+// 3. Caddy, routing by path straight to each process: the production setup.
+// The routing table is brick build's, with the upstreams on this host.
+const portOf = (url: string) => new URL(url).port;
+const table = (host: string) =>
+  routingTable(brick({ services: [], remote: [benchGo, benchRust] }), {
+    cwd: root,
+    addresses: {
+      app: `${host}:${port}`,
+      "bench-go": `${host}:${portOf(children.urls.benchGo!)}`,
+      "bench-rust": `${host}:${portOf(children.urls.benchRust!)}`,
+    },
+  });
+const scratch = mkdtempSync(join(tmpdir(), "brick-bench-"));
+writeFileSync(
+  join(scratch, "Caddyfile"),
+  caddyfile(table("host.docker.internal")),
+);
+const caddyPort = await freePort();
+sh(
+  `docker run -d --rm --name brick-bench-caddy -p 127.0.0.1:${caddyPort}:80 -v ${scratch}/Caddyfile:/etc/caddy/Caddyfile:ro caddy:2 >/dev/null`,
+);
+const caddyBin = process.env.BENCH_CADDY_BIN;
+const nativePort = await freePort();
+let native: ReturnType<typeof spawn> | undefined;
+if (caddyBin) {
+  writeFileSync(
+    join(scratch, "Caddyfile.native"),
+    caddyfile(table("127.0.0.1")).replace(
+      /^:80 \{/m,
+      `{\n\tadmin off\n}\n\n:${nativePort} {`,
+    ),
+  );
+  native = spawn(
+    caddyBin,
+    [
+      "run",
+      "--config",
+      join(scratch, "Caddyfile.native"),
+      "--adapter",
+      "caddyfile",
+    ],
+    { stdio: "ignore" },
+  );
+}
+
 // The built server closes gracefully but its pools keep it alive: kill it after 6s.
 const stop = async () => {
+  spawnSync("docker", ["rm", "-f", "brick-bench-caddy"], { stdio: "ignore" });
+  native?.kill();
   if (app.exitCode === null && app.signalCode === null) {
     const exited = new Promise((done) => app.once("exit", done));
     app.kill("SIGTERM");
@@ -151,32 +217,33 @@ process.on("SIGINT", () => void stop().then(() => process.exit(130)));
 try {
   await waitFor(`${appUrl}/_health`);
   await children.ready();
+  const proxyUrl = `http://127.0.0.1:${caddyPort}`;
+  const nativeUrl = `http://127.0.0.1:${nativePort}`;
+  await waitFor(`${proxyUrl}/_health`);
+  if (native) await waitFor(`${nativeUrl}/_health`);
 
   const targets: { language: Language; api: Api; path: Path; url: string }[] =
     [];
   for (const language of ["ts", "go", "rust"] as Language[])
     for (const api of APIS) {
-      targets.push({
-        language,
-        api,
-        path: "gateway",
-        url: `${appUrl}/api/${SERVICES[language]}/${api}`,
-      });
-      if (language !== "ts")
-        targets.push({
-          language,
-          api,
-          path: "direct",
-          url: `${children.urls[language === "go" ? "benchGo" : "benchRust"]}/${api}`,
-        });
+      const path = `/api/${SERVICES[language]}/${api}`;
+      const remote =
+        language === "go"
+          ? children.urls.benchGo
+          : language === "rust"
+            ? children.urls.benchRust
+            : undefined;
+      const add = (kind: Path, base: string) =>
+        targets.push({ language, api, path: kind, url: `${base}${path}` });
+      add("proxy", proxyUrl);
+      if (native) add("proxy-native", nativeUrl);
+      // TS's service port is Bun's; Go and Rust have their own.
+      add("direct", remote ?? appUrl);
+      if (remote) add("gateway", appUrl);
     }
 
   const call = async (target: (typeof targets)[number], i: number) => {
-    const headers: Record<string, string> = {
-      "content-type": "application/json",
-    };
-    // A direct call skips Bun, so it brings the token Bun would add.
-    if (target.path === "direct") headers["x-brick-internal"] = internalToken();
+    const headers = { "content-type": "application/json" };
     const started = performance.now();
     const response = await fetch(target.url, {
       method: "POST",
@@ -241,6 +308,7 @@ try {
       warmup: WARMUP,
       sequential: true,
       client: "Bun fetch (keep-alive) from the bench process",
+      proxy: `caddy:2 in docker (${version("docker version --format '{{.Server.Version}}'")}), upstreams via host.docker.internal${caddyBin ? `; proxy-native: ${version(`${caddyBin} version`)} on the host` : ""}`,
       app: "vite build (Nitro node-server output) run on Bun, NODE_ENV=production",
       pools: "10 connections in TS (postgres-js), Go (pgxpool) and Rust (sqlx)",
       units: "milliseconds, request sent to response body read",

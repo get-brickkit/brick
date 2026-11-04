@@ -195,6 +195,9 @@ type BenchDbOutput struct {
 	Value int64  `json:"value"`
 }
 
+type BenchAuthMeInput struct {
+}
+
 type BenchRustValidateInput struct {
 	Name string `json:"name"`
 	Age  int64  `json:"age"`
@@ -215,6 +218,9 @@ type BenchRustDbOutput struct {
 	Id    int64  `json:"id"`
 	Name  string `json:"name"`
 	Value int64  `json:"value"`
+}
+
+type BenchRustMeInput struct {
 }
 
 // PagesPageList calls pages.page.list (ts).
@@ -308,6 +314,13 @@ func BenchDb(ctx context.Context, in BenchDbInput) (BenchDbOutput, error) {
 	return out, err
 }
 
+// BenchAuthMe calls benchAuth.me (ts).
+func BenchAuthMe(ctx context.Context, in BenchAuthMeInput) (any, error) {
+	var out any
+	err := brick.Call(ctx, "benchAuth", "me", in, &out)
+	return out, err
+}
+
 // BenchRustEcho calls benchRust.echo (rust).
 func BenchRustEcho(ctx context.Context, in any) (any, error) {
 	var out any
@@ -326,5 +339,12 @@ func BenchRustValidate(ctx context.Context, in BenchRustValidateInput) (BenchRus
 func BenchRustDb(ctx context.Context, in BenchRustDbInput) (BenchRustDbOutput, error) {
 	var out BenchRustDbOutput
 	err := brick.Call(ctx, "benchRust", "db", in, &out)
+	return out, err
+}
+
+// BenchRustMe calls benchRust.me (rust).
+func BenchRustMe(ctx context.Context, in BenchRustMeInput) (any, error) {
+	var out any
+	err := brick.Call(ctx, "benchRust", "me", in, &out)
 	return out, err
 }
