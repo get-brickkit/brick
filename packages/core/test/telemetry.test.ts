@@ -402,3 +402,14 @@ describe("trace context and database spans", () => {
     },
   );
 });
+
+it("accepts the OpenTelemetry API of hosts on SDK 2.x", async () => {
+  // A second, newer API copy would see the host's provider as incompatible and
+  // turn every Brick span into a no-op. Core uses nothing newer than 1.9.
+  const manifest = await Bun.file(
+    new URL("../package.json", import.meta.url),
+  ).json();
+  expect(
+    Bun.semver.satisfies("1.9.0", manifest.dependencies["@opentelemetry/api"]),
+  ).toBe(true);
+});
