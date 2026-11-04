@@ -50,7 +50,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (!toolchains) return;
   await children?.stop();
-  await app.stop();
+  if (app.server) await app.stop();
 });
 
 const post = (path: string, body: unknown, headers: HeadersInit = {}) =>

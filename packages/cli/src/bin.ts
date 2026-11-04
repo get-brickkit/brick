@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { Command, InvalidArgumentError } from "commander";
 import { startDevServer, startProdServer, startWorker } from "./runner";
 import { DEFAULT_DASHBOARD_PORT } from "./dev-dashboard";
@@ -373,15 +373,25 @@ ${PORT_RESOLUTION_HELP}`,
           dashboard: configDashboard(project, opts.dashboardExtension),
         });
         const app = await loadBrickApp(entry);
-        buildRemoteServices(app);
+        buildRemoteServices(app, project?.root);
         const deploy = project?.config.deploy;
         const targets = opts.deploy ?? deploy?.targets;
         if (targets?.length) {
+          const root = project?.root ?? process.cwd();
+          // The image runs `brick build` with this config, so the server is in build.outdir.
+          const server = relative(
+            root,
+            resolve(root, build?.outdir ?? "dist/brick", "server.js"),
+          );
           const written = await writeDeploy(app, {
             ...deploy,
             targets,
             domain: opts.domain ?? deploy?.domain,
-            root: project?.root,
+            app: {
+              ...deploy?.app,
+              start: deploy?.app?.start ?? `bun ${server}`,
+            },
+            root,
           });
           for (const file of written) console.log(`Deploy: ${file}`);
         }
@@ -416,7 +426,11 @@ ${PORT_RESOLUTION_HELP}`,
       console.log(`Services manifest written to ${manifest}`);
       const client = fromRoot(project, project.config.client?.output);
       // An app with Go or Rust services gets the merged contract and their clients.
-      const polyglot = await writePolyglotContract(project.entry, client);
+      const polyglot = await writePolyglotContract(
+        project.entry,
+        client ?? join(project.generated, "contract.ts"),
+        project.root,
+      );
       if (polyglot) {
         for (const file of polyglot) console.log(`Written ${file}`);
       } else if (client) {
@@ -519,8 +533,14 @@ ${PORT_RESOLUTION_HELP}`,
         const project = await loadConfig(configOf(command));
         const target = requireEntry(command, entry, project);
         const output =
-          opts.output ?? fromRoot(project, project?.config.client?.output);
-        const written = await writePolyglotContract(target, output);
+          (opts.output && resolve(opts.output)) ??
+          fromRoot(project, project?.config.client?.output) ??
+          (project && join(project.generated, "contract.ts"));
+        const written = await writePolyglotContract(
+          target,
+          output,
+          project?.root,
+        );
         if (!written) {
           await writeClientContract(target, output);
           console.log("No remote services: wrote the TS contract only.");

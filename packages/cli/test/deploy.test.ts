@@ -37,6 +37,7 @@ describe("brick build --deploy", () => {
     expect(Object.keys(files).sort()).toEqual([
       "caddy/Caddyfile",
       "compose/app.Dockerfile",
+      "compose/app.Dockerfile.dockerignore",
       "compose/billing.Dockerfile",
       "compose/billing.Dockerfile.dockerignore",
       "compose/compose.yaml",

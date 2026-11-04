@@ -144,13 +144,37 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
       // Go and Rust services run beside the dev server, restarted on their own
       // changes. A middleware-mode server (no httpServer) only reads the app.
       const { remote = [], services } = requireBrickApp(app).definition;
-      if (remote.length && server.httpServer) {
-        const children = await startDevRemotes(remote, {
-          appUrl: `http://127.0.0.1:${server.config.server.port ?? 5173}`,
-          services: services.map((service) => service.name),
-          env: remoteEnv(requireBrickApp(app).definition),
+      // They start once the server listens, so appUrl is the port Vite bound
+      // (the next free one when the configured port is busy).
+      const httpServer = server.httpServer;
+      if (remote.length && httpServer) {
+        const env = remoteEnv(requireBrickApp(app).definition);
+        httpServer.once("listening", () => {
+          const address = httpServer.address();
+          const port =
+            address && typeof address === "object"
+              ? address.port
+              : (server.config.server.port ?? 5173);
+          const scheme = server.config.server.https ? "https" : "http";
+          const children = startDevRemotes(remote, {
+            appUrl: `${scheme}://127.0.0.1:${port}`,
+            services: services.map((service) => service.name),
+            env,
+          });
+          children.catch((error) =>
+            server.config.logger.error(
+              `Brick: remote services failed to start: ${error instanceof Error ? error.message : error}`,
+            ),
+          );
+          httpServer.once(
+            "close",
+            () =>
+              void children.then(
+                (started) => started.stop(),
+                () => {},
+              ),
+          );
         });
-        server.httpServer?.once("close", () => void children.stop());
       }
       dependencies.clear();
       collectDependencies(environment.moduleGraph.getModuleById(entry));

@@ -34,7 +34,12 @@ export {
   kubernetesYaml,
   composeYaml,
   routesJson,
+  dockerfile,
+  parseDeployTargets,
+  BRICK_HEADERS,
   type RoutingTable,
+  type RoutingTableOptions,
+  type ProxyTarget,
   type Upstream,
 } from "./deploy";
 export {

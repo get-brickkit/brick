@@ -215,14 +215,21 @@ export async function startProdServer(options: DevServerOptions = {}) {
         env: remoteEnv(app.definition),
       })
     : undefined;
-  // Before listening, so the first request is already traced and its logs kept.
-  const dashboard = await startProductionDashboard(app, {
-    appPort: port,
-    dashboard: options.dashboard || undefined,
-  });
-  await app.start?.();
-  app.listen(port);
-  app.events?.start();
+  let dashboard: Awaited<ReturnType<typeof startProductionDashboard>>;
+  try {
+    // Before listening, so the first request is already traced and its logs kept.
+    dashboard = await startProductionDashboard(app, {
+      appPort: port,
+      dashboard: options.dashboard || undefined,
+    });
+    await app.start?.();
+    app.listen(port);
+    app.events?.start();
+  } catch (error) {
+    // The children run in their own process groups: don't leave them behind.
+    await children?.stop();
+    throw error;
+  }
   // Finish deliveries, then stop the server and the plugins (reverse order).
   finishDeliveriesOnSignal({
     stop: async () => {
@@ -429,7 +436,11 @@ export async function startDevServer(options: DevServerOptions = {}) {
         services: message.services,
         env: message.env,
       },
-    );
+    ).catch((error) => {
+      // Let the next worker start try again once the cause is fixed.
+      children = undefined;
+      throw error;
+    });
     const processes = await children;
     if (!stopped) worker.send({ type: "brick:services", urls: processes.urls });
   };
@@ -731,7 +742,10 @@ export async function startDevServer(options: DevServerOptions = {}) {
     dashboard?.stop();
     docs?.close();
     history?.close();
-    void children?.then((processes) => processes.stop());
+    void children?.then(
+      (processes) => processes.stop(),
+      () => {},
+    );
     child.kill();
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);

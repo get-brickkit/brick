@@ -3,7 +3,7 @@
 // Rust services directly through the proxy; everything else goes to Bun.
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { kebabCase, remoteEnv, type BrickApp } from "@brickkit/core";
 import {
   DEPLOY_TARGETS,
@@ -94,7 +94,10 @@ function buildContext(root: string, dir: string, language: "go" | "rust") {
   const folders = [...localDependencies(service, language), service];
   let context = resolve(root);
   for (const folder of folders)
-    while (folder !== context && !folder.startsWith(context + sep))
+    while (
+      relative(context, folder).startsWith("..") &&
+      dirname(context) !== context
+    )
       context = dirname(context);
   return {
     context: relative(root, context) || ".",
@@ -313,7 +316,7 @@ certificatesResolvers:
 entryPoints:
   web:
     address: ":80"
-${acme}
+${tls ? `    http:\n      redirections:\n        entryPoint:\n          to: websecure\n          scheme: https\n` : ""}${acme}
 providers:
   file:
     filename: /etc/traefik/dynamic.yml
@@ -351,7 +354,9 @@ const yamlEnv = (env: Record<string, string>, indent: string) =>
 export function kubernetesYaml(table: RoutingTable): string {
   const docs = table.upstreams.flatMap((u) => {
     const env = Object.entries(u.env).map(([key, value]) =>
-      key === "BRICK_INTERNAL_TOKEN"
+      // Without a domain the public URL is unknown: the issuer comes from the Secret too.
+      key === "BRICK_INTERNAL_TOKEN" ||
+      (key === "BRICK_JWT_ISSUER" && !table.domain)
         ? `            - name: ${key}
               valueFrom:
                 secretKeyRef: { name: brick, key: ${key} }`
@@ -374,6 +379,7 @@ spec:
       containers:
         - name: ${u.name}
           image: ${u.name}:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: ${u.port}
           env:
@@ -413,7 +419,7 @@ ${tls}  rules:
         paths:
 ${paths.join("\n")}`);
   return `# ${HEADER}
-# Create the token first: kubectl create secret generic brick --from-literal=BRICK_INTERNAL_TOKEN=$(openssl rand -hex 24)
+# Create the token first: kubectl create secret generic brick --from-literal=BRICK_INTERNAL_TOKEN=$(openssl rand -hex 24)${table.domain ? "" : " --from-literal=BRICK_JWT_ISSUER=https://<your public host>"}
 # An Ingress can't remove request headers, so x-brick-* reaches the services: each
 # one ignores them without BRICK_INTERNAL_TOKEN, and answers a wrong token with 401.
 # To also strip them at the edge, route with the Gateway API and a RequestHeaderModifier.
@@ -544,10 +550,12 @@ export function deployFiles(
     files["compose/compose.yaml"] = composeYaml(table, proxy);
     for (const u of table.upstreams) {
       files[`compose/${u.name}.Dockerfile`] = dockerfile(table, u);
-      // Docker reads <Dockerfile>.dockerignore: keep build output out of a large context.
-      if (u.language !== "ts")
-        files[`compose/${u.name}.Dockerfile.dockerignore`] =
-          "**/target\n**/node_modules\n**/.git\n";
+      // Docker reads <Dockerfile>.dockerignore: keep build output and host
+      // installs (native modules built for another OS) out of the context.
+      files[`compose/${u.name}.Dockerfile.dockerignore`] =
+        u.language === "ts"
+          ? "**/node_modules\n**/.git\ndist\ndeploy\n"
+          : "**/target\n**/node_modules\n**/.git\n";
     }
   }
   return files;

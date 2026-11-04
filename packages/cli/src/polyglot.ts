@@ -108,6 +108,9 @@ export async function writePolyglotContract(
   clientOutput?: string,
   cwd = process.cwd(),
 ): Promise<string[] | undefined> {
+  const output = resolve(cwd, clientOutput ?? "_brick/contract.ts");
+  if (resolve(entry) === output)
+    throw new Error("Brick: contract output must not overwrite the app entry.");
   const app = await loadBrickApp(entry);
   const remote = app.definition.remote ?? [];
   if (!remote.length) return undefined;
@@ -129,7 +132,7 @@ export async function writePolyglotContract(
     `${JSON.stringify(contract, null, 2)}\n`,
   );
   await write(
-    resolve(cwd, clientOutput ?? "_brick/contract.ts"),
+    output,
     generateClientContract(
       app,
       contract.services.filter((s) => s.language !== "ts"),
@@ -172,8 +175,18 @@ function isStruct(schema: any): boolean {
   return (
     schema?.type === "object" &&
     !schema.enum &&
-    (schema.properties !== undefined || !schema.additionalProperties)
+    (schema.properties !== undefined ||
+      (!schema.additionalProperties && !schema.patternProperties))
   );
+}
+
+/** The value schema of a map: `additionalProperties`, or TypeBox `Type.Record`'s single `patternProperties` entry. */
+function mapValue(schema: any): any {
+  if (schema?.type !== "object") return undefined;
+  if (typeof schema.additionalProperties === "object")
+    return schema.additionalProperties;
+  const patterns = Object.values(schema.patternProperties ?? {});
+  return patterns.length === 1 ? patterns[0] : undefined;
 }
 
 function scalarType(
@@ -243,11 +256,8 @@ export function goClient(contract: PolyglotContract, self: string): string {
       );
       return name;
     }
-    if (
-      schema?.type === "object" &&
-      typeof schema.additionalProperties === "object"
-    )
-      return `map[string]${goType(schema.additionalProperties, `${name}Value`)}`;
+    const value = mapValue(schema);
+    if (value) return `map[string]${goType(value, `${name}Value`)}`;
     if (schema?.type === "object") return "map[string]any";
     return "any";
   };
@@ -268,18 +278,22 @@ func ${fn}(ctx context.Context, in ${input}) (${output}, error) {
 }`);
     }
   }
-  return `// ${HEADER}
-
-// Package brickclient calls the app's other Brick services.
-package brickclient
-
-import (
+  // Go rejects unused imports, and with no other service's actions nothing uses them.
+  const imports = funcs.length
+    ? `import (
 \t"context"
 
 \t"github.com/get-brickkit/brick/sdk/go/brick"
 )
 
-${[...decls, ...funcs].join("\n\n")}
+`
+    : "";
+  return `// ${HEADER}
+
+// Package brickclient calls the app's other Brick services.
+package brickclient
+
+${imports}${[...decls, ...funcs].join("\n\n")}
 `;
 }
 
@@ -331,11 +345,9 @@ export function rustClient(contract: PolyglotContract, self: string): string {
       );
       return name;
     }
-    if (
-      schema?.type === "object" &&
-      typeof schema.additionalProperties === "object"
-    )
-      return `std::collections::HashMap<String, ${rustType(schema.additionalProperties, `${name}Value`)}>`;
+    const value = mapValue(schema);
+    if (value)
+      return `std::collections::HashMap<String, ${rustType(value, `${name}Value`)}>`;
     return "serde_json::Value";
   };
   const funcs: string[] = [];
