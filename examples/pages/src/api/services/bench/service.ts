@@ -39,7 +39,8 @@ const Item = t.Object({
 
 benchService.action({
   name: "db",
-  input: t.Object({ id: t.Integer({ minimum: 1 }) }),
+  // The id column is a Postgres integer: a larger id is a client error, not a 500.
+  input: t.Object({ id: t.Integer({ minimum: 1, maximum: 2147483647 }) }),
   output: Item,
   errors: { NOT_FOUND: { status: 404, message: "No such item" } },
   execute: async ({ input, ctx, error }) => {

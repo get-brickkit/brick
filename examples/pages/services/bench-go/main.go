@@ -21,7 +21,7 @@ type person struct {
 }
 
 type itemID struct {
-	ID int64 `json:"id" minimum:"1"`
+	ID int64 `json:"id" minimum:"1" maximum:"2147483647"`
 }
 
 type item struct {

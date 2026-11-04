@@ -141,6 +141,9 @@ if (!process.env.BENCH_SKIP_BUILD) {
     sh(remote.options.build!.command, join(root, remote.options.dir));
 }
 
+const caddyBin = process.env.BENCH_CADDY_BIN;
+if (LOAD && !caddyBin) throw new Error("bench load needs BENCH_CADDY_BIN");
+
 // 2. Start the Go and Rust services (release builds), then the app on Bun.
 const probe = Bun.serve({ port: 0, fetch: () => new Response() });
 const port = probe.port!;
@@ -184,35 +187,8 @@ writeFileSync(
   caddyfile(table("host.docker.internal")),
 );
 const caddyPort = await freePort();
-const caddyBin = process.env.BENCH_CADDY_BIN;
-if (LOAD && !caddyBin) throw new Error("bench load needs BENCH_CADDY_BIN");
-// The load test goes through the native Caddy only.
-if (!LOAD)
-  sh(
-    `docker run -d --rm --name brick-bench-caddy -p 127.0.0.1:${caddyPort}:80 -v ${scratch}/Caddyfile:/etc/caddy/Caddyfile:ro caddy:2 >/dev/null`,
-  );
 const nativePort = await freePort();
 let native: ReturnType<typeof spawn> | undefined;
-if (caddyBin) {
-  writeFileSync(
-    join(scratch, "Caddyfile.native"),
-    caddyfile(table("127.0.0.1")).replace(
-      /^:80 \{/m,
-      `{\n\tadmin off\n}\n\n:${nativePort} {`,
-    ),
-  );
-  native = spawn(
-    caddyBin,
-    [
-      "run",
-      "--config",
-      join(scratch, "Caddyfile.native"),
-      "--adapter",
-      "caddyfile",
-    ],
-    { stdio: "ignore" },
-  );
-}
 
 // The built server closes gracefully but its pools keep it alive: kill it after 6s.
 const stop = async () => {
@@ -230,6 +206,32 @@ const stop = async () => {
 process.on("SIGINT", () => void stop().then(() => process.exit(130)));
 
 try {
+  // Inside try, so a failed proxy start still stops the services and the app.
+  // The load test goes through the native Caddy only.
+  if (!LOAD)
+    sh(
+      `docker run -d --rm --name brick-bench-caddy --add-host=host.docker.internal:host-gateway -p 127.0.0.1:${caddyPort}:80 -v ${scratch}/Caddyfile:/etc/caddy/Caddyfile:ro caddy:2 >/dev/null`,
+    );
+  if (caddyBin) {
+    writeFileSync(
+      join(scratch, "Caddyfile.native"),
+      caddyfile(table("127.0.0.1")).replace(
+        /^:80 \{/m,
+        `{\n\tadmin off\n}\n\n:${nativePort} {`,
+      ),
+    );
+    native = spawn(
+      caddyBin,
+      [
+        "run",
+        "--config",
+        join(scratch, "Caddyfile.native"),
+        "--adapter",
+        "caddyfile",
+      ],
+      { stdio: "ignore" },
+    );
+  }
   await waitFor(`${appUrl}/_health`);
   await children.ready();
   const proxyUrl = `http://127.0.0.1:${caddyPort}`;
