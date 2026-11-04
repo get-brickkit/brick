@@ -98,7 +98,7 @@ brick({
 
 `origin` takes `true` (the app's own origin, the default), an exact origin, a list, or a predicate `(origin, request) => boolean` for rules such as preview deployments. An allowed origin is echoed with `Vary: Origin`. Any other origin gets no CORS headers, so the browser blocks it. Brick never reflects an origin the rule doesn't allow, and `"*"` is refused at startup.
 
-Preflights are answered with `204` before routing and plugin middleware, so a middleware never refuses them. Error responses carry the headers too, so the browser can read the error.
+Preflights are answered with `204` before routing. Error responses carry the headers too, so the browser can read the error.
 
 ### Structured MCP results
 
@@ -241,7 +241,7 @@ import { brick } from "@brickkit/cli";
 
 const pages = defineService("pages", { database, rateLimit, cache });
 const app = brick({ services: [pages], legacyRoutes: true });
-app.request(corsMiddleware);
+app.request(handleCors);
 app.cleanup(() => store.close());
 
 // v0.12
