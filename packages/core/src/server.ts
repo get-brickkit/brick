@@ -1,4 +1,6 @@
 import { Elysia } from "elysia";
+import { toErrorResponse } from "./error-response";
+import { createLogger } from "./logger";
 import {
   compileBrickApplication,
   type CompiledApplication,
@@ -490,9 +492,26 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
       .listActions()
       .find((candidate) => candidate.name === route.ir.action)!;
     // The handler reads the principal off the route context as `ctx.user`.
+    const logger = resolveUser
+      ? createLogger(`[${route.ir.service}:${route.ir.action}]`)
+      : undefined;
     const handle = resolveUser
       ? async (context: any) => {
-          context.user = await resolveUser(context.request);
+          try {
+            context.user = await resolveUser(context.request);
+          } catch (err) {
+            // Answer as the handler answers its own throws.
+            const requestId =
+              context.headers?.["x-request-id"] || `req_${crypto.randomUUID()}`;
+            if (context.set?.headers)
+              context.set.headers["x-request-id"] = requestId;
+            const response = toErrorResponse(err, {
+              logger: logger!,
+              requestId,
+            });
+            context.set.status = response.status;
+            return response;
+          }
           return route.handler(context);
         }
       : route.handler;

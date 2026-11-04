@@ -80,6 +80,28 @@ describe("brick({ auth })", () => {
       expect(await allowed.json()).toEqual({ id: "alice" });
     });
 
+  for (const compiler of [true, false])
+    it(`answers a failing auth.resolve with the Brick error envelope (compiler: ${compiler})`, async () => {
+      const app = setup({
+        compiler,
+        auth: {
+          resolve: () => {
+            throw new Error("session store down");
+          },
+        },
+      });
+      const response = await app.handle(
+        new Request("http://localhost/api/notes/mine", {
+          headers: { "x-request-id": "req_auth" },
+        }),
+      );
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({
+        code: "INTERNAL_SERVER_ERROR",
+        requestId: "req_auth",
+      });
+    });
+
   it("feeds ctx.user to socket handshakes", async () => {
     const app = setup().listen(0);
     const url = `ws://localhost:${app.server!.port}/api/notes/live`;
