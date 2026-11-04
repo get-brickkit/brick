@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 
-type Step = { uses?: string; run?: string; with?: Record<string, string> };
+type Step = {
+  name?: string;
+  uses?: string;
+  run?: string;
+  with?: Record<string, string>;
+};
 type Job = {
   "runs-on": string;
   needs?: string | string[];
@@ -101,4 +106,14 @@ test("release jobs use Node 24 actions and an explicit Ubuntu runner", () => {
         expect(step.uses).toBe("actions/download-artifact@v8");
     }
   }
+});
+
+test("a package publishes only after the @brickkit versions it depends on", () => {
+  const names = publish!.steps.map((step) => step.name);
+  const wait = names.indexOf("Wait for the @brickkit packages it depends on");
+  expect(wait).toBeGreaterThan(-1);
+  expect(wait).toBeLessThan(names.indexOf("Publish the validated tarball"));
+  expect(publish!.steps[wait]!.run).toContain(
+    'npm view "$dep@$PACKAGE_VERSION"',
+  );
 });
