@@ -15,7 +15,14 @@ const posts = sqliteTable("posts", {
 });
 
 let sequence = 0;
-function fixture() {
+function fixture(
+  fields: Record<string, object> = {
+    id: { read: true, sort: true },
+    title: { read: true },
+    rank: { read: true, sort: true },
+    note: { read: true, sort: true },
+  },
+) {
   const database = defineDatabase({ tables: [posts] });
   const db = database.getDb() as ReturnType<typeof database.getDb> & {
     $client: Database;
@@ -34,12 +41,7 @@ function fixture() {
     .use(
       crud({
         access: "public",
-        fields: {
-          id: { read: true, sort: true },
-          title: { read: true },
-          rank: { read: true, sort: true },
-          note: { read: true, sort: true },
-        },
+        fields,
       }),
     );
   return { service, resource };
@@ -144,4 +146,41 @@ test("the typed client contract carries cursor and nextCursor", () => {
   );
   expect(contract).toContain(`"cursor"?: (string | null); }, { "items"`);
   expect(contract).toContain(`"nextCursor"?: (string | null); }`);
+});
+
+const hiddenFixture = (fields: Record<string, object>) =>
+  fixture(fields).resource;
+
+test("a cursor holds only values the caller can read unscrubbed", async () => {
+  const forged = (values: unknown[]) =>
+    Buffer.from(JSON.stringify(["rank:asc", values])).toString("base64url");
+  // rank sorts but is not readable: a cursor would leak it, and a forged one
+  // would range-filter on it.
+  const sortOnly = hiddenFixture({
+    id: { read: true },
+    title: { read: true },
+    rank: { sort: true },
+  });
+  const byRank = { orderBy: [{ field: "rank", direction: "asc" }] };
+  for (const cursor of [null, forged([1, 0])])
+    await expect(
+      sortOnly.list.run({ ...byRank, cursor }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  // Offset pages still sort on it.
+  expect((await sortOnly.list.run({ ...byRank, limit: 1 })).items).toEqual([
+    { id: 3, title: "p3" },
+  ]);
+  // An unreadable ID breaks every cursor's ties.
+  const hiddenId = hiddenFixture({ title: { read: true } });
+  await expect(hiddenId.list.run({ cursor: null })).rejects.toMatchObject({
+    code: "BAD_REQUEST",
+  });
+  // A scrubbed sort field is hidden too.
+  const scrubbed = hiddenFixture({
+    id: { read: true },
+    rank: { read: true, sort: true, scrub: () => 0 },
+  });
+  await expect(
+    scrubbed.list.run({ ...byRank, cursor: null }),
+  ).rejects.toMatchObject({ code: "BAD_REQUEST" });
 });

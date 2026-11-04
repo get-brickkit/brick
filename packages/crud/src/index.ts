@@ -426,6 +426,9 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
         if (policy.read) projection[key] = columns[key];
       }
       const idColumn: Column = resource.id;
+      const cursorColumns = new Set(
+        readable.filter((key) => !fields[key].scrub).map((key) => columns[key]),
+      );
       if (!Object.values(columns).includes(idColumn))
         throw new Error("CRUD ID must belong to the resource table");
       const idSchema = columnSchema(idColumn);
@@ -853,6 +856,13 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
             });
           if (keyset.some((key) => !key.column.notNull))
             invalid("Cursor pagination needs sort fields that are not null");
+          // A cursor carries its sort values to the client and back, so it may
+          // hold only what the caller already reads: no value leaks, and a
+          // forged cursor filters on nothing the caller cannot see.
+          if (keyset.some((key) => !cursorColumns.has(key.column)))
+            invalid(
+              "Cursor pagination needs sort fields and an ID that are readable and not scrubbed",
+            );
         }
         const cursorSpec = sorts
           .map((sort) => `${sort.field}:${sort.direction}`)

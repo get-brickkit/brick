@@ -201,6 +201,7 @@ A cursor page starts after the last row of the previous one (`WHERE (publishedAt
 
 - Send the same `orderBy` with every page. A cursor made for another `orderBy`, or one that was edited, fails with `BAD_REQUEST`.
 - `cursor` and `offset` cannot be combined, and the sort fields must be `NOT NULL` columns.
+- A cursor holds the last row's sort values and ID, so cursor pages need sort fields and an ID with `read: true` and no `scrub`. Sort on a hidden field with `offset` pages instead.
 - `where`, `select` and `includeTotal` work as usual; `total` counts every match, not just the rows after the cursor.
 - Cursors hold the last row's sort values as JSON, so `Date` values keep millisecond precision. On Postgres, cursor pages order `timestamp` columns with more precision (the default is microseconds) by their millisecond, then by the other sort fields and the ID. Declare `timestamp({ precision: 3 })` to let the sort use an index on the column.
 
