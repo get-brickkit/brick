@@ -42,7 +42,7 @@ test("prepares candidates and dispatches releases without creating release refs"
             ? { peerDependencies: { "@brickkit/core": "^0.7.2" } }
             : {}),
           ...(name === "bullmq-world"
-            ? { dependencies: { "@brickkit/redis-world": "^0.7.2" } }
+            ? { dependencies: { "@brickkit/redis-world": "0.7.2" } }
             : {}),
         }),
       );
@@ -75,7 +75,7 @@ test("prepares candidates and dispatches releases without creating release refs"
       if (name === "crud")
         expect(manifest.peerDependencies["@brickkit/core"]).toBe("^0.7.3");
       if (name === "bullmq-world")
-        expect(manifest.dependencies["@brickkit/redis-world"]).toBe("^0.7.3");
+        expect(manifest.dependencies["@brickkit/redis-world"]).toBe("0.7.3");
     }
     expect(git("rev-parse", "HEAD")).toBe(head);
     expect(git("tag", "--list")).toBe("");

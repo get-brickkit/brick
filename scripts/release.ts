@@ -179,8 +179,8 @@ const version = bumpVersion(coreJson.version, bump);
 const tag = `v${version}`;
 cliJson.dependencies["@brickkit/core"] = `^${version}`;
 crudJson.peerDependencies["@brickkit/core"] = `^${version}`;
-// bullmq-world shares storage, streams and retention from redis-world.
-bullmqWorldJson.dependencies["@brickkit/redis-world"] = `^${version}`;
+// bullmq-world imports redis-world/internal, which changes in lockstep: pin it exactly.
+bullmqWorldJson.dependencies["@brickkit/redis-world"] = version;
 const exists = execFileSync(GIT, ["ls-remote", "origin", `refs/tags/${tag}`], {
   cwd: ROOT,
   encoding: "utf-8",

@@ -102,7 +102,7 @@ bun run check
 
 ## Release
 
-All five published packages (`@brickkit/core`, `@brickkit/crud`, `@brickkit/cli`, `@brickkit/redis-world`, and `@brickkit/bullmq-world`) share one version and ship under one `v<version>` tag. A release writes the new version into each package manifest, sets the CLI's `@brickkit/core` dependency and CRUD's `@brickkit/core` peer dependency to `^<version>`, and updates `bun.lock`. It refuses to run when the five versions differ.
+All five published packages (`@brickkit/core`, `@brickkit/crud`, `@brickkit/cli`, `@brickkit/redis-world`, and `@brickkit/bullmq-world`) share one version and ship under one `v<version>` tag. A release writes the new version into each package manifest, sets the CLI's `@brickkit/core` dependency and CRUD's `@brickkit/core` peer dependency to `^<version>`, pins bullmq-world's `@brickkit/redis-world` dependency to exactly `<version>`, and updates `bun.lock`. It refuses to run when the five versions differ.
 
 Stable releases run from a clean, up-to-date `main` checkout:
 
@@ -116,7 +116,7 @@ The GitHub `publish-npm.yml` workflow stages candidate versions without changing
 
 `bun run release` only checks the preconditions (a clean tree, the release branch in sync with origin, a tag that does not exist yet, and `gh` signed in) and dispatches that workflow. There are two dry runs:
 
-- `bun run release <bump> --dry-run` runs locally. It prints the next version and the files it would write, and changes nothing. It does not build, test, or pack.
+- `bun run release <bump> --dry-run` runs locally. It prints each package's current and next version and writes no files. It still fetches origin and needs `gh` signed in. It does not build, test, or pack.
 - The workflow's `dry_run` input, set when you dispatch `publish-npm.yml` by hand, runs the full `validate` matrix and packs the tarballs, but publishes nothing and creates no commit or tag.
 
 The internal `--prepare` mode is for the workflow: it writes the manifests and the lockfile for validation, without committing.
