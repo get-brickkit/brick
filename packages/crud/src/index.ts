@@ -29,6 +29,7 @@ import {
   asc,
   desc,
   sql,
+  Param,
 } from "drizzle-orm";
 
 import type {
@@ -828,15 +829,28 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
         const paging = operation === "list" && input.cursor !== undefined;
         const sorts: { field: string; direction: string }[] =
           input.orderBy ?? [];
+        // Postgres timestamps keep microseconds, but a cursor holds a millisecond
+        // Date: page on the millisecond so the cursor's tie still matches its row.
+        const sortKey = (column: Column): SQL =>
+          paging &&
+          column.columnType === "PgTimestamp" &&
+          ((column as { precision?: number }).precision ?? 6) > 3
+            ? sql`date_trunc('milliseconds', ${column})`
+            : sql`${column}`;
         const keyset = sorts.map((sort) => ({
           column: columns[sort.field] as Column,
+          key: sortKey(columns[sort.field] as Column),
           desc: sort.direction === "desc",
         }));
         if (paging) {
           shape.push("cursor");
           if (input.offset) invalid("Use cursor or offset, not both");
           if (!keyset.some((key) => key.column === idColumn))
-            keyset.push({ column: idColumn, desc: false });
+            keyset.push({
+              column: idColumn,
+              key: sql`${idColumn}`,
+              desc: false,
+            });
           if (keyset.some((key) => !key.column.notNull))
             invalid("Cursor pagination needs sort fields that are not null");
         }
@@ -849,10 +863,12 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
           shape.push("after");
           // (a, b) after (x, y): a > x OR (a = x AND b > y), per direction.
           for (let index = keyset.length - 1; index >= 0; index--) {
-            const { column, desc: down } = keyset[index];
-            const value = () => bind(databaseValue(column, values[index]));
-            const past = down ? lt(column, value()) : gt(column, value());
-            after = after ? or(past, and(eq(column, value()), after)) : past;
+            const { column, key, desc: down } = keyset[index];
+            // Encoded by the column, also when the key is a SQL expression on it.
+            const value = () =>
+              new Param(bind(databaseValue(column, values[index])), column);
+            const past = down ? lt(key, value()) : gt(key, value());
+            after = after ? or(past, and(eq(key, value()), after)) : past;
           }
         }
         const derived: string[] = input.include ?? [];
@@ -908,7 +924,7 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
             operation === "list" ? (input.limit ?? defaultLimit) : 1;
           const offset = input.offset ?? 0;
           const ordering = keyset.map((key) =>
-            key.desc ? desc(key.column) : asc(key.column),
+            key.desc ? desc(key.key) : asc(key.key),
           );
           // One extra row tells whether there is a next page.
           const boundLimit = bind(paging ? limit + 1 : limit),
