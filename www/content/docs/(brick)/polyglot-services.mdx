@@ -3,6 +3,14 @@ title: Polyglot Services
 description: Write a Brick service in Go or Rust. In production browsers reach it directly through a reverse proxy; it verifies Better Auth JWTs itself, and every service calls every other directly.
 ---
 
+<Callout type="warn">
+  **Experimental.** Go and Rust services are new in Brick 0.13. `remoteService`,
+  `brick({remote})`, `brick gen contract`, `brick build --deploy`, the Go and
+  Rust SDKs, the wire format and the environment variables below may change in
+  any release, without a major version. `brick dev`, `brick build` and `brick
+  start` print a one-line notice when the app has Go or Rust services.
+</Callout>
+
 This is optional: an app with only TypeScript services needs none of it, and nothing on this page changes how it runs.
 
 A Brick app can have services written in Go or Rust next to its TypeScript ones. Each runs as its own process. Use one for an action that needs a Go or Rust library, or a hot path. Keep everything else in TypeScript.
@@ -15,6 +23,26 @@ A Go or Rust service has actions, and nothing else: no events, outbox, listeners
 - return the errors they declare, with the same error envelope a TypeScript action returns.
 - read the signed-in user from the caller's Better Auth JWT.
 - call any other service's actions, in any language, with a generated client.
+
+## Install
+
+The SDKs are released with the `@brickkit` npm packages, under the same version. Use the version of your `@brickkit/core`, 0.13.0 or later.
+
+Go, in the service's module:
+
+```sh
+go get github.com/get-brickkit/brick/sdk/go@v0.13.0
+```
+
+The package to import is `github.com/get-brickkit/brick/sdk/go/brick`. The module is tagged `sdk/go/v0.13.0` in the Brick repository. It needs Go 1.26.3 or later.
+
+Rust, in the service's crate:
+
+```sh
+cargo add brickkit@0.13.0 schemars serde tokio --features serde/derive,tokio/macros,tokio/rt-multi-thread
+```
+
+The crate is [`brickkit`](https://crates.io/crates/brickkit), imported as `brickkit`. It needs Rust 1.88 or later.
 
 ## Development and production
 
@@ -93,20 +121,20 @@ The user is the token's claims without the registered ones (`iss`, `sub`, `aud`,
 
 Services call each other directly, not through Bun or the proxy. A call carries the internal token in `x-brick-internal`, and the caller's user, tenant and own name in `x-brick-user`, `x-brick-tenant` and `x-brick-caller`.
 
-A service trusts `x-brick-*` headers only with the internal token. A request without the token is a public call: its `x-brick-*` headers are ignored and its user comes from its JWT. A request with a wrong token gets a 401. Every proxy config that `brick build --deploy` writes also removes `x-brick-*` from incoming requests.
+A service trusts `x-brick-*` headers only with the internal token. A request without the token is a public call: its `x-brick-*` headers are ignored and its user comes from its JWT. A request with a wrong token gets a 401. The Caddy, nginx and Traefik configs that `brick build --deploy` writes also remove `x-brick-*` from incoming requests. The Kubernetes Ingress can't; see [Deploy](#deploy).
 
 The original JWT is not forwarded. Many callers don't have one: a TypeScript action that read the session cookie, or a background job. A JWT can also expire in the middle of a chain of calls. The internal token never reaches a browser, and only services that hold it can name a user.
 
 Each process gets these variables. `brick dev` and `brick start` set them; the deploy targets write them:
 
-| Variable               | Value                                                                         |
-| ---------------------- | ----------------------------------------------------------------------------- |
-| `BRICK_SERVICES`       | JSON: each service's name and base URL, the TypeScript services included      |
-| `BRICK_INTERNAL_TOKEN` | The shared secret: random for each `brick dev` run, set by you in production. |
-| `BRICK_PORT`           | The port to listen on                                                         |
-| `BRICK_HOST`           | The address to listen on. Default `127.0.0.1`; `0.0.0.0` in a container.      |
-| `BRICK_PREFIX`         | The app's API prefix. Default `/api`.                                         |
-| `BRICK_CORS`           | The origins of `brick({ cors })` as JSON. A predicate origin isn't passed on. |
+| Variable               | Value                                                                                          |
+| ---------------------- | ---------------------------------------------------------------------------------------------- |
+| `BRICK_SERVICES`       | JSON: each service's name and base URL, the TypeScript services included                       |
+| `BRICK_INTERNAL_TOKEN` | The shared secret: yours in production, else random for each `brick dev` or `brick start` run. |
+| `BRICK_PORT`           | The port to listen on                                                                          |
+| `BRICK_HOST`           | The address to listen on. Default `127.0.0.1`; `0.0.0.0` in a container.                       |
+| `BRICK_PREFIX`         | The app's API prefix. Default `/api`.                                                          |
+| `BRICK_CORS`           | The origins of `brick({ cors })` as JSON. A predicate origin isn't passed on.                  |
 
 ## Declare the service in the app
 
@@ -135,6 +163,14 @@ export default brick({ services: [orders], remote: [billing] });
 ## Write it in Go
 
 The Go SDK is `github.com/get-brickkit/brick/sdk/go/brick`. It uses chi for routing, Huma for the schemas and `lestrrat-go/jwx` for JWTs. Struct tags such as `minLength`, `maximum` and `enum` describe the input.
+
+Create the module next to the app:
+
+```sh
+mkdir -p services/billing && cd services/billing
+go mod init example.com/app/billing
+go get github.com/get-brickkit/brick/sdk/go@v0.13.0
+```
 
 ```go title="services/billing/main.go"
 package main
@@ -180,10 +216,19 @@ func main() {
 
 ## Write it in Rust
 
-The Rust crate is `brick` in `sdk/rust/brick`. It uses axum, serde, schemars for the schemas, `jsonschema`, reqwest and `jsonwebtoken`. schemars attributes describe the input.
+The Rust crate is `brickkit`. It uses axum, serde, schemars for the schemas, `jsonschema`, reqwest with rustls, and `jsonwebtoken`. schemars attributes describe the input.
+
+Create the crate next to the app:
+
+```sh
+cargo new --vcs none services/billing && cd services/billing
+cargo add brickkit@0.13.0 schemars serde tokio --features serde/derive,tokio/macros,tokio/rt-multi-thread
+```
+
+The same `billing` service as in Go:
 
 ```rust title="services/billing/src/main.rs"
-use brick::{Ctx, Error, ErrorDef, Service};
+use brickkit::{Ctx, Error, ErrorDef, Service};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -222,7 +267,7 @@ async fn main() -> std::io::Result<()> {
 
 `Ctx` has `request_id()`, `trace_id()`, `caller()`, `tenant_id()`, `user::<T>()` (an `Option`) and `require_user::<T>()`. Any other error, such as an `sqlx::Error` returned with `?`, is logged and answered as a 500.
 
-The Rust SDK fetches the JWKS over plain HTTP. Point `BRICK_JWKS_URL` at the Bun app's internal address, as the deploy targets do.
+Both SDKs fetch the JWKS over HTTP or HTTPS, and check HTTPS certificates against the system's roots. In a container, that needs the CA certificates, which the generated Dockerfiles copy. Pointing `BRICK_JWKS_URL` at the Bun app's internal address, as the deploy targets do, skips TLS and the public network.
 
 ## Validation and errors
 
@@ -279,13 +324,13 @@ A Go or Rust service calls a TypeScript action at `POST /_brick/call/<service>/<
 brick gen contract src/app.ts
 ```
 
-`brick gen` runs each Go and Rust service with `--brick-manifest` (or `BRICK_MANIFEST=1`). Each prints its name, its actions with their input and output JSON Schema, and its errors. `brick gen` merges them with the TypeScript services into `_brick/contract.json`. Then it writes:
+`brick gen` runs each Go and Rust service's `dev` command with `BRICK_MANIFEST=1` (a built binary also takes `--brick-manifest`). Each prints its name, its actions with their input and output JSON Schema, and its errors. `brick gen` merges them with the TypeScript services into `_brick/contract.json`. Then it writes:
 
 - the TypeScript contract (`_brick/contract.ts`), so the typed client and `useService` know the Go and Rust actions.
 - `brickclient/client.go` in each Go service.
 - `src/brick_client.rs` in each Rust service. Add `mod brick_client;`.
 
-Commit the generated Go and Rust clients. Rerun `brick gen` after changing an action's types in any language. In an app with a `brick.config.ts`, a bare `brick gen` does this too.
+The generated clients import the published SDKs: `github.com/get-brickkit/brick/sdk/go/brick` and `brickkit`. Commit them. Rerun `brick gen` after changing an action's types in any language. In an app with a `brick.config.ts`, a bare `brick gen` does this too.
 
 ## Run it
 
@@ -298,8 +343,6 @@ Commit the generated Go and Rust clients. Rerun `brick gen` after changing an ac
 Set `BRICK_JWT_ISSUER` in the app's environment (a `.env` file works): the services inherit it in `brick dev` and `brick start`.
 
 To run the binaries yourself, call `startRemoteServices(services, { mode: "start", appUrl, env: remoteEnv(app.definition) })` from `@brickkit/core` before the app starts. It sets `BRICK_SERVICES` and `BRICK_INTERNAL_TOKEN` in the process, so start the app from the same process or pass them on.
-
-The Go and Rust services run on macOS and Linux.
 
 ## Deploy
 
@@ -332,7 +375,7 @@ The flags win over the config. Nothing is written unless you ask for a target. A
 
 | Target       | Files in `deploy/`                               | What it is                                                                                                         |
 | ------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| `caddy`      | `caddy/Caddyfile`                                | Caddy. With `--domain`, automatic HTTPS.                                                                           |
+| `caddy`      | `caddy/Caddyfile`                                | Caddy, with a keep-alive pool of 256 per process. With `--domain`, automatic HTTPS.                                |
 | `nginx`      | `nginx/nginx.conf`                               | A full `nginx.conf` with a keep-alive upstream per process. Terminate TLS in front of it, or add your certificate. |
 | `traefik`    | `traefik/traefik.yml`, `traefik/dynamic.yml`     | Static config, and the routes for Traefik's file provider. With `--domain`, Let's Encrypt.                         |
 | `kubernetes` | `kubernetes/brick.yaml`                          | A Deployment and a Service per process, and an Ingress routing by path. With `--domain`, TLS from `brick-tls`.     |
@@ -349,15 +392,27 @@ app.example.com {
 	request_header -X-Brick-Tenant
 
 	handle /api/billing/* {
-		reverse_proxy billing:4001
+		reverse_proxy billing:4001 {
+			transport http {
+				keepalive_idle_conns_per_host 256
+			}
+		}
 	}
 
 	handle /api/fx-rates/* {
-		reverse_proxy fx-rates:4002
+		reverse_proxy fx-rates:4002 {
+			transport http {
+				keepalive_idle_conns_per_host 256
+			}
+		}
 	}
 
 	handle {
-		reverse_proxy app:3000
+		reverse_proxy app:3000 {
+			transport http {
+				keepalive_idle_conns_per_host 256
+			}
+		}
 	}
 }
 ```
@@ -367,7 +422,7 @@ The nginx routes:
 ```txt title="deploy/nginx/nginx.conf"
     upstream billing {
         server billing:4001;
-        keepalive 32;
+        keepalive 256;
     }
 
         location /api/billing/ {
@@ -421,7 +476,7 @@ kubectl create secret generic brick --from-literal=BRICK_INTERNAL_TOKEN=$(openss
 kubectl apply -f deploy/kubernetes/brick.yaml
 ```
 
-The Ingress API can't remove headers in a portable way, so on Kubernetes the services' own rule does it: they ignore `x-brick-*` without the internal token.
+An Ingress can't remove request headers in a portable way, so the generated one doesn't, and `x-brick-*` from a browser reaches the services. The guard on Kubernetes is the services' own rule, which every SDK and the Bun app apply and test: without the internal token they ignore `x-brick-*`, and with a wrong one they answer 401. Only a request that carries `BRICK_INTERNAL_TOKEN` can name a user, tenant or caller, so keep the token in the Secret and out of the browser. To strip the headers at the edge too, route with the Gateway API instead of the Ingress: an `HTTPRoute` filter of type `RequestHeaderModifier` with `remove: [X-Brick-Internal, X-Brick-User, X-Brick-Caller, X-Brick-Tenant]`. ingress-nginx's `configuration-snippet` annotation could do it, but most clusters disable snippets, so `brick build --deploy` doesn't rely on it.
 
 With compose, put the token and the public URL in `deploy/compose/.env`. Compose refuses to start without the token:
 
@@ -434,7 +489,7 @@ BRICK_JWT_ISSUER=https://app.example.com
 docker compose -f deploy/compose/compose.yaml up --build
 ```
 
-The Dockerfiles build from the project root, so a Go `replace` or Cargo `path` that points outside it won't build. Each process gets `BRICK_SERVICES` with the other processes' compose or Kubernetes addresses, and each Go or Rust service gets `BRICK_JWKS_URL=http://app:3000/api/auth/jwks`.
+Each Go or Rust Dockerfile copies only the service's folder and its local dependencies, builds the release binary, and runs it on `debian:trixie-slim`. A service that depends on the published SDK builds from the project root. When `go.mod` has a `replace` or `Cargo.toml` a `path` dependency that points outside the project, as in a monorepo, the build context becomes the closest folder that holds both, and `compose.yaml` says so. Each Dockerfile has a `.dockerignore` next to it that leaves out `target/`, `node_modules/` and `.git/`. Each process gets `BRICK_SERVICES` with the other processes' compose or Kubernetes addresses, and each Go or Rust service gets `BRICK_JWKS_URL=http://app:3000/api/auth/jwks`.
 
 `routes.json` lists the same routes, the upstreams with their addresses, languages and environment, and the headers to strip:
 
@@ -472,3 +527,19 @@ BENCH_CADDY_BIN=/path/to/caddy bun run --cwd examples/pages bench   # adds proxy
 On macOS, docker's network adds its own overhead to the `proxy` path. Set `BENCH_CADDY_BIN` to a Caddy binary to also measure `proxy-native`, the same Caddyfile on the host.
 
 It writes p50, p90, p99, mean, min and max for each language, API and path to `examples/pages/bench/results.json`.
+
+The `load` mode measures throughput under concurrency. Through the native Caddy, it gives each language and API a 10 s warm-up, then 20 s measured with [oha](https://github.com/hatoo/oha) at 64 connections. It records requests per second, p50 and p99, and the CPU and peak memory of Caddy, Bun, Go and Rust, sampled with `ps`, into `examples/pages/bench/results-load.json`:
+
+```sh
+BENCH_CADDY_BIN=/path/to/caddy BENCH_OHA_BIN=/path/to/oha bun run --cwd examples/pages bench load
+```
+
+## Limits
+
+- It is experimental. Pin the SDKs to the version of your `@brickkit/core` and read the release notes before you upgrade.
+- A Go or Rust service has actions only: no events, outbox, listeners, workflows, commands, sockets, CRUD or plugins.
+- It reads the user only from a Better Auth JWT in `Authorization`, not from the session cookie, and only when `BRICK_JWT_ISSUER` is set.
+- Input validation matches TypeBox for the keywords listed above. String formats such as `email` or `uuid` aren't checked.
+- The services run on macOS and Linux, not Windows.
+- `brick dev` starts the services the app had at its first start. Restart it after adding one.
+- Kubernetes doesn't strip `x-brick-*` at the Ingress. The internal token is the guard there, as described above.
