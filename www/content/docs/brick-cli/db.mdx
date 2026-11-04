@@ -17,7 +17,7 @@ brick db migrate  [entry] [--out <dir>] [--config <path>]
 brick db push     [entry] [--force] [--config <path>]
 ```
 
-With a [`brick.config.ts`](/docs/brick-cli/config), the entry comes from the config file and the migrations folder defaults to `drizzle/` beside it. Each database writes to its own subfolder, named after `defineDatabase({ name })` or else the first service that uses it, such as `drizzle/pages/`.
+With a [`brick.config.ts`](/docs/brick-cli/config), the entry comes from the config file and the migrations folder defaults to `drizzle/` beside it. Each database writes to its own subfolder, named after `defineDatabase({ name })` or else the one service that uses it, such as `drizzle/pages/`. A handle that several services share needs a `name`.
 
 ## Migrations for production
 
@@ -61,15 +61,19 @@ It only touches the tables the app knows. Tables of other apps, and the SQLite s
 
 ## Several databases
 
-Each `defineDatabase` handle is migrated on its own, in its own subfolder (`drizzle/billing/`, `drizzle/pages/`). The layout is the same for one database or several, so adding a database never moves another's migrations. Two handles with the same name would share a folder, so `brick db` refuses them. Give each physical database one handle and share it between the services that use it.
+Each `defineDatabase` handle is migrated on its own, in its own subfolder (`drizzle/billing/`, `drizzle/pages/`). The layout is the same for one database or several, so adding a database never moves another's migrations. Two handles with the same name would share a folder, so `brick db` refuses them. Give each physical database one handle and share it between the services that use it. `migrate` checks every database's migrations first, so a missing folder stops it before any database changes.
 
 ## Tests and quick scripts
 
-For tests, `syncSchema` creates the tables that do not exist yet, without migration files. It never changes an existing table. On Postgres it uses Drizzle Kit, so install `drizzle-kit` (it comes with `@brickkit/cli`) and `await` it:
+For tests, `syncSchema` creates the tables that do not exist yet, without migration files. It never changes an existing table. On Postgres it uses Drizzle Kit, so install `drizzle-kit` (it comes with `@brickkit/cli`) and `await` it. `database.tables` holds only the tables given to `defineDatabase`; resource and plugin tables are in `service.tables`, so pass both:
 
 ```ts title="test/setup.ts"
 import { syncSchema } from "@brickkit/core";
 import { database } from "../src/database";
+import { service } from "../src/service";
 
-await syncSchema(database.tables, database.getDb());
+await syncSchema(
+  [...Object.values(database.tables), ...service.tables.values()],
+  database.getDb(),
+);
 ```

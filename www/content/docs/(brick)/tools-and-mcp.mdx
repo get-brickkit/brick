@@ -47,7 +47,7 @@ app.listen(4000);
 
 ## Serving MCP (`brick({ mcp })`)
 
-`mcp: true` (or an options object) mounts an MCP endpoint that serves every tool the app's services register with `service.tool()`. It speaks the streamable HTTP transport statelessly: each `POST` gets one JSON response, and `GET` answers `405` because the server opens no event stream. The server reports the app's `title` and `version` as its name and version.
+`mcp: true` (or an options object) mounts an MCP endpoint that serves every tool the app's services register with `service.tool()`. It speaks the streamable HTTP transport statelessly: each `POST` gets one JSON response, and a `GET` that passes `authorize` answers `405` because the server opens no event stream. The server reports the app's `title` and `version` as its name and version.
 
 | Option      | Default  | Description                                                                                                  |
 | :---------- | :------- | :----------------------------------------------------------------------------------------------------------- |

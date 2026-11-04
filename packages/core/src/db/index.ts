@@ -95,12 +95,12 @@ export function createDatabase<
 /**
  * Apply the migrations in a folder that have not run yet, in order, and record
  * them in the database's `__drizzle_migrations` table. The folder is the one
- * `brick db generate` (or drizzle-kit) writes.
+ * `brick db generate` (or drizzle-kit) writes: `<out>/<database name>`.
  *
  * @param database - A handle from `defineDatabase`.
  * @param migrationsFolder - The folder holding `meta/_journal.json`.
  * @example
- * await migrateDatabase(database, "./drizzle");
+ * await migrateDatabase(database, "./drizzle/pages");
  */
 export async function migrateDatabase(
   database: DatabaseHandle<unknown>,
