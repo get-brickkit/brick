@@ -16,7 +16,7 @@
     "check": "bun run lint && bun run format:check && bun run build && bun run typecheck && bun run build:worlds && bun run typecheck:worlds && bun run test",
     "build": "bun run --filter @brickkit/core build && bun run --filter @brickkit/crud build && bun run --filter @brickkit/cli build",
     "release": "bun scripts/release.ts",
-    "test": "bun test packages examples/extensions/test examples/websocket/test scripts --path-ignore-patterns='**/*-world/**' && bun run --cwd examples/events test",
+    "test": "bun test packages ./sdk examples/extensions/test examples/websocket/test scripts --path-ignore-patterns='**/*-world/**' && bun run --cwd examples/events test",
     "typecheck": "bun run --filter @brickkit/core typecheck && bun run --filter @brickkit/crud typecheck && bun run --filter @brickkit/cli typecheck && bun run --filter @brickkit/workflow-inspector typecheck",
     "build:worlds": "bun run --filter @brickkit/redis-world build && bun run --filter @brickkit/bullmq-world build",
     "typecheck:worlds": "bun run --filter '@brickkit/*-world' typecheck",
