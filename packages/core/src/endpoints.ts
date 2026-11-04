@@ -10,6 +10,7 @@ import { createLogger } from "./logger";
 import { ActionExecutionError, ValidationError } from "./types";
 import type { BrickSocketSchema } from "./socket-types";
 import type { InstalledPlugin } from "./define-plugin";
+import type { RemoteService } from "./remote";
 
 export type EndpointMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -196,6 +197,8 @@ export type BrickApp = Elysia<any, any, any, any, any, any, any> & {
     readonly events?: EventsDefinition;
     /** Every `definePlugin` installation, in install order. */
     readonly plugins?: readonly InstalledPlugin[];
+    /** The Go and Rust services from `brick({ remote })`. */
+    readonly remote?: readonly RemoteService[];
   };
   /**
    * Run the plugins' `on("start")` handlers in install order, once. `listen`

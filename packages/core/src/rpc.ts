@@ -10,6 +10,7 @@ import { getGlobalRegistry } from "./registry";
 import { getPluginActionRoute } from "./plugin";
 import { pickContextEnvelope } from "./context";
 import { withCallSpan } from "./telemetry";
+import { callRemoteAction, getRemoteService } from "./remote";
 
 /** An in-process caller for one action: its input, then an optional call context. */
 export type ServiceActionCaller<A> =
@@ -129,6 +130,18 @@ async function callAction(
   callCtx: Partial<ActionContext> | undefined,
   options: ProxyOptions,
 ) {
+  // A TS service of this name wins: remote services live outside the registry.
+  const remote = getGlobalRegistry().has(serviceName)
+    ? undefined
+    : getRemoteService(serviceName);
+  if (remote) {
+    const envelope = createRpcEnvelope(options.from, options.context, callCtx);
+    return withCallSpan(
+      `rpc ${serviceName}.${actionName}`,
+      { "brick.service": serviceName, "brick.action": actionName },
+      () => callRemoteAction(remote, actionName, payload, envelope),
+    );
+  }
   const service = getGlobalRegistry().get(serviceName);
   if (!service) {
     throw new Error(

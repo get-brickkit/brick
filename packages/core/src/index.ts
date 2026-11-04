@@ -41,6 +41,17 @@ export type {
 } from "./define-plugin";
 // HTTP Runtime (Elysia app): bundled to user apps, never the CLI.
 export { brick, type CreateServerOptions } from "./server";
+export {
+  remoteService,
+  isRemoteService,
+  startRemoteServices,
+  internalToken,
+  type RemoteService,
+  type RemoteServiceOptions,
+  type RemoteContext,
+  type RemoteProcesses,
+  type StartRemoteOptions,
+} from "./remote";
 export type { CorsOptions, CorsOrigin } from "./cors";
 export {
   type BrickApp,

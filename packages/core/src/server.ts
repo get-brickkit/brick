@@ -4,7 +4,7 @@ import {
   type CompiledApplication,
   type RouteIR,
 } from "./compiler";
-import type { Service } from "./types";
+import { ActionExecutionError, type Service } from "./types";
 import { getGlobalRegistry } from "./registry";
 import {
   getPluginActionRoute,
@@ -46,6 +46,11 @@ import type { EventsOptions } from "./events/types";
 import { localBroker, mountSockets, socketPath } from "./socket";
 import type { SocketBroker } from "./socket-types";
 import { corsHook, type CorsOptions } from "./cors";
+import { remoteGateway, trustedEnvelope, type RemoteService } from "./remote";
+import { kebabCase } from "./kebab";
+import { ownerPath } from "./routes";
+import { toErrorResponse } from "./error-response";
+import { createLogger } from "./logger";
 
 export interface CreateServerOptions {
   port?: number;
@@ -125,6 +130,14 @@ export interface CreateServerOptions {
    * Other origins get no `Access-Control-Allow-Origin`. Preflights are answered.
    */
   cors?: false | CorsOptions;
+  /**
+   * Go and Rust services from `remoteService`. Each is served at
+   * `${prefix}/<name>/*` by proxying to its process on 127.0.0.1, after CORS,
+   * request ids and the service's `context` hook. It also mounts
+   * `POST /_brick/call/<service>/<action>`, where those services call TS
+   * actions with the internal token.
+   */
+  remote?: readonly RemoteService[];
 }
 
 export {
@@ -480,6 +493,24 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     if (mounted) mountedRoutes.push(route.ir);
   }
 
+  const remote = options.remote ?? [];
+  for (const service of remote) {
+    if (byName.has(service.name))
+      throw new Error(`Brick: duplicate service "${service.name}" in brick()`);
+    const base = ownerPath(prefix, service.name);
+    const gateway = remoteGateway(service, base);
+    const handler = ({ request }: { request: Request }) => gateway(request);
+    const traced = (path: string) =>
+      telemetry
+        ? (context: any) =>
+            traceHttpRequest(context, context.request.method, path, () =>
+              handler(context),
+            )
+        : handler;
+    app.all(`${base}/*`, { parse: "none" }, traced(`${base}/*`));
+  }
+  if (remote.length) mountInternalCalls(app, services);
+
   mountSockets(
     app,
     sockets,
@@ -501,6 +532,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     documentation: normalizeDocumentation(options.documentation),
     dashboard,
     ...(events ? { events: events.describe() } : {}),
+    remote: Object.freeze([...remote]),
     plugins: Object.freeze(plugins.plugins),
   });
   Object.defineProperty(brickApp, "definition", { value: definition });
@@ -542,6 +574,61 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   );
 
   return brickApp;
+}
+
+const internalLogger = createLogger("[brick:internal]");
+
+/**
+ * `POST /_brick/call/:service/:action`: how Go and Rust services call TS
+ * actions. Only requests with the internal token are served; their `x-brick-*`
+ * headers become the call's caller, user and tenant.
+ */
+function mountInternalCalls(
+  app: Elysia<any, any, any, any, any, any, any>,
+  services: readonly Service<any, any>[],
+) {
+  app.post(
+    "/_brick/call/:service/:action",
+    async ({ request, params, body, set }: any) => {
+      const requestId =
+        request.headers.get("x-request-id") || `req_i${Date.now()}`;
+      const traceId = request.headers.get("x-trace-id") || undefined;
+      set.headers["x-request-id"] = requestId;
+      try {
+        const envelope = trustedEnvelope(request.headers);
+        if (!envelope)
+          throw new ActionExecutionError(
+            "UNAUTHORIZED",
+            "Missing or invalid internal token",
+            401,
+          );
+        const service = services.find(
+          (candidate) => kebabCase(candidate.name) === params.service,
+        );
+        const action = service
+          ?.listActions()
+          .find((candidate) => kebabCase(candidate.name) === params.action);
+        if (!action)
+          throw new ActionExecutionError(
+            "NOT_FOUND",
+            `No action '${params.service}.${params.action}'`,
+            404,
+          );
+        const result = await action.execute({
+          input: body,
+          ctx: { request, requestId, traceId, ...envelope },
+        });
+        return jsonActionResult(result);
+      } catch (err) {
+        const response = toErrorResponse(err, {
+          logger: internalLogger,
+          requestId,
+        });
+        set.status = response.status;
+        return response;
+      }
+    },
+  );
 }
 
 function normalizeDocumentation(
