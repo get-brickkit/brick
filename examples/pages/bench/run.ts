@@ -14,8 +14,15 @@
 // on a Caddy binary on the host, without docker's network in the way.
 // Writes bench/results.json.
 //
+// `load` mode measures throughput instead: through the native Caddy only
+// (BENCH_CADDY_BIN), each language and API gets a 10 s warm-up and 20 s
+// measured with oha (BENCH_OHA_BIN, default `oha`) at 64 connections. It
+// records requests per second, p50 and p99, and CPU and peak RSS per process
+// (sampled with ps), into bench/results-load.json.
+//
 //   bun run --cwd examples/pages bench            # from the repository root
 //   BENCH_SKIP_BUILD=1 bun bench/run.ts           # reuse the last builds
+//   BENCH_CADDY_BIN=caddy BENCH_OHA_BIN=oha bun bench/run.ts load
 //
 // Uses its own database (BENCH_DATABASE_URL, default drafton_bench), created
 // and migrated from drizzle/ on first run.
@@ -33,6 +40,11 @@ import postgres from "postgres";
 
 import { benchGo, benchRust } from "../src/api/services/bench/service";
 
+const LOAD = process.argv.includes("load");
+const OHA = process.env.BENCH_OHA_BIN ?? "oha";
+const LOAD_WARMUP = process.env.BENCH_LOAD_WARMUP ?? "10s";
+const LOAD_DURATION = process.env.BENCH_LOAD_DURATION ?? "20s";
+const CONCURRENCY = Number(process.env.BENCH_CONCURRENCY ?? 64);
 const ITERATIONS = Number(process.env.BENCH_ITERATIONS ?? 200);
 const WARMUP = Number(process.env.BENCH_WARMUP ?? 50);
 const root = join(import.meta.dir, "..");
@@ -172,10 +184,13 @@ writeFileSync(
   caddyfile(table("host.docker.internal")),
 );
 const caddyPort = await freePort();
-sh(
-  `docker run -d --rm --name brick-bench-caddy -p 127.0.0.1:${caddyPort}:80 -v ${scratch}/Caddyfile:/etc/caddy/Caddyfile:ro caddy:2 >/dev/null`,
-);
 const caddyBin = process.env.BENCH_CADDY_BIN;
+if (LOAD && !caddyBin) throw new Error("bench load needs BENCH_CADDY_BIN");
+// The load test goes through the native Caddy only.
+if (!LOAD)
+  sh(
+    `docker run -d --rm --name brick-bench-caddy -p 127.0.0.1:${caddyPort}:80 -v ${scratch}/Caddyfile:/etc/caddy/Caddyfile:ro caddy:2 >/dev/null`,
+  );
 const nativePort = await freePort();
 let native: ReturnType<typeof spawn> | undefined;
 if (caddyBin) {
@@ -219,103 +234,280 @@ try {
   await children.ready();
   const proxyUrl = `http://127.0.0.1:${caddyPort}`;
   const nativeUrl = `http://127.0.0.1:${nativePort}`;
-  await waitFor(`${proxyUrl}/_health`);
+  if (!LOAD) await waitFor(`${proxyUrl}/_health`);
   if (native) await waitFor(`${nativeUrl}/_health`);
+  if (LOAD) await load(nativeUrl);
+  else {
+    const targets: { language: Language; api: Api; path: Path; url: string }[] =
+      [];
+    for (const language of ["ts", "go", "rust"] as Language[])
+      for (const api of APIS) {
+        const path = `/api/${SERVICES[language]}/${api}`;
+        const remote =
+          language === "go"
+            ? children.urls.benchGo
+            : language === "rust"
+              ? children.urls.benchRust
+              : undefined;
+        const add = (kind: Path, base: string) =>
+          targets.push({ language, api, path: kind, url: `${base}${path}` });
+        add("proxy", proxyUrl);
+        if (native) add("proxy-native", nativeUrl);
+        // TS's service port is Bun's; Go and Rust have their own.
+        add("direct", remote ?? appUrl);
+        if (remote) add("gateway", appUrl);
+      }
 
-  const targets: { language: Language; api: Api; path: Path; url: string }[] =
-    [];
+    const call = async (target: (typeof targets)[number], i: number) => {
+      const headers = { "content-type": "application/json" };
+      const started = performance.now();
+      const response = await fetch(target.url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(inputOf(target.api, i)),
+      });
+      await response.arrayBuffer();
+      return { ms: performance.now() - started, status: response.status };
+    };
+
+    // 3. Warm up every target, and check each answers 200.
+    for (const target of targets)
+      for (let i = 0; i < WARMUP; i++) {
+        const { status } = await call(target, i);
+        if (status !== 200)
+          throw new Error(`${target.url} answered ${status} during warmup`);
+      }
+
+    // 4. Measure: each target 200 times, one request at a time.
+    const requests: {
+      language: Language;
+      api: Api;
+      path: Path;
+      i: number;
+      ms: number;
+      status: number;
+    }[] = [];
+    for (const target of targets)
+      for (let i = 0; i < ITERATIONS; i++) {
+        const { ms, status } = await call(target, i);
+        requests.push({
+          language: target.language,
+          api: target.api,
+          path: target.path,
+          i,
+          ms: Math.round(ms * 1000) / 1000,
+          status,
+        });
+      }
+
+    const summary = targets.map(({ language, api, path }) => {
+      const rows = requests.filter(
+        (r) => r.language === language && r.api === api && r.path === path,
+      );
+      return {
+        language,
+        api,
+        path,
+        n: rows.length,
+        errors: rows.filter((r) => r.status !== 200).length,
+        ...stats(rows.map((r) => r.ms)),
+      };
+    });
+
+    const sql = postgres(databaseUrl, { max: 1 });
+    const [{ version: pg }] = await sql`SELECT version()`;
+    await sql.end();
+    const results = {
+      date: new Date().toISOString(),
+      config: {
+        iterations: ITERATIONS,
+        warmup: WARMUP,
+        sequential: true,
+        client: "Bun fetch (keep-alive) from the bench process",
+        proxy: `caddy:2 in docker (${version("docker version --format '{{.Server.Version}}'")}), upstreams via host.docker.internal${caddyBin ? `; proxy-native: ${version(`${caddyBin} version`)} on the host` : ""}`,
+        app: "vite build (Nitro node-server output) run on Bun, NODE_ENV=production",
+        pools:
+          "10 connections in TS (postgres-js), Go (pgxpool) and Rust (sqlx)",
+        units: "milliseconds, request sent to response body read",
+      },
+      machine: {
+        platform: platform(),
+        release: release(),
+        arch: arch(),
+        cpu: cpus()[0]?.model,
+        cores: cpus().length,
+        memoryGb: Math.round(totalmem() / 2 ** 30),
+      },
+      versions: {
+        bun: Bun.version,
+        go: version("go version"),
+        rustc: version("rustc --version"),
+        postgres: pg as string,
+        brick: (
+          await Bun.file(join(root, "../../packages/core/package.json")).json()
+        ).version,
+      },
+      summary,
+      requests,
+    };
+    await Bun.write(
+      join(import.meta.dir, "results.json"),
+      `${JSON.stringify(results, null, 2)}\n`,
+    );
+    console.table(
+      summary.map(
+        ({ language, api, path, p50, p90, p99, mean, min, max, errors }) => ({
+          language,
+          api,
+          path,
+          p50,
+          p90,
+          p99,
+          mean,
+          min,
+          max,
+          errors,
+        }),
+      ),
+    );
+    console.log(`Wrote ${join(import.meta.dir, "results.json")}`);
+  }
+} finally {
+  await stop();
+}
+
+/** CPU seconds a process has used so far (`ps -o time=`: [[h:]m:]s.cc). */
+function cpuSeconds(pid: number): number {
+  const out = spawnSync("ps", ["-o", "time=", "-p", String(pid)], {
+    encoding: "utf8",
+  }).stdout.trim();
+  return out
+    .split(":")
+    .reduce((total, part) => total * 60 + Number(part.replace(",", ".")), 0);
+}
+
+/** Resident memory of a process, in KiB. */
+function rssKb(pid: number): number {
+  return Number(
+    spawnSync("ps", ["-o", "rss=", "-p", String(pid)], {
+      encoding: "utf8",
+    }).stdout.trim() || 0,
+  );
+}
+
+/** The newest process whose command line matches `pattern`. */
+function pidOf(pattern: string): number {
+  const out = spawnSync("pgrep", ["-n", "-f", pattern], {
+    encoding: "utf8",
+  }).stdout.trim();
+  if (!out) throw new Error(`no process matches ${pattern}`);
+  return Number(out);
+}
+
+async function oha(url: string, body: unknown, duration: string) {
+  const child = Bun.spawn(
+    [
+      OHA,
+      "-z",
+      duration,
+      "-c",
+      String(CONCURRENCY),
+      "--no-tui",
+      "--output-format",
+      "json",
+      "-m",
+      "POST",
+      "-H",
+      "content-type: application/json",
+      "-d",
+      JSON.stringify(body),
+      url,
+    ],
+    { stdout: "pipe", stderr: "inherit" },
+  );
+  const out = await new Response(child.stdout).text();
+  if ((await child.exited) !== 0) throw new Error(`oha failed for ${url}`);
+  return JSON.parse(out) as {
+    summary: { requestsPerSec: number; successRate: number };
+    latencyPercentiles: Record<string, number>;
+    statusCodeDistribution: Record<string, number>;
+    errorDistribution?: Record<string, number>;
+  };
+}
+
+/** Throughput at CONCURRENCY connections through the native Caddy, per language and API. */
+async function load(base: string) {
+  const processes = {
+    caddy: native!.pid!,
+    bun: app.pid!,
+    go: pidOf("bin/bench-go$"),
+    rust: pidOf("release/bench-rust$"),
+  };
+  const summary = [];
   for (const language of ["ts", "go", "rust"] as Language[])
     for (const api of APIS) {
-      const path = `/api/${SERVICES[language]}/${api}`;
-      const remote =
-        language === "go"
-          ? children.urls.benchGo
-          : language === "rust"
-            ? children.urls.benchRust
-            : undefined;
-      const add = (kind: Path, base: string) =>
-        targets.push({ language, api, path: kind, url: `${base}${path}` });
-      add("proxy", proxyUrl);
-      if (native) add("proxy-native", nativeUrl);
-      // TS's service port is Bun's; Go and Rust have their own.
-      add("direct", remote ?? appUrl);
-      if (remote) add("gateway", appUrl);
-    }
-
-  const call = async (target: (typeof targets)[number], i: number) => {
-    const headers = { "content-type": "application/json" };
-    const started = performance.now();
-    const response = await fetch(target.url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(inputOf(target.api, i)),
-    });
-    await response.arrayBuffer();
-    return { ms: performance.now() - started, status: response.status };
-  };
-
-  // 3. Warm up every target, and check each answers 200.
-  for (const target of targets)
-    for (let i = 0; i < WARMUP; i++) {
-      const { status } = await call(target, i);
-      if (status !== 200)
-        throw new Error(`${target.url} answered ${status} during warmup`);
-    }
-
-  // 4. Measure: each target 200 times, one request at a time.
-  const requests: {
-    language: Language;
-    api: Api;
-    path: Path;
-    i: number;
-    ms: number;
-    status: number;
-  }[] = [];
-  for (const target of targets)
-    for (let i = 0; i < ITERATIONS; i++) {
-      const { ms, status } = await call(target, i);
-      requests.push({
-        language: target.language,
-        api: target.api,
-        path: target.path,
-        i,
-        ms: Math.round(ms * 1000) / 1000,
-        status,
+      const url = `${base}/api/${SERVICES[language]}/${api}`;
+      const body = inputOf(api, 0);
+      console.log(`load ${language} ${api}: warm-up ${LOAD_WARMUP}`);
+      await oha(url, body, LOAD_WARMUP);
+      const before = Object.fromEntries(
+        Object.entries(processes).map(([name, pid]) => [name, cpuSeconds(pid)]),
+      );
+      const peak: Record<string, number> = {};
+      const sample = () => {
+        for (const [name, pid] of Object.entries(processes))
+          peak[name] = Math.max(peak[name] ?? 0, rssKb(pid));
+      };
+      sample();
+      const sampler = setInterval(sample, 250);
+      const started = performance.now();
+      console.log(`load ${language} ${api}: measuring ${LOAD_DURATION}`);
+      const result = await oha(url, body, LOAD_DURATION).finally(() =>
+        clearInterval(sampler),
+      );
+      const seconds = (performance.now() - started) / 1000;
+      const round = (n: number, digits = 2) =>
+        Math.round(n * 10 ** digits) / 10 ** digits;
+      const statuses = result.statusCodeDistribution ?? {};
+      summary.push({
+        language,
+        api,
+        rps: Math.round(result.summary.requestsPerSec),
+        p50: round(result.latencyPercentiles.p50! * 1000, 3),
+        p99: round(result.latencyPercentiles.p99! * 1000, 3),
+        errors: Object.entries(statuses)
+          .filter(([code]) => code !== "200")
+          .reduce((n, [, count]) => n + count, 0),
+        successRate: result.summary.successRate,
+        statuses,
+        failures: result.errorDistribution ?? {},
+        // Cores used on average over the run (CPU seconds / wall seconds).
+        cpu: Object.fromEntries(
+          Object.entries(processes).map(([name, pid]) => [
+            name,
+            round((cpuSeconds(pid) - before[name]!) / seconds),
+          ]),
+        ),
+        peakRssMb: Object.fromEntries(
+          Object.entries(peak).map(([name, kb]) => [name, round(kb / 1024, 1)]),
+        ),
       });
     }
-
-  const summary = targets.map(({ language, api, path }) => {
-    const rows = requests.filter(
-      (r) => r.language === language && r.api === api && r.path === path,
-    );
-    return {
-      language,
-      api,
-      path,
-      n: rows.length,
-      errors: rows.filter((r) => r.status !== 200).length,
-      ...stats(rows.map((r) => r.ms)),
-    };
-  });
-
-  const sql = postgres(databaseUrl, { max: 1 });
-  const [{ version: pg }] = await sql`SELECT version()`;
-  await sql.end();
   const results = {
     date: new Date().toISOString(),
     config: {
-      iterations: ITERATIONS,
-      warmup: WARMUP,
-      sequential: true,
-      client: "Bun fetch (keep-alive) from the bench process",
-      proxy: `caddy:2 in docker (${version("docker version --format '{{.Server.Version}}'")}), upstreams via host.docker.internal${caddyBin ? `; proxy-native: ${version(`${caddyBin} version`)} on the host` : ""}`,
+      warmup: LOAD_WARMUP,
+      duration: LOAD_DURATION,
+      concurrency: CONCURRENCY,
+      client: version(`${OHA} --version`),
+      proxy: `${version(`${caddyBin} version`)} on the host, the Caddyfile of brick build --deploy caddy`,
       app: "vite build (Nitro node-server output) run on Bun, NODE_ENV=production",
       pools: "10 connections in TS (postgres-js), Go (pgxpool) and Rust (sqlx)",
-      units: "milliseconds, request sent to response body read",
+      units:
+        "rps: requests per second; p50, p99: ms; cpu: cores (CPU s / wall s); peakRssMb: MiB",
     },
     machine: {
       platform: platform(),
-      release: release(),
       arch: arch(),
       cpu: cpus()[0]?.model,
       cores: cpus().length,
@@ -325,35 +517,29 @@ try {
       bun: Bun.version,
       go: version("go version"),
       rustc: version("rustc --version"),
-      postgres: pg as string,
-      brick: (
-        await Bun.file(join(root, "../../packages/core/package.json")).json()
-      ).version,
     },
     summary,
-    requests,
   };
   await Bun.write(
-    join(import.meta.dir, "results.json"),
+    join(import.meta.dir, "results-load.json"),
     `${JSON.stringify(results, null, 2)}\n`,
   );
   console.table(
-    summary.map(
-      ({ language, api, path, p50, p90, p99, mean, min, max, errors }) => ({
-        language,
-        api,
-        path,
-        p50,
-        p90,
-        p99,
-        mean,
-        min,
-        max,
-        errors,
-      }),
-    ),
+    summary.map(({ language, api, rps, p50, p99, errors, cpu, peakRssMb }) => ({
+      language,
+      api,
+      rps,
+      p50,
+      p99,
+      errors,
+      "cpu caddy": cpu.caddy,
+      "cpu bun": cpu.bun,
+      "cpu go": cpu.go,
+      "cpu rust": cpu.rust,
+      "rss bun": peakRssMb.bun,
+      "rss go": peakRssMb.go,
+      "rss rust": peakRssMb.rust,
+    })),
   );
-  console.log(`Wrote ${join(import.meta.dir, "results.json")}`);
-} finally {
-  await stop();
+  console.log(`Wrote ${join(import.meta.dir, "results-load.json")}`);
 }

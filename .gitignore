@@ -79,3 +79,4 @@ sdk/go/conformance/bin/
 examples/pages/services/bench-go/bin/
 examples/pages/services/bench-rust/target/
 examples/pages/bench/results.json
+examples/pages/bench/results-load.json
