@@ -16,6 +16,7 @@
     "services-and-actions",
     "context",
     "dependencies",
+    "polyglot-services",
     "resources",
     "commands",
     "routes",

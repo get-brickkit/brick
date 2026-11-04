@@ -1,0 +1,231 @@
+---
+title: Polyglot Services
+description: Write a Brick service in Go or Rust. It runs as its own process behind the Bun app, which serves its actions, authenticates the caller, and lets every service call every other directly.
+---
+
+A Brick app can have services written in Go or Rust next to its TypeScript ones. Each runs as its own process on `127.0.0.1`. The Bun app stays the only public server: it serves `/api/<service>/<action>` for every service, whatever its language.
+
+Use one for an action that needs a Go or Rust library, or a hot path. Keep everything else in TypeScript.
+
+## What a Go or Rust service can do
+
+A Go or Rust service has actions, and nothing else: no events, outbox, listeners, workflows, commands, sockets, CRUD or plugins. Its actions can:
+
+- read and write the app's Postgres database, with `pgx` in Go or `sqlx` in Rust. The TypeScript side owns the schema and the migrations.
+- return the errors they declare, with the same error envelope a TypeScript action returns.
+- call any other service's actions, in any language, with a generated client.
+
+## How a request flows
+
+```txt
+browser ──► Bun :5174  /api/billing/charge
+             │  CORS, request id, trace id
+             │  the service's context hook works out the user
+             │  strips the client's x-brick-* headers, adds trusted ones
+             ▼
+           Go  127.0.0.1:<port>  POST /charge   (keep-alive loopback)
+```
+
+Bun forwards `x-request-id`, `x-trace-id`, `traceparent`, `x-brick-caller`, `x-brick-user` (the user as base64 JSON) and `x-brick-tenant`. The child trusts them only with `x-brick-internal`, a random token made for each run. Bun strips every `x-brick-*` header a client sends, so a client can't pose as a user or a service.
+
+The Go and Rust services have no auth code. Bun authenticates the caller before the request reaches them, and a request without the token gets a 401.
+
+Calls between services don't go through the gateway. Each child gets these variables:
+
+| Variable               | Value                                                                    |
+| ---------------------- | ------------------------------------------------------------------------ |
+| `BRICK_SERVICES`       | JSON: each service's name and base URL, the TypeScript services included |
+| `BRICK_PORT`           | The port to listen on                                                    |
+| `BRICK_INTERNAL_TOKEN` | The run's token                                                          |
+
+## Declare the service in the app
+
+```ts title="src/app.ts"
+import { brick, remoteService } from "@brickkit/core";
+import { orders } from "./services/orders";
+
+export const billing = remoteService({
+  name: "billing",
+  dir: "services/billing",
+  dev: "go run .",
+  build: { command: "go build -o bin/billing .", run: "./bin/billing" },
+  context: ({ request }) => ({ user: userFrom(request) }),
+});
+
+export default brick({ services: [orders], remote: [billing] });
+```
+
+| Option    | Meaning                                                                                                                   |
+| --------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `name`    | The service name. It must match the name in the Go or Rust code.                                                          |
+| `dir`     | The Go module or Cargo crate, relative to the working directory.                                                          |
+| `dev`     | What `brick dev` runs in `dir`: `go run .` or `cargo run -q`.                                                             |
+| `build`   | `command` builds the release binary (`brick build`), `run` starts it (`brick start`).                                     |
+| `port`    | A fixed loopback port. Without one, a free port is picked at start.                                                       |
+| `context` | Works out the caller from the public request, like a TypeScript service's context hook. It returns `user` and `tenantId`. |
+
+## Write it in Go
+
+The Go SDK is `github.com/get-brickkit/brick/sdk/go/brick`. It uses chi for routing and Huma for the schemas. Struct tags such as `minLength`, `maximum` and `enum` describe the input.
+
+```go title="services/billing/main.go"
+package main
+
+import (
+	"log"
+
+	"github.com/get-brickkit/brick/sdk/go/brick"
+)
+
+type Charge struct {
+	OrderID string `json:"orderId" minLength:"1"`
+	Cents   int64  `json:"cents" minimum:"1" maximum:"100000"`
+}
+
+type Receipt struct {
+	ID string `json:"id"`
+}
+
+func main() {
+	svc := brick.NewService("billing")
+	declined := svc.DefineError("CARD_DECLINED", 402, "The card was declined")
+
+	brick.Action(svc, "charge", func(ctx *brick.Ctx, in Charge) (Receipt, error) {
+		var user struct{ ID string `json:"id"` }
+		if ok, _ := ctx.User(&user); !ok {
+			return Receipt{}, declined.New(nil)
+		}
+		log.Printf("charge for %s, request %s", user.ID, ctx.RequestID())
+		return Receipt{ID: "r_1"}, nil
+	})
+
+	log.Fatal(svc.Serve())
+}
+```
+
+`*brick.Ctx` is a `context.Context`. Pass it to `pgx` and to the generated client. It has `RequestID()`, `TraceID()`, `Caller()` (the calling service, or `""` for a call through the gateway), `TenantID()` and `User(&v)`.
+
+## Write it in Rust
+
+The Rust crate is `brick` in `sdk/rust/brick`. It uses axum, serde, schemars for the schemas, `jsonschema` and reqwest. schemars attributes describe the input.
+
+```rust title="services/billing/src/main.rs"
+use brick::{Ctx, Error, ErrorDef, Service};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+const DECLINED: ErrorDef = ErrorDef::new("CARD_DECLINED", 402, "The card was declined");
+
+#[derive(Deserialize, JsonSchema)]
+struct Charge {
+    #[serde(rename = "orderId")]
+    #[schemars(length(min = 1))]
+    order_id: String,
+    #[schemars(range(min = 1, max = 100000))]
+    cents: i64,
+}
+
+#[derive(Serialize, JsonSchema)]
+struct Receipt { id: String }
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    Service::new("billing")
+        .error(DECLINED)
+        .action("charge", |ctx: Ctx, input: Charge| async move {
+            if ctx.user::<serde_json::Value>().is_none() || input.cents > 50_000 {
+                return Err(DECLINED.err());
+            }
+            Ok::<_, Error>(Receipt { id: "r_1".into() })
+        })
+        .serve()
+        .await
+}
+```
+
+Any other error, such as an `sqlx::Error` returned with `?`, is logged and answered as a 500.
+
+## Validation and errors
+
+Each service validates its own input. Bun can't check a Go or Rust schema, so it passes the body through. The Go and Rust SDKs report problems with the same messages, paths and order as TypeBox. The same bad input gives the same bytes from every language:
+
+```json
+{
+  "name": "ValidationError",
+  "code": "VALIDATION_FAILED",
+  "message": "Validation failed for action 'charge' input",
+  "status": 400,
+  "errors": [
+    {
+      "path": "/cents",
+      "message": "Expected integer to be less or equal to 100000",
+      "value": 250000
+    }
+  ],
+  "requestId": "req_3"
+}
+```
+
+A declared error has `name`, `code`, `message`, `status`, `details` and `requestId`, as in TypeScript. When a TypeScript action calls a Go or Rust action that fails, it gets an `ActionExecutionError` with the same `code`, `status` and `details`.
+
+The SDKs match TypeBox for `type`, `required`, `properties`, `additionalProperties`, `enum`, `const`, `anyOf`, string length and `pattern`, number bounds and `multipleOf`, and array `items` and length. String formats aren't checked. Huma marks Go structs `additionalProperties: false`, so a Go action rejects unknown fields; add a `_ struct{} additionalProperties:"true"` field to allow them.
+
+## Call between services
+
+From TypeScript, `useService` works as it does for a TypeScript service. The call goes straight to the child:
+
+```ts
+const billing = useService(billingService, { from: "orders" });
+const receipt = await billing.charge(
+  { orderId, cents: 500 },
+  { user: ctx.user, requestId: ctx.requestId },
+);
+```
+
+`billingService` is what `remoteService` returned. Go and Rust call other services through a generated client, which forwards the user, request id and trace of the current call, with their own service as the caller:
+
+```go
+receipt, err := brickclient.BillingCharge(ctx, brickclient.BillingChargeInput{OrderId: "o1", Cents: 500})
+```
+
+```rust
+let receipt = brick_client::billing_charge(&ctx, &input).await?;
+```
+
+A Go or Rust service calls a TypeScript action at `POST /_brick/call/<service>/<action>` on the Bun app. That route runs the action's validation and authorization. It serves only requests with the internal token. The action's context hook receives the caller's user as `ctx.user`, so keep it: `context: ({ request, user }) => ({ user: user ?? fromCookie(request) })`.
+
+## Generate the contract and the clients
+
+```sh
+brick gen contract src/app.ts
+```
+
+`brick gen` runs each Go and Rust service with `--brick-manifest` (or `BRICK_MANIFEST=1`). Each prints its name, its actions with their input and output JSON Schema, and its errors. `brick gen` merges them with the TypeScript services into `_brick/contract.json`. Then it writes:
+
+- the TypeScript contract (`_brick/contract.ts`), so the typed client and `useService` know the Go and Rust actions.
+- `brickclient/client.go` in each Go service.
+- `src/brick_client.rs` in each Rust service. Add `mod brick_client;`.
+
+Commit the generated Go and Rust clients. Rerun `brick gen` after changing an action's types in any language. In an app with a `brick.config.ts`, a bare `brick gen` does this too.
+
+## Run it
+
+| Command       | What it does                                                                                                                                                     |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `brick dev`   | Runs each service's `dev` command next to the app. It restarts a service when a file in its `dir` changes, and only that service. The Vite plugin does the same. |
+| `brick build` | Runs each `build.command`.                                                                                                                                       |
+| `brick start` | Starts each `build.run` binary, then the app.                                                                                                                    |
+
+To run the binaries yourself, call `startRemoteServices(services, { mode: "start", appUrl })` from `@brickkit/core` before the app starts. It sets `BRICK_SERVICES` and `BRICK_INTERNAL_TOKEN` in the process, so start the app from the same process or pass them on.
+
+The Go and Rust services run on macOS and Linux.
+
+## Measure the gateway
+
+The pages example has the same three APIs in TypeScript, Go and Rust: `echo`, `validate` and `db` (one `SELECT` by id, with a pool of 10 connections in each language). Its benchmark builds the app for production, calls every API 200 times one request at a time through Bun, and calls the Go and Rust APIs 200 times directly, so the gateway's cost shows on its own:
+
+```sh
+bun run --cwd examples/pages bench
+```
+
+It writes p50, p90, p99, mean, min and max for each language, API and path to `examples/pages/bench/results.json`.
