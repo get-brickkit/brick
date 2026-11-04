@@ -60,7 +60,7 @@ For the Go and Rust SDKs (`sdk/go`, `sdk/rust`) and their conformance test, whic
 
 ```sh
 (cd sdk/go && go vet ./... && go test ./...)
-(cd sdk/rust && cargo clippy --all-targets -- -D warnings && cargo test)
+(cd sdk/rust && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test)
 bun test sdk
 ```
 
@@ -86,6 +86,6 @@ A maintainer sets this up once, before the first release that includes them:
 
 1. Claim the crate name: sign in to crates.io with the GitHub account that owns the release, and publish `brickkit` once by hand from `sdk/rust` (`cargo publish -p brickkit`), or let the first release do it. Then add the other maintainers with `cargo owner --add <github-user> brickkit`.
 2. Create a crates.io API token (Account Settings, API Tokens) with the `publish-update` scope, limited to the `brickkit` crate (and `publish-new` for the first publish).
-3. Add it as the repository secret `CARGO_REGISTRY_TOKEN` (Settings, Secrets and variables, Actions). Without it a release stops in the `prepare` job, before anything is published.
+3. Add it as the repository secret `CARGO_REGISTRY_TOKEN` (Settings, Secrets and variables, Actions). Without it a release, manual or from a `v*` tag, stops in the `prepare` job, before anything is published.
 
 The Go module needs no registry: the tag is enough, and `proxy.golang.org` picks it up on the first `go get`.

@@ -469,12 +469,15 @@ spec:
                 port: { number: 4001 }
 ```
 
-Create the internal token before you apply it:
+Create the internal token before you apply it. Without `--domain` the manifest doesn't know your public URL, so the services read `BRICK_JWT_ISSUER` from the same Secret:
 
 ```sh
-kubectl create secret generic brick --from-literal=BRICK_INTERNAL_TOKEN=$(openssl rand -hex 24)
+kubectl create secret generic brick --from-literal=BRICK_INTERNAL_TOKEN=$(openssl rand -hex 24) \
+  --from-literal=BRICK_JWT_ISSUER=https://app.example.com
 kubectl apply -f deploy/kubernetes/brick.yaml
 ```
+
+The images are `<name>:latest` with `imagePullPolicy: IfNotPresent`: load them into the cluster (`kind load docker-image`, `minikube image load`) or tag and push them to your registry and edit `image`.
 
 An Ingress can't remove request headers in a portable way, so the generated one doesn't, and `x-brick-*` from a browser reaches the services. The guard on Kubernetes is the services' own rule, which every SDK and the Bun app apply and test: without the internal token they ignore `x-brick-*`, and with a wrong one they answer 401. Only a request that carries `BRICK_INTERNAL_TOKEN` can name a user, tenant or caller, so keep the token in the Secret and out of the browser. To strip the headers at the edge too, route with the Gateway API instead of the Ingress: an `HTTPRoute` filter of type `RequestHeaderModifier` with `remove: [X-Brick-Internal, X-Brick-User, X-Brick-Caller, X-Brick-Tenant]`. ingress-nginx's `configuration-snippet` annotation could do it, but most clusters disable snippets, so `brick build --deploy` doesn't rely on it.
 
@@ -489,7 +492,7 @@ BRICK_JWT_ISSUER=https://app.example.com
 docker compose -f deploy/compose/compose.yaml up --build
 ```
 
-Each Go or Rust Dockerfile copies only the service's folder and its local dependencies, builds the release binary, and runs it on `debian:trixie-slim`. A service that depends on the published SDK builds from the project root. When `go.mod` has a `replace` or `Cargo.toml` a `path` dependency that points outside the project, as in a monorepo, the build context becomes the closest folder that holds both, and `compose.yaml` says so. Each Dockerfile has a `.dockerignore` next to it that leaves out `target/`, `node_modules/` and `.git/`. Each process gets `BRICK_SERVICES` with the other processes' compose or Kubernetes addresses, and each Go or Rust service gets `BRICK_JWKS_URL=http://app:3000/api/auth/jwks`.
+Each Go or Rust Dockerfile copies only the service's folder and its local dependencies, builds the release binary, and runs it on `debian:trixie-slim`. A service that depends on the published SDK builds from the project root. When `go.mod` has a `replace` or `Cargo.toml` a `path` dependency that points outside the project, as in a monorepo, the build context becomes the closest folder that holds both, and `compose.yaml` says so. Each Dockerfile has a `.dockerignore` next to it that leaves out `target/`, `node_modules/` and `.git/` (for the Bun app, `node_modules/`, `.git/`, `dist/` and `deploy/`). Each process gets `BRICK_SERVICES` with the other processes' compose or Kubernetes addresses, and each Go or Rust service gets `BRICK_JWKS_URL=http://app:3000/api/auth/jwks`.
 
 `routes.json` lists the same routes, the upstreams with their addresses, languages and environment, and the headers to strip:
 

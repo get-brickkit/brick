@@ -104,14 +104,20 @@ framework tests without requiring the pages Postgres database.
 wired into the app with `remoteService` in `src/api/services/bench/service.ts`.
 They have the same three APIs as the TS `bench` service: `echo`, `validate` and
 `db` (one `SELECT` from `bench_items`, which migrations 0001 and 0002 create and
-seed). `bun run dev` starts them with `go run .` and `cargo run -q`; you need Go
-and Rust installed.
+seed). They are part of the app only with `BRICK_BENCH=1`:
+`BRICK_BENCH=1 bun run dev` starts them with `go run .` and `cargo run -q` (you
+need Go and Rust installed); a plain `bun run dev` skips them.
 
 `bun run bench` builds the app for production and the services in release mode,
-calls each API 200 times one request at a time through Bun, calls the Go and
-Rust APIs 200 times directly, and writes `bench/results.json` (ignored by Git).
-It uses its own database, `drafton_bench` (set `BENCH_DATABASE_URL`), and
-migrates it on first run. `BENCH_SKIP_BUILD=1` reuses the last builds.
+calls each API 200 times one request at a time through Caddy (in Docker, so you
+need Docker running), through Bun, and directly, and writes
+`bench/results.json` (ignored by Git). It uses its own database,
+`drafton_bench` (set `BENCH_DATABASE_URL`), and migrates it on first run.
+`BENCH_SKIP_BUILD=1` reuses the last builds.
+
+`BENCH_CADDY_BIN=caddy BENCH_OHA_BIN=oha bun bench/run.ts load` measures
+throughput instead, through a Caddy binary on the host with
+[oha](https://github.com/hatoo/oha), and writes `bench/results-load.json`.
 
 ## Layout
 
