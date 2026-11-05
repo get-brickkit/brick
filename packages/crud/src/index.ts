@@ -286,10 +286,8 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
         defaultLimit,
       });
       const api: Record<string, unknown> = {};
-      // Expose the access policy for introspection: enforcement stays inside
-      // execute(), so stamp metadata that getActionAccess() reads. Deny by
-      // default — anything that is not explicit "public" is protected, even
-      // when authorize is missing (runtime rejects with FORBIDDEN).
+      // Deny by default: anything not explicitly "public" is protected, even
+      // without authorize (the runtime rejects with FORBIDDEN).
       const crudIsPublic = options.access === "public";
       const crudHasScopeFn =
         typeof options.access === "object" &&

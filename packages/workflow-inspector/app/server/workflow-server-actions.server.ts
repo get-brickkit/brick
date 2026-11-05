@@ -75,15 +75,11 @@ function createServerActionError(
   return errorResponse;
 }
 
-/**
- * Converts an error into a user-facing message
- */
 function getUserFacingErrorMessage(error: Error, status?: number): string {
   if (!status) {
     return `Error creating response: ${error.message}`;
   }
 
-  // Check for common error patterns
   if (status === 403 || status === 401) {
     return "Access denied. Please check your credentials and permissions.";
   }
@@ -100,7 +96,6 @@ function getUserFacingErrorMessage(error: Error, status?: number): string {
     return "Network error. Please check your connection and try again.";
   }
 
-  // Return the original message for other errors
   return error.message || "An unexpected error occurred";
 }
 
@@ -416,8 +411,6 @@ export interface StreamChunksResult {
 }
 
 /**
- * Fetch stream chunks using paginated batch API.
- *
  * A world's cursor points past a full page, and is null after the last one,
  * so the next poll can only restart from the start of the last page read. The
  * cursor returned here is `<skip>:<world cursor>`: that start, and how many of

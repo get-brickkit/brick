@@ -1,19 +1,12 @@
-import type { Database } from "bun:sqlite";
 import { test, expect, spyOn } from "bun:test";
 
-import {
-  defineService,
-  defineDatabase,
-  brick,
-  compileBrickApplication,
-  t,
-} from "@brickkit/core";
+import { brick, compileBrickApplication, t } from "@brickkit/core";
 import { eq } from "drizzle-orm";
 import { sqliteTable, integer, text } from "drizzle-orm/sqlite-core";
 
 import { crud } from "../src";
+import { clientContract, sqliteService } from "./helpers";
 import { createBrickClient } from "@brickkit/core/client";
-import { generateClientContract } from "../../cli/src/client-contract";
 
 const records = sqliteTable("records", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -22,7 +15,6 @@ const records = sqliteTable("records", {
   private: text("private"),
   active: integer("active", { mode: "boolean" }).default(true),
 });
-let sequence = 0;
 function fixture(
   options: Parameters<typeof crud>[0] = {
     access: "public",
@@ -44,13 +36,7 @@ function fixture(
     },
   },
 ) {
-  const database = defineDatabase({ tables: [records] });
-  const db = database.getDb();
-  const sqlite = (db as typeof db & { $client: Database }).$client;
-  sqlite.exec(
-    "CREATE TABLE records (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL UNIQUE,email TEXT,private TEXT,active INTEGER DEFAULT 1)",
-  );
-  const service = defineService(`test_${sequence++}`, { database });
+  const { db, sqlite, service } = sqliteService("test", [records]);
   const resource: any = service
     .resource({ name: "record", table: records, id: records.id })
     .use(crud(options));
@@ -90,7 +76,7 @@ test("defaults, explicit fields, scrubbing and writes use real database", async 
     sqlite.close();
   }
 });
-test("filter AST, selection, total opt-in and bounded prepared reuse", async () => {
+test("filter AST, selection, total opt-in and offset paging", async () => {
   const { resource: r, sqlite } = fixture();
   try {
     await r.create.run({ name: "A%" });
@@ -652,12 +638,7 @@ for (const compiler of [false, true]) {
       docs: false,
       requestLogging: false,
     });
-    const source = generateClientContract(app);
-    const serialized = source.match(
-      /export const contract: AppContract = JSON.parse\((.+)\);/,
-    )?.[1];
-    if (!serialized) throw new Error("Generated contract is missing");
-    const contract = JSON.parse(JSON.parse(serialized))[service.name];
+    const contract = clientContract(app).contract[service.name];
     const client = createBrickClient<{ named: typeof resource }>({
       baseUrl: "http://localhost",
       contract,
@@ -706,13 +687,7 @@ test("a value its column can't hold is a bad request, also past a custom schema"
     id: integer("id").primaryKey({ autoIncrement: true }),
     at: integer("at", { mode: "timestamp_ms" }).notNull(),
   });
-  const database = defineDatabase({ tables: [events] });
-  const db = database.getDb();
-  const sqlite = (db as typeof db & { $client: Database }).$client;
-  sqlite.exec(
-    "CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL)",
-  );
-  const service = defineService(`test_${sequence++}`, { database });
+  const { sqlite, service } = sqliteService("test", [events]);
   const r: any = service.resource({ name: "event", table: events }).use(
     crud({
       access: "public",
@@ -741,13 +716,7 @@ test("create takes columns named like query options as row data", async () => {
     where: text("where"),
     select: text("select"),
   });
-  const database = defineDatabase({ tables: [notes] });
-  const db = database.getDb();
-  const sqlite = (db as typeof db & { $client: Database }).$client;
-  sqlite.exec(
-    'CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, "where" TEXT, "select" TEXT)',
-  );
-  const service = defineService(`test_${sequence++}`, { database });
+  const { sqlite, service } = sqliteService("test", [notes]);
   const r: any = service.resource({ name: "note", table: notes }).use(
     crud({
       access: "public",

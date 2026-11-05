@@ -24,10 +24,6 @@ import {
 import { unwrapOrThrow } from "~/lib/client/workflow-errors";
 import { rpc } from "~/lib/rpc-client";
 
-// ============================================================================
-// Shared Props and Types
-// ============================================================================
-
 export interface RunActionCallbacks {
   onSuccess?: () => void;
   onNavigateToRun?: (runId: string) => void;
@@ -41,10 +37,6 @@ export interface RunActionsBaseProps {
   replayDisabledReason?: string;
   callbacks?: RunActionCallbacks;
 }
-
-// ============================================================================
-// Shared Hook for Run Actions
-// ============================================================================
 
 interface UseRunActionsOptions {
   runId: string;
@@ -161,23 +153,17 @@ function useRunActions({
   }, [runId, runStatus, cancelling, callbacks]);
 
   return {
-    // State
     rerunning,
     reenqueuing,
     wakingUp,
     cancelling,
     hasPendingSleeps,
-    // Handlers
     handleReplay,
     handleReenqueue,
     handleWakeUp,
     handleCancel,
   };
 }
-
-// ============================================================================
-// Shared Tooltip Content
-// ============================================================================
 
 function CancelSleepsTooltipContent({
   hasPendingSleeps,
@@ -202,10 +188,6 @@ function ReenqueueTooltipContent() {
     </>
   );
 }
-
-// ============================================================================
-// Dropdown Menu Items (for runs-table)
-// ============================================================================
 
 export interface RunActionsDropdownItemsProps extends RunActionsBaseProps {
   /** Stop click event propagation (useful in table rows) */
@@ -280,7 +262,6 @@ export function RunActionsDropdownItems({
         ) : null}
       </Tooltip>
 
-      {/* Re-enqueue - always shown */}
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuItem
@@ -296,7 +277,6 @@ export function RunActionsDropdownItems({
         </TooltipContent>
       </Tooltip>
 
-      {/* Cancel Active Sleeps - disabled if no active sleeps */}
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuItem
@@ -322,10 +302,6 @@ export function RunActionsDropdownItems({
     </>
   );
 }
-
-// ============================================================================
-// Buttons (for run-detail-view)
-// ============================================================================
 
 export interface RunActionsButtonsProps extends RunActionsBaseProps {
   loading?: boolean;
@@ -357,7 +333,6 @@ export function RunActionsButtons({
   const isRunActive = runStatus === "pending" || runStatus === "running";
   const canCancel = isRunActive;
 
-  // Rerun button logic
   const canRerun = !loading && !isRunActive && !replayDisabledReason;
   const rerunDisabledReason = replayDisabledReason
     ? replayDisabledReason
@@ -367,7 +342,6 @@ export function RunActionsButtons({
         ? "Cannot re-run while workflow is still running"
         : "";
 
-  // Cancel button logic
   const cancelDisabledReason =
     runStatus === "completed"
       ? "Run has already completed"
@@ -379,7 +353,6 @@ export function RunActionsButtons({
 
   return (
     <>
-      {/* Rerun Button */}
       <Tooltip>
         <TooltipTrigger asChild>
           <span>
@@ -407,7 +380,6 @@ export function RunActionsButtons({
         </TooltipContent>
       </Tooltip>
 
-      {/* Cancel Button */}
       <Tooltip>
         <TooltipTrigger asChild>
           <span>
@@ -431,7 +403,6 @@ export function RunActionsButtons({
         </TooltipContent>
       </Tooltip>
 
-      {/* More Actions Menu */}
       <DropdownMenu>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -449,7 +420,6 @@ export function RunActionsButtons({
           <TooltipContent>More actions</TooltipContent>
         </Tooltip>
         <DropdownMenuContent align="end">
-          {/* Re-enqueue - always shown */}
           <Tooltip>
             <TooltipTrigger asChild>
               <DropdownMenuItem
@@ -465,7 +435,6 @@ export function RunActionsButtons({
             </TooltipContent>
           </Tooltip>
 
-          {/* Cancel Active Sleeps - disabled if no active sleeps */}
           <Tooltip>
             <TooltipTrigger asChild>
               <DropdownMenuItem

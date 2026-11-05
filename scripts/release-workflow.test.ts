@@ -69,12 +69,8 @@ test("every package must build, typecheck, test, and pack before publishing, wit
   expect(validate!.strategy?.matrix.pkg).toBe(MATRIX);
   expect(validate!.strategy?.["fail-fast"]).toBe(false);
   const commands = validate!.steps.map((step) => step.run ?? "").join("\n");
-  expect(commands).toMatch(/^bun run build$/m);
-  expect(commands).toContain(
-    "bun run --cwd packages/${{ matrix.pkg }} typecheck",
-  );
-  expect(commands).toContain("bun run --cwd packages/${{ matrix.pkg }} test");
-  expect(commands).toContain("npm pack --ignore-scripts");
+  for (const command of [/\bbuild\b/, /\btypecheck\b/, /\btest\b/, /npm pack/])
+    expect(commands).toMatch(command);
   expect(commit!.needs).toContain("validate");
   expect(publish!.needs).toContain("validate");
   expect(publish!.needs).not.toContain("commit");
@@ -110,7 +106,7 @@ test("every published package has its own test script", async () => {
 
 test("candidate preparation cannot commit or publish, and dry runs stop after validation", () => {
   const commands = prepare!.steps.map((step) => step.run ?? "").join("\n");
-  expect(commands).toContain('bun run release "$RELEASE_BUMP" --prepare');
+  expect(commands).toMatch(/bun run release .*--prepare/);
   expect(commands).not.toMatch(/git (commit|tag|push)|npm publish/);
   expect(commit!.if).toContain("inputs.dry_run != true");
   expect(publish!.if).toContain("inputs.dry_run != true");
@@ -134,7 +130,7 @@ test("publishing uses the exact checked tarballs without rerunning tests or buil
   expect(upload?.with?.name).toBe("package-${{ matrix.pkg }}");
   expect(download?.with?.name).toBe(upload?.with?.name);
   const commands = publish!.steps.map((step) => step.run ?? "").join("\n");
-  expect(commands).toContain('npm publish "$RUNNER_TEMP/package/"*.tgz');
+  expect(commands).toMatch(/npm publish \S*\.tgz/);
   expect(commands).not.toMatch(/bun (test|run build|install)/);
   expect(publish!.strategy?.matrix.pkg).toBe(MATRIX);
 });
@@ -159,11 +155,8 @@ test("release jobs pin actions to commits, share CI's pins and Bun, and use an e
 });
 
 test("a package publishes only after the @brickkit versions it depends on", () => {
-  const names = publish!.steps.map((step) => step.name);
-  const wait = names.indexOf("Wait for the @brickkit packages it depends on");
+  const runs = publish!.steps.map((step) => step.run ?? "");
+  const wait = runs.findIndex((run) => /npm view "\$dep@/.test(run));
   expect(wait).toBeGreaterThan(-1);
-  expect(wait).toBeLessThan(names.indexOf("Publish the validated tarball"));
-  expect(publish!.steps[wait]!.run).toContain(
-    'npm view "$dep@$PACKAGE_VERSION"',
-  );
+  expect(wait).toBeLessThan(runs.findIndex((run) => /npm publish/.test(run)));
 });

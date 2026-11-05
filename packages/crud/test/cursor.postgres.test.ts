@@ -1,11 +1,9 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { defineDatabase, defineService } from "@brickkit/core";
 import { pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import { crud } from "../src";
-
-const url = process.env.TEST_DATABASE_URL;
-const suite = url ? describe : describe.skip;
+import { suite, url } from "./postgres";
 
 suite("cursor pagination on Postgres", () => {
   const name = `cursor_${randomUUID().slice(0, 8)}`;

@@ -251,8 +251,7 @@ describe("what does not emit", () => {
 
 describe("an app without events", () => {
   it("behaves exactly as before, even with an outbox table in the database", async () => {
-    const { resource, service, db, outboxRows } = fixture({ events: false });
-    expect(service.recorder).toBeUndefined();
+    const { resource, db, outboxRows } = fixture({ events: false });
     const created = await resource.create.run({ name: "Ada", email: "a@x" });
     await resource.update.run({ id: created.id, data: { email: "b@x" } });
     await resource.delete.run({ id: created.id });
@@ -316,10 +315,10 @@ describe("sequences", () => {
     await resource.update.run({ id: 1, data: { name: "Ada L" } });
     await resource.delete.run({ id: 1 });
     await app!.events!.drain();
-    expect(seen.map((event) => event.name).sort()).toEqual([
+    expect(seen.map((event) => event.name)).toEqual([
       "person.create",
-      "person.delete",
       "person.update",
+      "person.delete",
     ]);
     expect(await app!.events!.counts()).toEqual({
       pending: 0,

@@ -9,7 +9,6 @@ import {
 } from "~/lib/client/workflow-errors";
 import { rpc } from "~/lib/rpc-client";
 
-// Helper function to fetch resource and get correlation ID
 async function fetchResourceWithCorrelationId(
   resource: "run" | "step" | "hook",
   resourceId: string,

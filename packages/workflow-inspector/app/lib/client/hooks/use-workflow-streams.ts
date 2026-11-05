@@ -31,13 +31,11 @@ export function useWorkflowStreams(
     }
   }, [runId]);
 
-  // Initial load
   useEffect(() => {
     hasFetchedRef.current = false;
     fetchData();
   }, [fetchData]);
 
-  // Auto-refresh interval
   useEffect(() => {
     if (!refreshInterval || refreshInterval <= 0) {
       return;

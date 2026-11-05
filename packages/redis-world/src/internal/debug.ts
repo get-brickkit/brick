@@ -3,9 +3,8 @@
  * Logs to stderr to avoid corrupting CLI JSON output on stdout.
  *
  * Control via WORKFLOW_DEBUG environment variable:
- *   WORKFLOW_DEBUG=1                       // Enable all
- *   WORKFLOW_DEBUG=mysql-world             // Specific namespace
- *   WORKFLOW_DEBUG=mysql-world,redis-world // Multiple namespaces
+ *   WORKFLOW_DEBUG=1            // Enable all
+ *   WORKFLOW_DEBUG=redis-world  // Named namespaces, comma-separated
  */
 export function createDebugLogger(namespace: string) {
   return (...args: unknown[]) => {

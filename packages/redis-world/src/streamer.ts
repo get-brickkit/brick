@@ -197,11 +197,10 @@ export function createStreamer(
   const emitterKey = (runId: string, name: string) =>
     `strm:${runId}:${name}` as const;
 
-  // Set up pub/sub subscriber for stream notifications
   const subscriber = redis.duplicate();
 
-  // CRITICAL: Must await subscribe() to avoid race condition where PUBLISH happens before SUBSCRIBE is ready
-  // This was causing workflows to hang because completion events were published but never received
+  // A PUBLISH sent before SUBSCRIBE is ready is lost, and a reader waiting on it
+  // hangs, so every append awaits this first.
   const subscriptionReady: Promise<void> = subscriber
     .subscribe(STREAM_CHANNEL)
     .then(() => {});
@@ -251,8 +250,6 @@ export function createStreamer(
     eof: boolean,
     encodedChunks: string[],
   ): Promise<void> => {
-    // CRITICAL: Wait for subscription to be ready before publishing
-    // Otherwise the message might be published before anyone is subscribed
     await subscriptionReady;
 
     await scripted.wfStreamAppend(
@@ -273,7 +270,6 @@ export function createStreamer(
         name: string,
         chunk: string | Uint8Array,
       ): Promise<void> {
-        // Await runId if it's a promise to ensure proper flushing
         const runId = await _runId;
         await append(runId, name, false, [toBase64(chunk)]);
       },
@@ -285,7 +281,6 @@ export function createStreamer(
       ): Promise<void> {
         if (chunks.length === 0) return;
 
-        // Await runId if it's a promise to ensure proper flushing
         const runId = await _runId;
 
         // One script call appends every chunk, so they land contiguously and
@@ -297,7 +292,6 @@ export function createStreamer(
         _runId: string | Promise<string>,
         name: string,
       ): Promise<void> {
-        // Await runId if it's a promise to ensure proper flushing
         const runId = await _runId;
 
         // Final chunk carries eof=true. Same single-round-trip append as
@@ -325,7 +319,6 @@ export function createStreamer(
 
         return new ReadableStream<Uint8Array>({
           async start(controller) {
-            // Track last entry ID for ordering
             let lastEntryId = "";
             let offset = startIndex ?? 0;
             let buffer = [] as StreamChunkEvent[] | null;
@@ -420,8 +413,6 @@ export function createStreamer(
               events.off(key, onData);
             });
 
-            // Read all historical chunks from Redis Stream
-            // XRANGE reads entries from start to end
             const chunks = await redis
               .xrange(streamKey(runId, name), "-", "+")
               .catch((err) => {
@@ -443,7 +434,6 @@ export function createStreamer(
               offset = Math.max(0, dataCount + offset);
             }
 
-            // From now on, process chunks in real-time
             const buffered = buffer ?? [];
             buffer = null;
 

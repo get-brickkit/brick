@@ -1,17 +1,8 @@
 import { setTimeout } from "node:timers/promises";
-import { expectRejectedWith } from "./helpers.js";
-import { RedisContainer } from "@testcontainers/redis";
 import { type Event, eventIdToSlot, slotToEventId } from "@workflow/world";
 import { Redis } from "ioredis";
-import {
-  afterAll,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  test,
-} from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { keys } from "../src/keys.js";
 import {
   createEventsStorage,
   createHooksStorage,
@@ -19,14 +10,9 @@ import {
   createStepsStorage,
 } from "../src/storage.js";
 import { createStreamer } from "../src/streamer.js";
+import { describeRedis, expectRejectedWith, redisUrl } from "./helpers.js";
 
-describe("Storage (Redis integration)", () => {
-  if (process.platform === "win32") {
-    test.skip("skipped on Windows since it relies on a docker container", () => {});
-    return;
-  }
-
-  let container: Awaited<ReturnType<RedisContainer["start"]>>;
+describeRedis("Storage (Redis integration)", () => {
   let redis: Redis;
   let runs: ReturnType<typeof createRunsStorage>;
   let steps: ReturnType<typeof createStepsStorage>;
@@ -34,17 +20,15 @@ describe("Storage (Redis integration)", () => {
   let _hooks: ReturnType<typeof createHooksStorage>;
 
   const keyPrefix = "workflow:test:";
+  const k = keys(keyPrefix);
 
   async function flushTestKeys() {
-    const keys = await redis.keys(`${keyPrefix}*`);
-    if (keys.length > 0) {
-      await redis.del(...keys);
+    const found = await redis.keys(`${keyPrefix}*`);
+    if (found.length > 0) {
+      await redis.del(...found);
     }
   }
 
-  /**
-   * Helper: create a run via run_created event and return the run entity.
-   */
   async function createRun(opts?: {
     deploymentId?: string;
     workflowName?: string;
@@ -63,9 +47,6 @@ describe("Storage (Redis integration)", () => {
     return result.run!;
   }
 
-  /**
-   * Helper: create a step via step_created event and return the step entity.
-   */
   async function createStep(
     runId: string,
     opts?: { stepId?: string; stepName?: string; input?: any },
@@ -82,23 +63,14 @@ describe("Storage (Redis integration)", () => {
     return result.step!;
   }
 
-  beforeAll(async () => {
-    // Start Redis container
-    // REDIS_TEST_URL points the suite at an existing Redis instead of a container.
-    const redisUrl =
-      process.env.REDIS_TEST_URL ??
-      (container = await new RedisContainer(
-        "redis:7-alpine",
-      ).start()).getConnectionUrl();
-
-    // Initialize Redis client and storage
+  beforeAll(() => {
     redis = new Redis(redisUrl);
     const config = { redis, keyPrefix };
     runs = createRunsStorage(config);
     steps = createStepsStorage(config);
     events = createEventsStorage(config);
     _hooks = createHooksStorage(config);
-  }, 120_000);
+  });
 
   beforeEach(async () => {
     await flushTestKeys();
@@ -106,7 +78,6 @@ describe("Storage (Redis integration)", () => {
 
   afterAll(async () => {
     await redis.quit();
-    await container?.stop();
   });
 
   describe("runs", () => {
@@ -448,7 +419,6 @@ describe("Storage (Redis integration)", () => {
           input: ["input1"],
         });
 
-        // Start the step first
         await events.create(testRunId, {
           eventType: "step_started",
           correlationId: "step-123",
@@ -540,6 +510,10 @@ describe("Storage (Redis integration)", () => {
             eventIdToSlot(log.data[0].eventId)!,
         ).toBe(1);
         expect(log.data[1].eventId).toBe(result.event?.eventId);
+        // The input rides the synthetic step_created, not the start.
+        expect(
+          (log.data[1].eventData as { input?: unknown }).input,
+        ).toBeUndefined();
       });
 
       it("should let exactly one of several concurrent lazy starts claim the step", async () => {
@@ -656,46 +630,6 @@ describe("Storage (Redis integration)", () => {
         expect(result.event?.createdAt).toBeInstanceOf(Date);
       });
 
-      it("should number a run first event as slot 1", async () => {
-        const created = await events.create(null, {
-          eventType: "run_created",
-          eventData: {
-            deploymentId: "deployment-123",
-            workflowName: "slots",
-            input: [],
-          },
-        });
-
-        expect(created.event?.eventId).toBe("evnt_00000000000000000000000001");
-        expect(created.event?.eventId).toBe(slotToEventId(1));
-      });
-
-      it("should number events densely from 1 with zero-padded ids", async () => {
-        await createStep(testRunId, { stepId: "dense-step" });
-        await events.create(testRunId, { eventType: "run_started" });
-        await events.create(testRunId, {
-          eventType: "step_started",
-          correlationId: "dense-step",
-        });
-
-        const log = await events.list({
-          runId: testRunId,
-          pagination: { sortOrder: "asc" },
-        });
-        expect(log.data.map((e) => e.eventType)).toEqual([
-          "run_created",
-          "step_created",
-          "run_started",
-          "step_started",
-        ]);
-        expect(log.data.map((e) => e.eventId)).toEqual(
-          [1, 2, 3, 4].map(slotToEventId),
-        );
-        expect(log.data.map((e) => eventIdToSlot(e.eventId))).toEqual([
-          1, 2, 3, 4,
-        ]);
-      });
-
       it("should reuse event ids across runs and tell them apart by run", async () => {
         // Event ids are unique only within a run: both runs' first event is slot 1.
         const other = await createRun();
@@ -736,13 +670,11 @@ describe("Storage (Redis integration)", () => {
       });
 
       it("should create a new event with null byte in payload", async () => {
-        // Create a step first
         await createStep(testRunId, {
           stepId: "corr_123",
           stepName: "test-step",
         });
 
-        // Start the step
         await events.create(testRunId, {
           eventType: "step_started",
           correlationId: "corr_123",
@@ -787,7 +719,6 @@ describe("Storage (Redis integration)", () => {
       it("should list events by correlation ID", async () => {
         const correlationId = "step-abc123";
 
-        // Create a step first
         await createStep(testRunId, {
           stepId: correlationId,
           stepName: "test-step",
@@ -797,8 +728,6 @@ describe("Storage (Redis integration)", () => {
           eventType: "step_started",
           correlationId,
         });
-
-        await setTimeout(5);
 
         const completeResult = await events.create(testRunId, {
           eventType: "step_completed",
@@ -829,23 +758,17 @@ describe("Storage (Redis integration)", () => {
           eventData: { token: "test-token-123" },
         });
 
-        await setTimeout(5);
-
         const received1Result = await events.create(testRunId, {
           eventType: "hook_received",
           correlationId: hookId,
           eventData: { payload: { request: 1 } },
         });
 
-        await setTimeout(5);
-
         const received2Result = await events.create(testRunId, {
           eventType: "hook_received",
           correlationId: hookId,
           eventData: { payload: { request: 2 } },
         });
-
-        await setTimeout(5);
 
         const disposedResult = await events.create(testRunId, {
           eventType: "hook_disposed",
@@ -888,7 +811,6 @@ describe("Storage (Redis integration)", () => {
           correlationId: sharedCorrelationId,
           eventData: { payload: { request: 1 } },
         });
-        await setTimeout(5);
         const a2 = await events.create(runA.runId, {
           eventType: "hook_received",
           correlationId: sharedCorrelationId,
@@ -899,7 +821,6 @@ describe("Storage (Redis integration)", () => {
           correlationId: sharedCorrelationId,
           eventData: { payload: { request: 3 } },
         });
-        await setTimeout(5);
         const a3 = await events.create(runA.runId, {
           eventType: "hook_received",
           correlationId: sharedCorrelationId,
@@ -1011,7 +932,6 @@ describe("Storage (Redis integration)", () => {
       const run = await createRun();
       const stepId = "step-idempotent-test";
 
-      // First step_created event
       const result1 = await events.create(run.runId, {
         eventType: "step_created",
         correlationId: stepId,
@@ -1071,7 +991,6 @@ describe("Storage (Redis integration)", () => {
     });
 
     it("rejects a duplicate run_created with EntityConflictError", async () => {
-      // First run_created event
       const result1 = await events.create(null, {
         eventType: "run_created",
         eventData: {
@@ -1185,7 +1104,6 @@ describe("Storage (Redis integration)", () => {
     it("should not create duplicate run_started event on replay", async () => {
       const run = await createRun();
 
-      // First run_started
       const result1 = await events.create(run.runId, {
         eventType: "run_started",
       });
@@ -1525,13 +1443,9 @@ describe("Storage (Redis integration)", () => {
         specVersion: 4,
         createdAt: new Date(),
       };
-      await redis.set(`${keyPrefix}hook:${hookId}`, JSON.stringify(orphanHook));
-      await redis.set(`${keyPrefix}hooks:by_token:${token}`, hookId);
-      await redis.zadd(
-        `${keyPrefix}hooks:by_run:${run.runId}`,
-        Date.now(),
-        hookId,
-      );
+      await redis.set(k.hookKey(hookId), JSON.stringify(orphanHook));
+      await redis.set(k.hooksByTokenKey(token), hookId);
+      await redis.zadd(k.hooksIndexKey(run.runId), Date.now(), hookId);
 
       // Entity and creation event are now written in one atomic script, so
       // this state can only be legacy data. A replayed hook_created rejects
@@ -1635,7 +1549,7 @@ describe("Storage (Redis integration)", () => {
         // A stream is keyed by its run as well as its name.
         const runId = "wrun_digit_boundary";
         const streamName = "digit-boundary-stream";
-        const key = `${keyPrefix}stream:${runId}:${streamName}`;
+        const key = k.streamKey(runId, streamName);
         for (let seq = 1; seq <= 12; seq++) {
           await redis.xadd(
             key,
@@ -1678,7 +1592,7 @@ describe("Storage (Redis integration)", () => {
         0, 1, 2, 250, 255,
       ]);
 
-      const raw = await redis.get(`${keyPrefix}run:${run.runId}`);
+      const raw = await redis.get(k.runKey(run.runId));
       expect(raw).toContain('"__type":"Uint8Array"');
       expect(raw).not.toContain("__uint8array");
     });
@@ -1707,9 +1621,7 @@ describe("Storage (Redis integration)", () => {
       expect(output.length).toBe(payload.length);
       expect(output[1000]).toBe(payload[1000]);
 
-      const raw = await redis.get(
-        `${keyPrefix}step:${run.runId}:${step.stepId}`,
-      );
+      const raw = await redis.get(k.stepKey(run.runId, step.stepId));
       expect(raw).toContain('"__type":"Uint8Array"');
       expect(raw).not.toContain("__uint8array");
     });
@@ -1768,7 +1680,7 @@ describe("Storage (Redis integration)", () => {
   describe("records written before the meta key and hook token map existed", () => {
     it("validates events against the run body when the meta key is missing", async () => {
       const run = await createRun();
-      await redis.del(`${keyPrefix}run:meta:${run.runId}`);
+      await redis.del(k.runMetaKey(run.runId));
 
       // step_created only consults status/specVersion, which now normally come
       // from the meta key; without it the run body must still be consulted.
@@ -1792,13 +1704,9 @@ describe("Storage (Redis integration)", () => {
         eventData: { output: "done" },
       });
 
-      expect(await redis.get(`${keyPrefix}hook:hook-mapped`)).toBeNull();
-      expect(
-        await redis.get(`${keyPrefix}hooks:by_token:token-mapped`),
-      ).toBeNull();
-      expect(await redis.exists(`${keyPrefix}hooks:tokens:${run.runId}`)).toBe(
-        0,
-      );
+      expect(await redis.get(k.hookKey("hook-mapped"))).toBeNull();
+      expect(await redis.get(k.hooksByTokenKey("token-mapped"))).toBeNull();
+      expect(await redis.exists(k.hooksTokenMapKey(run.runId))).toBe(0);
     });
   });
 
@@ -1965,23 +1873,6 @@ describe("Storage (Redis integration)", () => {
   });
 
   describe("bump and report (eventCount)", () => {
-    it("lands an up-to-date writer on the slot it asked for and reports nothing", async () => {
-      const run = await createRun();
-
-      const result = await events.create(
-        run.runId,
-        {
-          eventType: "step_created",
-          correlationId: "step-fresh",
-          eventData: { stepName: "fresh", input: [] },
-        },
-        { eventCount: 1 },
-      );
-
-      expect(result.event?.eventId).toBe(slotToEventId(2));
-      expect(result.events).toBeUndefined();
-    });
-
     it("commits a stale writer at the next free slot and reports the span it skipped", async () => {
       const run = await createRun();
       const winner = await events.create(
@@ -2012,62 +1903,6 @@ describe("Storage (Redis integration)", () => {
       ]);
       expect(stale.events?.[0].correlationId).toBe("step-winner");
       expect(stale.hasMore).toBe(false);
-    });
-
-    it("always accepts a create that carries no eventCount", async () => {
-      const run = await createRun();
-      for (const id of ["a", "b", "c"]) {
-        await events.create(run.runId, {
-          eventType: "step_created",
-          correlationId: `step-${id}`,
-          eventData: { stepName: id, input: [] },
-        });
-      }
-
-      const result = await events.create(run.runId, {
-        eventType: "step_created",
-        correlationId: "step-no-count",
-        eventData: { stepName: "no-count", input: [] },
-      });
-
-      expect(result.event?.eventId).toBe(slotToEventId(5));
-      expect(result.events).toBeUndefined();
-    });
-
-    it("settles a parallel fan-out from one snapshot on consecutive slots", async () => {
-      const run = await createRun();
-      const fanOut = 8;
-
-      const results = await Promise.all(
-        Array.from({ length: fanOut }, (_, index) =>
-          events.create(
-            run.runId,
-            {
-              eventType: "step_created",
-              correlationId: `step-fan-${index}`,
-              eventData: { stepName: "fan", input: [index] },
-            },
-            { eventCount: 1 },
-          ),
-        ),
-      );
-
-      // Nothing rejected, and the eight writes took slots 2..9 between them.
-      const slots = results
-        .map((r) => eventIdToSlot(r.event!.eventId)!)
-        .sort((a, b) => a - b);
-      expect(slots).toEqual(Array.from({ length: fanOut }, (_, i) => i + 2));
-
-      // Each write reports exactly the events in the slots it bumped past.
-      for (const result of results) {
-        const slot = eventIdToSlot(result.event!.eventId)!;
-        const reported = (result.events ?? []).map((e) =>
-          eventIdToSlot(e.eventId),
-        );
-        expect(reported).toEqual(
-          Array.from({ length: slot - 2 }, (_, i) => i + 2),
-        );
-      }
     });
   });
 

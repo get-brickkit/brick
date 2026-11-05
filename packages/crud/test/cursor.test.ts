@@ -1,11 +1,10 @@
-import type { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import { brick, defineDatabase, defineService } from "@brickkit/core";
+import { brick } from "@brickkit/core";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 import { crud } from "../src";
-import { generateClientContract } from "../../cli/src/client-contract";
+import { clientContract, sqliteService } from "./helpers";
 
 const posts = sqliteTable("posts", {
   id: integer("id").primaryKey(),
@@ -14,7 +13,6 @@ const posts = sqliteTable("posts", {
   note: text("note"),
 });
 
-let sequence = 0;
 function fixture(
   fields: Record<string, object> = {
     id: { read: true, sort: true },
@@ -23,19 +21,10 @@ function fixture(
     note: { read: true, sort: true },
   },
 ) {
-  const database = defineDatabase({ tables: [posts] });
-  const db = database.getDb() as ReturnType<typeof database.getDb> & {
-    $client: Database;
-  };
-  db.$client.exec(
-    "CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT NOT NULL, rank INTEGER NOT NULL, note TEXT)",
-  );
+  const { sqlite, service } = sqliteService("cursor", [posts]);
   // Ranks repeat, so the ID has to break ties.
   for (let id = 1; id <= 7; id++)
-    db.$client.run(
-      `INSERT INTO posts VALUES (${id}, 'p${id}', ${id % 3}, NULL)`,
-    );
-  const service = defineService(`cursor_${sequence++}`, { database });
+    sqlite.run(`INSERT INTO posts VALUES (${id}, 'p${id}', ${id % 3}, NULL)`);
   const resource: any = service
     .resource({ name: "post", table: posts, id: posts.id })
     .use(
@@ -136,31 +125,28 @@ test("bad cursors are 400s", async () => {
   // findOne takes no cursor.
   await expect(
     resource.findOne.run({ cursor: null } as never),
-  ).rejects.toBeDefined();
+  ).rejects.toMatchObject({ status: 400 });
 });
 
 test("the typed client contract carries cursor and nextCursor", () => {
   const { service } = fixture();
-  const contract = generateClientContract(
+  const contract = clientContract(
     brick({ services: [service], requestLogging: false }),
-  );
+  ).source;
   expect(contract).toContain(`"cursor"?: (string | null); }, { "items"`);
   expect(contract).toContain(`"nextCursor"?: (string | null); }`);
 });
-
-const hiddenFixture = (fields: Record<string, object>) =>
-  fixture(fields).resource;
 
 test("a cursor holds only values the caller can read unscrubbed", async () => {
   const forged = (values: unknown[]) =>
     Buffer.from(JSON.stringify(["rank:asc", values])).toString("base64url");
   // rank sorts but is not readable: a cursor would leak it, and a forged one
   // would range-filter on it.
-  const sortOnly = hiddenFixture({
+  const sortOnly = fixture({
     id: { read: true },
     title: { read: true },
     rank: { sort: true },
-  });
+  }).resource;
   const byRank = { orderBy: [{ field: "rank", direction: "asc" }] };
   for (const cursor of [null, forged([1, 0])])
     await expect(
@@ -171,15 +157,15 @@ test("a cursor holds only values the caller can read unscrubbed", async () => {
     { id: 3, title: "p3" },
   ]);
   // An unreadable ID breaks every cursor's ties.
-  const hiddenId = hiddenFixture({ title: { read: true } });
+  const hiddenId = fixture({ title: { read: true } }).resource;
   await expect(hiddenId.list.run({ cursor: null })).rejects.toMatchObject({
     code: "BAD_REQUEST",
   });
   // A scrubbed sort field is hidden too.
-  const scrubbed = hiddenFixture({
+  const scrubbed = fixture({
     id: { read: true },
     rank: { read: true, sort: true, scrub: () => 0 },
-  });
+  }).resource;
   await expect(
     scrubbed.list.run({ ...byRank, cursor: null }),
   ).rejects.toMatchObject({ code: "BAD_REQUEST" });

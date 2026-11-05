@@ -2,14 +2,14 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import {
   publishedPackages,
+  releaseVersion,
   repositoryUrl,
   workspacePackages,
 } from "./published-packages.ts";
 
 const root = join(import.meta.dir, "..");
 const packages = publishedPackages(root);
-// Released in lockstep (CI checks it), so any package carries the release version.
-const version = packages[0]!.data.version;
+const version = releaseVersion(packages);
 const tag = `v${version}`;
 const repo = repositoryUrl(root);
 const SECTIONS: Record<string, string> = {

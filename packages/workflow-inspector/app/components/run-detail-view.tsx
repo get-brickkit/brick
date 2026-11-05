@@ -82,7 +82,6 @@ export function RunDetailView({
     TABS.find((tab) => tab === searchParams.get("tab")) ?? "trace";
   const selectedStreamId = searchParams.get("streamId");
 
-  // Helper to update URL search params
   const updateSearchParams = useCallback(
     (updates: Record<string, string | null>) => {
       const params = new URLSearchParams(searchParams.toString());
@@ -118,7 +117,6 @@ export function RunDetailView({
     [updateSearchParams],
   );
 
-  // Handler for clicking on stream refs in the trace viewer
   const handleStreamClick = useCallback(
     (streamId: string) => {
       updateSearchParams({ tab: "streams", streamId });
@@ -176,7 +174,6 @@ export function RunDetailView({
     return null;
   }, []);
 
-  // Fetch run + events for the trace viewer (always asc)
   const {
     run: runData,
     events: allEvents,
@@ -198,7 +195,6 @@ export function RunDetailView({
   const [encryptionKey, setEncryptionKey] = useState<Uint8Array | null>(null);
   encryptionKeyRef.current = encryptionKey;
 
-  // Separate event fetching for the Events tab with user-controlled sort order
   const [eventsSortOrder, setEventsSortOrder] = useState<"asc" | "desc">("asc");
   const {
     events: eventsListData,
@@ -278,7 +274,6 @@ export function RunDetailView({
     ],
   );
 
-  // Fetch streams for this run
   const {
     streams,
     loading: streamsLoading,
@@ -303,7 +298,6 @@ export function RunDetailView({
       setCancelling(true);
       setShowCancelDialog(false);
       await unwrapOrThrow(rpc("cancelRun", { runId }));
-      // Trigger a refresh of the data
       await update();
       toast.success("Run cancelled");
     } catch (err) {
@@ -330,14 +324,12 @@ export function RunDetailView({
     try {
       setRerunning(true);
       setShowRerunDialog(false);
-      // Start a new run with the same workflow and input arguments
       const newRunId = await unwrapOrThrow(
         rpc("recreateRun", { runId: run.runId }),
       );
       toast.success("New run started", {
         description: `Run ID: ${newRunId}`,
       });
-      // Navigate to the new run
       navigate(`/run/${newRunId}`);
     } catch (err) {
       console.error("Failed to re-run workflow:", err);
@@ -365,7 +357,6 @@ export function RunDetailView({
 
   return (
     <>
-      {/* Cancel Confirmation Dialog */}
       <AlertDialog open={showCancelDialog} onOpenChange={setShowCancelDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -388,7 +379,6 @@ export function RunDetailView({
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Replay Run Confirmation Dialog */}
       <AlertDialog open={showRerunDialog} onOpenChange={setShowRerunDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -425,9 +415,7 @@ export function RunDetailView({
             </BreadcrumbList>
           </Breadcrumb>
 
-          {/* Run Overview Header */}
           <div className="space-y-4 p-6 border rounded-lg">
-            {/* Title Row */}
             <div className="flex items-start justify-between">
               <div className="mb-4">
                 <h1 className="text-xl font-semibold">
@@ -462,7 +450,6 @@ export function RunDetailView({
               </div>
             </div>
 
-            {/* Status and Timeline Row */}
             <div className="flex items-start gap-8">
               <div className="flex flex-col gap-1">
                 <div className="text-xs text-muted-foreground">Status</div>
@@ -644,7 +631,6 @@ export function RunDetailView({
             <TabsContent value="streams" className="mt-0 flex-1 min-h-0">
               <ErrorBoundary title="Failed to load stream data">
                 <div className="relative -mx-6 flex h-full min-h-0 overflow-hidden border-t border-gray-alpha-400 bg-background-100">
-                  {/* Stream list sidebar */}
                   <div className="flex w-[340px] shrink-0 flex-col border-r border-gray-alpha-400 bg-background-100">
                     <div
                       aria-hidden="true"
@@ -691,7 +677,6 @@ export function RunDetailView({
                     </div>
                   </div>
 
-                  {/* Stream viewer */}
                   <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background-100">
                     {streamsLoading ? (
                       <div className="min-h-0 flex-1">

@@ -99,7 +99,6 @@ if (
 )
   fail("usage: bun run release [patch|minor|major|beta] [--dry-run|--prepare]");
 
-// --- preconditions ---
 const dirty = sh(["git", "status", "--porcelain"])
   .split("\n")
   .filter((l) => l && !l.startsWith("??"));
@@ -132,7 +131,6 @@ if (!PREPARE) {
   }
 }
 
-// --- compute new versions ---
 const releases = publishedPackages(ROOT);
 let current: string;
 try {

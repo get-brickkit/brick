@@ -35,9 +35,6 @@ export class WorkflowWebAPIError extends Error {
   }
 }
 
-/**
- * Helper to convert ServerActionError to WorkflowWebAPIError
- */
 export function createWorkflowAPIError(
   serverError: ServerActionError,
 ): WorkflowWebAPIError {
@@ -48,16 +45,9 @@ export function createWorkflowAPIError(
   });
 }
 
-/**
- * Gets a user-facing error message from an error object.
- * Handles both WorkflowWebAPIError and regular Error instances.
- */
 export const getErrorMessage = (error: Error | WorkflowWebAPIError): string =>
   error instanceof Error ? error.message : "An error occurred";
 
-/**
- * Helper to handle server action results and throw WorkflowWebAPIError on failure
- */
 export async function unwrapServerActionResult<T>(
   promise: Promise<{
     success: boolean;

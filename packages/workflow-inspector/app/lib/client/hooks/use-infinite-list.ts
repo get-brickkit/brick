@@ -28,8 +28,7 @@ export interface InfiniteList<T> {
  *
  * Pages are keyed by `[cacheKey, cursor]`, so switching tabs (unmount +
  * remount) restores previously fetched pages instantly instead of refetching.
- * Revalidation is deliberately conservative — analytics list queries can be
- * expensive (ClickHouse) — so cached pages are NOT refetched on remount or
+ * Revalidation is deliberately conservative: cached pages are NOT refetched on remount or
  * when loading further pages (`revalidateFirstPage: false`,
  * `revalidateIfStale: false`). Freshness comes from explicit `reload()`/
  * `refresh()` calls (the Refresh button and the tab-visibility auto-reload).
@@ -122,9 +121,8 @@ export function useInfiniteList<T>(
 /**
  * Infinite-scrolling list of workflow runs.
  *
- * Pages are larger than the old prev/next views (25 rows) since rows
- * accumulate; with the ClickHouse-backed analytics read path this keeps the
- * number of round-trips low while scrolling.
+ * Pages are large since rows accumulate, which keeps the number of
+ * round-trips low while scrolling.
  */
 export function useWorkflowRunsInfinite(params: {
   workflowName?: string;

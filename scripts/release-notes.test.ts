@@ -32,27 +32,25 @@ function fixture() {
     join(import.meta.dir, "../package.json"),
     join(root, "package.json"),
   );
-  const [first, ...rest] = publishedPackages();
-  for (const { dir, data } of [first!, ...rest]) {
-    mkdirSync(join(root, "packages", dir), { recursive: true });
-    writeFileSync(
-      join(root, "packages", dir, "package.json"),
-      JSON.stringify({
-        name: data.name,
-        devDependencies: data.devDependencies,
-      }),
-    );
-  }
-  // The notes read the (lockstep) version from one package, so only it changes.
+  const packages = publishedPackages();
+  const write = (version?: string) => {
+    for (const { dir, data } of packages) {
+      mkdirSync(join(root, "packages", dir), { recursive: true });
+      writeFileSync(
+        join(root, "packages", dir, "package.json"),
+        JSON.stringify({
+          name: data.name,
+          devDependencies: data.devDependencies,
+          version,
+        }),
+      );
+    }
+  };
+  write();
+  // Every published package carries the lockstep version; the change itself lands in the first.
   const commit = (subject: string, version: string) => {
-    writeFileSync(
-      join(root, "packages", first!.dir, "package.json"),
-      JSON.stringify({
-        name: first!.data.name,
-        devDependencies: first!.data.devDependencies,
-        version,
-      }),
-    );
+    write(version);
+    writeFileSync(join(root, "packages", packages[0]!.dir, "change"), subject);
     git("add", ".");
     git("commit", "--allow-empty", "-m", subject);
   };
@@ -70,8 +68,8 @@ test("beta notes include only changes since the previous beta and omit maintenan
   git("tag", "v0.2.4");
   commit("feat: old beta feature", "0.3.0-beta.4");
   git("tag", "v0.3.0-beta.4");
-  commit("fix: repository metadata", "0.3.0-beta.5");
-  commit("style: formatting", "0.3.0-beta.5");
+  commit("fix: repository metadata", "0.3.0-beta.4");
+  commit("style: formatting", "0.3.0-beta.4");
   commit("chore(release): v0.3.0-beta.5", "0.3.0-beta.5");
   git("tag", "v0.3.0-beta.5");
   const output = notes();

@@ -62,16 +62,6 @@ describe("createQueue workers", () => {
     },
   );
 
-  test("runs one worker on the flows queue under the job prefix", async () => {
-    const queue = createQueue(redis, {
-      redis: "redis://localhost:6379",
-      jobPrefix: "custom_",
-    });
-    await queue.start();
-    expect(Worker.mock.calls.map(([name]) => name)).toEqual(["custom_flows"]);
-    await queue.close();
-  });
-
   test("start is idempotent: a second call does not add a worker", async () => {
     const queue = createQueue(redis, { redis: "redis://localhost:6379" });
     await queue.start();

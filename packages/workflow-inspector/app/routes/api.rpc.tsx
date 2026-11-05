@@ -19,7 +19,6 @@ function cborResponse(data: unknown, status = 200): Response {
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
-  // Decode request body — accept both CBOR and JSON
   let body: { method: unknown; params: unknown };
   const contentType = request.headers.get("content-type") || "";
   try {

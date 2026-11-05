@@ -56,10 +56,8 @@ interface InvocationData {
 }
 
 /**
- * HooksTable - Displays hooks with server-side pagination.
- * Uses the PaginatingTable pattern similar to RunsTable.
- * Fetches invocation counts in the background for each hook.
- *
+ * Hooks with server-side pagination. Fetches invocation counts in the
+ * background for each hook.
  */
 export function HooksTable({ onHookClick, selectedHookId }: HooksTableProps) {
   const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(
@@ -77,7 +75,6 @@ export function HooksTable({ onHookClick, selectedHookId }: HooksTableProps) {
     pageInfo,
   } = useWorkflowHooks({ sortOrder: "desc" });
 
-  // Hook actions for resolve functionality
   const hookActions = useHookActions({
     onResolve: async (hook, payload) => {
       // List rows are metadata-only; fetch the secret token on demand just
@@ -101,7 +98,6 @@ export function HooksTable({ onHookClick, selectedHookId }: HooksTableProps) {
     refresh();
   };
 
-  // Track invocation counts per hook (fetched in background)
   const [invocationData, setInvocationData] = useState<
     Map<string, InvocationData>
   >(new Map());
@@ -147,7 +143,6 @@ export function HooksTable({ onHookClick, selectedHookId }: HooksTableProps) {
     };
   }, [hooks]);
 
-  // Render invocation count for a hook
   const renderInvocationCount = (hook: HookListItem) => {
     const data = invocationData.get(hook.hookId);
 
@@ -186,7 +181,6 @@ export function HooksTable({ onHookClick, selectedHookId }: HooksTableProps) {
 
   return (
     <div>
-      {/* Modal for resolving hooks - rendered at top level */}
       <HookResolveModalWrapper hookActions={hookActions} />
 
       <div className="flex items-center justify-between">
