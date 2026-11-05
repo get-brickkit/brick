@@ -398,8 +398,11 @@ describe("DocsHost", () => {
       expect(host.current).toBe(first);
       expect(events).toEqual(["ready"]);
 
-      // Edits reach the store as a new revision.
+      // A change to the docs reaches the store as a new revision. Refreshing
+      // directly: right after a watch starts, macOS can drop the first file event,
+      // and "notices edits" above covers the watching.
       await writeFile(join(root, "docs/extra.mdx"), "# Extra\n");
+      await host.current!.refresh();
       await waitFor(() => store.snapshot().docs?.revision === 2);
 
       // An app that drops `documentation` closes them.

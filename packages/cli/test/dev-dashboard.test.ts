@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { startDevDashboard } from "../src/dev-dashboard";
 import { openHistory } from "../src/dev-history";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
-import type { TraceSummary } from "../src/dashboard-protocol";
+import { historyUrl, type TraceSummary } from "../src/dashboard-protocol";
 
 async function setup(restart?: () => void) {
   const store = new DevTelemetryStore();
@@ -238,7 +238,9 @@ describe("startDevDashboard", () => {
     try {
       const state = await (await fetch(`${off.base}/api/state`)).json();
       expect(state.historyDays).toBe(0);
-      expect((await fetch(`${off.base}/api/history/stats`)).status).toBe(404);
+      expect((await fetch(`${off.base}${historyUrl("summary")}`)).status).toBe(
+        404,
+      );
     } finally {
       off.dashboard.stop();
     }
