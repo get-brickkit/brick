@@ -192,10 +192,12 @@ export async function callRemoteAction(
 ): Promise<unknown> {
   const headers = envelopeHeaders(envelope);
   headers.set("content-type", "application/json");
+  // Outside the try: a malformed BRICK_SERVICES is a config error, not an outage.
+  const url = `${remoteUrl(remote)}/${kebabCase(action)}`;
   let response: Response;
   let text: string;
   try {
-    response = await fetch(`${remoteUrl(remote)}/${kebabCase(action)}`, {
+    response = await fetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(input ?? {}),
