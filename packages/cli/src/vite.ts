@@ -251,11 +251,9 @@ installDevReporter({ url: ${JSON.stringify(dashboard.ingestUrl)} });
       const reporter = dashboard
         ? `import ${JSON.stringify(reporterId)};\n`
         : "";
-      return `${reporter}import app from ${JSON.stringify(entry)};
-if (!app || typeof app.fetch !== "function" || typeof app.endpoint !== "function") {
-  throw new Error("Brick: the entry module must default-export a BrickApp created by brick().");
-}
-export default app;
+      return `${reporter}import { requireBrickApp } from "@brickkit/core";
+import app from ${JSON.stringify(entry)};
+export default requireBrickApp(app);
 `;
     },
   };

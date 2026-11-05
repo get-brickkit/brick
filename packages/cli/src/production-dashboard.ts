@@ -65,6 +65,7 @@ export async function startProductionDashboard(
     port,
     host,
     mode: "production",
+    portHint: "Set dashboard.port in brick() to another.",
     auth: config.auth,
     dashboard: options.dashboard,
     // A `brick build` folder already holds the plugins' extensions.

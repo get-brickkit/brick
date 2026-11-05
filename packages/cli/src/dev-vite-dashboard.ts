@@ -48,6 +48,8 @@ export async function startViteDashboard(options: {
     warn: (message) => options.logger.warn(message),
     docs: true,
     dashboard: options.dashboard,
+    portHint:
+      "Set dashboard.port in brickClient() to another, or dashboard: false.",
   });
   if (!dashboard) return undefined;
   const { store, docs } = dashboard;

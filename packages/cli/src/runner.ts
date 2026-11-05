@@ -180,6 +180,7 @@ export async function startDevServer(options: DevServerOptions = {}) {
         restart: () => {
           void restart("dashboard");
         },
+        portHint: "Use --dashboard-port <number> or --no-dashboard.",
       })
     : undefined;
   const telemetry = dashboard?.store;

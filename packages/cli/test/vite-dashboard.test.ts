@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { context, propagation, trace } from "@opentelemetry/api";
 import { createServer } from "vite";
 import { brickClient } from "../src/vite";
+import { startViteDashboard } from "../src/dev-vite-dashboard";
 
 afterAll(() => {
   // The tracer provider is process-wide; release it for other test files.
@@ -293,3 +294,26 @@ it("has no docs when the app sets no documentation", async () => {
     await rm(root, { recursive: true, force: true });
   }
 }, 30000);
+
+it("names the plugin's own option when the dashboard port is taken", async () => {
+  const taken = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => new Response(),
+  });
+  const warnings: string[] = [];
+  try {
+    const dashboard = await startViteDashboard({
+      port: taken.port,
+      directory: import.meta.dir,
+      entry: join(import.meta.dir, "app.ts"),
+      historyDays: 0,
+      logger: { info() {}, warn: (message) => warnings.push(message) },
+    });
+    expect(dashboard).toBeUndefined();
+    expect(warnings.join("\n")).toContain("dashboard.port in brickClient()");
+    expect(warnings.join("\n")).not.toContain("--dashboard-port");
+  } finally {
+    taken.stop(true);
+  }
+});
