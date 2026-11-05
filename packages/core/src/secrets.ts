@@ -19,6 +19,8 @@
  * registered secret at boot and throws listing all missing required ones.
  */
 
+import { definitionSite } from "./definition-site";
+
 export interface SecretSource {
   get(name: string): string | undefined;
 }
@@ -37,7 +39,9 @@ export interface SecretOptions {
 export type SecretValidator<T> = (value: T) => void | boolean | string;
 
 const registry = new Map<string, SecretRef<any>>();
-const overrides = new Map<string, string | undefined>();
+const overrides = new Map<string, string>();
+/** Where each secret was first declared. */
+const sites = new Map<string, string | undefined>();
 
 export class SecretRef<T = string> {
   readonly name: string;
@@ -89,11 +93,9 @@ export class SecretRef<T = string> {
   }
 
   private resolveRaw(source: SecretSource): string | undefined {
-    if (overrides.has(this.name)) {
-      const v = overrides.get(this.name);
-      if (v !== undefined) return v;
-    }
-    return source.get(this.name) ?? this.options.default;
+    return (
+      overrides.get(this.name) ?? source.get(this.name) ?? this.options.default
+    );
   }
 
   private coerce(raw: string): T {
@@ -155,15 +157,25 @@ export class SecretRef<T = string> {
 }
 
 /**
- * Declare a secret. Idempotent: re-declaring the same name returns the
- * original ref (first declaration wins) so module re-evaluation is safe.
+ * Declare a secret. Calling it again for the name returns the same ref. From
+ * the same line (a module evaluated again) it starts the declaration over, so
+ * its builder calls replace the earlier ones instead of adding to them.
  */
 export function defineSecret(
   name: string,
   options: SecretOptions = {},
 ): SecretRef<string> {
+  const site = definitionSite();
   const existing = registry.get(name);
-  if (existing) return existing;
+  if (existing) {
+    if (site !== undefined && sites.get(name) === site) {
+      (existing as { options: SecretOptions }).options = options;
+      existing["validators"] = [];
+      existing["transformFn"] = undefined;
+    }
+    return existing;
+  }
+  sites.set(name, site);
   const ref = new SecretRef<string>(name, options);
   registry.set(name, ref);
   return ref;
@@ -206,20 +218,13 @@ export function listSecrets(
 
 /** Test/session override for one secret (`undefined` clears the override). */
 export function overrideSecret(name: string, value: string | undefined): void {
-  overrides.set(name, value);
-}
-
-/** Bulk overrides (test/session scoped). */
-export function overrideSecrets(
-  values: Record<string, string | undefined>,
-): void {
-  for (const [name, value] of Object.entries(values)) {
-    overrides.set(name, value);
-  }
+  if (value === undefined) overrides.delete(name);
+  else overrides.set(name, value);
 }
 
 /** Clear registry and overrides. Test-only. */
 export function resetSecrets(): void {
   registry.clear();
   overrides.clear();
+  sites.clear();
 }
