@@ -80,27 +80,18 @@ The standard error helpers injected into `execute({ error })` and CRUD hooks thr
 | `CONFLICT`              | `409 Conflict`       | Unique constraint violation or state collision       | `error.CONFLICT(msg?, details?)`              |
 | `INTERNAL_SERVER_ERROR` | `500 Internal Error` | Unexpected backend or database failure               | `error.INTERNAL_SERVER_ERROR(msg?, details?)` |
 
-## Current Authorization Status Codes & Issue #53
+## Authorization Status Codes
 
-Authorization failures are reported as follows in the current release:
+An action's `authorize` and a CRUD resource's `access` deny a call the same way: `UNAUTHORIZED` (401) when the request has no user, `FORBIDDEN` (403) when it has one.
 
-| Layer  | Trigger                              | Thrown Code    | HTTP Status     | Source Reference                        |
-| :----- | :----------------------------------- | :------------- | :-------------- | :-------------------------------------- |
-| Action | `authorize()` returns `false`        | `UNAUTHORIZED` | `403 Forbidden` | `packages/core/src/compiler/runtime.ts` |
-| CRUD   | `access.authorize()` returns `false` | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/perform.ts`          |
-| CRUD   | `access` object has no `authorize`   | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/perform.ts`          |
-| CRUD   | `create` with a non-empty `scope`    | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/perform.ts`          |
+| Layer  | Trigger                              | No user            | With a user     | Source Reference                        |
+| :----- | :----------------------------------- | :----------------- | :-------------- | :-------------------------------------- |
+| Action | `authorize()` returns `false`        | `UNAUTHORIZED` 401 | `FORBIDDEN` 403 | `packages/core/src/compiler/runtime.ts` |
+| CRUD   | `access.authorize()` returns `false` | `UNAUTHORIZED` 401 | `FORBIDDEN` 403 | `packages/crud/src/perform.ts`          |
+| CRUD   | `access` object has no `authorize`   | `UNAUTHORIZED` 401 | `FORBIDDEN` 403 | `packages/crud/src/perform.ts`          |
+| CRUD   | `create` with a non-empty `scope`    | `FORBIDDEN` 403    | `FORBIDDEN` 403 | `packages/crud/src/perform.ts`          |
 
 The message is `Access denied for action '<name>'`, where a CRUD operation's name is `<resource>.<operation>` (or `Row-scoped creation requires an explicit create policy` for scoped creates).
-
-<Callout type="warn">
-  **Known inconsistency (Issue #53)**: In the current release, an action
-  `authorize` rejection throws code `UNAUTHORIZED` with HTTP status `403`, while
-  CRUD access denial uses `FORBIDDEN`/`403`. Issue #53 tracks aligning these
-  codes; until it lands, clients should treat both codes as access denial. Track
-  progress in [GitHub Issue
-  #53](https://github.com/get-brickkit/brick/issues/53).
-</Callout>
 
 ## Common Troubleshooting Scenarios
 
