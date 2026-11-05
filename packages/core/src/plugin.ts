@@ -160,6 +160,24 @@ interface PluginState {
   claims: Map<object, Map<string, string>>;
 }
 const states = new WeakMap<object, PluginState>();
+
+/** Records the plugin state; the returned function puts all of it back (a failed install's rollback). */
+function snapshotState(state: PluginState): () => void {
+  const copy = <V>(maps: Map<object, Map<string, V>>) =>
+    new Map([...maps].map(([key, inner]) => [key, new Map(inner)]));
+  const saved: PluginState = {
+    hosts: copy(state.hosts),
+    actions: new Map(state.actions),
+    endpoints: [...state.endpoints],
+    claims: copy(state.claims),
+  };
+  return () => {
+    // Actions the failed install bound lose their route too.
+    for (const action of state.actions.keys())
+      if (!saved.actions.has(action)) delete actionMeta(action).route;
+    Object.assign(state, saved);
+  };
+}
 function stateOf(service: Service<any, any>): PluginState {
   let state = states.get(service);
   if (!state) {
@@ -245,17 +263,8 @@ export function installPlugin(
       );
     return resource ?? existing.api;
   }
-  const restore = portOf(service).snapshot();
-  const snapshots = {
-    hosts: new Map(
-      [...state.hosts].map(([key, installations]) => [
-        key,
-        new Map(installations),
-      ]),
-    ),
-    bindings: new Map(state.actions),
-    endpoints: [...state.endpoints],
-  };
+  const restoreService = portOf(service).snapshot();
+  const restoreState = snapshotState(state);
   const installations =
     state.hosts.get(host) ?? new Map<string, Installation>();
   state.hosts.set(host, installations);
@@ -264,7 +273,6 @@ export function installPlugin(
   const commits: (() => void)[] = [];
   const ownedActions = new Set<Action<any, any, any, any>>();
   let active = true;
-  const claimed: string[] = [];
   const claim = (segment: string) => {
     if (!resource) throw new Error("Only resource plugins claim URL segments");
     const claims = state.claims.get(resource) ?? new Map<string, string>();
@@ -281,7 +289,6 @@ export function installPlugin(
         `Brick: duplicate name "${taken.name}" in service "${service.name}": "${segment}" is a ${descriptor.name} route`,
       );
     claims.set(segment, descriptor.name);
-    claimed.push(segment);
   };
   const bindingFor = (config: {
     name: string;
@@ -435,13 +442,8 @@ export function installPlugin(
     for (const commit of commits) commit();
     return resource ?? api;
   } catch (error) {
-    for (const action of state.actions.keys())
-      if (!snapshots.bindings.has(action)) delete actionMeta(action).route;
-    restore();
-    state.hosts = snapshots.hosts;
-    state.actions = snapshots.bindings;
-    state.endpoints = snapshots.endpoints;
-    for (const segment of claimed) state.claims.get(resource!)?.delete(segment);
+    restoreService();
+    restoreState();
     throw error;
   } finally {
     active = false;
