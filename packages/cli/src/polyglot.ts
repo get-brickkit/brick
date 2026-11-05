@@ -53,21 +53,35 @@ export async function readRemoteManifest(
     detached: true,
   };
   const pending = run("/bin/sh", ["-c", remote.options.dev], options);
+  const killGroup = () => {
+    try {
+      process.kill(-pending.child.pid!, "SIGKILL");
+    } catch {}
+  };
   // A service whose SDK ignores BRICK_MANIFEST would serve forever.
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
-    try {
-      process.kill(-pending.child.pid!, "SIGKILL");
-    } catch {}
+    killGroup();
   }, 120_000);
+  // Ctrl+C reaches only this process, not the command's own group.
+  const onSignal = (signal: NodeJS.Signals) => {
+    killGroup();
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
   const { stdout } = await pending
     .catch((error: Error & { stderr?: string }) => {
       throw new Error(
         `Brick: could not read the manifest of "${remote.name}" (${remote.options.dev} in ${remote.options.dir}): ${timedOut ? "no manifest within 120s" : error.stderr || error.message}`,
       );
     })
-    .finally(() => clearTimeout(timer));
+    .finally(() => {
+      clearTimeout(timer);
+      process.off("SIGINT", onSignal);
+      process.off("SIGTERM", onSignal);
+    });
   const line = stdout.trim().split("\n").at(-1) ?? "";
   let manifest: ServiceManifest;
   try {
@@ -193,6 +207,24 @@ function snake(name: string): string {
 
 type Decl = string[];
 
+/**
+ * Claim a generated name: two sources for one name would not compile, so
+ * `brick gen` fails naming both.
+ */
+function claim(
+  seen: Map<string, string>,
+  name: string,
+  source: string,
+  language: string,
+): void {
+  const other = seen.get(name);
+  if (other !== undefined)
+    throw new Error(
+      `Brick: ${other} and ${source} both become ${name} in the ${language} client; rename one.`,
+    );
+  seen.set(name, source);
+}
+
 function isStruct(schema: any): boolean {
   return (
     schema?.type === "object" &&
@@ -241,6 +273,8 @@ function nullableOf(schema: any): any {
  */
 export function goClient(contract: PolyglotContract, self: string): string {
   const decls: Decl = [];
+  // Types and functions share the package scope.
+  const names = new Map<string, string>();
   const goType = (schema: any, name: string): string => {
     const nullable = nullableOf(schema);
     if (nullable) {
@@ -262,11 +296,14 @@ export function goClient(contract: PolyglotContract, self: string): string {
     if (schema?.type === "array")
       return `[]${goType(schema.items, `${name}Item`)}`;
     if (isStruct(schema)) {
+      claim(names, name, `the type ${name}`, "Go");
       const required = new Set<string>(schema.required ?? []);
+      const fieldNames = new Map<string, string>();
       const fields = Object.entries(schema.properties ?? {}).map(
         ([key, prop]) => {
           let field = pascal(key) || "Field";
           if (/^[0-9]/.test(field)) field = `F${field}`;
+          claim(fieldNames, `${name}.${field}`, `property "${key}"`, "Go");
           let type = goType(prop, name + pascal(key));
           const optional = !required.has(key);
           if (optional && !/^(\*|\[\]|map|any)/.test(type)) type = `*${type}`;
@@ -288,6 +325,7 @@ export function goClient(contract: PolyglotContract, self: string): string {
     if (service.name === self) continue;
     for (const action of service.actions) {
       const fn = pascal(service.name) + pascal(action.name);
+      claim(names, fn, `${service.name}.${action.name}`, "Go");
       const input = action.input ? goType(action.input, `${fn}Input`) : "any";
       const output = action.output
         ? goType(action.output, `${fn}Output`)
@@ -333,6 +371,9 @@ const RUST_KEYWORDS = new Set(
  */
 export function rustClient(contract: PolyglotContract, self: string): string {
   const decls: Decl = [];
+  // Types and functions are separate namespaces in Rust.
+  const types = new Map<string, string>();
+  const fns = new Map<string, string>();
   const rustType = (schema: any, name: string): string => {
     const nullable = nullableOf(schema);
     if (nullable) return `Option<${rustType(nullable, name)}>`;
@@ -347,11 +388,14 @@ export function rustClient(contract: PolyglotContract, self: string): string {
     if (schema?.type === "array")
       return `Vec<${rustType(schema.items, `${name}Item`)}>`;
     if (isStruct(schema)) {
+      claim(types, name, `the type ${name}`, "Rust");
       const required = new Set<string>(schema.required ?? []);
+      const fieldNames = new Map<string, string>();
       const fields = Object.entries(schema.properties ?? {}).map(
         ([key, prop]) => {
           let field = snake(key) || "field";
           if (/^[0-9]/.test(field)) field = `f${field}`;
+          claim(fieldNames, `${name}.${field}`, `property "${key}"`, "Rust");
           // self, super and crate can't be raw identifiers.
           if (["self", "super", "crate"].includes(field)) field = `${field}_`;
           else if (RUST_KEYWORDS.has(field)) field = `r#${field}`;
@@ -380,6 +424,12 @@ export function rustClient(contract: PolyglotContract, self: string): string {
     if (service.name === self) continue;
     for (const action of service.actions) {
       const base = pascal(service.name) + pascal(action.name);
+      claim(
+        fns,
+        `${snake(service.name)}_${snake(action.name)}`,
+        `${service.name}.${action.name}`,
+        "Rust",
+      );
       const input = action.input
         ? rustType(action.input, `${base}Input`)
         : "serde_json::Value";
@@ -394,7 +444,7 @@ pub async fn ${snake(service.name)}_${snake(action.name)}(ctx: &brickkit::Ctx, i
   }
   return `// ${HEADER}
 //! Calls the app's other Brick services.
-#![allow(dead_code, clippy::all)]
+#![allow(dead_code, unused_imports, clippy::all)]
 
 use serde::{Deserialize, Serialize};
 

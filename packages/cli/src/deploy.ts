@@ -272,6 +272,9 @@ ${upstreams.join("\n\n")}
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
+        # An idle WebSocket would otherwise close after nginx's 60s default.
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -435,6 +438,7 @@ ${paths.join("\n")}`);
 # An Ingress can't remove request headers, so x-brick-* reaches the services: each
 # one ignores them without BRICK_INTERNAL_TOKEN, and answers a wrong token with 401.
 # To also strip them at the edge, route with the Gateway API and a RequestHeaderModifier.
+# The Ingress sets no ingressClassName: the cluster needs a default IngressClass, or add one.${table.domain ? "\n# TLS comes from the Secret brick-tls: kubectl create secret tls brick-tls --cert=<file> --key=<file>, or let cert-manager issue it." : ""}
 ${docs.map((doc) => `---\n${doc}\n`).join("")}`;
 }
 

@@ -182,11 +182,23 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
               `Brick: remote services failed to start: ${error instanceof Error ? error.message : error}`,
             ),
           );
-          httpServer.once("close", () => {
-            remotesStopped = children.then(
+          const stop = () =>
+            (remotesStopped = children.then(
               (started) => started.stop(),
               () => {},
+            ));
+          // Vite doesn't close the server on Ctrl+C, and Node then exits
+          // without an exit event: stop the children, then exit.
+          const onSignal = (signal: NodeJS.Signals) =>
+            void stop().then(() =>
+              process.exit(signal === "SIGINT" ? 130 : 143),
             );
+          process.once("SIGINT", onSignal);
+          process.once("SIGTERM", onSignal);
+          httpServer.once("close", () => {
+            process.off("SIGINT", onSignal);
+            process.off("SIGTERM", onSignal);
+            stop();
           });
         });
       }

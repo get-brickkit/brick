@@ -46,6 +46,19 @@ describe("polyglot clients", () => {
     expect(source).toContain("pub r#type: String,");
   });
 
+  it("fails on generated names that collide, naming both", () => {
+    const input = {
+      type: "object",
+      properties: { user_id: { type: "string" }, userId: { type: "string" } },
+    };
+    expect(() => goClient(contract(input), "self")).toThrow(
+      'property "user_id" and property "userId" both become TagsCountInput.UserId',
+    );
+    expect(() => rustClient(contract(input), "self")).toThrow(
+      'property "user_id" and property "userId" both become TagsCountInput.user_id',
+    );
+  });
+
   it("writes no Go imports when no other service has actions", () => {
     const source = goClient(contract(undefined), "tags");
     expect(source).not.toContain("import");
