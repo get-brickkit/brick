@@ -293,6 +293,13 @@ describe("event catalog", () => {
     await expect(emitEvent(ctx, "orders.refunded", {})).rejects.toThrow(
       /not in the event catalog/,
     );
+    // An event another service declares is checked against its own schema.
+    const billing = defineService("billing", {
+      events: { paid: t.Object({ id: t.String() }) },
+    });
+    await expect(
+      emitEvent(ctx, billing.events.paid, { id: 1 } as never),
+    ).rejects.toThrow(/"billing.paid" payload does not match/);
     // CRUD events of the service's resources keep their names.
     await emitEvent(ctx, "order.update", { id: "o1" });
     expect(outboxRows(db).map((row: any) => row.name)).toEqual([

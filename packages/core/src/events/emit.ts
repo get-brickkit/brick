@@ -1,5 +1,5 @@
-import { checkEvent, type EventRef } from "./catalog";
-import { recorders } from "./hub";
+import { checkPayload, type EventRef } from "./catalog";
+import { recordingServices } from "./hub";
 
 /**
  * Record an event of your own from an action, a tool or a hook. Listeners get it
@@ -50,19 +50,14 @@ export async function emitEvent(
   options: { tx?: unknown; source?: string } = {},
 ): Promise<void> {
   const name = typeof event === "string" ? event : event.name;
-  if (typeof event !== "string")
-    checkEvent(
-      {
-        name: event.service,
-        events: { [name.slice(event.service.length + 1)]: event },
-        hasCatalog: true,
-        listResources: () => [],
-      },
-      name,
-      payload,
-    );
-  const events =
-    ctx.db && typeof ctx.db === "object" ? recorders.get(ctx.db) : undefined;
+  const service =
+    ctx.db && typeof ctx.db === "object"
+      ? recordingServices.get(ctx.db)
+      : undefined;
+  // The recording service checks its own events; one declared elsewhere is checked here.
+  if (typeof event !== "string" && event.service !== service?.name)
+    checkPayload(event, payload);
+  const events = service?.recorder;
   if (!events)
     throw new Error(
       `Cannot emit '${name}': ctx.db is not the database of a service with an outbox table (the app needs events, and ctx.db must be the service's own database, not a transaction)`,

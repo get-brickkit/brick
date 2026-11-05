@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { PLUGIN_DEPS, runWithDeps } from "../deps";
+import { runWithDeps } from "../deps";
+import { listenerDeps } from "./listener";
 import type {
   EventDelivery,
   EventListener,
@@ -11,12 +12,24 @@ import type {
   WorkflowsOptions,
 } from "./types";
 
-/** `getQueueTopicPrefix("workflow")` from `@workflow/world`: the queue the runtime reads. */
-const WORKFLOW_QUEUE_PREFIX = "__wkf_workflow_";
-const BUNDLE_DIR = ".well-known/workflow/v1";
+/** The workflow bundle `buildWorkflows()` writes and the runtime reads: its directory under the project root, and its files. */
+export const WORKFLOW_BUNDLE = {
+  dir: ".well-known/workflow/v1",
+  flow: "flow.mjs",
+  steps: "__step_registrations.mjs",
+  webhook: "webhook.mjs",
+  manifest: "manifest.json",
+} as const;
+/** From the Workflow SDK: the queue a workflow run goes to (`getQueueTopicPrefix("workflow")` in `@workflow/world`), and the header a world names it in. */
+export const WORKFLOW_QUEUE = {
+  prefix: "__wkf_workflow_",
+  header: "x-vqs-queue-name",
+} as const;
 const STOPPED = "The events were stopped, so workflows can no longer run";
+const NOT_BUILT =
+  "brick dev and brick start build it; in a test or script, call buildWorkflows() from @brickkit/cli/workflows first.";
 /** Where the SDK builds the URL of a webhook: the route `handleWebhook` serves. */
-export const WEBHOOK_ROUTE = "/.well-known/workflow/v1/webhook/*";
+export const WEBHOOK_ROUTE = `/${WORKFLOW_BUNDLE.dir}/webhook/*`;
 /** Where the transform and the bundle register steps by id. The SDK's own generated code uses it. */
 const STEP_REGISTRY = Symbol.for("@workflow/core//registeredSteps");
 
@@ -47,7 +60,7 @@ export function resolveWorkflowPaths(options: WorkflowsOptions = {}): {
   dir: string;
 } {
   const root = resolve(options.root ?? process.cwd());
-  return { root, dir: join(root, BUNDLE_DIR) };
+  return { root, dir: join(root, WORKFLOW_BUNDLE.dir) };
 }
 
 /**
@@ -90,24 +103,18 @@ export class WorkflowRuntime {
    *
    * @param listener - The workflow listener the delivery is for.
    * @param delivery - The delivery.
-   * @returns The run id.
    */
   async startRun(
     listener: EventListener,
     delivery: EventDelivery,
-  ): Promise<string> {
+  ): Promise<void> {
     const sdk = await this.ensure();
     const { attempt: _attempt, ...event } = delivery;
-    const run = await sdk.start(
-      listener.workflow,
-      [event satisfies WorkflowEvent],
-      {
-        world: this.world,
-        runKey: delivery.deliveryId,
-        runKeyTime: Date.parse(delivery.occurredAt),
-      },
-    );
-    return run.runId;
+    await sdk.start(listener.workflow, [event satisfies WorkflowEvent], {
+      world: this.world,
+      runKey: delivery.deliveryId,
+      runKeyTime: Date.parse(delivery.occurredAt),
+    });
   }
 
   /**
@@ -121,12 +128,9 @@ export class WorkflowRuntime {
    */
   async handleWebhook(request: Request): Promise<Response> {
     await this.connect();
-    const file = join(this.dir, "webhook.mjs");
+    const file = join(this.dir, WORKFLOW_BUNDLE.webhook);
     if (!existsSync(file))
-      throw new Error(
-        `No webhook bundle at ${file}. brick dev and brick start build it; ` +
-          "in a test or script, call buildWorkflows() from @brickkit/cli/workflows first.",
-      );
+      throw new Error(`No webhook bundle at ${file}. ${NOT_BUILT}`);
     const handlers = await import(pathToFileURL(file).href);
     const handler = handlers[request.method];
     if (typeof handler !== "function")
@@ -173,12 +177,9 @@ export class WorkflowRuntime {
           "Use the world from @brickkit/redis-world or @brickkit/bullmq-world.",
       );
     const sdk = await this.connect();
-    const flow = join(this.dir, "flow.mjs");
+    const flow = join(this.dir, WORKFLOW_BUNDLE.flow);
     if (!existsSync(flow))
-      throw new Error(
-        `No workflow bundle at ${flow}. brick dev and brick start build it; ` +
-          "in a test or script, call buildWorkflows() from @brickkit/cli/workflows first.",
-      );
+      throw new Error(`No workflow bundle at ${flow}. ${NOT_BUILT}`);
     const manifest = this.readManifest();
     const depsOf = this.checkListeners(manifest);
     const bundle = await this.loadBundle(flow);
@@ -188,10 +189,10 @@ export class WorkflowRuntime {
     // Steps run inside this handler, so `useDeps()` in a step finds the deps of
     // the app, or of the plugin whose listener runs the workflow. The queue is
     // named after the workflow: `__wkf_workflow_<workflowId>`.
-    this.world.registerHandler?.(WORKFLOW_QUEUE_PREFIX, (request: Request) => {
-      const queue = request.headers.get("x-vqs-queue-name") ?? "";
+    this.world.registerHandler?.(WORKFLOW_QUEUE.prefix, (request: Request) => {
+      const queue = request.headers.get(WORKFLOW_QUEUE.header) ?? "";
       const deps =
-        depsOf.get(queue.slice(WORKFLOW_QUEUE_PREFIX.length)) ?? this.deps;
+        depsOf.get(queue.slice(WORKFLOW_QUEUE.prefix.length)) ?? this.deps;
       return runWithDeps(deps, () => post(request));
     });
     await this.world.start?.();
@@ -240,7 +241,7 @@ export class WorkflowRuntime {
   }
 
   private readManifest(): BundleManifest | undefined {
-    const path = join(this.dir, "manifest.json");
+    const path = join(this.dir, WORKFLOW_BUNDLE.manifest);
     if (!existsSync(path)) return undefined;
     return JSON.parse(readFileSync(path, "utf8")) as BundleManifest;
   }
@@ -275,10 +276,7 @@ export class WorkflowRuntime {
         throw new Error(
           `The workflow bundle does not contain '${id}' (listener '${listener.name}'). Rebuild it with brick dev or brick start.`,
         );
-      const deps =
-        ((listener as unknown as Record<symbol, unknown>)[PLUGIN_DEPS] as
-          | Record<string, unknown>
-          | undefined) ?? this.deps;
+      const deps = listenerDeps(listener) ?? this.deps;
       if ((depsOf.get(id) ?? deps) !== deps)
         throw new Error(
           `Workflow '${id}' is run by listeners with different deps (listener '${listener.name}'); give each app or plugin install its own workflow.`,

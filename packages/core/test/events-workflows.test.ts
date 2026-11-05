@@ -14,6 +14,7 @@ import {
   port,
   syncSchema,
   useDeps,
+  WORKFLOW_QUEUE,
   type EventsWorld,
 } from "../src";
 
@@ -208,7 +209,7 @@ describe("workflow listeners", () => {
         new EventsHub({
           listeners: [{ name: "raw", on: ["x"] }],
         }),
-    ).toThrow("exactly one of run and workflow");
+    ).toThrow("needs a run handler or a workflow");
   });
 
   it("needs a world", () => {
@@ -276,7 +277,7 @@ describe("workflow listeners", () => {
     expect(globalThis.__fakeWorkflow.worlds).toEqual([world]);
     expect(calls.start).toBe(1);
     expect(calls.handlers).toHaveLength(1);
-    expect(calls.handlers[0]![0]).toBe("__wkf_workflow_");
+    expect(calls.handlers[0]![0]).toBe(WORKFLOW_QUEUE.prefix);
     expect(typeof calls.handlers[0]![1]).toBe("function");
   });
 

@@ -1,3 +1,4 @@
+import { ATTR } from "./telemetry-names";
 import {
   context,
   propagation,
@@ -95,11 +96,11 @@ export function traceHttpRequest<T>(
   fn: () => T,
 ): T {
   const attributes: Attributes = {
-    "http.request.method": method,
-    "http.route": route,
+    [ATTR.httpMethod]: method,
+    [ATTR.httpRoute]: route,
   };
   if (request.request) {
-    attributes["url.path"] = new URL(request.request.url).pathname;
+    attributes[ATTR.urlPath] = new URL(request.request.url).pathname;
   }
   const headers = request.headers ?? {};
   const parent = propagation.extract(context.active(), headers);
@@ -124,9 +125,9 @@ export function traceHttpRequest<T>(
               ? outcome.value.status
               : responseStatus(request.set?.status);
           if (outcome.failed) recordThrown(span, outcome.error);
-          span.setAttribute("http.response.status_code", status);
+          span.setAttribute(ATTR.httpStatus, status);
           const traceId = headers["x-trace-id"];
-          if (traceId) span.setAttribute("brick.trace_id", traceId);
+          if (traceId) span.setAttribute(ATTR.traceId, traceId);
           if (status >= 500) {
             span.setStatus({
               code: SpanStatusCode.ERROR,
@@ -151,9 +152,9 @@ export function recordFailure(
   const span = trace.getActiveSpan();
   if (!span) return;
   span.setAttributes({
-    "brick.error.code": failure.code,
-    "brick.error.status": failure.status,
-    "brick.error.message": truncate(failure.message),
+    [ATTR.errorCode]: failure.code,
+    [ATTR.errorStatus]: failure.status,
+    [ATTR.errorMessage]: truncate(failure.message),
   });
   if (failure.status >= 500) recordThrown(span, error);
 }
@@ -284,9 +285,9 @@ function statementName(sql: string): string {
 
 function statementAttributes(sql: string, system: string): Attributes {
   return {
-    "db.system": system,
-    "db.operation": operationOf(sql),
-    "db.statement": truncate(sql, MAX_STATEMENT_LENGTH),
+    [ATTR.dbSystem]: system,
+    [ATTR.dbOperation]: operationOf(sql),
+    [ATTR.dbStatement]: truncate(sql, MAX_STATEMENT_LENGTH),
   };
 }
 

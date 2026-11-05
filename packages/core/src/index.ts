@@ -66,6 +66,7 @@ export {
   type RequestLoggingOptions,
 } from "./request-logger";
 export { traceRoute } from "./telemetry";
+export { SPAN, ATTR, GLOBAL_SYMBOL } from "./telemetry-names";
 export type { DashboardAuth, DashboardOptions } from "./dashboard";
 export {
   scalarDocsHTML,
@@ -142,42 +143,46 @@ export {
 export { port, useDeps, type Port, type Ports, type DepsOf } from "./deps";
 export { stepErrors, stepFailure, type StepErrorBuilder } from "./workflow";
 
+export { defineListener } from "./events/listener";
+export { emitEvent } from "./events/emit";
 export {
-  defineListener,
-  emitEvent,
   isEventRef,
-  outboxTable,
-  isOutboxTable,
-  runInTransaction,
-  onTransactionCommit,
-  resolveWorkflowPaths,
-  EventsHub,
-  stopAllEvents,
-  Dispatcher,
-  type CrudEventPayload,
-  type DispatchOptions,
   type EventCatalog,
   type EventRef,
   type EventRefs,
-  type EventDelivery,
-  type EventEnvelope,
-  type EventListener,
-  type ListenerFailure,
-  type RetryDecision,
-  type EventRecorder,
-  type EventWorkflow,
-  type EventsDefinition,
-  type EventsOptions,
-  type EventsWorld,
-  type OutboxCounts,
+} from "./events/catalog";
+export {
+  outboxTable,
+  isOutboxTable,
   type OutboxStatus,
   type OutboxTable,
   type PostgresOutboxTable,
   type SQLiteOutboxTable,
-  type ServiceEvents,
-  type WorkflowEvent,
-  type WorkflowsOptions,
-} from "./events";
+} from "./events/outbox";
+export { runInTransaction, onTransactionCommit } from "./events/transaction";
+export {
+  resolveWorkflowPaths,
+  WORKFLOW_BUNDLE,
+  WORKFLOW_QUEUE,
+} from "./events/workflows";
+export { EventsHub, stopAllEvents, type EventsDefinition } from "./events/hub";
+export { Dispatcher, type OutboxCounts } from "./events/dispatcher";
+export type {
+  CrudEventPayload,
+  DispatchOptions,
+  EventDelivery,
+  EventEnvelope,
+  EventListener,
+  ListenerFailure,
+  RetryDecision,
+  EventRecorder,
+  EventWorkflow,
+  EventsOptions,
+  EventsWorld,
+  ServiceEvents,
+  WorkflowEvent,
+  WorkflowsOptions,
+} from "./events/types";
 
 // Typed HTTP Client (also importable as `@brickkit/core/client` for frontends)
 export {

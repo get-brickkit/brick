@@ -14,6 +14,7 @@ import {
   type Span,
   type SpanProcessor,
 } from "@opentelemetry/sdk-trace";
+import { GLOBAL_SYMBOL } from "@brickkit/core";
 import type {
   ApiDocument,
   ArchitectureSchema,
@@ -21,9 +22,9 @@ import type {
 } from "@brickkit/core";
 
 /** Read by @brickkit/core's logger; see `createLogger` there. */
-const LOG_CAPTURE = Symbol.for("brickkit.logs.capture");
+const LOG_CAPTURE = Symbol.for(GLOBAL_SYMBOL.logsCapture);
 /** Core's function that records a line on the running span; see `recordActive` there. */
-const LOG_RECORD = Symbol.for("brickkit.logs.record");
+const LOG_RECORD = Symbol.for(GLOBAL_SYMBOL.logsRecord);
 const CONSOLE_CAPTURED = Symbol.for("brickkit.console.captured");
 
 const CONSOLE_LEVELS = {
