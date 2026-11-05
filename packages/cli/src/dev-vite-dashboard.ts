@@ -4,7 +4,6 @@ import {
   type ApiDocument,
   type BrickApp,
 } from "@brickkit/core";
-import { DEFAULT_DASHBOARD_PORT, DEFAULT_HISTORY_DAYS } from "./config";
 import { openDashboard } from "./dashboard-host";
 import { ROUTES } from "./dashboard-protocol";
 import type { DashboardExtensionOptions } from "./dashboard-extension";
@@ -42,9 +41,9 @@ export async function startViteDashboard(options: {
   logger: DashboardLogger;
 }): Promise<ViteDashboard | undefined> {
   const dashboard = await openDashboard({
-    port: options.port ?? DEFAULT_DASHBOARD_PORT,
+    port: options.port,
     directory: options.directory,
-    historyDays: options.historyDays ?? DEFAULT_HISTORY_DAYS,
+    historyDays: options.historyDays,
     warn: (message) => options.logger.warn(message),
     docs: true,
     dashboard: options.dashboard,

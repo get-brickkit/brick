@@ -15,7 +15,12 @@ import {
   type SpanProcessor,
 } from "@opentelemetry/sdk-trace";
 import { GLOBAL_SYMBOL } from "@brickkit/core";
-import type { WorkerMessage } from "./dev-protocol";
+import type {
+  SerializedError,
+  TelemetryRecord,
+  WorkerErrorPhase,
+} from "./dashboard-protocol";
+import { sendToSupervisor } from "./dev-protocol";
 
 /** Read by @brickkit/core's logger; see `createLogger` there. */
 const LOG_CAPTURE = Symbol.for(GLOBAL_SYMBOL.logsCapture);
@@ -35,45 +40,6 @@ const MAX_TEXT_LENGTH = 500;
 const MAX_STACK_LENGTH = 4000;
 const FLUSH_DELAY_MS = 20;
 const MAX_BATCH_SIZE = 200;
-const SEND_TIMEOUT_MS = 1000;
-
-export interface SpanEventRecord {
-  name: string;
-  timeMs: number;
-  attributes: Attributes;
-}
-
-export interface SpanStartRecord {
-  phase: "start";
-  traceId: string;
-  spanId: string;
-  parentSpanId?: string;
-  name: string;
-  startMs: number;
-  attributes: Attributes;
-}
-
-export interface SpanEndRecord {
-  phase: "end";
-  traceId: string;
-  spanId: string;
-  name: string;
-  endMs: number;
-  status: "unset" | "ok" | "error";
-  statusMessage?: string;
-  attributes: Attributes;
-  events: SpanEventRecord[];
-}
-
-export type TelemetryRecord = SpanStartRecord | SpanEndRecord;
-
-export type WorkerErrorPhase = "startup" | "uncaught" | "unhandled-rejection";
-
-export interface SerializedError {
-  name: string;
-  message: string;
-  stack?: string;
-}
 
 /**
  * Register the tracer provider, context manager, and W3C trace context
@@ -154,23 +120,6 @@ export function installWorkerTelemetry(): void {
   });
 }
 
-/** Resolves once the message is written, or after a short timeout if the channel is gone. */
-export function sendToSupervisor(message: WorkerMessage): Promise<void> {
-  if (!process.send) return Promise.resolve();
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, SEND_TIMEOUT_MS);
-    try {
-      process.send!(message, () => {
-        clearTimeout(timer);
-        resolve();
-      });
-    } catch {
-      clearTimeout(timer);
-      resolve();
-    }
-  });
-}
-
 export function reportWorkerError(
   phase: WorkerErrorPhase,
   error: unknown,
@@ -182,7 +131,7 @@ export function reportWorkerError(
   });
 }
 
-export function serializeError(error: unknown): SerializedError {
+function serializeError(error: unknown): SerializedError {
   if (error instanceof Error) {
     return {
       name: error.name,

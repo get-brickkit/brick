@@ -1,16 +1,17 @@
 import { existsSync, watch } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import { brick, isBrickApp } from "@brickkit/core";
 import { importEntry } from "./app-entry";
 import { TEMPORARY_FILE_PREFIX } from "./client-contract-file";
 import {
   ConfigError,
+  CONTRACT_FILE,
   DEFAULT_DASHBOARD_PORT,
-  DEFAULT_HISTORY_DAYS,
+  PROJECT_DEFAULTS,
   resolvePort,
 } from "./config";
 import { openDashboard } from "./dashboard-host";
+import { ownModule } from "./own-module";
 import type { DashboardExtensionOptions } from "./dashboard-extension";
 import { startDevApplication } from "./dev-application";
 import type { WorkerMessage, WorkerOptions } from "./dev-protocol";
@@ -21,6 +22,10 @@ import { buildAppWorkflows } from "./workflows";
 export interface DevServerOptions {
   port?: number;
   entry?: string;
+  /**
+   * @deprecated Only used without an `entry`; an exported app sets its own
+   * prefix in `brick({ prefix })`.
+   */
   prefix?: string;
   /** Generate a browser contract before starting the backend and frontend. */
   clientOutput?: string;
@@ -89,15 +94,15 @@ export async function startWorker(options: { entry: string }) {
   );
   const app = await importEntry(options.entry, { run: true });
   if (!isBrickApp(app))
-    throw new Error(
+    throw new ConfigError(
       "Brick: a worker needs an entry that default-exports a BrickApp.",
     );
   if (!app.events)
-    throw new Error(
+    throw new ConfigError(
       "Brick: this app has no events, so a worker has nothing to deliver.",
     );
   if (!app.events.describe().dispatch)
-    throw new Error(
+    throw new ConfigError(
       "Brick: this app only records events (events.dispatch is false), so a worker would deliver nothing. Enable dispatch for the worker process.",
     );
   await buildAppWorkflows(app);
@@ -130,7 +135,11 @@ export async function startWorker(options: { entry: string }) {
 export async function startDevServer(options: DevServerOptions = {}) {
   const entry = options.entry;
   if (!entry && (options.clientOutput || options.frontend))
-    throw new Error("Brick: --client and --frontend require an app entry.");
+    throw new ConfigError(
+      "Brick: --client and --frontend require an app entry.",
+    );
+  if (options.frontend && !options.clientOutput)
+    throw new ConfigError("Brick: --frontend requires --client <file>.");
   const port = resolvePort(options.port);
   if (!entry) return startDevApplication({ port, prefix: options.prefix });
   const resolvedEntry = resolve(entry);
@@ -139,24 +148,18 @@ export async function startDevServer(options: DevServerOptions = {}) {
       `[Brick-TS] Error: Entry file not found: ${resolvedEntry}`,
     );
 
-  const worker = new URL(
-    import.meta.url.endsWith(".ts") ? "./dev-worker.ts" : "./dev-worker.js",
-    import.meta.url,
-  );
-  if (options.frontend && !options.clientOutput)
-    throw new Error("Brick: --frontend requires --client <file>.");
   if (
     options.dashboard &&
     (options.dashboard.port ?? DEFAULT_DASHBOARD_PORT) === port
   )
-    throw new Error(
+    throw new ConfigError(
       "Brick: dashboard port must differ from the API port. Use --dashboard-port <number>.",
     );
   const manifest = options.manifest;
   if (manifest) await writeServiceManifest(manifest);
   const contract = resolve(
     options.clientOutput ??
-      join(manifest?.generated ?? "_brick", "contract.ts"),
+      join(manifest?.generated ?? PROJECT_DEFAULTS.generated, CONTRACT_FILE),
   );
   const workerOptions: WorkerOptions = {
     entry: resolvedEntry,
@@ -169,9 +172,9 @@ export async function startDevServer(options: DevServerOptions = {}) {
   // have somewhere to go.
   const dashboard = options.dashboard
     ? await openDashboard({
-        port: options.dashboard.port ?? DEFAULT_DASHBOARD_PORT,
+        port: options.dashboard.port,
         directory: process.cwd(),
-        historyDays: options.dashboard.historyDays ?? DEFAULT_HISTORY_DAYS,
+        historyDays: options.dashboard.historyDays,
         warn: (message) => console.warn(message),
         docs: true,
         dashboard: {
@@ -261,7 +264,11 @@ export async function startDevServer(options: DevServerOptions = {}) {
     telemetry?.setInspector(undefined);
     const generation = telemetry?.startGeneration() ?? 0;
     const application = Bun.spawn(
-      [process.execPath, fileURLToPath(worker), JSON.stringify(workerOptions)],
+      [
+        process.execPath,
+        ownModule("dev-worker"),
+        JSON.stringify(workerOptions),
+      ],
       {
         cwd: process.cwd(),
         stdout: "inherit",
@@ -290,11 +297,10 @@ export async function startDevServer(options: DevServerOptions = {}) {
     console.log(`📊 Dev dashboard:       http://127.0.0.1:${dashboard.port}`);
   }
   let child = launch();
+  // The worker reports the other files the entry imports (brick:dependencies).
   const watchDirs = [
     ...new Set([
-      resolve("src"),
-      resolve("app"),
-      resolve(resolvedEntry, ".."),
+      dirname(resolvedEntry),
       ...(manifest ? [manifest.services] : []),
     ]),
   ].filter(existsSync);

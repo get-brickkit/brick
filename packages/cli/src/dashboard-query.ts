@@ -7,9 +7,9 @@ import {
   type HistoryTrace,
   type Outcome,
   type TraceSummary,
+  type SpanEventRecord,
   type VolumeBucket,
 } from "./dashboard-protocol";
-import type { SpanEventRecord } from "./dev-telemetry";
 
 /*
  * The request log's rules, as plain functions over rows: what a request's
@@ -48,6 +48,67 @@ export function toRow(trace: TraceSummary): HistoryTrace {
 }
 
 export const OUTCOMES: readonly Outcome[] = ["ok", "client", "server"];
+
+/** The filters of the request log, over a window, a page at a time. */
+export interface HistoryQuery extends RowFilters {
+  from: number;
+  to: number;
+  limit?: number;
+  offset?: number;
+}
+
+/** A history query as the query string the history API takes. */
+export function encodeHistoryQuery(query: HistoryQuery): URLSearchParams {
+  const params = new URLSearchParams({
+    from: String(query.from),
+    to: String(query.to),
+  });
+  for (const endpoint of query.endpoints ?? [])
+    params.append("endpoint", endpoint);
+  for (const method of query.methods ?? []) params.append("method", method);
+  for (const service of query.services ?? []) params.append("service", service);
+  for (const outcome of query.outcomes ?? []) params.append("outcome", outcome);
+  if (query.minMs !== undefined) params.set("minMs", String(query.minMs));
+  if (query.query) params.set("q", query.query);
+  if (query.sort && query.sort !== "recent") params.set("sort", query.sort);
+  if (query.limit !== undefined) params.set("limit", String(query.limit));
+  if (query.offset !== undefined) params.set("offset", String(query.offset));
+  return params;
+}
+
+/** The history query in a query string, parsed defensively: what `encodeHistoryQuery` wrote. */
+export function decodeHistoryQuery(
+  params: URLSearchParams,
+  now = Date.now(),
+): HistoryQuery {
+  const integer = (name: string): number | undefined => {
+    const raw = params.get(name);
+    if (raw === null || raw.trim() === "") return undefined;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : undefined;
+  };
+  const all = (name: string): string[] | undefined => {
+    const values = params.getAll(name).filter((value) => value !== "");
+    return values.length > 0 ? values : undefined;
+  };
+  const to = integer("to") ?? now;
+  return {
+    to,
+    // A week back by default.
+    from: integer("from") ?? to - 7 * 86_400_000,
+    endpoints: all("endpoint"),
+    methods: all("method"),
+    services: all("service"),
+    outcomes: all("outcome")?.filter((value): value is Outcome =>
+      OUTCOMES.includes(value as Outcome),
+    ),
+    minMs: integer("minMs"),
+    query: params.get("q") || undefined,
+    sort: params.get("sort") === "slowest" ? "slowest" : "recent",
+    limit: integer("limit"),
+    offset: integer("offset"),
+  };
+}
 
 /** A filter groups its values with OR; separate filters combine with AND. */
 export interface RowFilters {

@@ -1,10 +1,5 @@
 import type { Attributes } from "@opentelemetry/api";
 import type { ArchitectureSchema } from "@brickkit/core";
-import type {
-  SpanEventRecord,
-  TelemetryRecord,
-  WorkerErrorPhase,
-} from "./dev-telemetry";
 
 /*
  * What the dashboard server and its page agree on: the routes, headers, event
@@ -13,7 +8,61 @@ import type {
  */
 
 // ---------------------------------------------------------------------------
+// Span records: what the app's tracer reports, over IPC or `/api/ingest`
+
+export interface SpanEventRecord {
+  name: string;
+  timeMs: number;
+  attributes: Attributes;
+}
+
+export interface SpanStartRecord {
+  phase: "start";
+  traceId: string;
+  spanId: string;
+  parentSpanId?: string;
+  name: string;
+  startMs: number;
+  attributes: Attributes;
+}
+
+export interface SpanEndRecord {
+  phase: "end";
+  traceId: string;
+  spanId: string;
+  name: string;
+  endMs: number;
+  status: "unset" | "ok" | "error";
+  statusMessage?: string;
+  attributes: Attributes;
+  events: SpanEventRecord[];
+}
+
+export type TelemetryRecord = SpanStartRecord | SpanEndRecord;
+
+export type WorkerErrorPhase = "startup" | "uncaught" | "unhandled-rejection";
+
+export interface SerializedError {
+  name: string;
+  message: string;
+  stack?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Routes
+
+/** The dashboard's built-in views; `#/<view>/…` opens one. */
+export const VIEW_NAMES = [
+  "requests",
+  "logs",
+  "overview",
+  "apis",
+  "docs",
+  "workflows",
+  "errors",
+  "reloads",
+] as const;
+export type ViewName = (typeof VIEW_NAMES)[number];
 
 interface RouteSpec {
   path: string;
@@ -24,7 +73,9 @@ interface RouteSpec {
   /** Served by the production dashboard; `"extension"`: only when it has one. */
   production: boolean | "extension";
   /** The page's view that needs it; a view whose routes production lacks is hidden there. */
-  view?: string;
+  view?: ViewName;
+  /** It changes something, so the request must carry `CSRF_HEADER`. */
+  csrf?: true;
 }
 
 const GET = ["GET"] as const;
@@ -72,8 +123,18 @@ export const ROUTES = {
     production: false,
     view: "workflows",
   },
-  ingest: { path: "/api/ingest", methods: ["POST"], production: false },
-  restart: { path: "/api/restart", methods: ["POST"], production: false },
+  ingest: {
+    path: "/api/ingest",
+    methods: ["POST"],
+    production: false,
+    csrf: true,
+  },
+  restart: {
+    path: "/api/restart",
+    methods: ["POST"],
+    production: false,
+    csrf: true,
+  },
 } as const satisfies Record<string, RouteSpec>;
 
 export type RouteName = keyof typeof ROUTES;
@@ -97,18 +158,22 @@ export function matchRoute(
 }
 
 /** Views the production dashboard hides: they need a route it does not serve. */
-export const PRODUCTION_HIDDEN_VIEWS: ReadonlySet<string> = new Set(
+export const PRODUCTION_HIDDEN_VIEWS: ReadonlySet<string> = new Set<ViewName>(
   Object.values(ROUTES as Record<RouteName, RouteSpec>).flatMap((route) =>
     route.view && route.production === false ? [route.view] : [],
   ),
 );
 
-export type HistoryEndpoint =
-  | "summary"
-  | "traces"
-  | "facets"
-  | "volume"
-  | "export";
+/** What each history query endpoint answers, as JSON. */
+export interface HistoryResponses {
+  summary: HistorySummary;
+  traces: { total: number; traces: HistoryTrace[] };
+  facets: HistoryFacets;
+  volume: VolumeBucket[];
+}
+
+/** The history endpoints: the JSON queries, and `export` (CSV). */
+export type HistoryEndpoint = keyof HistoryResponses | "export";
 
 /** A history query's address; with no endpoint, what the history holds. */
 export const historyUrl = (
@@ -139,15 +204,35 @@ export function decode(value: string): string {
   }
 }
 
+/**
+ * A page address, `#/<segments>#<anchor>`, each part encoded. Every view's
+ * links are built with it, and the page's `parseRoute` reads them back.
+ */
+export const hashHref = (segments: string[], anchor?: string): string =>
+  `#/${encodePath(segments)}${anchor ? `#${encodeURIComponent(anchor)}` : ""}`;
+
 /** The page's address of a docs page, optionally at one of its headings. */
-export function docsHref(path: string[], anchor?: string): string {
-  const pages = path.map(encodeURIComponent).join("/");
-  return `#/docs${pages ? `/${pages}` : ""}${anchor ? `#${encodeURIComponent(anchor)}` : ""}`;
-}
+export const docsHref = (path: string[], anchor?: string): string =>
+  hashHref(["docs", ...path], anchor);
+
+const encodePath = (path: string[]): string =>
+  path.map(encodeURIComponent).join("/");
 
 /** Where a file in the docs folder is served, by its path inside it. */
 export const docsFileUrl = (path: string): string =>
-  `${DOCS_PATHS.files}/${path.split("/").map(encodeURIComponent).join("/")}`;
+  `${DOCS_PATHS.files}/${encodePath(path.split("/"))}`;
+
+/** Where a compiled docs page is served, by its slugs. */
+export const docsPageUrl = (path: string[]): string =>
+  `${DOCS_PATHS.page}/${encodePath(path)}`;
+
+/** Where the docs search answers `query`. */
+export const docsSearchUrl = (query: string): string =>
+  `${DOCS_PATHS.search}?q=${encodeURIComponent(query)}`;
+
+/** Whether a link names a scheme (`https:`, `mailto:`) and so leaves the dashboard. */
+export const isExternalHref = (href: string): boolean =>
+  /^[a-z][a-z\d+.-]*:/i.test(href);
 
 /**
  * Sent with every request that changes something (restart, ingest). A page on
@@ -167,6 +252,33 @@ export interface IngestPayload {
   /** A notice that the app loaded: a new generation begins. */
   worker?: string;
 }
+
+// ---------------------------------------------------------------------------
+// The shell and its assets
+
+/** The files the shell loads from `ROUTES.assets.path`. `app.*` come from the dashboard's build. */
+export const ASSETS = {
+  app: "app.js",
+  appCss: "app.css",
+  /** The project's extension, or the list of parts when plugins have one too. */
+  extension: "extension.js",
+  extensionCss: "extension.css",
+  /** The project's theme tokens; see `themeCss`. */
+  theme: "brick-theme.css",
+} as const;
+
+/** Where an asset is served. */
+export const assetUrl = (file: string): string =>
+  `${ROUTES.assets.path}/${file}`;
+
+/**
+ * What the shell tells the page in its markup: a `<meta name="brick-extension"
+ * data-revision data-src>` for the extension, and the theme's `<link>`.
+ */
+export const SHELL = {
+  extensionMeta: 'meta[name="brick-extension"]',
+  themeLink: "link[data-brick-theme]",
+} as const;
 
 // ---------------------------------------------------------------------------
 // Modules the page shares with the project's own
@@ -308,18 +420,19 @@ export interface ApiSnapshot {
 }
 
 /** What the dashboard knows about the app's developer documentation. */
-export interface DocsSnapshot {
-  /** Changes whenever the pages change, so the Docs tab reloads. */
-  revision: number;
-  status: "ready" | "missing" | "error";
-  title: string;
-  /** Whether the project supplied components of its own. */
-  components: boolean;
-  /** Why the docs cannot be shown, when `status` is not ready. */
-  message?: string;
-  /** Packages to install, when `status` is "missing". */
-  packages?: string[];
-}
+export type DocsSnapshot =
+  | {
+      status: "ready";
+      /** Changes whenever the pages change, so the Docs tab reloads. */
+      revision: number;
+      title: string;
+      /** Whether the project supplied components of its own. */
+      components: boolean;
+    }
+  /** The packages the docs need are not installed. */
+  | { status: "missing"; packages: string[]; message: string }
+  /** Why the docs cannot be shown. */
+  | { status: "error"; message: string };
 
 /** The project's dashboard extension as last built. */
 export interface ExtensionBuild {

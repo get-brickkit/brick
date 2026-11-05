@@ -7,8 +7,10 @@ import {
 import { extname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { ConfigError } from "./config";
 import type { DevDocs } from "./dev-docs";
-import { parseHistoryQuery, type DevHistory } from "./dev-history";
+import type { DevHistory } from "./dev-history";
+import { decodeHistoryQuery, type HistoryQuery } from "./dashboard-query";
 import type { DevTelemetryStore } from "./dev-telemetry-store";
 import { dashboardShell } from "./dev-dashboard-shell";
 import type { DashboardAuth } from "@brickkit/core";
@@ -18,6 +20,7 @@ import {
   requestProtocol,
 } from "./dashboard-access";
 import {
+  ASSETS,
   CSRF_HEADER,
   CSRF_VALUE,
   DOCS_PATHS,
@@ -26,7 +29,7 @@ import {
   ROUTES,
   type DashboardEvents,
   type DashboardSnapshot,
-  type HistoryEndpoint,
+  type HistoryResponses,
   type IngestPayload,
   type RouteName,
 } from "./dashboard-protocol";
@@ -144,7 +147,7 @@ export function startDevDashboard(
   const production = options.mode === "production";
   if (!loopback && !options.auth) {
     return Promise.reject(
-      new Error(
+      new ConfigError(
         `Brick: the dashboard would listen on ${host}, where others can reach it, so it needs access control. Set dashboard.auth with a token or an authorize function.`,
       ),
     );
@@ -206,6 +209,13 @@ export function startDevDashboard(
       send(response, 404, "Not found");
       return;
     }
+    if (
+      "csrf" in ROUTES[route] &&
+      request.headers[CSRF_HEADER] !== CSRF_VALUE
+    ) {
+      send(response, 403, "Forbidden");
+      return;
+    }
     await handlers[route](request, response, url);
   }
 
@@ -259,6 +269,7 @@ export function startDevDashboard(
               }
             : undefined,
           theme: theme !== "",
+          mode: production ? "production" : "dev",
         }),
         {
           "content-type": "text/html; charset=utf-8",
@@ -268,7 +279,7 @@ export function startDevDashboard(
     assets(_request, response, url) {
       const name = url.pathname.slice(ROUTES.assets.path.length + 1);
       // The project's own files, kept in memory beside the dashboard's.
-      const own = name === "brick-theme.css" ? theme : extension?.asset(name);
+      const own = name === ASSETS.theme ? theme : extension?.asset(name);
       if (own !== undefined)
         send(response, 200, own, {
           "content-type": assetType(name),
@@ -301,10 +312,6 @@ export function startDevDashboard(
         send(response, 404, "Not found");
         return;
       }
-      if (request.headers[CSRF_HEADER] !== CSRF_VALUE) {
-        send(response, 403, "Forbidden");
-        return;
-      }
       options.restart();
       send(response, 202, "");
     },
@@ -331,10 +338,6 @@ export function startDevDashboard(
     request: IncomingMessage,
     response: ServerResponse,
   ): Promise<void> {
-    if (request.headers[CSRF_HEADER] !== CSRF_VALUE) {
-      send(response, 403, "Forbidden");
-      return;
-    }
     const body = await readBytes(request, MAX_INGEST_BYTES);
     if (!body) {
       send(response, 413, "Payload too large");
@@ -485,13 +488,17 @@ export function startDevDashboard(
     );
   }
 
-  /** Send the request on to `target` and stream its answer back. */
+  /**
+   * Send the request on to `target` and stream its answer back. `body`: the
+   * request's body when the caller already read it; else it is streamed.
+   */
   async function forward(
     request: IncomingMessage,
     response: ServerResponse,
     target: string,
     adjust: (headers: Headers) => void,
     unreachable: string,
+    body?: Uint8Array,
   ): Promise<void> {
     const headers = forwardedHeaders(request);
     adjust(headers);
@@ -505,10 +512,12 @@ export function startDevDashboard(
         signal: abort.signal,
         ...(isBodyless(request)
           ? {}
-          : {
-              body: Readable.toWeb(request) as unknown as BodyInit,
-              duplex: "half",
-            }),
+          : body
+            ? { body: body as BodyInit }
+            : {
+                body: Readable.toWeb(request) as unknown as BodyInit,
+                duplex: "half",
+              }),
       } as RequestInit);
       response.writeHead(upstream.status, returnedHeaders(upstream));
       if (!upstream.body || request.method === "HEAD") {
@@ -558,25 +567,17 @@ export function startDevDashboard(
       send(response, 413, "Payload too large");
       return;
     }
-    const headers = forwardedHeaders(request);
     const cookie = url.searchParams.get("cookie");
-    if (cookie) headers.set("cookie", cookie);
-    try {
-      const upstream = await fetch(target, {
-        method: request.method,
-        headers,
-        body: isBodyless(request) ? undefined : (body as BodyInit),
-        redirect: "manual",
-      });
-      send(
-        response,
-        upstream.status,
-        new Uint8Array(await upstream.arrayBuffer()),
-        returnedHeaders(upstream),
-      );
-    } catch {
-      send(response, 502, "Could not reach the app.");
-    }
+    await forward(
+      request,
+      response,
+      target.href,
+      (headers) => {
+        if (cookie) headers.set("cookie", cookie);
+      },
+      "Could not reach the app.",
+      body,
+    );
   }
 
   function eventStream(request: IncomingMessage, response: ServerResponse) {
@@ -686,10 +687,9 @@ function history(
   params: URLSearchParams,
   response: ServerResponse,
 ): void {
-  const queries: Record<
-    Exclude<HistoryEndpoint, "export">,
-    (query: ReturnType<typeof parseHistoryQuery>) => unknown
-  > = {
+  const queries: {
+    [K in keyof HistoryResponses]: (query: HistoryQuery) => HistoryResponses[K];
+  } = {
     summary: (query) => store.summary(query),
     traces: (query) => store.traces(query),
     facets: (query) => store.facets(query),
@@ -699,7 +699,7 @@ function history(
     const endpoint = pathname.slice(ROUTES.history.path.length + 1);
     if (endpoint === "") return json(response, store.info());
     if (endpoint === "export") {
-      return send(response, 200, store.exportCsv(parseHistoryQuery(params)), {
+      return send(response, 200, store.exportCsv(decodeHistoryQuery(params)), {
         "content-type": "text/csv; charset=utf-8",
         "content-disposition": 'attachment; filename="brick-requests.csv"',
         "cache-control": "no-store",
@@ -708,7 +708,7 @@ function history(
     if (Object.hasOwn(queries, endpoint))
       return json(
         response,
-        queries[endpoint as keyof typeof queries](parseHistoryQuery(params)),
+        queries[endpoint as keyof typeof queries](decodeHistoryQuery(params)),
       );
     const prefix = "traces/";
     if (endpoint.startsWith(prefix)) {
@@ -718,7 +718,10 @@ function history(
       if (trace) return json(response, trace);
     }
     send(response, 404, "Not found");
-  } catch {
+  } catch (error) {
+    // A malformed `%` in the trace id is the caller's mistake.
+    if (error instanceof URIError) return send(response, 400, error.message);
+    console.error("[Brick-TS] A dashboard history query failed:", error);
     send(response, 500, "History query failed");
   }
 }

@@ -1,5 +1,9 @@
 import type { ComponentType, ReactNode } from "react";
-import type { TraceSummary } from "../src/dashboard-protocol";
+import {
+  hashHref,
+  isExternalHref,
+  type TraceSummary,
+} from "../src/dashboard-protocol";
 import type { Route, View } from "./state";
 
 /*
@@ -158,7 +162,7 @@ export interface NavItem {
 const PAGE_ID = /^[a-z0-9][a-z0-9-]*$/i;
 
 export function pageHref(id: string): string {
-  return `#/x/${encodeURIComponent(id)}`;
+  return hashHref(["x", id]);
 }
 
 /** The sidebar entry a route belongs to. */
@@ -214,7 +218,7 @@ export function mergeNav(
       label: link.label,
       icon: link.icon,
       href: link.href,
-      external: /^[a-z][a-z\d+.-]*:/i.test(link.href),
+      external: isExternalHref(link.href),
     });
 
   const nav: (NavItem & Placement)[] = [...builtIn];

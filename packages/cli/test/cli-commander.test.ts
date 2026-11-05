@@ -190,7 +190,7 @@ describe("brick CLI (commander)", () => {
     }
   });
 
-  it("rejects deprecated build flags with guidance", async () => {
+  it("rejects deprecated build flags and conflicting flags with one line", async () => {
     const root = await mkdtemp(resolve(import.meta.dir, "../.brick-cli-test-"));
     try {
       const prefix = await run(root, ["build", entry, "--prefix", "/api"]);
@@ -199,6 +199,19 @@ describe("brick CLI (commander)", () => {
       const logging = await run(root, ["build", entry, "--no-request-logging"]);
       expect(logging.code).toBe(1);
       expect(logging.stderr).toContain("configure prefix");
+      // A user's mistake prints one line, not a stack.
+      expect(logging.stderr).not.toContain("Fatal error");
+      const conflict = await run(root, [
+        "dev",
+        entry,
+        "--no-dashboard",
+        "--history-days",
+        "3",
+      ]);
+      expect(conflict.code).toBe(1);
+      expect(conflict.stderr.trim()).toBe(
+        "Brick: --history-days cannot be combined with --no-dashboard.",
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -1,5 +1,6 @@
 import { useEffect, useState, type ComponentType } from "react";
 import {
+  docsPageUrl,
   DOCS_PATHS,
   type DocsInfo,
   type DocsPage,
@@ -41,7 +42,7 @@ export function useDocsPage(path: string[], revision: number): PageState {
   const [state, setState] = useState<{ key: string; value: PageState }>();
   useEffect(() => {
     const controller = new AbortController();
-    const url = `${DOCS_PATHS.page}/${path.map(encodeURIComponent).join("/")}`;
+    const url = docsPageUrl(path);
     getJson<DocsPage>(url, controller.signal).then(
       (page) =>
         setState({

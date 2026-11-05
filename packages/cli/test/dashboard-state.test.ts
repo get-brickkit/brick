@@ -1,11 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import {
-  docsHref,
   initialState,
   parseRoute,
   reduce,
   routeHref,
 } from "../dashboard/state";
+import { docsHref } from "../src/dashboard-protocol";
+import { apiHref } from "../dashboard/api-operations";
+import { pageHref } from "../dashboard/extension-registry";
 
 describe("parseRoute", () => {
   it("reads a view and a selected request", () => {
@@ -81,6 +83,24 @@ describe("docsHref", () => {
       view: "docs",
       path: ["a b", "c"],
       anchor: "d e",
+    });
+  });
+});
+
+describe("every link builder", () => {
+  it("writes what parseRoute reads back", () => {
+    expect(parseRoute(routeHref("requests", "a/b c"))).toMatchObject({
+      view: "requests",
+      traceId: "a/b c",
+    });
+    expect(parseRoute(pageHref("my page"))).toMatchObject({
+      view: "x",
+      page: "my page",
+      path: [],
+    });
+    expect(parseRoute(apiHref("pages api", "get", "/a/{id}"))).toMatchObject({
+      view: "apis",
+      path: ["pages api", "get", "a", "{id}"],
     });
   });
 });

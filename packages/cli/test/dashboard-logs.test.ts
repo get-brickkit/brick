@@ -10,12 +10,8 @@ import {
   parseLogQuery,
   queryLogs,
 } from "../dashboard/logs";
-import {
-  captureConsole,
-  installTracing,
-  type TelemetryRecord,
-} from "../src/dev-telemetry";
-import type { TraceSummary } from "../src/dashboard-protocol";
+import { captureConsole, installTracing } from "../src/dev-telemetry";
+import type { TelemetryRecord, TraceSummary } from "../src/dashboard-protocol";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
 
 function traceWith(

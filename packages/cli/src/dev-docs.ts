@@ -11,11 +11,12 @@ import {
   sep,
 } from "node:path";
 import type { DocumentationOptions } from "@brickkit/core";
+import { bundleComponents } from "./dashboard-extension";
 import {
   decode,
   docsFileUrl,
   docsHref,
-  SHARED_MODULES,
+  isExternalHref,
   type DocsInfo,
   type DocsNode,
   type DocsPage,
@@ -223,8 +224,7 @@ function walk(node: MdastNode, visit: (node: MdastNode) => void): void {
 
 /** Ways a link inside a page can point at another page or a local image. */
 function resolveInside(from: string, href: string): string | undefined {
-  if (/^[a-z][a-z\d+.-]*:/i.test(href) || href.startsWith("#"))
-    return undefined;
+  if (isExternalHref(href) || href.startsWith("#")) return undefined;
   if (href.startsWith("/")) return undefined;
   const [target] = href.split(/[?#]/);
   if (!target) return undefined;
@@ -475,8 +475,7 @@ export class DevDocs {
       (hashAt >= 0 ? href.slice(0, hashAt) : href).split("?")[0] ?? "";
     const route = (slug: string) =>
       docsHref(slug ? slug.split("/") : [], anchor);
-    if (/^[a-z][a-z\d+.-]*:/i.test(href) || href.startsWith("#") || !target)
-      return undefined;
+    if (isExternalHref(href) || !target) return undefined;
     if (target.startsWith("/")) {
       // A docs site links by address (/guide/setup); so can these pages.
       const slug = target.replace(/^\/+|\/+$/g, "");
@@ -552,57 +551,6 @@ export class DevDocs {
     this.#watchers.length = 0;
     this.#listeners.clear();
   }
-}
-
-const SHARED = SHARED_MODULES.map((module) => module.specifier);
-
-/** Bundle a module of React components for the dashboard to import. */
-export async function bundleComponents(entry: string): Promise<string> {
-  if (typeof Bun !== "undefined") {
-    const result = await Bun.build({
-      entrypoints: [entry],
-      target: "browser",
-      format: "esm",
-      external: SHARED,
-      minify: false,
-      // Report what went wrong, not only that something did.
-      throw: false,
-    });
-    if (!result.success)
-      throw new Error(result.logs.map((log) => log.message).join("\n"));
-    // A CSS import adds a stylesheet output; the module is the entry point.
-    const output =
-      result.outputs.find((item) => item.kind === "entry-point") ??
-      result.outputs[0]!;
-    return output.text();
-  }
-  // Under Node the dev server's own bundler does the work. The name is not
-  // written as a literal so the CLI's Bun bundle, which never gets here,
-  // stays free of a Vite import.
-  const bundler = "vite";
-  const { build } = (await import(bundler)) as typeof import("vite");
-  const output = await build({
-    configFile: false,
-    logLevel: "silent",
-    root: dirname(entry),
-    oxc: { jsx: { runtime: "automatic" } },
-    esbuild: { jsx: "automatic" },
-    define: { "process.env.NODE_ENV": '"development"' },
-    build: {
-      write: false,
-      minify: false,
-      lib: { entry, formats: ["es"], fileName: "components" },
-      rollupOptions: { external: SHARED },
-    },
-  } as never);
-  const bundles = Array.isArray(output) ? output : [output];
-  for (const bundle of bundles) {
-    const chunk = ("output" in bundle ? bundle.output : []).find(
-      (item) => item.type === "chunk" && item.isEntry,
-    );
-    if (chunk && "code" in chunk) return chunk.code;
-  }
-  throw new Error("Brick: the docs components module produced no output.");
 }
 
 /** Flatten what MDX gives for a heading to text. */
@@ -771,14 +719,11 @@ export class DocsHost {
           ? `The docs need ${opened.packages.join(" and ")}. Install with: bun add -d ${opened.packages.join(" ")}`
           : opened.message;
       this.#warn(`[Brick-TS] Docs are off. ${message}`);
-      this.#publish({
-        revision: 1,
-        status: opened.status,
-        title: DEFAULT_TITLE,
-        components: false,
-        message,
-        ...(opened.status === "missing" ? { packages: opened.packages } : {}),
-      });
+      this.#publish(
+        opened.status === "missing"
+          ? { status: "missing", packages: opened.packages, message }
+          : { status: "error", message },
+      );
       return;
     }
     this.#docs = opened.docs;

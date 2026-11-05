@@ -2,16 +2,17 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DevHistory, openHistory, parseHistoryQuery } from "../src/dev-history";
+import { DevHistory, openHistory } from "../src/dev-history";
 import {
   applyFilters,
   bucketRows,
+  decodeHistoryQuery,
+  type HistoryQuery,
   computeFacets,
   summarizeRows,
   toRow,
   tracesToCsv,
 } from "../src/dashboard-query";
-import type { HistoryQuery } from "../src/dev-history";
 import type { TraceSummary } from "../src/dashboard-protocol";
 
 const DAY = 86_400_000;
@@ -156,6 +157,39 @@ describe("openHistory", () => {
 });
 
 describe("DevHistory", () => {
+  it("warns once per kind of failure when it cannot write or prune", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "brick-history-"));
+    directories.push(directory);
+    const warnings: string[] = [];
+    const history = (await openHistory({
+      directory,
+      days: 90,
+      warn: (message) => warnings.push(message),
+    }))!;
+    opened.push(history);
+    const specifier = "bun:sqlite";
+    const { Database } = (await import(specifier)) as {
+      Database: new (file: string) => {
+        exec(sql: string): void;
+        close(): void;
+      };
+    };
+    const raw = new Database(join(directory, ".brick", "telemetry.sqlite"));
+    raw.exec("DROP TABLE traces");
+    raw.close();
+
+    for (const id of ["a", "b"]) {
+      history.saveTrace(trace(id));
+      history.flush();
+      history.prune();
+    }
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain(
+      "Could not save requests to the request history",
+    );
+    expect(warnings[1]).toContain("Could not prune the request history");
+  });
+
   it("returns a saved request with its spans, and replaces it when saved again", async () => {
     const history = await open();
     history.saveTrace(trace("a", { httpStatus: 200 }));
@@ -589,9 +623,9 @@ describe("under Node", () => {
   });
 });
 
-describe("parseHistoryQuery", () => {
+describe("decodeHistoryQuery", () => {
   it("reads filters from a query string and ignores values it does not understand", () => {
-    const query = parseHistoryQuery(
+    const query = decodeHistoryQuery(
       new URLSearchParams(
         "from=100&to=200&endpoint=GET%20%2Fx&endpoint=POST%20%2Fy&method=GET" +
           "&service=pages&outcome=server&outcome=client&outcome=weird" +
@@ -612,7 +646,7 @@ describe("parseHistoryQuery", () => {
       offset: 40,
     });
 
-    const defaults = parseHistoryQuery(
+    const defaults = decodeHistoryQuery(
       new URLSearchParams({ outcome: "weird", from: "nope", minMs: "" }),
       NOW,
     );

@@ -24,6 +24,14 @@ export const DEFAULT_PORT = 4000;
 export const DEFAULT_DASHBOARD_PORT = 9400;
 export const DEFAULT_HISTORY_DAYS = 90;
 export const DEFAULT_OUTDIR = "dist/brick";
+/** Project paths a config leaves out, relative to its folder. */
+export const PROJECT_DEFAULTS = {
+  entry: "src/app.ts",
+  services: "src/services",
+  generated: "_brick",
+} as const;
+/** The client contract's name in the generated folder, when `client.output` names none. */
+export const CONTRACT_FILE = "contract.ts";
 const CONFIG_FILE = "brick.config.ts";
 
 const path = (message: string) => t.String({ minLength: 1, message });
@@ -142,7 +150,7 @@ export function defineConfig(config: BrickConfig): BrickConfig {
   return config;
 }
 
-/** A missing file or an invalid config; `brick` prints the message alone, which names the file and key. */
+/** A user's mistake: a missing file, an invalid config, or flags that conflict. `brick` prints the message alone. */
 export class ConfigError extends Error {}
 
 /** The project: its config file, if any, and every path with defaults applied. */
@@ -188,17 +196,20 @@ export async function resolveProject(
   if (file)
     validateConfig(config, file.endsWith(CONFIG_FILE) ? CONFIG_FILE : file);
   const root = file ? dirname(file) : resolve(cwd);
-  const generated = resolve(root, config.generated ?? "_brick");
+  const generated = resolve(
+    root,
+    config.generated ?? PROJECT_DEFAULTS.generated,
+  );
   return {
     file,
     root,
     config,
-    entry: resolve(root, config.entry ?? "src/app.ts"),
-    services: resolve(root, config.services ?? "src/services"),
+    entry: resolve(root, config.entry ?? PROJECT_DEFAULTS.entry),
+    services: resolve(root, config.services ?? PROJECT_DEFAULTS.services),
     generated,
     contract: config.client?.output
       ? resolve(root, config.client.output)
-      : join(generated, "contract.ts"),
+      : join(generated, CONTRACT_FILE),
     outdir: resolve(root, config.build?.outdir ?? DEFAULT_OUTDIR),
   };
 }
@@ -213,6 +224,53 @@ export async function loadConfig(
 ): Promise<LoadedConfig | undefined> {
   const project = await resolveProject(explicit, cwd);
   return project.file ? project : undefined;
+}
+
+/** The dashboard flags of `brick dev`. */
+export interface DevDashboardFlags {
+  /** `false` with `--no-dashboard`. */
+  dashboard?: boolean;
+  dashboardPort?: number;
+  historyDays?: number;
+  dashboardExtension?: string;
+}
+
+/**
+ * Whether `brick dev` serves its dashboard, and its port and history, from the
+ * config's `dev.dashboard` and the flags. The config can turn it off; a port or
+ * history flag turns it back on.
+ *
+ * @throws ConfigError When a dashboard flag is combined with turning it off.
+ */
+export function resolveDevDashboard(
+  configured: NonNullable<BrickConfig["dev"]>["dashboard"],
+  flags: DevDashboardFlags,
+): { port?: number; historyDays?: number } | false {
+  if (flags.dashboard === false) {
+    if (flags.dashboardPort !== undefined)
+      throw new ConfigError(
+        "Brick: --dashboard-port cannot be combined with --no-dashboard.",
+      );
+    if (flags.historyDays !== undefined)
+      throw new ConfigError(
+        "Brick: --history-days cannot be combined with --no-dashboard.",
+      );
+  }
+  const off =
+    flags.dashboard === false ||
+    (configured === false &&
+      flags.dashboardPort === undefined &&
+      flags.historyDays === undefined);
+  if (off && flags.dashboardExtension)
+    throw new ConfigError(
+      "Brick: --dashboard-extension cannot be combined with --no-dashboard.",
+    );
+  if (off) return false;
+  const settings = configured || undefined;
+  return {
+    port: flags.dashboardPort ?? settings?.port,
+    historyDays: flags.historyDays ?? settings?.historyDays,
+  };
 }
 
 /** A port from a flag, else `PORT`, else the config, else 4000; throws outside 1-65535. */

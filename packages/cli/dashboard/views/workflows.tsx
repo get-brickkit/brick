@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Empty } from "@/components/page-header";
 import { cn } from "@/lib/utils";
-import { ROUTES } from "../../src/dashboard-protocol";
+import { ROUTES, SHELL } from "../../src/dashboard-protocol";
 
 /**
  * The Workflow SDK's own inspector, served by the dev server at `/workflows`
@@ -41,7 +41,7 @@ export function WorkflowsView({
         className="h-[calc(100svh-3.5rem)] w-full border-0"
         onLoad={(event) => {
           // The project's theme applies to the inspector too: it uses the same tokens.
-          const theme = document.querySelector("link[data-brick-theme]");
+          const theme = document.querySelector(SHELL.themeLink);
           const head = event.currentTarget.contentDocument?.head;
           if (theme && head) head.append(theme.cloneNode());
         }}

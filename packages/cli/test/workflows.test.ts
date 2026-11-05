@@ -16,11 +16,39 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadBrickApp } from "../src/app-entry";
 import { buildApplication } from "../src/build";
-import { buildWorkflows, registerWorkflowTransform } from "../src/workflows";
+import type { BrickApp } from "@brickkit/core";
+import {
+  buildAppWorkflows,
+  buildWorkflows,
+  registerWorkflowTransform,
+} from "../src/workflows";
 
-const root = join(import.meta.dir, "fixtures", "workflow-app");
-const dir = join(root, ".well-known", "workflow", "v1");
+const fixture = join(import.meta.dir, "fixtures", "workflow-app");
 const WORKFLOW_ID = "workflow//./src/hello//hello";
+
+/**
+ * A copy of the fixture, so builds and edits stay out of the repository. Outside
+ * it, this package's dependencies resolve from a node_modules link beside it.
+ */
+function copyFixture(): string {
+  const copy = join(
+    realpathSync(mkdtempSync(join(tmpdir(), "brick-workflow-"))),
+    "app",
+  );
+  cpSync(fixture, copy, {
+    recursive: true,
+    filter: (path) => !/[\\/](\.well-known|dist)$/.test(path),
+  });
+  symlinkSync(
+    join(import.meta.dir, "..", "node_modules"),
+    join(dirname(copy), "node_modules"),
+  );
+  return copy;
+}
+
+const root = copyFixture();
+const dir = join(root, ".well-known", "workflow", "v1");
+afterAll(() => rmSync(dirname(root), { recursive: true, force: true }));
 
 describe("workflow build and transform", () => {
   it("does nothing, and says so, in a project without the Workflow SDK", async () => {
@@ -36,7 +64,6 @@ describe("workflow build and transform", () => {
   });
 
   it("builds the bundle and a manifest that names the workflow", async () => {
-    rmSync(join(root, ".well-known"), { recursive: true, force: true });
     await buildWorkflows({ root });
 
     expect(existsSync(join(dir, "flow.mjs"))).toBe(true);
@@ -52,11 +79,9 @@ describe("workflow build and transform", () => {
   });
 
   it("gives a workflow the id the bundle knows, and registers its steps", async () => {
-    // This installs the transform for the whole `bun test` process, once: Bun
-    // keeps a plugin until the process ends. The test above needs it not yet
-    // installed, so no other test file may install it; run a child process instead.
+    // Other test files may have registered the transform for their own root.
     expect(await registerWorkflowTransform(root)).toBe(true);
-    const { hello } = await import("./fixtures/workflow-app/src/hello");
+    const { hello } = await import(join(root, "src", "hello.ts"));
 
     expect((hello as { workflowId?: string }).workflowId).toBe(WORKFLOW_ID);
     const steps = (globalThis as Record<symbol, unknown>)[
@@ -99,7 +124,7 @@ describe("apps with workflows", () => {
   const entry = join(root, "src", "app.ts");
 
   it("releases the world when an app is only inspected", async () => {
-    const { world } = await import("./fixtures/workflow-app/src/app");
+    const { world } = await import(entry);
     const before = world.closed;
     await loadBrickApp(entry);
     expect(world.closed).toBeGreaterThan(before);
@@ -108,31 +133,30 @@ describe("apps with workflows", () => {
   it("brick build transforms the workflows, builds the bundle, and starts events in the server", async () => {
     rmSync(join(root, ".well-known"), { recursive: true, force: true });
     const outdir = join(root, "dist", "brick");
-    try {
-      await buildApplication({ entry, outdir });
-      const server = readFileSync(join(outdir, "server.js"), "utf8");
-      expect(server).toContain(WORKFLOW_ID);
-      expect(server).toContain("events?.start()");
-      // A second Ctrl-C exits even while a delivery hangs.
-      expect(server).toContain('process.exit(signal === "SIGINT" ? 130 : 143)');
-      // The workflow plugin must not keep the AOT plugin from the entry: without
-      // the precompiled handlers every route answers 500.
-      expect(server).toContain("Compiled.register(");
-      expect(existsSync(join(dir, "flow.mjs"))).toBe(true);
-    } finally {
-      rmSync(join(root, "dist"), { recursive: true, force: true });
-    }
+    await buildApplication({ entry, outdir });
+    const server = readFileSync(join(outdir, "server.js"), "utf8");
+    expect(server).toContain(WORKFLOW_ID);
+    expect(server).toContain("events?.start()");
+    // A second Ctrl-C exits even while a delivery hangs.
+    expect(server).toContain('process.exit(signal === "SIGINT" ? 130 : 143)');
+    // The workflow plugin must not keep the AOT plugin from the entry: without
+    // the precompiled handlers every route answers 500.
+    expect(server).toContain("Compiled.register(");
+    expect(existsSync(join(dir, "flow.mjs"))).toBe(true);
+  });
+
+  it("refuses an app whose workflows root is not the one its files were transformed from", async () => {
+    await registerWorkflowTransform(root);
+    const app = { events: { workflows: { root: tmpdir() } } } as BrickApp;
+    await expect(buildAppWorkflows(app)).rejects.toThrow(
+      "is not the folder its workflow files were transformed from",
+    );
   });
 });
 
 describe("reusing the bundle", () => {
-  // A copy, so the edits below do not touch the fixture the other tests use.
-  // Outside the repository, where this package's dependencies resolve from a
-  // node_modules link in the parent folder.
-  const copy = join(
-    realpathSync(mkdtempSync(join(tmpdir(), "brick-workflow-"))),
-    "app",
-  );
+  // Its own copy: the edits below would change what the tests above see.
+  const copy = copyFixture();
   const flow = join(copy, ".well-known", "workflow", "v1", "flow.mjs");
   const steps = join(
     copy,
@@ -157,17 +181,9 @@ describe("reusing the bundle", () => {
   const reuse = () => buildWorkflows({ root: copy, reuse: true });
 
   beforeAll(() => {
-    cpSync(root, copy, {
-      recursive: true,
-      filter: (path) => !path.includes(".well-known"),
-    });
     mkdirSync(join(copy, "node_modules", "@tsconfig", "test"), {
       recursive: true,
     });
-    symlinkSync(
-      join(import.meta.dir, "..", "node_modules"),
-      join(dirname(copy), "node_modules"),
-    );
     write("shared.ts", 'export const suffix = "!";\n');
     write("data.json", '{ "greeting": "hi" }\n');
     write(

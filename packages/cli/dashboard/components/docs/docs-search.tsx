@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { docsHref } from "@/state";
 import { segmentsOf } from "@/components/docs/docs-tree";
 import {
-  DOCS_PATHS,
+  docsHref,
+  docsSearchUrl,
   type DocsSearchHit,
 } from "../../../src/dashboard-protocol";
 
@@ -21,7 +21,7 @@ export function DocsSearch({ revision }: { revision: number }) {
     const controller = new AbortController();
     // Wait for a pause in typing before asking.
     const timer = setTimeout(() => {
-      fetch(`${DOCS_PATHS.search}?q=${encodeURIComponent(query)}`, {
+      fetch(docsSearchUrl(query), {
         signal: controller.signal,
       })
         .then((response) => (response.ok ? response.json() : []))

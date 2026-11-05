@@ -1,11 +1,11 @@
 import { mkdtemp, mkdir, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { compileBrickApplication } from "@brickkit/core";
-import { fileURLToPath } from "node:url";
 import type { BunPlugin } from "bun";
 import { emitCompiledApplication } from "./compiler";
 import { brickAot } from "./compiler/aot";
 import { loadBrickApp } from "./app-entry";
+import { ownModule } from "./own-module";
 import { DEFAULT_OUTDIR, resolvePort } from "./config";
 import { buildAppWorkflows, workflowTransformPlugin } from "./workflows";
 import {
@@ -29,15 +29,6 @@ export interface BuildApplicationOptions {
   dashboard?: DashboardExtensionOptions;
 }
 
-/** A module of this package, bundled into the server from source or from dist. */
-const own = (name: string) =>
-  fileURLToPath(
-    new URL(
-      `./${name}${import.meta.url.endsWith(".ts") ? ".ts" : ".js"}`,
-      import.meta.url,
-    ),
-  );
-
 /**
  * The production dashboard stays out of the bundle: it serves files that ship
  * with @brickkit/cli, so a built server whose app asks for it imports it from
@@ -53,16 +44,16 @@ const productionDashboardAtRunTime: BunPlugin = {
   },
 };
 
+/** The files `brick build` writes to the output folder, `server.js` last. */
+const OUTPUTS = ["routes.js", "brick-ir.json", "server.js.map", "server.js"];
+
 /** Bundle an exported BrickApp with generated handlers and its original configuration. */
 export async function buildApplication(options: BuildApplicationOptions) {
   const entry = resolve(options.entry);
   if (!(await Bun.file(entry).exists()))
     throw new Error(`Brick compiler: entry not found: ${entry}`);
   const outdir = resolve(options.outdir ?? DEFAULT_OUTDIR);
-  if (
-    entry === join(outdir, "server.js") ||
-    entry === join(outdir, "routes.js")
-  )
+  if (OUTPUTS.some((name) => entry === join(outdir, name)))
     throw new Error(
       "Brick compiler: output would overwrite the application entry",
     );
@@ -99,10 +90,9 @@ export async function buildApplication(options: BuildApplicationOptions) {
       ? join(outdir, "dashboard")
       : undefined;
     const theme = JSON.stringify(options.dashboard?.theme);
-    const source = `import { fileURLToPath } from "node:url";
-import { loadCompiledBrickApp } from "@brickkit/core";
-import { resolvePort } from ${JSON.stringify(own("config"))};
-import { serveApp, shutdownOnSignal } from ${JSON.stringify(own("serve"))};
+    const source = `import { loadCompiledBrickApp } from "@brickkit/core";
+import { resolvePort } from ${JSON.stringify(ownModule("config"))};
+import { serveApp, shutdownOnSignal } from ${JSON.stringify(ownModule("serve"))};
 import { ir } from "./routes.js";
 export const app = await loadCompiledBrickApp(() => import(${JSON.stringify(entry)}), ir);
 if (import.meta.main) {
@@ -147,12 +137,7 @@ if (import.meta.main) {
       JSON.stringify(compilation.ir, null, 2) + "\n",
     );
     await mkdir(outdir, { recursive: true });
-    for (const name of [
-      "routes.js",
-      "brick-ir.json",
-      "server.js.map",
-      "server.js",
-    ])
+    for (const name of OUTPUTS)
       await rename(join(staging, name), join(outdir, name));
     if (dashboard) {
       await rm(dashboard, { recursive: true, force: true });

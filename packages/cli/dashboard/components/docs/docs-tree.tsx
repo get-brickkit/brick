@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { docsHref } from "@/state";
-import type { DocsNode } from "../../../src/dashboard-protocol";
+import { docsHref, type DocsNode } from "../../../src/dashboard-protocol";
 
 /** A tree route (`/guide/setup`) as the segments the dashboard's route uses. */
 export function segmentsOf(url: string): string[] {

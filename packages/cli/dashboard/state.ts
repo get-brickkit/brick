@@ -8,16 +8,18 @@ import {
 import {
   LIVE_LIMITS,
   ROUTES,
+  SHELL,
   TELEMETRY_EVENTS,
   THEME_STORAGE_KEY,
+  VIEW_NAMES,
   decode,
+  hashHref,
+  type ViewName,
   type DashboardEvents,
   type DashboardSnapshot,
   type DevTelemetryEvent,
   type ExtensionBuild,
 } from "../src/dashboard-protocol";
-
-export { docsHref } from "../src/dashboard-protocol";
 
 export interface DashboardState extends DashboardSnapshot {
   connected: boolean;
@@ -30,7 +32,7 @@ export interface DashboardState extends DashboardSnapshot {
  */
 function followExtension(build: ExtensionBuild | null) {
   const served = document
-    .querySelector('meta[name="brick-extension"]')
+    .querySelector(SHELL.extensionMeta)
     ?.getAttribute("data-revision");
   // A page served without an extension reloads when one appears (a plugin's).
   if (build && served !== String(build.revision)) location.reload();
@@ -134,14 +136,7 @@ export function useDashboard(): DashboardState {
 }
 
 export type View =
-  | "requests"
-  | "logs"
-  | "overview"
-  | "apis"
-  | "docs"
-  | "workflows"
-  | "errors"
-  | "reloads"
+  | ViewName
   /** An extension's page, at `#/x/<id>/…`, so it never clashes with a built-in one. */
   | "x";
 export interface Route {
@@ -154,17 +149,6 @@ export interface Route {
   /** The extension page's id, for `x`. */
   page?: string;
 }
-
-const VIEWS: View[] = [
-  "requests",
-  "logs",
-  "overview",
-  "apis",
-  "docs",
-  "workflows",
-  "errors",
-  "reloads",
-];
 
 export function parseRoute(hash: string): Route {
   const body = hash.replace(/^#\/?/, "");
@@ -183,7 +167,9 @@ export function parseRoute(hash: string): Route {
     };
   return {
     // History became part of Requests; old links still land there.
-    view: VIEWS.includes(view as View) ? (view as View) : "requests",
+    view: VIEW_NAMES.includes(view as ViewName)
+      ? (view as ViewName)
+      : "requests",
     traceId: path[0],
     path,
     ...(anchor ? { anchor } : {}),
@@ -191,7 +177,7 @@ export function parseRoute(hash: string): Route {
 }
 
 export function routeHref(view: View, traceId?: string): string {
-  return traceId ? `#/${view}/${encodeURIComponent(traceId)}` : `#/${view}`;
+  return hashHref(traceId ? [view, traceId] : [view]);
 }
 
 /** The view and selected request, kept in the URL hash so links can be shared. */
@@ -206,7 +192,6 @@ export function useRoute(): Route {
 }
 
 export type Theme = "light" | "dark" | "system";
-const THEME_KEY = THEME_STORAGE_KEY;
 
 function applyTheme(theme: Theme) {
   const dark =
@@ -218,7 +203,7 @@ function applyTheme(theme: Theme) {
 
 export function useTheme(): { theme: Theme; cycle: () => void } {
   const [theme, setTheme] = useState<Theme>(() => {
-    const stored = localStorage.getItem(THEME_KEY);
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
     return stored === "light" || stored === "dark" ? stored : "system";
   });
   useEffect(() => {
@@ -233,8 +218,8 @@ export function useTheme(): { theme: Theme; cycle: () => void } {
     setTheme((current) => {
       const next: Theme =
         current === "system" ? "dark" : current === "dark" ? "light" : "system";
-      if (next === "system") localStorage.removeItem(THEME_KEY);
-      else localStorage.setItem(THEME_KEY, next);
+      if (next === "system") localStorage.removeItem(THEME_STORAGE_KEY);
+      else localStorage.setItem(THEME_STORAGE_KEY, next);
       return next;
     });
   }, []);

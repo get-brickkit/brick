@@ -7,7 +7,9 @@ import type {
   SerializedError,
   TelemetryRecord,
   WorkerErrorPhase,
-} from "./dev-telemetry";
+} from "./dashboard-protocol";
+
+const SEND_TIMEOUT_MS = 1000;
 
 /*
  * What `brick dev`'s supervisor and its worker process agree on: the options
@@ -48,3 +50,20 @@ export type WorkerMessage =
   | { type: "brick:dependencies"; files: string[] }
   /** The browser contract is written; the frontend may start. */
   | { type: "brick:contract-ready" };
+
+/** Resolves once the message is written, or after a short timeout if the channel is gone. */
+export function sendToSupervisor(message: WorkerMessage): Promise<void> {
+  if (!process.send) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, SEND_TIMEOUT_MS);
+    try {
+      process.send!(message, () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    } catch {
+      clearTimeout(timer);
+      resolve();
+    }
+  });
+}

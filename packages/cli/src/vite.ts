@@ -1,6 +1,7 @@
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { writeFileIfChanged } from "./client-contract-file";
+import { join, resolve } from "node:path";
+import { writeAppContract } from "./client-contract-file";
+import { CONTRACT_FILE, PROJECT_DEFAULTS } from "./config";
+import { ownModule } from "./own-module";
 import {
   createServer,
   isRunnableDevEnvironment,
@@ -9,13 +10,11 @@ import {
   type ResolvedConfig,
   type EnvironmentModuleNode,
 } from "vite";
-import { generateClientContract } from "./client-contract";
 import { requireBrickApp } from "@brickkit/core";
 import { startViteDashboard, type ViteDashboard } from "./dev-vite-dashboard";
-import {
-  themeCss,
-  type DashboardExtensionOptions,
-  type DashboardTheme,
+import type {
+  DashboardExtensionOptions,
+  DashboardTheme,
 } from "./dashboard-extension";
 import { ModuleRunner } from "vite/module-runner";
 
@@ -46,14 +45,7 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
   const reporterId = "virtual:brick-dev-reporter";
   const resolvedReporterId = "\0" + reporterId;
   // Imported by file path: the package name may not resolve from the app's root.
-  const reporterModule = fileURLToPath(
-    new URL(
-      import.meta.url.endsWith(".ts")
-        ? "./dev-reporter.ts"
-        : "./dev-reporter.js",
-      import.meta.url,
-    ),
-  );
+  const reporterModule = ownModule("dev-reporter");
   let entry: string;
   let output: string;
   let config: ResolvedConfig;
@@ -64,11 +56,6 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
   const dependencies = new Set<string>();
   let revision = 0;
   const changedFiles = new Set<string>();
-
-  async function writeContract(value: unknown) {
-    const source = generateClientContract(requireBrickApp(value));
-    await writeFileIfChanged(output, source);
-  }
 
   function collectDependencies(
     node: EnvironmentModuleNode | undefined,
@@ -88,13 +75,11 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
       config = resolved;
       entry = normalizePath(resolve(config.root, options.entry));
       output = normalizePath(
-        resolve(config.root, options.output ?? "_brick/contract.ts"),
+        resolve(
+          config.root,
+          options.output ?? join(PROJECT_DEFAULTS.generated, CONTRACT_FILE),
+        ),
       );
-      if (entry === output)
-        throw new Error(
-          "Brick: contract output must not overwrite the app entry.",
-        );
-      if (options.dashboard) themeCss(options.dashboard.theme);
     },
     async configureServer(server) {
       const environment = server.environments.ssr;
@@ -137,7 +122,7 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
         });
       }
       const app = (await runner.import(entry)).default;
-      await writeContract(app);
+      await writeAppContract(app, entry, output);
       dashboard?.architecture(requireBrickApp(app));
       dependencies.clear();
       collectDependencies(environment.moduleGraph.getModuleById(entry));
@@ -182,7 +167,7 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
           invalidate(entry);
           try {
             const app = (await currentRunner.import(entry)).default;
-            await writeContract(app);
+            await writeAppContract(app, entry, output);
             dashboard?.architecture(requireBrickApp(app));
           } finally {
             collectDependencies(
@@ -222,7 +207,11 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
           const environment = loader.environments.ssr;
           if (!environment || !isRunnableDevEnvironment(environment))
             throw new Error("Brick: missing build-time SSR loader.");
-          await writeContract((await environment.runner.import(entry)).default);
+          await writeAppContract(
+            (await environment.runner.import(entry)).default,
+            entry,
+            output,
+          );
         } finally {
           await loader.close();
         }

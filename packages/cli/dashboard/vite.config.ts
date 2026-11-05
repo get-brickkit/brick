@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { ASSETS, ROUTES } from "../src/dashboard-protocol";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 
@@ -12,7 +13,7 @@ const here = fileURLToPath(new URL(".", import.meta.url));
 export default defineConfig({
   root: here,
   // The CLI serves the build under /assets/, so asset URLs in CSS must too.
-  base: "/assets/",
+  base: `${ROUTES.assets.path}/`,
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
@@ -28,6 +29,7 @@ export default defineConfig({
     assetsInlineLimit: 0,
     rollupOptions: {
       input: {
+        // `ASSETS.app`
         app: fileURLToPath(new URL("./main.tsx", import.meta.url)),
         // `@brickkit/cli/dashboard` for extensions; it shares chunks with the
         // app, so both use one copy of each component and context.
@@ -39,7 +41,7 @@ export default defineConfig({
         entryFileNames: "[name].js",
         chunkFileNames: "[name]-[hash].js",
         assetFileNames: (asset) =>
-          asset.names.includes("main.css") ? "app.css" : "[name][extname]",
+          asset.names.includes("main.css") ? ASSETS.appCss : "[name][extname]",
       },
     },
   },

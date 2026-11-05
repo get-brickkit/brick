@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import {
   findConfigFile,
   loadConfig,
+  resolveDevDashboard,
   resolvePort,
   resolveProject,
   validateConfig,
@@ -119,6 +120,76 @@ describe("brick.config.ts validation", () => {
     );
     expect(error(null)).toContain("must default-export");
   });
+});
+
+describe("brick dev dashboard on/off", () => {
+  it.each([
+    ["on by default", undefined, {}, {}],
+    [
+      "config settings",
+      { port: 9500, historyDays: 7 },
+      {},
+      { port: 9500, historyDays: 7 },
+    ],
+    [
+      "flags win over config",
+      { port: 9500 },
+      { dashboardPort: 9600 },
+      { port: 9600 },
+    ],
+    ["--no-dashboard", undefined, { dashboard: false }, false],
+    ["off in config", false, {}, false],
+    [
+      "a port flag turns it back on",
+      false,
+      { dashboardPort: 9600 },
+      { port: 9600 },
+    ],
+    [
+      "a history flag turns it back on",
+      false,
+      { historyDays: 1 },
+      { historyDays: 1 },
+    ],
+  ] as const)("%s", (_name, configured, flags, expected) => {
+    const result = resolveDevDashboard(configured, flags);
+    if (expected === false) expect(result).toBe(false);
+    else
+      expect(result).toEqual({
+        port: undefined,
+        historyDays: undefined,
+        ...expected,
+      });
+  });
+
+  it.each([
+    [{ dashboard: false, dashboardPort: 9600 }, "--dashboard-port"],
+    [{ dashboard: false, historyDays: 1 }, "--history-days"],
+    [{ dashboard: false, dashboardExtension: "x.ts" }, "--dashboard-extension"],
+  ] as const)("rejects %o", (flags, flag) => {
+    expect(() => resolveDevDashboard(undefined, flags)).toThrow(
+      `${flag} cannot be combined with --no-dashboard`,
+    );
+  });
+
+  it("rejects an extension flag when the config turns the dashboard off", () => {
+    expect(() =>
+      resolveDevDashboard(false, { dashboardExtension: "x.ts" }),
+    ).toThrow("--dashboard-extension cannot be combined");
+  });
+});
+
+it("the package root, which still exports defineConfig, loads under Node", () => {
+  // ESLint may read brick.config.ts under Node, so nothing index reaches may
+  // touch Bun at load time (see scanDefinitionFiles). Needs `bun run build`.
+  const result = Bun.spawnSync([
+    "node",
+    "--input-type=module",
+    "-e",
+    `const m = await import(${JSON.stringify(resolve(import.meta.dir, "../dist/index.js"))}); console.log(typeof m.defineConfig);`,
+  ]);
+  expect(result.stderr.toString()).toBe("");
+  expect(result.stdout.toString().trim()).toBe("function");
 });
 
 describe("loading brick.config.ts", () => {

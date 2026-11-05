@@ -17,13 +17,12 @@ import {
   CLIENT_ERROR,
   endpointOf,
   MAX_FACET_VALUES,
-  OUTCOMES,
   percentile,
   SEARCHED,
   SERVER_ERROR,
   tracesToCsv,
   type Facet,
-  type RowFilters,
+  type HistoryQuery,
 } from "./dashboard-query";
 
 const DAY_MS = 86_400_000;
@@ -33,14 +32,6 @@ const PRUNE_MS = 30 * 60_000;
 const VOLUME_BUCKETS = 48;
 const MAX_LIMIT = 500;
 const MAX_EXPORT_ROWS = 100_000;
-
-/** The filters of the request log, over a window, a page at a time. */
-export interface HistoryQuery extends RowFilters {
-  from: number;
-  to: number;
-  limit?: number;
-  offset?: number;
-}
 
 interface Statement {
   run(...params: unknown[]): unknown;
@@ -113,7 +104,7 @@ export async function openHistory(
     const ignore = join(folder, ".gitignore");
     if (!existsSync(ignore)) writeFileSync(ignore, "*\n");
     const database = await openDatabase(join(folder, "telemetry.sqlite"));
-    return new DevHistory(database, options.days);
+    return new DevHistory(database, options.days, options.warn);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     options.warn?.(
@@ -210,10 +201,18 @@ export class DevHistory {
   #flushTimer: ReturnType<typeof setTimeout> | undefined;
   readonly #pruneTimer: ReturnType<typeof setInterval>;
   #closed = false;
+  readonly #warn?: (message: string) => void;
+  /** Failure kinds already reported: one warning each, not one per batch. */
+  readonly #warned = new Set<string>();
 
-  constructor(database: Database, days: number) {
+  constructor(
+    database: Database,
+    days: number,
+    warn?: (message: string) => void,
+  ) {
     this.#database = database;
     this.days = days;
+    this.#warn = warn;
     database.exec(`
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = NORMAL;
@@ -315,8 +314,9 @@ export class DevHistory {
         );
       }
       this.#database.exec("COMMIT");
-    } catch {
+    } catch (error) {
       // A failed write loses a batch of history; it must not break the app.
+      this.#warnOnce("save requests to", error);
       try {
         this.#database.exec("ROLLBACK");
       } catch {
@@ -344,9 +344,19 @@ export class DevHistory {
           )
           .run(count - MAX_TRACES);
       }
-    } catch {
+    } catch (error) {
       // Pruning is housekeeping; try again next time.
+      this.#warnOnce("prune", error);
     }
+  }
+
+  #warnOnce(action: string, error: unknown): void {
+    if (this.#warned.has(action)) return;
+    this.#warned.add(action);
+    const reason = error instanceof Error ? error.message : String(error);
+    this.#warn?.(
+      `[Brick-TS] Could not ${action} the request history (${reason}).`,
+    );
   }
 
   info(): HistoryInfo {
@@ -508,37 +518,4 @@ export class DevHistory {
       // Already closed.
     }
   }
-}
-
-/** Query-string values the dashboard sends, parsed defensively. */
-export function parseHistoryQuery(
-  params: URLSearchParams,
-  now = Date.now(),
-): HistoryQuery {
-  const integer = (name: string): number | undefined => {
-    const raw = params.get(name);
-    if (raw === null || raw.trim() === "") return undefined;
-    const value = Number(raw);
-    return Number.isFinite(value) ? value : undefined;
-  };
-  const all = (name: string): string[] | undefined => {
-    const values = params.getAll(name).filter((value) => value !== "");
-    return values.length > 0 ? values : undefined;
-  };
-  const to = integer("to") ?? now;
-  return {
-    to,
-    from: integer("from") ?? to - 7 * DAY_MS,
-    endpoints: all("endpoint"),
-    methods: all("method"),
-    services: all("service"),
-    outcomes: all("outcome")?.filter((value): value is Outcome =>
-      OUTCOMES.includes(value as Outcome),
-    ),
-    minMs: integer("minMs"),
-    query: params.get("q") || undefined,
-    sort: params.get("sort") === "slowest" ? "slowest" : "recent",
-    limit: integer("limit"),
-    offset: integer("offset"),
-  };
 }

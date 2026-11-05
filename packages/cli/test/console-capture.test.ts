@@ -2,12 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { context, propagation, trace } from "@opentelemetry/api";
 // Loads core's logger, which the console capture calls into.
 import "../../core/src/logger";
-import {
-  captureConsole,
-  installTracing,
-  type SpanEndRecord,
-  type TelemetryRecord,
-} from "../src/dev-telemetry";
+import { captureConsole, installTracing } from "../src/dev-telemetry";
+import type { SpanEndRecord, TelemetryRecord } from "../src/dashboard-protocol";
 
 const CAPTURE = Symbol.for("brickkit.logs.capture");
 
