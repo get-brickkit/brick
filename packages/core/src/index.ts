@@ -91,7 +91,6 @@ export {
   type CompiledRoutePlan,
   type HandlerFactory,
 } from "./compiler";
-export { emitHandlerFactory } from "./compiler/emit";
 export { compilerRuntime } from "./compiler/runtime";
 
 // Core Primitives

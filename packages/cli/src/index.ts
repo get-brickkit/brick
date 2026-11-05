@@ -5,7 +5,7 @@ export type {
   DashboardTheme,
 } from "./dashboard-extension";
 export { generateClientContract } from "./client-contract";
-export { emitCompiledApplication, emitHandlerFactory } from "./compiler/emit";
+export { emitCompiledApplication, emitHandlerFactory } from "./compiler";
 export {
   defineConfig,
   loadConfig,
