@@ -58,7 +58,7 @@ const writeHooks = {
   create: ["beforeCreate", "afterCreate"],
   update: ["beforeUpdate", "afterUpdate"],
   delete: ["beforeDelete", "afterDelete"],
-} as const;
+} as const satisfies Record<string, readonly (keyof Hooks)[]>;
 
 type Hook = (args: any) => unknown;
 /** The crud() hooks, then those of plugins installed on the resource, then on the service. */
@@ -621,8 +621,9 @@ export function operations(model: CrudModel) {
   /** Prepares the unfiltered list and get statements ahead of the first call. */
   const prewarm = (enabled: readonly ("list" | "get")[]) => {
     const db: any = service.getDb();
-    if (!cacheable(db, options.access !== "public" && options.access.scope))
-      return;
+    // A scoped call binds its scope's SQL, so only unscoped statements warm.
+    const scoped = options.access !== "public" && !!options.access.scope;
+    if (scoped || !cacheable(db, undefined)) return;
     for (const operation of enabled) {
       const call = begin(operation, {}, undefined, db);
       call.query.warm(db, "rows", () => rowsQuery(call).build(db));

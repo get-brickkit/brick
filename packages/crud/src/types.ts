@@ -4,6 +4,7 @@ import type {
   ActionContext,
   ResourcePlugin,
   PluginRoutes,
+  PluginHookArgs,
 } from "@brickkit/core";
 import type { TSchema, TUnsafe, Static } from "@sinclair/typebox";
 import type { Table, SQL, Column, GetColumnData } from "drizzle-orm";
@@ -62,15 +63,12 @@ export type CrudCommitArgs = {
   | { operation: "create" | "update"; row: Record<string, unknown> }
   | { operation: "delete"; row?: undefined }
 );
-/** A write hook: it gets `args` plus the call's context and transaction. */
-type WriteHook<A> = (
-  args: A & {
-    ctx: ActionContext;
-    error: ErrorBuilder<Record<string, never>>;
-    /** The operation's open transaction: write other tables through it. */
-    tx: any;
-  },
-) => void | Promise<void>;
+/** The write hooks: core's plugin hook arguments, plus the call's `error`. */
+type WriteHooks = {
+  [K in Exclude<keyof PluginHookArgs, "afterCommit">]?: (
+    args: PluginHookArgs[K] & { error: ErrorBuilder<Record<string, never>> },
+  ) => void | Promise<void>;
+};
 export interface CrudOptions<
   F extends Fields = Fields,
   O extends Operations = Operations,
@@ -108,14 +106,10 @@ export interface CrudOptions<
    * `afterCommit` runs after the commit, for side effects that must not happen
    * when the write is undone; an error it throws is logged, not returned.
    */
-  hooks?: {
-    afterCommit?: (args: CrudCommitArgs) => void | Promise<void>;
-    beforeCreate?: WriteHook<{ data: Record<string, unknown> }>;
-    afterCreate?: WriteHook<{ row: Record<string, unknown> }>;
-    afterUpdate?: WriteHook<{ id: unknown; row: Record<string, unknown> }>;
-    beforeDelete?: WriteHook<{ id: unknown }>;
-    afterDelete?: WriteHook<{ id: unknown }>;
-    beforeUpdate?: WriteHook<{ id: unknown; data: Record<string, unknown> }>;
+  hooks?: WriteHooks & {
+    afterCommit?: (
+      args: CrudCommitArgs & PluginHookArgs["afterCommit"],
+    ) => void | Promise<void>;
   };
 }
 type Row<T extends Table> = T["$inferSelect"];

@@ -7,7 +7,7 @@ import {
 import { type TSchema } from "@sinclair/typebox";
 import { getTableColumns, type Column } from "drizzle-orm";
 
-import { checkJsonSchema, columnSchema, object } from "./codec";
+import { SORTABLE_TYPES, checkJsonSchema, columnSchema, object } from "./codec";
 import { bulkOperations, operations } from "./perform";
 import { CACHE_LIMIT } from "./statement";
 import type {
@@ -142,12 +142,7 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
         if (columns[key] === resource.id && policy.update)
           throw new Error("CRUD primary key cannot be updated");
         checkFilters(key, columns[key], policy.filter ?? []);
-        if (
-          policy.sort &&
-          !["string", "number", "date", "bigint", "boolean"].includes(
-            columns[key].dataType,
-          )
-        )
+        if (policy.sort && !SORTABLE_TYPES.has(columns[key].dataType))
           throw new Error(`Sorting is unsupported for '${key}'`);
       }
       const idColumn: Column = resource.id;
@@ -298,9 +293,8 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
       // when authorize is missing (runtime rejects with FORBIDDEN).
       const crudIsPublic = options.access === "public";
       const crudHasScopeFn =
-        !crudIsPublic &&
-        typeof (options.access as { scope?: unknown } | undefined)?.scope ===
-          "function";
+        typeof options.access === "object" &&
+        typeof options.access.scope === "function";
       for (const operation of Object.keys(methods) as (
         | Operation
         | BulkOperation
@@ -357,21 +351,6 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
           plugin: "@brickkit/crud",
           resource: resource.name,
           operations: Object.keys(api),
-          inputs: Object.fromEntries(
-            Object.keys(api).map((operation) => [
-              operation,
-              inputs[operation as Operation | BulkOperation],
-            ]),
-          ),
-          outputs: Object.fromEntries(
-            Object.keys(api).map((operation) => [
-              operation,
-              outputs[operation as Operation | BulkOperation],
-            ]),
-          ),
-          defaultLimit,
-          maxLimit,
-          cacheLimit: CACHE_LIMIT,
         }),
         prepare: () =>
           prewarm(

@@ -3,8 +3,6 @@ import { sql } from "drizzle-orm";
 /** Prepared statements kept per database, the oldest dropped past this many. */
 export const CACHE_LIMIT = 128;
 
-export type Statement = ReturnType<ReturnType<typeof statements>>;
-
 /**
  * Builds one call's statement. When it can be cached, bound values become
  * placeholders, and the statement is prepared once per key: `identity` plus
