@@ -1,4 +1,5 @@
 import { basename, dirname, relative, resolve, sep } from "node:path";
+import { kebabCase } from "@brickkit/core/client";
 import {
   DEFINITION_FILE,
   TEST_FILE,
@@ -42,36 +43,57 @@ export interface Rule {
   ): Record<string, ((node: Node) => void) | undefined>;
 }
 
+export function defineRule(
+  type: Rule["meta"]["type"],
+  description: string,
+  create: Rule["create"],
+  options: { fixable?: "code"; schema?: unknown[] } = {},
+): Rule {
+  return {
+    meta: {
+      type,
+      docs: { description },
+      fixable: options.fixable,
+      schema: options.schema ?? [],
+    },
+    create,
+  };
+}
+
 /** Paths from brick.config.ts, relative to `root`. Linters pass them in `settings.brick`. */
 export interface BrickSettings {
   root: string;
   services: string;
   entry: string;
   generated: string;
-  /** Browser code folder, which may import only the client and the contract. */
-  web: string;
 }
+
+/** Browser code folder, which may import only the client and the contract. */
+export const WEB_DIR = "web";
 
 const posix = (path: string) => path.split(sep).join("/");
 
+/** The settings with Brick's default paths, each relative to the root without a trailing slash. */
 export function brickSettings(context: RuleContext): BrickSettings {
   const given = context.settings?.brick ?? {};
+  const root = given.root ?? context.cwd ?? process.cwd();
+  const from = (path: string) => posix(relative(root, resolve(root, path)));
   return {
-    root: given.root ?? context.cwd ?? process.cwd(),
-    services: given.services ?? "src/services",
-    entry: given.entry ?? "src/app.ts",
-    generated: given.generated ?? "_brick",
-    web: given.web ?? "web",
+    root,
+    services: from(given.services ?? "src/services"),
+    entry: from(given.entry ?? "src/app.ts"),
+    generated: from(given.generated ?? "_brick"),
   };
 }
+
+/** The folders a service may live in: its kebab-case name, or the name itself. */
+export const serviceFolders = (name: string) => [kebabCase(name), name];
 
 export interface FileInfo {
   settings: BrickSettings;
   /** Path from the project root, with forward slashes. */
   rel: string;
   base: string;
-  /** Services folder from the root. */
-  servicesDir: string;
   inServices: boolean;
   /** Service folder name, for files under `<services>/<name>/`. */
   service?: string;
@@ -80,6 +102,8 @@ export interface FileInfo {
   /** Definition kind from the file suffix, and the name before it. */
   kind?: DefinitionKind;
   stem?: string;
+  /** Tests, dependencies and generated files: no rule checks them. */
+  ignored: boolean;
   /** Tests, local plugins and generated files are not app definitions. */
   exempt: boolean;
 }
@@ -87,35 +111,30 @@ export interface FileInfo {
 export function fileInfo(context: RuleContext): FileInfo {
   const settings = brickSettings(context);
   const rel = posix(relative(settings.root, context.filename));
-  const servicesDir = posix(
-    relative(settings.root, resolve(settings.root, settings.services)),
-  );
-  const generated = posix(
-    relative(settings.root, resolve(settings.root, settings.generated)),
-  );
+  const { services: servicesDir, generated } = settings;
   const base = basename(rel);
   const inServices = rel.startsWith(`${servicesDir}/`);
   const parts = inServices ? rel.slice(servicesDir.length + 1).split("/") : [];
   const match = DEFINITION_FILE.exec(base);
   const segments = rel.split("/");
+  const ignored =
+    TEST_FILE.test(base) ||
+    segments.includes("test") ||
+    segments.includes("tests") ||
+    segments.includes("__tests__") ||
+    segments.includes("node_modules") ||
+    rel.startsWith(`${generated}/`);
   return {
     settings,
     rel,
     base,
-    servicesDir,
     inServices,
     service: parts.length > 1 ? parts[0] : undefined,
     rest: parts.slice(1),
     kind: match?.[2] as DefinitionKind | undefined,
     stem: match?.[1],
-    exempt:
-      TEST_FILE.test(base) ||
-      segments.includes("test") ||
-      segments.includes("tests") ||
-      segments.includes("__tests__") ||
-      segments.includes("plugins") ||
-      segments.includes("node_modules") ||
-      rel.startsWith(`${generated}/`),
+    ignored,
+    exempt: ignored || segments.includes("plugins"),
   };
 }
 

@@ -1,37 +1,31 @@
 import { relative, sep } from "node:path";
 import type { BrickSettings } from "./ast";
-import { resolveProject, type BrickConfig, type LoadedConfig } from "../config";
+import { ConfigError, type LoadedConfig } from "../config";
+import { fileRules, resolveRules, type Severity } from "./presets";
 
-export interface Project {
-  /** Folder of brick.config.ts, or the working directory without one. */
-  root: string;
-  file?: string;
-  config: BrickConfig;
-  settings: BrickSettings;
-}
-
-/** The lint settings of a project: its paths, relative to its root. */
-export function settingsOf(project: LoadedConfig): BrickSettings {
+/** Rules, settings and ignores of a project, shared by brick lint and both linters. */
+export function projectRules(project: LoadedConfig) {
+  const lint = project.config.lint ?? {};
+  let resolved: Record<string, Severity>;
+  try {
+    resolved = resolveRules(lint.presets, lint.rules);
+  } catch (error) {
+    throw new ConfigError(
+      `brick.config.ts: lint.rules: ${(error as Error).message}`,
+    );
+  }
   const from = (path: string) =>
     relative(project.root, path).split(sep).join("/") || ".";
-  return {
+  const settings: BrickSettings = {
     root: project.root,
     services: from(project.services),
     entry: from(project.entry),
     generated: from(project.generated),
-    web: "web",
   };
-}
-
-/** Read and validate the nearest brick.config.ts (or `config`), with Brick's default paths. */
-export async function readProject(
-  options: { cwd?: string; config?: string } = {},
-): Promise<Project> {
-  const project = await resolveProject(options.config, options.cwd);
   return {
-    root: project.root,
-    file: project.file,
-    config: project.config,
-    settings: settingsOf(project),
+    resolved,
+    rules: fileRules(resolved),
+    settings,
+    ignore: [...(lint.ignore ?? []), `${settings.generated}/**`],
   };
 }

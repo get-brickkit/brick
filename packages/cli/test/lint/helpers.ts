@@ -44,7 +44,6 @@ export function lintCases(
           services: "src/services",
           entry: "src/app.ts",
           generated: "_brick",
-          web: "web",
         },
         fix,
       });

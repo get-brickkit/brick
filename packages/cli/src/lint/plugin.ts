@@ -6,7 +6,8 @@ import {
   type PresetName,
   type Severity,
 } from "./presets";
-import { readProject } from "./project";
+import { resolveProject } from "../config";
+import { projectRules } from "./project";
 
 const FILES = ["**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"];
 
@@ -36,31 +37,19 @@ for (const name of Object.keys(PRESETS) as PresetName[])
     rules: fileRules(resolveRules([name])),
   };
 
-/** Rules, settings and ignores from brick.config.ts, shared by both linters. */
-export async function projectRules(options: { cwd?: string; config?: string }) {
-  const project = await readProject(options);
-  const lint = project.config.lint ?? {};
-  return {
-    rules: fileRules(resolveRules(lint.presets, lint.rules)),
-    settings: { brick: project.settings },
-    ignore: [
-      ...(lint.ignore ?? []),
-      `${project.settings.generated.replace(/\/$/, "")}/**`,
-    ],
-  };
-}
-
 async function fromProject(
   options: { cwd?: string; config?: string } = {},
 ): Promise<FlatConfig[]> {
-  const { rules, settings, ignore } = await projectRules(options);
+  const { rules, settings, ignore } = projectRules(
+    await resolveProject(options.config, options.cwd),
+  );
   return [
     {
       name: "brick/project",
       files: FILES,
       ignores: ignore,
       plugins: { brick },
-      settings,
+      settings: { brick: settings },
       rules,
     },
   ];

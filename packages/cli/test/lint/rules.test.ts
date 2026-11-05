@@ -244,6 +244,16 @@ const CASES: Record<string, Case[]> = {
       code: `const a = process.env.DB;\nconst b = Bun.env.DB;\n`,
       errors: 2,
     },
+    {
+      file: "src/plugins/audit/audit.plugin.ts",
+      code: `export const key = process.env.AUDIT_KEY;\n`,
+      errors: 1,
+    },
+    {
+      file: "src/db.test.ts",
+      code: `const a = process.env.DB;\n`,
+      errors: 0,
+    },
   ],
   "action-schemas": [
     {
