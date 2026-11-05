@@ -1,11 +1,11 @@
 import type { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { defineDatabase, defineService, t } from "@brickkit/core";
+import { defineService, t } from "@brickkit/core";
 import { createTestApp } from "@brickkit/core/testing";
 import { eq } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { crud } from "../src";
-import { generateClientContract } from "../../cli/src/client-contract";
+import { clientContract, sqliteDatabase } from "./helpers";
 
 const orders = sqliteTable("orders", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -16,12 +16,9 @@ const orders = sqliteTable("orders", {
 function fixture() {
   let sqlite!: Database;
   const testApp = createTestApp(() => {
-    const database = defineDatabase({ tables: { orders } });
-    const db = database.getDb();
-    sqlite = (db as typeof db & { $client: Database }).$client;
-    sqlite.exec(
-      "CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, status TEXT NOT NULL)",
-    );
+    const created = sqliteDatabase([orders]);
+    const database = created.database;
+    sqlite = created.sqlite;
     sqlite.exec(
       "INSERT INTO orders (owner, status) VALUES ('ada', 'paid'), ('bob', 'paid')",
     );
@@ -90,10 +87,7 @@ test("a command loads its row through its own access", async () => {
 test("the typed client calls a command as api.<service>.<resource>.<command>", () => {
   const { sqlite, app } = fixture();
   try {
-    const contract = generateClientContract(app);
-    const parsed = JSON.parse(
-      JSON.parse(contract.match(/JSON\.parse\((".*")\);/)![1]!),
-    );
+    const { source: contract, contract: parsed } = clientContract(app);
     expect(parsed.orders.order.markReady.config).toEqual({
       path: "/api/orders/order/:id/mark-ready",
       method: "POST",

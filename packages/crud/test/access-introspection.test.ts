@@ -1,5 +1,4 @@
 import { test, expect } from "bun:test";
-import type { Database } from "bun:sqlite";
 import { sqliteTable, integer, text } from "drizzle-orm/sqlite-core";
 import { eq } from "drizzle-orm";
 import {
@@ -12,6 +11,7 @@ import {
   t,
 } from "@brickkit/core";
 import { crud } from "../src";
+import { sqliteService } from "./helpers";
 
 const records = sqliteTable("introspect_records", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -23,13 +23,7 @@ let sequence = 0;
 
 function setup(options: Parameters<typeof crud>[0]) {
   resetGlobalRegistry();
-  const database = defineDatabase({ tables: [records] });
-  const db = database.getDb();
-  const sqlite = (db as typeof db & { $client: Database }).$client;
-  sqlite.exec(
-    "CREATE TABLE introspect_records (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT,user_id TEXT)",
-  );
-  const service = defineService(`introspect_${sequence++}`, { database });
+  const { sqlite, service } = sqliteService("introspect", [records]);
   const resource: any = service
     .resource({ name: "record", table: records, id: records.id })
     .use(crud(options));
@@ -87,10 +81,11 @@ test("CRUD with authorize+scope reports hasAuthorize/hasScope/scoped", () => {
     // exportArchitecture() surfaces the same policy (issue #28 repro).
     const exported = getGlobalRegistry().exportArchitecture();
     const svc = exported.services.find((s) => s.name === service.name)!;
-    expect(svc).toBeDefined();
-    for (const action of svc.actions.filter((a: any) =>
+    const exportedCrud = svc.actions.filter((a: any) =>
       CRUD_OPS.some((op) => a.name.endsWith(`.${op}`)),
-    )) {
+    );
+    expect(exportedCrud).toHaveLength(8);
+    for (const action of exportedCrud) {
       const op = action.name.split(".").pop()!;
       expect(action.hasAuthorize).toBe(true);
       expect(action.accessPolicy).toBe(
@@ -254,6 +249,7 @@ test("OpenAPI advertises security for protected CRUD and omits it for public", (
     const ops = Object.values(spec.paths).flatMap((methods: any) =>
       Object.values(methods),
     ) as any[];
+    expect(ops.length).toBeGreaterThan(0);
     for (const op of ops) {
       expect(op.security).toBeUndefined();
     }

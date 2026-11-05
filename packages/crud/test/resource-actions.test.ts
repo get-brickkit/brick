@@ -1,4 +1,3 @@
-import type { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 import {
   brick,
@@ -11,7 +10,7 @@ import {
 import { eq } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { crud } from "../src";
-import { generateClientContract } from "../../cli/src/client-contract";
+import { clientContract, sqliteDatabase } from "./helpers";
 
 beforeEach(resetGlobalRegistry);
 
@@ -23,12 +22,7 @@ const orders = sqliteTable("orders", {
 });
 
 function fixture() {
-  const database = defineDatabase({ tables: { orders } });
-  const db = database.getDb();
-  const sqlite = (db as typeof db & { $client: Database }).$client;
-  sqlite.exec(
-    "CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, status TEXT NOT NULL, secret TEXT)",
-  );
+  const { database, sqlite } = sqliteDatabase([orders]);
   sqlite.exec(
     "INSERT INTO orders (owner, status, secret) VALUES ('ada', 'paid', 's1'), ('bob', 'paid', 's2')",
   );
@@ -184,12 +178,7 @@ test("a record action loads its row through its own access and answers 404 for h
 });
 
 test("a record action needs its own access, with or without crud", async () => {
-  const database = defineDatabase({ tables: { orders } });
-  const db = database.getDb();
-  const sqlite = (db as typeof db & { $client: Database }).$client;
-  sqlite.exec(
-    "CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, status TEXT NOT NULL, secret TEXT)",
-  );
+  const { database, sqlite } = sqliteDatabase([orders]);
   sqlite.exec("INSERT INTO orders (owner, status) VALUES ('ada', 'paid')");
   try {
     const bare = defineService("bare", { database });
@@ -300,11 +289,8 @@ test("OpenAPI groups resource routes under service · resource; the client nests
       "orderBilling · order",
     ]);
 
-    const contract = generateClientContract(
+    const { source: contract, contract: parsed } = clientContract(
       brick({ services: [service], docs: false }),
-    );
-    const parsed = JSON.parse(
-      JSON.parse(contract.match(/JSON\.parse\((".*")\);/)![1]!),
     );
     expect(parsed.orderBilling.order.archive.config).toEqual({
       path: "/api/order-billing/order/:id/archive",
@@ -331,13 +317,8 @@ test("a record action finds a row whose id column holds dates", async () => {
     at: integer("at", { mode: "timestamp_ms" }).primaryKey(),
     name: text("name").notNull(),
   });
-  const database = defineDatabase({ tables: { events } });
-  const db = database.getDb();
-  const sqlite = (db as typeof db & { $client: Database }).$client;
+  const { database, db, sqlite } = sqliteDatabase([events]);
   try {
-    sqlite.exec(
-      "CREATE TABLE events (at INTEGER PRIMARY KEY, name TEXT NOT NULL)",
-    );
     const at = new Date("2026-01-01T00:00:00.000Z");
     await db.insert(events).values({ at, name: "launch" });
     const service = defineService("calendar", { database });
@@ -370,13 +351,8 @@ test("crud and record actions accept the same ids", async () => {
     at: integer("at", { mode: "timestamp_ms" }).primaryKey(),
     name: text("name").notNull(),
   });
-  const database = defineDatabase({ tables: { events } });
-  const db = database.getDb();
-  const sqlite = (db as typeof db & { $client: Database }).$client;
+  const { database, db, sqlite } = sqliteDatabase([events]);
   try {
-    sqlite.exec(
-      "CREATE TABLE events (at INTEGER PRIMARY KEY, name TEXT NOT NULL)",
-    );
     await db
       .insert(events)
       .values({ at: new Date("2026-01-01T00:00:00.000Z"), name: "launch" });

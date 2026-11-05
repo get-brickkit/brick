@@ -1,19 +1,12 @@
-import type { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
-import {
-  brick,
-  defineDatabase,
-  defineService,
-  generateOpenApiSpec,
-  runInTransaction,
-} from "@brickkit/core";
+import { brick, generateOpenApiSpec, runInTransaction } from "@brickkit/core";
 import { createBrickClient } from "@brickkit/core/client";
 import { eq } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 import { crud } from "../src";
-import { generateClientContract } from "../../cli/src/client-contract";
+import { clientContract, sqliteService } from "./helpers";
 
 const records = sqliteTable("records", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -25,16 +18,8 @@ const audit = sqliteTable("audit", {
   note: text("note").notNull(),
 });
 
-let sequence = 0;
 function fixture(options: Partial<Parameters<typeof crud>[0]> = {}) {
-  const database = defineDatabase({ tables: [records, audit] });
-  const db: any = database.getDb();
-  const sqlite = (db as { $client: Database }).$client;
-  sqlite.exec(
-    "CREATE TABLE records (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, owner TEXT);" +
-      "CREATE TABLE audit (id INTEGER PRIMARY KEY AUTOINCREMENT, note TEXT NOT NULL);",
-  );
-  const service = defineService(`tx_${sequence++}`, { database });
+  const { db, sqlite, service } = sqliteService("tx", [records, audit]);
   const notes = service
     .resource({ name: "note", table: audit, id: audit.id })
     .use(
@@ -381,14 +366,9 @@ test("the typed client calls bulk operations over HTTP", async () => {
     docs: false,
     requestLogging: false,
   });
-  const source = generateClientContract(app);
-  const serialized = source.match(
-    /export const contract: AppContract = JSON.parse\((.+)\);/,
-  )?.[1];
-  if (!serialized) throw new Error("Generated contract is missing");
   const client = createBrickClient<{ record: typeof f.resource }>({
     baseUrl: "http://localhost",
-    contract: JSON.parse(JSON.parse(serialized))[f.service.name],
+    contract: clientContract(app).contract[f.service.name],
     fetch: async (url, init) => app.handle(new Request(String(url), init)),
   });
   try {
