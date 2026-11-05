@@ -18,6 +18,7 @@ import {
   type Rule,
   type RuleContext,
 } from "../ast";
+import { STANDARD_ERRORS } from "@brickkit/core/client";
 import { MANIFEST_FILE } from "../../definitions";
 import { version } from "../../../package.json";
 
@@ -48,14 +49,7 @@ function skip(context: RuleContext) {
 }
 
 const HANDLERS: Definition["kind"][] = ["action", "command", "tool"];
-const BUILT_IN_ERRORS = new Set([
-  "BAD_REQUEST",
-  "UNAUTHORIZED",
-  "FORBIDDEN",
-  "NOT_FOUND",
-  "CONFLICT",
-  "INTERNAL_SERVER_ERROR",
-]);
+const BUILT_IN_ERRORS = new Set(Object.keys(STANDARD_ERRORS));
 
 /** `error.NAME(...)`, the error helper handlers receive. */
 function errorHelper(node: Node): string | undefined {
