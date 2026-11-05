@@ -130,7 +130,7 @@ export class EventsHub {
    * @param services - The app's services.
    * @returns The hub, for chaining.
    */
-  attach(services: readonly Service[]): this {
+  attach(services: readonly Service<any, any>[]): this {
     for (const service of services.map(portOf)) {
       const table = service.getOutbox();
       if (!table) continue;

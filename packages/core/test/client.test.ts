@@ -87,7 +87,8 @@ describe("createBrickClient (typed HTTP client)", () => {
         return Promise.resolve(new Response("ok"));
       } as unknown as typeof fetch,
     });
-    expect(await api.billing.charge({ amount: 1 })).toBe("ok");
+    // The fake server answers with a string, whatever the contract says.
+    expect((await api.billing.charge({ amount: 1 })) as unknown).toBe("ok");
   });
 
   it("reads plain strings with or without a content type and rejects malformed JSON", async () => {
@@ -102,7 +103,9 @@ describe("createBrickClient (typed HTTP client)", () => {
         baseUrl: "http://localhost:4000",
         fetch: fetchImpl,
       });
-      expect(await api.billing.charge({ amount: 1 })).toBe("Echo: local");
+      expect((await api.billing.charge({ amount: 1 })) as unknown).toBe(
+        "Echo: local",
+      );
     }
     const api = createBrickClient<AppServer>({
       baseUrl: "http://localhost:4000",

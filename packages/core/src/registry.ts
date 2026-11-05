@@ -7,7 +7,7 @@ import type { BrickSocketSchema } from "./socket-types";
 import { claimName, definitionSite } from "./definition-site";
 
 export interface ArchitectureApplication {
-  services: readonly Service[];
+  services: readonly Service<any, any>[];
   routes: readonly RouteIR[];
   events?: EventsDefinition;
   sockets?: readonly (BrickSocketSchema & { service: string; path: string })[];

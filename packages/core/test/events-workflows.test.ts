@@ -390,7 +390,7 @@ describe("workflow listeners", () => {
       const hub = app(world, root, transformed());
       hub.start();
       await settle(hub, () =>
-        quiet.mock.calls.some((call) =>
+        quiet.mock.calls.some((call: unknown[]) =>
           String(call[0]).includes("is run by listeners with different deps"),
         ),
       );

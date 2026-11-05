@@ -283,7 +283,7 @@ describe("Service-Level Context Resolution & Session Injection", () => {
           dbName: ctx.dbName,
           serviceName: ctx.serviceName,
           resolverRan: ctx.resolverRan === true,
-          userId: ctx.user?.id,
+          userId: (ctx as { user?: { id: string } }).user?.id,
           caller: ctx.caller,
           resolverCaller: ctx.resolverCaller,
         };
@@ -329,12 +329,9 @@ describe("Service-Level Context Resolution & Session Injection", () => {
     });
 
     // Execute orders action which internally calls billing
-    const result = await createOrderAction.run(
-      { amount: 100 },
-      {
-        user: { id: "usr_alice" } as any,
-      },
-    );
+    const result = await createOrderAction.run({ amount: 100 }, {
+      user: { id: "usr_alice" },
+    } as any);
 
     // Verify orders uses its own database
     expect(ordersDbCalls).toContain("orders_db");
@@ -461,7 +458,7 @@ describe("Receiver-owned context", () => {
       };
       const result =
         dispatch === "direct"
-          ? await inspect.run(undefined, callerContext)
+          ? await inspect.run(undefined, callerContext as any)
           : await useService(service, {
               context: callerContext,
             }).inspect(undefined, callerContext);

@@ -10,7 +10,7 @@ import {
   outboxTable,
   type EventDelivery,
 } from "../src";
-import { EventsHub } from "../src/events/hub";
+import { EventsHub, type Deliverable } from "../src/events/hub";
 
 const url = process.env.TEST_DATABASE_URL;
 const suite = url ? describe : describe.skip;
@@ -165,11 +165,12 @@ suite("events on Postgres", () => {
       client: otherClient,
       tables: {},
     }).getDb();
-    const first = new Dispatcher(ctx.db, ctx.outbox, () => listener, {
+    const deliverable = listener as unknown as Deliverable;
+    const first = new Dispatcher(ctx.db, ctx.outbox, () => deliverable, {
       timer: false,
       batchSize: 20,
     });
-    const second = new Dispatcher(otherDb, ctx.outbox, () => listener, {
+    const second = new Dispatcher(otherDb, ctx.outbox, () => deliverable, {
       timer: false,
       batchSize: 20,
     });

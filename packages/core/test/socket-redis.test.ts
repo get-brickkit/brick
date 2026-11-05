@@ -52,7 +52,8 @@ function process_() {
   return { live, url: `ws://localhost:${app.server!.port}/api/chat/live` };
 }
 async function connect(address: string, user: string) {
-  const ws = new WebSocket(address, { headers: { "x-user": user } });
+  // Bun's WebSocket takes headers; the DOM type doesn't know them.
+  const ws = new WebSocket(address, { headers: { "x-user": user } } as any);
   peers.push(ws);
   const received: unknown[] = [];
   ws.addEventListener("message", ({ data }) =>
@@ -185,14 +186,14 @@ it("logs a failed publish once, and keeps going", async () => {
   const warn = spyOn(console, "warn").mockImplementation(() => {});
   try {
     const broker = redisBroker({ url: "redis://fake" });
-    await broker.head();
+    await broker.head!("room");
     for (let i = 0; i < 2; i++) {
       broker.publish({ type: "kick", topic: "room" } as any);
       await Bun.sleep(0);
     }
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0]![0])).toContain("PUBLISH failed");
-    broker.close();
+    broker.close!();
   } finally {
     warn.mockRestore();
     bun.RedisClient = original;

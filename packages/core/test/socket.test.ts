@@ -8,6 +8,7 @@ import {
   resetGlobalRegistry,
   runInTransaction,
   t,
+  type Service,
 } from "../src";
 import { defineElsewhere } from "./fixtures/define-elsewhere";
 import {
@@ -28,7 +29,7 @@ afterEach(async () => {
   resetGlobalRegistry();
 });
 
-function start(service: ReturnType<typeof defineService>) {
+function start(service: Service<any, any>) {
   const app = brick({
     services: [service],
     prefix: "/v2",
@@ -41,7 +42,8 @@ function start(service: ReturnType<typeof defineService>) {
 function open(url: string, headers?: Record<string, string>) {
   const ws = new WebSocket(
     url.replace(/^http/, "ws"),
-    headers ? { headers } : undefined,
+    // Bun's WebSocket takes headers; the DOM type doesn't know them.
+    (headers ? { headers } : undefined) as any,
   );
   peers.push(ws);
   return new Promise<WebSocket>((resolve, reject) => {
@@ -939,6 +941,7 @@ it("doesn't replay a room's messages from before the client could join it", asyn
   let allowed = false;
   const live = service.socket({
     name: "live",
+    input: {},
     output: { message: t.String() },
     allowMissingOrigin: true,
     replay: { keep: 10, maxAgeMs: 60_000 },

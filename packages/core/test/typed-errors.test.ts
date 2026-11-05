@@ -289,7 +289,7 @@ test("output validation redacts failing values and logs diagnostics", async () =
   const action = defineAction({
     name: "invalidOutput",
     output: t.Object({ token: t.Number() }),
-    execute: () => ({ token: "private-output-token" }),
+    execute: () => ({ token: "private-output-token" }) as any,
   });
   const service = defineService("output_redaction").action(action);
   const log = spyOn(console, "error").mockImplementation(() => {});

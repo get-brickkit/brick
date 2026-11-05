@@ -132,7 +132,11 @@ it("keeps declarations open when exporting before app construction", () => {
   const table = sqliteTable("later", { id: text("id").primaryKey() });
   expect(() => service.resource({ name: "later", table })).not.toThrow();
   expect(() =>
-    service.contributePreparation({ name: "later", prepare: () => undefined }),
+    service.contributePreparation({
+      name: "later",
+      describe: () => undefined,
+      prepare: () => undefined,
+    }),
   ).not.toThrow();
   service.action({ name: "second", method: "GET", execute: () => true });
   const architecture = getGlobalRegistry().exportArchitecture();
