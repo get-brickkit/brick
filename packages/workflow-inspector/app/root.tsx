@@ -9,6 +9,7 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
+  useLocation,
   useNavigate,
   useRouteError,
   useSearchParams,
@@ -133,6 +134,7 @@ function computeResourceUrl(params: {
 
 function LayoutContent({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const [searchParams] = useSearchParams();
   const { setTheme } = useTheme();
 
@@ -143,7 +145,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   const resource = searchParams.get("resource");
   const themeParam = searchParams.get("theme");
 
-  const hasNavigatedRef = useRef(false);
+  const deepLinkReadRef = useRef(false);
 
   // Sync theme from URL param to next-themes
   useEffect(() => {
@@ -157,24 +159,17 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
     }
   }, [themeParam, setTheme]);
 
-  // Deep-link navigation on mount
+  // Deep-link navigation, once, when the page opens on the home route. The
+  // router's `pathname` is relative to the base path, unlike `window.location`.
   useEffect(() => {
-    const pathname = window.location.pathname;
-
-    if (pathname.startsWith("/run/")) {
-      hasNavigatedRef.current = true;
-      return;
-    }
-
-    if (pathname !== "/" && hasNavigatedRef.current) {
-      return;
-    }
+    if (deepLinkReadRef.current) return;
+    deepLinkReadRef.current = true;
+    if (pathname !== "/") return;
 
     if (resource) {
       if (!id) return;
       const url = computeResourceUrl({ resource, id, runId });
       if (url) {
-        hasNavigatedRef.current = true;
         navigate(url);
       } else {
         console.warn(`Can't deep-link to ${resource} ${id}.`);
@@ -183,11 +178,9 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
     }
 
     if (runId) {
-      hasNavigatedRef.current = true;
       navigate(computeDirectRunUrl({ runId, stepId, hookId }));
-      return;
     }
-  }, [resource, id, runId, stepId, hookId, navigate]);
+  }, [pathname, resource, id, runId, stepId, hookId, navigate]);
 
   return (
     <div className="min-h-screen flex flex-col">
