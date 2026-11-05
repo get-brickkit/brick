@@ -1,10 +1,10 @@
 import { getQueueTopicPrefix } from "@workflow/world";
 import { describe, expect, test } from "vitest";
 import { Env } from "./harness/env.js";
+import { world } from "./harness/world.js";
 import { W } from "./harness/workflows.js";
 
-/** Small lock and stall-check intervals so a dead worker's jobs are recovered quickly. */
-const FAST_RECOVERY = { heartbeatTtlMs: 2000 } as const;
+const FAST_RECOVERY = world.fastRecovery;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -354,12 +354,12 @@ describe("chaos", () => {
   }
 
   test(
-    "16c. liveness: two crashes with maxAttempts 49 still reach a terminal run",
+    `16c. liveness: ${world.spentBudget.title}`,
     { timeout: 240_000 },
     async () => {
       const env = await Env.create({
         workers: 3,
-        tuning: { ...FAST_RECOVERY, maxAttempts: 49 },
+        tuning: { ...FAST_RECOVERY, ...world.spentBudget.tuning },
       });
       const key = env.counterKey("slow");
       const runId = await env.invoke(W.slowStep, [6000, key]);
@@ -374,7 +374,8 @@ describe("chaos", () => {
         await env.workers.find((w) => w.name === name)!.kill("SIGKILL");
       }
 
-      // A survivor is alive. Recovery must not leave the run
+      // A survivor is alive and the budget is spent. Whatever the world decides
+      // (finish the run, fail the run) it must not leave the run
       // 'running' with nothing left in the queue to ever advance it.
       const outcome = await env
         .until(
@@ -400,10 +401,11 @@ describe("chaos", () => {
     "17. chaos monkey: workers are SIGKILLed and replaced for 25s under a mixed workload",
     { timeout: 420_000 },
     async () => {
-      // Keep the retry budget generous while measuring correctness under churn.
+      // A generous budget, so the test measures correctness under churn rather
+      // than the default budget (scenario 16 covers that).
       const env = await Env.create({
         workers: 3,
-        tuning: { ...FAST_RECOVERY, maxAttempts: 73 },
+        tuning: { ...FAST_RECOVERY, ...world.churnBudget },
       });
       type Kind = {
         wf: typeof W.fanOut;
