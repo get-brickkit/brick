@@ -56,33 +56,48 @@ fn push(issues: &mut Vec<Issue>, path: &str, message: String, value: Option<&Val
     });
 }
 
-/// `schema` without minLength and maxLength where the walk checks them (it
-/// follows properties, additionalProperties, items, anyOf and oneOf). Under
-/// anything else ($ref, allOf, prefixItems, ...) jsonschema keeps them.
+/// `schema` without minLength and maxLength exactly where `visit` checks them
+/// (a string type not under enum, const, anyOf or oneOf). Everywhere else,
+/// jsonschema keeps them.
 pub(crate) fn without_lengths(schema: &Value) -> Value {
     let Value::Object(map) = schema else {
         return schema.clone();
     };
-    let each = |v: &Value| match v {
-        Value::Array(items) => Value::Array(items.iter().map(without_lengths).collect()),
-        other => other.clone(),
+    // visit stops at enum and const without looking further.
+    if map.contains_key("enum") || map.contains_key("const") {
+        return schema.clone();
+    }
+    // visit checks only the variants of a union, nothing beside it.
+    let union = ["anyOf", "oneOf"]
+        .into_iter()
+        .find(|k| matches!(map.get(*k), Some(Value::Array(_))));
+    let has = |t: &str| match map.get("type") {
+        Some(Value::String(s)) => s == t,
+        Some(Value::Array(ts)) => ts.iter().any(|x| x == t),
+        _ => false,
     };
     Value::Object(
         map.iter()
-            .filter(|(k, v)| !(matches!(k.as_str(), "minLength" | "maxLength") && v.is_number()))
+            .filter(|(k, v)| {
+                !(union.is_none()
+                    && has("string")
+                    && matches!(k.as_str(), "minLength" | "maxLength")
+                    && v.is_number())
+            })
             .map(|(k, v)| {
-                let v = match k.as_str() {
-                    "items" | "additionalProperties" => without_lengths(v),
-                    "anyOf" | "oneOf" => each(v),
-                    "properties" => match v {
-                        Value::Object(props) => Value::Object(
-                            props
-                                .iter()
-                                .map(|(name, prop)| (name.clone(), without_lengths(prop)))
-                                .collect(),
-                        ),
-                        other => other.clone(),
-                    },
+                let v = match (k.as_str(), v) {
+                    (key, Value::Array(items)) if union == Some(key) => {
+                        Value::Array(items.iter().map(without_lengths).collect())
+                    }
+                    _ if union.is_some() => v.clone(),
+                    ("items", _) if has("array") => without_lengths(v),
+                    ("additionalProperties", _) if has("object") => without_lengths(v),
+                    ("properties", Value::Object(props)) if has("object") => Value::Object(
+                        props
+                            .iter()
+                            .map(|(name, prop)| (name.clone(), without_lengths(prop)))
+                            .collect(),
+                    ),
                     _ => v.clone(),
                 };
                 (k.clone(), v)
@@ -449,6 +464,22 @@ mod tests {
         let out = without_lengths(&schema);
         assert!(out["properties"]["a"].get("minLength").is_none());
         assert_eq!(out["$defs"]["b"]["minLength"], 3);
+
+        // Beside a union, under enum/const, or untyped: visit never checks them.
+        let schema = serde_json::json!({
+            "type": "object",
+            "anyOf": [{ "type": "string", "maxLength": 1 }],
+            "properties": { "c": { "type": "string", "maxLength": 4 } },
+        });
+        let out = without_lengths(&schema);
+        assert!(out["anyOf"][0].get("maxLength").is_none());
+        assert_eq!(out["properties"]["c"]["maxLength"], 4);
+        for schema in [
+            serde_json::json!({ "type": "string", "enum": ["ab"], "maxLength": 5 }),
+            serde_json::json!({ "minLength": 5 }),
+        ] {
+            assert_eq!(without_lengths(&schema), schema);
+        }
     }
 
     #[test]
