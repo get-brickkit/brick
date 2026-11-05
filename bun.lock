@@ -247,10 +247,8 @@
     "packages/crud": {
       "name": "@brickkit/crud",
       "version": "0.12.0",
-      "dependencies": {
-        "@sinclair/typebox": "^0.34.52",
-      },
       "devDependencies": {
+        "@sinclair/typebox": "^0.34.52",
         "@types/bun": "^1.4.4",
         "drizzle-orm": "^0.45.4",
         "tsdown": "^0.23.5",
@@ -258,6 +256,7 @@
       },
       "peerDependencies": {
         "@brickkit/core": "^0.12.0",
+        "@sinclair/typebox": "^0.34.52",
         "drizzle-orm": "^0.45.2",
       },
     },
