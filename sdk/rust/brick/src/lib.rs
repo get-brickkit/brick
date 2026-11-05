@@ -415,7 +415,10 @@ impl Service {
             })?,
             _ => 0,
         };
-        let host = std::env::var("BRICK_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+        let host = std::env::var("BRICK_HOST")
+            .ok()
+            .filter(|h| !h.is_empty())
+            .unwrap_or_else(|| "127.0.0.1".into());
         let listener = tokio::net::TcpListener::bind((host.as_str(), port)).await?;
         eprintln!(
             "[brick] {} (rust) listening on http://{}",

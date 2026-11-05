@@ -13,10 +13,10 @@ fn urls() -> &'static HashMap<String, String> {
     })
 }
 
-/// The shared client. A call that gets no answer in 30s fails as SERVICE_UNAVAILABLE.
 /// How much of a callee's reply `call` reads.
 const MAX_REPLY: usize = 16 << 20;
 
+/// The client for service calls. A call that gets no answer in 30s fails as SERVICE_UNAVAILABLE.
 pub(crate) fn http() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {

@@ -60,7 +60,10 @@ impl Verifier {
     }
 
     async fn fetch(&self) -> Result<JwkSet, reqwest::Error> {
-        crate::client::http()
+        // Its own client: no internal token goes out, so redirects anywhere are fine.
+        static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+        CLIENT
+            .get_or_init(reqwest::Client::new)
             .get(&self.url)
             .timeout(FETCH_TIMEOUT)
             .send()
