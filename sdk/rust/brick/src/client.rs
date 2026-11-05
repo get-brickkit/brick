@@ -103,19 +103,31 @@ pub async fn call<I: Serialize, O: DeserializeOwned>(
     }
     if !status.is_success() {
         return Err(match serde_json::from_slice::<Error>(&body) {
-            // Only an error status from the body; otherwise the HTTP one.
-            Ok(mut e) => {
+            // Only an error status from the body; otherwise the HTTP one. An
+            // envelope without a code is none, as in Go.
+            Ok(mut e) if !e.code.is_empty() => {
                 if !(400..600).contains(&e.status) {
                     e.status = status.as_u16();
                 }
                 e
             }
-            Err(_) => Error::new(
+            _ => Error::new(
                 "INTERNAL_SERVER_ERROR",
                 status.as_u16(),
                 status.canonical_reason().unwrap_or(status.as_str()),
             ),
         });
     }
-    Ok(serde_json::from_slice(&body)?)
+    // An empty reply is null (unit or None), as Go and TS take it as success.
+    let body: &[u8] = if body.is_empty() { b"null" } else { &body };
+    serde_json::from_slice(body).map_err(|_| {
+        Error::new(
+            "INTERNAL_SERVER_ERROR",
+            502,
+            &format!(
+                "Service '{service}' answered {} without JSON",
+                status.as_u16()
+            ),
+        )
+    })
 }

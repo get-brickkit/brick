@@ -130,16 +130,24 @@ fn has_type(t: &str, value: &Value) -> bool {
     }
 }
 
+/// JSON equality as JavaScript sees it: 1.0 and 1 are the same number.
+fn same(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => x.as_f64() == y.as_f64(),
+        _ => a == b,
+    }
+}
+
 fn visit(schema: &Value, path: &str, value: Option<&Value>, issues: &mut Vec<Issue>) {
     let Some(s) = schema.as_object() else { return };
     if let Some(Value::Array(options)) = s.get("enum") {
-        if !value.is_some_and(|v| options.contains(v)) {
+        if !value.is_some_and(|v| options.iter().any(|o| same(o, v))) {
             push(issues, path, "Expected union value".into(), value);
         }
         return;
     }
     if let Some(c) = s.get("const") {
-        if value != Some(c) {
+        if !value.is_some_and(|v| same(c, v)) {
             let text = match c {
                 Value::String(s) => format!("'{s}'"),
                 other => other.to_string(),
@@ -410,5 +418,15 @@ mod tests {
         ] {
             assert_eq!(js_number(f), want, "{f}");
         }
+    }
+
+    #[test]
+    fn enum_and_const_compare_numbers_as_javascript_does() {
+        let schema = serde_json::json!({ "enum": [1, 2] });
+        let mut issues = Vec::new();
+        visit(&schema, "", Some(&serde_json::json!(1.0)), &mut issues);
+        let schema = serde_json::json!({ "const": 2 });
+        visit(&schema, "", Some(&serde_json::json!(2.0)), &mut issues);
+        assert!(issues.is_empty());
     }
 }
