@@ -265,7 +265,7 @@ export function useWorkflowTraceViewerData(
   }, [live, initialLoadCompleted, update, run?.completedAt]);
 
   return {
-    run: run ?? ({} as WorkflowRun),
+    run,
     events,
     loading,
     error,

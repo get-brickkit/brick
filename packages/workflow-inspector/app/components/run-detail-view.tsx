@@ -363,11 +363,6 @@ export function RunDetailView({
 
   const workflowName = parseWorkflowName(run.workflowName)?.shortName;
 
-  // At this point, we've already returned if there was an error
-  // So hasError is always false here
-  const hasError = false;
-  const errorMessage = "";
-
   return (
     <>
       {/* Cancel Confirmation Dialog */}
@@ -445,7 +440,10 @@ export function RunDetailView({
               </div>
 
               <div className="flex items-center justify-between gap-2">
-                <LiveStatus hasError={hasError} errorMessage={errorMessage} />
+                <LiveStatus
+                  hasError={error !== null}
+                  errorMessage={error ? getErrorMessage(error) : ""}
+                />
                 <RunActionsButtons
                   runId={runId}
                   runStatus={run.status}
