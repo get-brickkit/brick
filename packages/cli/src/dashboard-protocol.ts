@@ -398,18 +398,19 @@ export interface ApiSnapshot {
 }
 
 /** What the dashboard knows about the app's developer documentation. */
-export interface DocsSnapshot {
-  /** Changes whenever the pages change, so the Docs tab reloads. */
-  revision: number;
-  status: "ready" | "missing" | "error";
-  title: string;
-  /** Whether the project supplied components of its own. */
-  components: boolean;
-  /** Why the docs cannot be shown, when `status` is not ready. */
-  message?: string;
-  /** Packages to install, when `status` is "missing". */
-  packages?: string[];
-}
+export type DocsSnapshot =
+  | {
+      status: "ready";
+      /** Changes whenever the pages change, so the Docs tab reloads. */
+      revision: number;
+      title: string;
+      /** Whether the project supplied components of its own. */
+      components: boolean;
+    }
+  /** The packages the docs need are not installed. */
+  | { status: "missing"; packages: string[]; message: string }
+  /** Why the docs cannot be shown. */
+  | { status: "error"; message: string };
 
 /** The project's dashboard extension as last built. */
 export interface ExtensionBuild {

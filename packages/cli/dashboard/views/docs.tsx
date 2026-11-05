@@ -32,8 +32,8 @@ export default function DocsView({
   if (docs.status === "missing")
     return (
       <Empty
-        title="The docs need two packages"
-        hint={`Install them with: bun add -d ${docs.packages?.join(" ") ?? "fumadocs-core @mdx-js/mdx"}`}
+        title="The docs need packages that are not installed"
+        hint={`Install them with: bun add -d ${docs.packages.join(" ")}`}
       />
     );
   if (docs.status === "error")
@@ -41,7 +41,13 @@ export default function DocsView({
   return <Ready docs={docs} route={route} />;
 }
 
-function Ready({ docs, route }: { docs: DocsSnapshot; route: Route }) {
+function Ready({
+  docs,
+  route,
+}: {
+  docs: Extract<DocsSnapshot, { status: "ready" }>;
+  route: Route;
+}) {
   const info = useDocsInfo(docs.revision);
   const project = useProjectComponents(docs.components, docs.revision);
   const [page, setPage] = useState<DocsPage>();

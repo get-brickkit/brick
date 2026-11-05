@@ -719,14 +719,11 @@ export class DocsHost {
           ? `The docs need ${opened.packages.join(" and ")}. Install with: bun add -d ${opened.packages.join(" ")}`
           : opened.message;
       this.#warn(`[Brick-TS] Docs are off. ${message}`);
-      this.#publish({
-        revision: 1,
-        status: opened.status,
-        title: DEFAULT_TITLE,
-        components: false,
-        message,
-        ...(opened.status === "missing" ? { packages: opened.packages } : {}),
-      });
+      this.#publish(
+        opened.status === "missing"
+          ? { status: "missing", packages: opened.packages, message }
+          : { status: "error", message },
+      );
       return;
     }
     this.#docs = opened.docs;
