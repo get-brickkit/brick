@@ -252,6 +252,7 @@ ${PORT_RESOLUTION_HELP}`,
                 }
               : false,
           manifest: project,
+          root: project?.root,
         });
       },
     );
@@ -434,7 +435,7 @@ ${PORT_RESOLUTION_HELP}`,
       if (polyglot) {
         for (const file of polyglot) console.log(`Written ${file}`);
       } else if (client) {
-        await writeClientContract(project.entry, client);
+        await writeClientContract(project.entry, client, project.root);
         console.log(`Client contract written to ${client}`);
       }
       const openapi = fromRoot(project, project.config.openapi?.output);
@@ -503,6 +504,7 @@ ${PORT_RESOLUTION_HELP}`,
           opts.output ??
             fromRoot(project, project?.config.client?.output) ??
             (project && join(project.generated, "contract.ts")),
+          project?.root,
         );
         console.log(`Client contract written to ${output}`);
       },
@@ -532,6 +534,7 @@ ${PORT_RESOLUTION_HELP}`,
       ) => {
         const project = await loadConfig(configOf(command));
         const target = requireEntry(command, entry, project);
+        if (project) await writeServiceManifest(project);
         const output =
           (opts.output && resolve(opts.output)) ??
           fromRoot(project, project?.config.client?.output) ??

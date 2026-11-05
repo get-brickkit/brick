@@ -508,9 +508,12 @@ ${yamlEnv(u.env, "      ").join("\n")}`,
   );
   const { image, volumes } = PROXY_IMAGES[proxy];
   const ports = table.domain ? ['"80:80"', '"443:443"'] : ['"80:80"'];
+  // A TS-only app reads neither variable.
+  const secrets = table.upstreams.some((u) => "BRICK_INTERNAL_TOKEN" in u.env)
+    ? "# Set BRICK_INTERNAL_TOKEN (and BRICK_JWT_ISSUER, your public URL) in deploy/compose/.env.\n"
+    : "";
   return `# ${HEADER}
-# Set BRICK_INTERNAL_TOKEN (and BRICK_JWT_ISSUER, your public URL) in deploy/compose/.env.
-services:
+${secrets}services:
 ${services.join("\n\n")}
 
   proxy:

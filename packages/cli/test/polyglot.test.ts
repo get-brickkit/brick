@@ -33,6 +33,17 @@ describe("polyglot clients", () => {
     );
   });
 
+  it("renames Rust fields that can't be raw identifiers", () => {
+    const input = {
+      type: "object",
+      properties: { self: { type: "string" }, type: { type: "string" } },
+      required: ["self", "type"],
+    };
+    const source = rustClient(contract(input), "self");
+    expect(source).toContain("pub self_: String,");
+    expect(source).toContain("pub r#type: String,");
+  });
+
   it("writes no Go imports when no other service has actions", () => {
     const source = goClient(contract(undefined), "tags");
     expect(source).not.toContain("import");

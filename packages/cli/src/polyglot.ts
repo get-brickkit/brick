@@ -48,13 +48,22 @@ export async function readRemoteManifest(
     cwd: resolve(cwd, remote.options.dir),
     env: { ...process.env, BRICK_MANIFEST: "1" },
     maxBuffer: 64 * 1024 * 1024,
+    // A service whose SDK ignores BRICK_MANIFEST would serve forever.
+    timeout: 120_000,
   }).catch((error: Error & { stderr?: string }) => {
     throw new Error(
       `Brick: could not read the manifest of "${remote.name}" (${remote.options.dev} in ${remote.options.dir}): ${error.stderr || error.message}`,
     );
   });
   const line = stdout.trim().split("\n").at(-1) ?? "";
-  const manifest = JSON.parse(line) as ServiceManifest;
+  let manifest: ServiceManifest;
+  try {
+    manifest = JSON.parse(line) as ServiceManifest;
+  } catch {
+    throw new Error(
+      `Brick: the manifest of "${remote.name}" (${remote.options.dev} in ${remote.options.dir}) is not JSON: its last line was ${JSON.stringify(line)}`,
+    );
+  }
   if (manifest.name !== remote.name)
     throw new Error(
       `Brick: ${remote.options.dir} serves "${manifest.name}", but its remoteService is named "${remote.name}".`,
@@ -329,7 +338,9 @@ export function rustClient(contract: PolyglotContract, self: string): string {
         ([key, prop]) => {
           let field = snake(key) || "field";
           if (/^[0-9]/.test(field)) field = `f${field}`;
-          if (RUST_KEYWORDS.has(field)) field = `r#${field}`;
+          // self, super and crate can't be raw identifiers.
+          if (["self", "super", "crate"].includes(field)) field = `${field}_`;
+          else if (RUST_KEYWORDS.has(field)) field = `r#${field}`;
           let type = rustType(prop, name + pascal(key));
           const optional = !required.has(key);
           const attrs = [`rename = ${JSON.stringify(key)}`];
@@ -416,6 +427,8 @@ export async function startDevRemotes(
     appUrl: string;
     services: readonly string[];
     env?: Record<string, string>;
+    /** Where the services' `dir`s are relative to (default the working directory). */
+    cwd?: string;
   },
 ): Promise<RemoteProcesses> {
   noticeExperimental(remote);
@@ -423,30 +436,42 @@ export async function startDevRemotes(
     mode: "dev",
     ...options,
   });
-  const watchers = remote.map((service) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    return watch(
-      resolve(service.options.dir),
-      { recursive: true },
-      (_event, filename) => {
-        if (
-          !filename ||
-          /(^|[\\/])(target|bin|node_modules|\.git)([\\/]|$)/.test(filename)
-        )
-          return;
-        clearTimeout(timer);
-        timer = setTimeout(() => {
-          console.log(`\n📝 ${service.name} changed. Restarting it...`);
-          void processes.restart(service.name);
-        }, 150);
-      },
-    );
-  });
-  return {
-    ...processes,
-    async stop() {
-      for (const watcher of watchers) watcher.close();
-      await processes.stop();
-    },
+  const watchers: ReturnType<typeof watch>[] = [];
+  const timers = new Set<ReturnType<typeof setTimeout>>();
+  const stop = async () => {
+    for (const watcher of watchers) watcher.close();
+    for (const timer of timers) clearTimeout(timer);
+    await processes.stop();
   };
+  try {
+    for (const service of remote) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      watchers.push(
+        watch(
+          resolve(options.cwd ?? process.cwd(), service.options.dir),
+          { recursive: true },
+          (_event, filename) => {
+            if (
+              !filename ||
+              /(^|[\\/])(target|bin|node_modules|\.git)([\\/]|$)/.test(filename)
+            )
+              return;
+            clearTimeout(timer);
+            timers.delete(timer!);
+            timer = setTimeout(() => {
+              timers.delete(timer!);
+              console.log(`\n📝 ${service.name} changed. Restarting it...`);
+              void processes.restart(service.name);
+            }, 150);
+            timers.add(timer);
+          },
+        ),
+      );
+    }
+  } catch (error) {
+    // Nobody gets the children to stop otherwise.
+    await stop();
+    throw error;
+  }
+  return { ...processes, stop };
 }

@@ -11,7 +11,7 @@ import {
 } from "vite";
 import { generateClientContract } from "./client-contract";
 import { remoteEnv } from "@brickkit/core";
-import { startDevRemotes } from "./polyglot";
+import { readContractRemotes, startDevRemotes } from "./polyglot";
 import { requireBrickApp } from "./app-entry";
 import { startViteDashboard, type ViteDashboard } from "./dev-vite-dashboard";
 import {
@@ -68,7 +68,11 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
   const changedFiles = new Set<string>();
 
   async function writeContract(value: unknown) {
-    const source = generateClientContract(requireBrickApp(value));
+    const app = requireBrickApp(value);
+    const source = generateClientContract(
+      app,
+      readContractRemotes(app, resolve(config.root, "_brick/contract.json")),
+    );
     await writeContractSource(output, source);
   }
 
@@ -155,9 +159,14 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
             address && typeof address === "object"
               ? address.port
               : (server.config.server.port ?? 5173);
-          const scheme = server.config.server.https ? "https" : "http";
+          // Over https, localhost: what dev certificates cover. The services'
+          // clients still need to trust that certificate.
+          const origin = server.config.server.https
+            ? `https://localhost:${port}`
+            : `http://127.0.0.1:${port}`;
           const children = startDevRemotes(remote, {
-            appUrl: `${scheme}://127.0.0.1:${port}`,
+            appUrl: origin,
+            cwd: server.config.root,
             services: services.map((service) => service.name),
             env,
           });

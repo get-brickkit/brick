@@ -97,6 +97,7 @@ try {
     port: parsePort(process.argv[3] || undefined, process.env.PORT),
     prefix: process.argv[4] || undefined,
     clientOutput: process.argv[5] || undefined,
+    root: process.argv[7] || undefined,
   });
   startupComplete = true;
   // The supervisor runs the Go and Rust services and answers with their addresses.

@@ -43,6 +43,8 @@ export interface DevServerOptions {
   prefix?: string;
   /** Generate a browser contract before starting the backend and frontend. */
   clientOutput?: string;
+  /** The project root: where `_brick/contract.json` and remote services' `dir`s are (default the working directory). */
+  root?: string;
   /** Frontend command, launched once after the first successful generation. */
   frontend?: string;
   /**
@@ -336,9 +338,17 @@ export async function startDevApplication(options: DevServerOptions) {
       throw new Error(
         "Brick: contract output must not overwrite the app entry.",
       );
+    const { readContractRemotes } = await import("./polyglot");
+    const app = requireBrickApp(module.default);
     await writeContractSource(
       output,
-      generateClientContract(requireBrickApp(module.default)),
+      generateClientContract(
+        app,
+        readContractRemotes(
+          app,
+          resolve(options.root ?? "", "_brick/contract.json"),
+        ),
+      ),
     );
     process.send?.({ type: "brick:contract-ready" });
   }
@@ -435,6 +445,7 @@ export async function startDevServer(options: DevServerOptions = {}) {
         appUrl: `http://127.0.0.1:${appPort()}`,
         services: message.services,
         env: message.env,
+        cwd: options.root,
       },
     ).catch((error) => {
       // Let the next worker start try again once the cause is fixed.
@@ -459,6 +470,7 @@ export async function startDevServer(options: DevServerOptions = {}) {
         options.prefix ?? "",
         options.clientOutput ? resolve(options.clientOutput) : "",
         telemetry ? "1" : "",
+        options.root ?? "",
       ],
       {
         cwd: process.cwd(),
@@ -715,6 +727,7 @@ export async function startDevServer(options: DevServerOptions = {}) {
       scheduleRestart();
     }),
   );
+  let remotesStopped: Promise<void> | undefined;
   const stop = () => {
     if (stopped) return;
     stopped = true;
@@ -742,7 +755,7 @@ export async function startDevServer(options: DevServerOptions = {}) {
     dashboard?.stop();
     docs?.close();
     history?.close();
-    void children?.then(
+    remotesStopped = children?.then(
       (processes) => processes.stop(),
       () => {},
     );
@@ -759,7 +772,10 @@ export async function startDevServer(options: DevServerOptions = {}) {
     stop();
     process.on("SIGINT", onSignal);
     process.on("SIGTERM", onSignal);
-    void child.exited.then(() => process.exit(0));
+    // Exiting drops the children's SIGKILL timers: wait for them to stop too.
+    void Promise.all([child.exited, remotesStopped]).then(() =>
+      process.exit(0),
+    );
   };
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
