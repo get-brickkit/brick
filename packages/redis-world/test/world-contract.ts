@@ -6,12 +6,13 @@ import { createTestSuite } from "@workflow/world-testing";
 // EventResult.maxEvents.
 import { eventLimit } from "@workflow/world-testing/dist/src/event-limit.mjs";
 import { Redis } from "ioredis";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import type {
   RedisBackedWorld,
   RedisBackedWorldConfig,
   RunRetention,
 } from "../src/internal.js";
+import { describeRedis, gate, redisUrl } from "./helpers.js";
 
 /** A Redis-backed world package, as the contract below drives it. */
 export interface WorldUnderTest {
@@ -24,37 +25,41 @@ export interface WorldUnderTest {
 
 /**
  * The behaviour every Redis-backed world shares, whatever its queue. Each world
- * package runs it against its own `createWorld`. Needs `REDIS_TEST_URL`
- * (test/global-setup.ts starts a container when it is unset).
+ * package runs it against its own `createWorld`.
  */
 export function worldContract({
   packageName,
   createWorld,
   isolate,
 }: WorldUnderTest): void {
-  if (!process.env.REDIS_TEST_URL) {
-    test.skip("needs REDIS_TEST_URL or Docker (see test/global-setup.ts)", () => {});
-    return;
-  }
-  const redisUrl: string = process.env.REDIS_TEST_URL;
-
-  describe("upstream world spec", () => {
-    // The spec's server processes read the connection from the environment.
-    process.env.WORKFLOW_REDIS_URL = redisUrl;
-    process.env.REDIS_URL = redisUrl;
+  describeRedis("upstream world spec", () => {
+    // The spec's server processes, started inside its tests, read the connection from the environment.
+    const saved = {
+      WORKFLOW_REDIS_URL: process.env.WORKFLOW_REDIS_URL,
+      REDIS_URL: process.env.REDIS_URL,
+    };
+    beforeAll(() => {
+      process.env.WORKFLOW_REDIS_URL = redisUrl;
+      process.env.REDIS_URL = redisUrl;
+    });
+    afterAll(() => {
+      for (const [name, value] of Object.entries(saved))
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+    });
     createTestSuite(packageName);
     eventLimit(packageName);
   });
 
-  describe("config from the environment", () => {
+  describeRedis("config from the environment", () => {
     afterEach(() => {
-      delete process.env.WORKFLOW_REDIS_KEY_PREFIX;
+      vi.unstubAllEnvs();
     });
 
     test("env vars still apply when some config is passed", async () => {
       const keyPrefix = `env:${randomUUID()}:`;
-      // WORKFLOW_REDIS_URL is set above for the spec suite.
-      process.env.WORKFLOW_REDIS_KEY_PREFIX = keyPrefix;
+      vi.stubEnv("WORKFLOW_REDIS_URL", redisUrl);
+      vi.stubEnv("WORKFLOW_REDIS_KEY_PREFIX", keyPrefix);
       const world = createWorld({ ...isolate(randomUUID()), retention: {} });
       const redis = new Redis(redisUrl);
       try {
@@ -74,7 +79,7 @@ export function worldContract({
   // to an in-process handler. What it pins is what the v5 runtime reads off a
   // delivery: the headers, how a reschedule counts, and that restart recovery
   // puts in-flight runs back.
-  describe("world queue and recovery (Redis integration)", () => {
+  describeRedis("world queue and recovery (Redis integration)", () => {
     // Each wait below allows 10s, so the test timeout must be longer: at vitest's
     // 5s default a stalled Redis or a starved CPU fails the test with a timeout
     // even though the queue delivers correctly afterwards.
@@ -220,9 +225,10 @@ export function worldContract({
 
     test("drops a duplicate enqueue that carries the same idempotency key", async () => {
       const world = newWorld();
+      const pending = gate();
       const deliveries = recordDeliveries(world, async () => {
         // Hold the first delivery open so the second enqueue arrives while it is pending.
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await pending.promise;
         return Response.json({ ok: true });
       });
       await world.queue(
@@ -240,14 +246,17 @@ export function worldContract({
       await vi.waitFor(() => expect(deliveries).toHaveLength(1), {
         timeout: 10_000,
       });
+      // A second delivery would come while the first is held: none may.
       await new Promise((resolve) => setTimeout(resolve, 500));
       expect(deliveries).toHaveLength(1);
+      pending.release();
     });
 
     test("queues the first message of a run once, however often the run is started", async () => {
       const world = newWorld();
+      const pending = gate();
       const deliveries = recordDeliveries(world, async () => {
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await pending.promise;
         return Response.json({ ok: true });
       });
       const message = {
@@ -267,8 +276,10 @@ export function worldContract({
       await vi.waitFor(() => expect(deliveries).toHaveLength(1), {
         timeout: 10_000,
       });
+      // A second delivery would come while the first is held: none may.
       await new Promise((resolve) => setTimeout(resolve, 500));
       expect(deliveries).toHaveLength(1);
+      pending.release();
     });
 
     test("does not collapse later messages of a run, which carry no run input", async () => {
@@ -419,7 +430,7 @@ export function worldContract({
 
   // Retention end to end: finished runs past their policy are deleted with every
   // key they own; live runs and runs inside the policy are not touched.
-  describe("run retention (Redis integration)", () => {
+  describeRedis("run retention (Redis integration)", () => {
     const worlds: RedisBackedWorld[] = [];
     const clients: Redis[] = [];
 
@@ -538,7 +549,7 @@ export function worldContract({
   // `running` with no terminal event; nothing re-enqueues it until a process calls
   // start() again.
 
-  describe("review: queue retry budget", () => {
+  describeRedis("queue retry budget", () => {
     const prefix: QueuePrefix = getQueueTopicPrefix("workflow");
     const worlds: RedisBackedWorld[] = [];
 

@@ -1,73 +1,42 @@
-import { RedisContainer } from "@testcontainers/redis";
 import { randomUUID } from "node:crypto";
 import { Redis } from "ioredis";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
+import { keys } from "../src/keys.js";
 import { createStreamer } from "../src/streamer.js";
+import { describeRedis, pauseAfter, redisUrl, subscribed } from "./helpers.js";
 
-// Review2 repro: the gap check (prevId) is applied to live notifications only
-// AFTER the initial read. A notification that is buffered while the initial
-// XRANGE is in flight is enqueued without the check, so a chunk whose own
-// notification was lost in that window (a subscriber reconnect: the resync
-// catch-up is a no-op while `buffer` is set) is skipped for good: lastEntryId
-// moves past it and every later catch-up reads from after it.
+// The gap check (prevId) covers notifications buffered while the initial
+// XRANGE is in flight too: a chunk whose own notification was lost in that
+// window (a subscriber reconnect: the resync catch-up is a no-op while `buffer`
+// is set) is still delivered, so lastEntryId never moves past it.
 
-let url: string;
-let testContainer: Awaited<ReturnType<RedisContainer["start"]>> | undefined;
-beforeAll(async () => {
-  url =
-    process.env.REDIS_TEST_URL ??
-    (testContainer = await new RedisContainer(
-      "redis:7-alpine",
-    ).start()).getConnectionUrl();
-
-  writer = new Redis(url);
-  admin = new Redis(url);
-}, 120_000);
 let writer: Redis;
 let admin: Redis;
-
+beforeAll(() => {
+  writer = new Redis(redisUrl);
+  admin = new Redis(redisUrl);
+});
 afterAll(async () => {
   await Promise.all([writer.quit(), admin.quit()]);
 });
 
-function gate() {
-  let release!: () => void;
-  const p = new Promise<void>((r) => {
-    release = r;
-  });
-  return { p, release };
-}
-
-describe("review2: streamer initial read vs a lost notification", () => {
+describeRedis("streamer initial read vs a lost notification", () => {
   it("delivers a chunk whose notification was lost while the history read was in flight", async () => {
     const keyPrefix = `review2:${randomUUID()}:`;
-    const readerRedis = new Redis(url);
+    const readerRedis = new Redis(redisUrl);
     const reading = createStreamer({ redis: readerRedis, keyPrefix });
     const writing = createStreamer({ redis: writer, keyPrefix });
     const runId = `wrun_${randomUUID()}`;
-    const key = `${keyPrefix}stream:${runId}:out`;
+    const key = keys(keyPrefix).streamKey(runId, "out");
 
     await writing.streams.write(runId, "out", "one");
-    // Let the reader's subscriber attach.
-    await new Promise((r) => setTimeout(r, 100));
+    await subscribed(admin, keyPrefix, 2);
 
     // Hold the reader's history XRANGE reply (taken now: ['one']) until we say so.
-    const reached = gate();
-    const hold = gate();
-    const orig = readerRedis.xrange.bind(readerRedis);
-    let armed = true;
-    (readerRedis as any).xrange = async (...args: unknown[]) => {
-      const value = await (orig as any)(...args);
-      if (armed) {
-        armed = false;
-        reached.release();
-        await hold.p;
-      }
-      return value;
-    };
+    const history = pauseAfter(readerRedis, "xrange");
 
     const streamP = reading.streams.get(runId, "out");
-    await reached.p;
+    await history.reached;
 
     // 'two' reaches the stream, its notification is lost.
     await admin.xadd(
@@ -80,8 +49,9 @@ describe("review2: streamer initial read vs a lost notification", () => {
     );
     // 'three' is published normally (prevId = 'two') and lands in the reader's buffer.
     await writing.streams.write(runId, "out", "three");
+    // Nothing to wait on: give the notification time to reach the reader's buffer.
     await new Promise((r) => setTimeout(r, 100));
-    hold.release();
+    history.release();
 
     const stream = await streamP;
     const received: string[] = [];
@@ -100,10 +70,6 @@ describe("review2: streamer initial read vs a lost notification", () => {
     await Promise.all([reading.close(), writing.close()]);
     await readerRedis.quit();
 
-    expect(received).toEqual(["one", "two", "three"]); // actual: ['one', 'three']
+    expect(received).toEqual(["one", "two", "three"]);
   });
-});
-
-afterAll(async () => {
-  await testContainer?.stop();
 });

@@ -3,40 +3,26 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
-import { RedisContainer } from "@testcontainers/redis";
 import { getQueueTopicPrefix } from "@workflow/world";
 import { Redis } from "ioredis";
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  describe,
-  expect,
-  test,
-  vi,
-} from "vitest";
+import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import { createQueue } from "../src/queue.js";
 import { resolveConfig, type RedisWorldConfig } from "../src/config.js";
 import { keys } from "../src/keys.js";
+import { describeRedis, gate, redisUrl } from "./helpers.js";
 
 const prefix = getQueueTopicPrefix("workflow");
 const queueName = `${prefix}list-tests`;
-let container: Awaited<ReturnType<RedisContainer["start"]>> | undefined;
-let url: string;
+const url = redisUrl;
 let redis: Redis;
 const queues: ReturnType<typeof createQueue>[] = [];
 const children: ChildProcess[] = [];
 const namespaces: string[] = [];
 const releases: (() => void)[] = [];
 
-beforeAll(async () => {
-  url =
-    process.env.REDIS_TEST_URL ??
-    (container = await new RedisContainer(
-      "redis:7-alpine",
-    ).start()).getConnectionUrl();
+beforeAll(() => {
   redis = new Redis(url);
-}, 120_000);
+});
 afterEach(async () => {
   vi.restoreAllMocks();
   for (const release of releases.splice(0)) release();
@@ -53,7 +39,6 @@ afterEach(async () => {
 });
 afterAll(async () => {
   await redis.quit();
-  await container?.stop();
 });
 
 function setup(extra: Partial<RedisWorldConfig> = {}) {
@@ -73,12 +58,9 @@ function setup(extra: Partial<RedisWorldConfig> = {}) {
   return { q, config, root: keys(config.keyPrefix).queue };
 }
 function held() {
-  let release = () => {};
-  const promise = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  releases.push(release);
-  return { promise, release };
+  const held = gate();
+  releases.push(held.release);
+  return held;
 }
 const wait = (check: () => unknown) =>
   vi.waitFor(check, { timeout: 10_000, interval: 25 });
@@ -111,7 +93,7 @@ async function deadWorker(config: RedisWorldConfig) {
   return { child, reserved };
 }
 
-describe("reliable Redis list queue", () => {
+describeRedis("reliable Redis list queue", () => {
   test("start is idempotent and uses one shared flow queue", async () => {
     const { q, root } = setup();
     await Promise.all([q.start(), q.start()]);
@@ -301,6 +283,7 @@ describe("reliable Redis list queue", () => {
       await second.start();
       await wait(() => expect(recovered).toBe(true));
       old.release();
+      // Asserts the old worker's late ACK does nothing: no event to wait for.
       await sleep(150);
       expect(await redis.get(root.idempotent("fence"))).toBe(id.messageId);
       expect(await q.getQueueStats()).toMatchObject({
@@ -456,6 +439,7 @@ describe("reliable Redis list queue", () => {
       return Response.json({ ok: true });
     });
     await second.start();
+    // Longer than heartbeatTtlMs: a lapsed heartbeat would let the second worker reclaim it.
     await sleep(1500);
     expect(closed).toBe(false);
     expect(deliveries).toBe(1);
@@ -471,12 +455,18 @@ describe("reliable Redis list queue", () => {
   test("a failed acknowledgement retires the lease and recovers the claim", async () => {
     const { q } = setup();
     const attempts: string[] = [];
+    const evaluate = redis.eval.bind(redis) as (...args: unknown[]) => unknown;
+    let failed = false;
+    vi.spyOn(redis, "eval").mockImplementation(((...args: unknown[]) => {
+      // The ACK script is the only one that deletes its idempotency key.
+      if (!failed && String(args[0]).includes("redis.call('DEL', KEYS[2])")) {
+        failed = true;
+        return Promise.reject(new Error("injected ACK connection failure"));
+      }
+      return evaluate(...args);
+    }) as typeof redis.eval);
     q.registerHandler?.(prefix, async (req) => {
       attempts.push(req.headers.get("x-vqs-message-attempt")!);
-      if (attempts.length === 1)
-        vi.spyOn(redis, "eval").mockRejectedValueOnce(
-          new Error("injected ACK connection failure"),
-        );
       return Response.json({ ok: true });
     });
     await q.start();

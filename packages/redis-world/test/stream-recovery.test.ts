@@ -1,34 +1,26 @@
-import { RedisContainer } from "@testcontainers/redis";
 import { randomUUID } from "node:crypto";
 import { Redis } from "ioredis";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
+import { keys } from "../src/keys.js";
 import { createStreamer } from "../src/streamer.js";
+import { describeRedis, redisUrl, subscribed } from "./helpers.js";
 
-// Review repro: a live reader is fed only by pub/sub after its initial XRANGE.
-// Pub/sub is fire-and-forget, so a chunk (or the eof marker) published while the
+// A live reader is fed by pub/sub after its initial XRANGE. Pub/sub is
+// fire-and-forget, so a chunk (or the eof marker) published while the
 // subscriber connection is down -- a reconnect, or Redis dropping a slow
 // subscriber at `client-output-buffer-limit pubsub` (chunks ride inline in the
-// message) -- is never delivered, and the reader hangs although the chunk is in
-// the stream.
+// message) -- must still reach the reader from the stream itself.
 
-let url: string;
-let testContainer: Awaited<ReturnType<RedisContainer["start"]>> | undefined;
-beforeAll(async () => {
-  url =
-    process.env.REDIS_TEST_URL ??
-    (testContainer = await new RedisContainer(
-      "redis:7-alpine",
-    ).start()).getConnectionUrl();
-
-  reader = new Redis(url, { connectionName: name });
-  writer = new Redis(url);
-  admin = new Redis(url);
-}, 120_000);
 const name = `review-${randomUUID()}`;
 let reader: Redis;
 let writer: Redis;
 let admin: Redis;
 
+beforeAll(() => {
+  reader = new Redis(redisUrl, { connectionName: name });
+  writer = new Redis(redisUrl);
+  admin = new Redis(redisUrl);
+});
 afterAll(async () => {
   await Promise.all([reader.quit(), writer.quit(), admin.quit()]);
 });
@@ -50,7 +42,7 @@ async function readLive(redis: Redis, kill: boolean) {
     }
     done = true;
   })();
-  await new Promise((r) => setTimeout(r, 50));
+  await subscribed(admin, keyPrefix, 2);
   if (kill) {
     // Drop only OUR subscriber connection (the duplicate inherits connectionName).
     const list = (await admin.client("LIST")) as string;
@@ -69,9 +61,9 @@ async function readLive(redis: Redis, kill: boolean) {
   return { chunks, done };
 }
 
-describe("review: streamer live delivery", () => {
+describeRedis("streamer live delivery", () => {
   it("control: a live reader gets the chunk and eof when nothing is lost", async () => {
-    const control = new Redis(url);
+    const control = new Redis(redisUrl);
     expect(await readLive(control, false)).toEqual({
       chunks: ["hello"],
       done: true,
@@ -80,7 +72,6 @@ describe("review: streamer live delivery", () => {
   });
 
   it("delivers chunks written while the subscriber reconnects", async () => {
-    // Actual: { chunks: [], done: false } -- the reader hangs until cancelled.
     expect(await readLive(reader, true)).toEqual({
       chunks: ["hello"],
       done: true,
@@ -88,10 +79,10 @@ describe("review: streamer live delivery", () => {
   });
 });
 
-describe("stream recovery: a notification lost in the middle", () => {
+describeRedis("stream recovery: a notification lost in the middle", () => {
   it("delivers the lost chunk before the one that did arrive", async () => {
     const keyPrefix = `review:${randomUUID()}:`;
-    const reading = createStreamer({ redis: new Redis(url), keyPrefix });
+    const reading = createStreamer({ redis: new Redis(redisUrl), keyPrefix });
     const writing = createStreamer({ redis: writer, keyPrefix });
     const runId = `wrun_${randomUUID()}`;
 
@@ -109,7 +100,7 @@ describe("stream recovery: a notification lost in the middle", () => {
     await writing.streams.write(runId, "out", "one");
     // 'two' reaches the stream but never the subscribers: a lost notification.
     await admin.xadd(
-      `${keyPrefix}stream:${runId}:out`,
+      keys(keyPrefix).streamKey(runId, "out"),
       "*",
       "data",
       Buffer.from("two").toString("base64"),
@@ -125,8 +116,4 @@ describe("stream recovery: a notification lost in the middle", () => {
     await Promise.all([reading.close(), writing.close()]);
     expect(received).toEqual(["one", "two", "three"]);
   });
-});
-
-afterAll(async () => {
-  await testContainer?.stop();
 });

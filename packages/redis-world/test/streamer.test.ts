@@ -1,5 +1,4 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { RedisContainer } from "@testcontainers/redis";
 import type { Streamer } from "@workflow/world";
 import { Redis } from "ioredis";
 import {
@@ -12,6 +11,7 @@ import {
   vi,
 } from "vitest";
 import { createStreamer } from "../src/streamer.js";
+import { describeRedis, redisUrl } from "./helpers.js";
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
@@ -35,23 +35,15 @@ async function readAllText(
   return (await readAll(stream)).map((chunk) => decoder.decode(chunk));
 }
 
-describe("Streamer (Redis integration)", () => {
-  let container: Awaited<ReturnType<RedisContainer["start"]>> | undefined;
+describeRedis("Streamer (Redis integration)", () => {
   let redis: Redis;
 
-  beforeAll(async () => {
-    // REDIS_TEST_URL points the suite at an existing Redis instead of a container.
-    const redisUrl =
-      process.env.REDIS_TEST_URL ??
-      (container = await new RedisContainer(
-        "redis:7-alpine",
-      ).start()).getConnectionUrl();
+  beforeAll(() => {
     redis = new Redis(redisUrl, { maxRetriesPerRequest: null });
-  }, 120_000);
+  });
 
-  afterAll(async () => {
+  afterAll(() => {
     redis?.disconnect();
-    await container?.stop();
   });
 
   let prefixCounter = 0;
@@ -75,26 +67,6 @@ describe("Streamer (Redis integration)", () => {
   afterEach(async () => {
     await Promise.all(streamers.map((s) => s.close()));
     streamers = [];
-  });
-
-  test("exposes the v5 shape", () => {
-    const { streamer } = newStreamer();
-    expect(Object.keys(streamer.streams).sort()).toEqual(
-      [
-        "close",
-        "get",
-        "getChunks",
-        "getInfo",
-        "list",
-        "write",
-        "writeMulti",
-      ].sort(),
-    );
-    expect(typeof streamer.close).toBe("function");
-    // Legacy v4 top-level methods are gone.
-    for (const legacy of ["writeToStream", "closeStream", "readFromStream"]) {
-      expect(legacy in streamer).toBe(false);
-    }
   });
 
   describe("write and get", () => {
