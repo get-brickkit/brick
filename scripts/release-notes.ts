@@ -1,10 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { publishedPackages, repositoryUrl } from "./published-packages.ts";
+import {
+  publishedPackages,
+  repositoryUrl,
+  workspacePackages,
+} from "./published-packages.ts";
 
 const root = join(import.meta.dir, "..");
 const packages = publishedPackages(root);
-// Released in lockstep, so any package carries the release version.
+// Released in lockstep (CI checks it), so any package carries the release version.
 const version = packages[0]!.data.version;
 const tag = `v${version}`;
 const repo = repositoryUrl(root);
@@ -35,6 +39,20 @@ const previous = git(
       ).test(candidate) && candidate !== tag,
   );
 
+// Private workspace packages a package depends on ship inside it (the inspector in the CLI).
+const privateDirs = new Map(
+  workspacePackages(root).flatMap((p) =>
+    p.data.private === true ? [[p.data.name as string, p.dir]] : [],
+  ),
+);
+const bundled = (data: Record<string, any>) =>
+  Object.keys({ ...data.dependencies, ...data.devDependencies }).flatMap(
+    (name) => {
+      const dir = privateDirs.get(name);
+      return dir ? [`packages/${dir}`] : [];
+    },
+  );
+
 let hasChanges = false;
 for (const { dir, data } of packages) {
   const commits = git(
@@ -43,8 +61,7 @@ for (const { dir, data } of packages) {
     previous ? `${previous}..HEAD` : "HEAD",
     "--",
     `packages/${dir}`,
-    // The inspector ships inside the CLI.
-    ...(dir === "cli" ? ["packages/workflow-inspector"] : []),
+    ...bundled(data),
   )
     .split("\n")
     .flatMap((line) => {

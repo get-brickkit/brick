@@ -17,7 +17,11 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { publishedPackages, repositoryUrl } from "./published-packages.ts";
+import {
+  publishedPackages,
+  releaseVersion,
+  repositoryUrl,
+} from "./published-packages.ts";
 
 const ROOT = join(import.meta.dir, "..");
 const DRY = process.argv.includes("--dry-run");
@@ -50,9 +54,9 @@ const GIT = resolveBin("git");
 
 function sh(cmd: string[], cwd = ROOT): string {
   const [bin, ...rest] = cmd;
-  // gh talks to GitHub, so resolve it to an absolute path above.
+  // git and gh talk to GitHub, so resolve them to absolute paths above.
   // Other tools (e.g. bun, often under ~/.bun/bin) keep PATH lookup.
-  const resolved = bin === "gh" ? resolveBin("gh") : bin;
+  const resolved = bin === "git" ? GIT : bin === "gh" ? resolveBin("gh") : bin;
   return execFileSync(resolved, rest, {
     cwd,
     encoding: "utf-8",
@@ -96,32 +100,25 @@ if (
   fail("usage: bun run release [patch|minor|major|beta] [--dry-run|--prepare]");
 
 // --- preconditions ---
-const dirty = execFileSync(GIT, ["status", "--porcelain"], {
-  cwd: ROOT,
-  encoding: "utf-8",
-})
+const dirty = sh(["git", "status", "--porcelain"])
   .split("\n")
   .filter((l) => l && !l.startsWith("??"));
 if (dirty.length)
   fail(`tracked tree not clean:\n${dirty.join("\n")}\ncommit or stash first`);
-const branch = execFileSync(GIT, ["branch", "--show-current"], {
-  cwd: ROOT,
-  encoding: "utf-8",
-}).trim();
+const branch = sh(["git", "branch", "--show-current"]);
 const releaseBranch = bump === "beta" ? "beta" : "main";
 if (branch !== releaseBranch) fail(`must run on ${releaseBranch}`);
 execFileSync(GIT, ["fetch", "origin"], {
   cwd: ROOT,
   stdio: DRY ? "ignore" : "inherit",
 });
-const divergence = execFileSync(
-  GIT,
-  ["rev-list", "--left-right", "--count", `HEAD...origin/${releaseBranch}`],
-  {
-    cwd: ROOT,
-    encoding: "utf-8",
-  },
-).trim();
+const divergence = sh([
+  "git",
+  "rev-list",
+  "--left-right",
+  "--count",
+  `HEAD...origin/${releaseBranch}`,
+]);
 if (!DRY && divergence !== "0\t0")
   fail(
     `local ${releaseBranch} differs from origin/${releaseBranch} — synchronize it first`,
@@ -137,9 +134,12 @@ if (!PREPARE) {
 
 // --- compute new versions ---
 const releases = publishedPackages(ROOT);
-const current = releases[0]!.data.version;
-if (releases.some((r) => r.data.version !== current))
-  fail("published package versions must match");
+let current: string;
+try {
+  current = releaseVersion(releases);
+} catch (error) {
+  fail((error as Error).message);
+}
 const version = bumpVersion(current, bump);
 const tag = `v${version}`;
 // Point every dependency on a sibling package at the new version, keeping its
@@ -153,10 +153,7 @@ for (const { data } of releases)
         data[field][dep] = data[field][dep].startsWith("^")
           ? `^${version}`
           : version;
-const exists = execFileSync(GIT, ["ls-remote", "origin", `refs/tags/${tag}`], {
-  cwd: ROOT,
-  encoding: "utf-8",
-}).trim();
+const exists = sh(["git", "ls-remote", "origin", `refs/tags/${tag}`]);
 if (exists) fail(`tag ${tag} already exists on origin`);
 
 console.log("releasing:");

@@ -62,6 +62,7 @@
     "build": "tsdown",
     "prepublishOnly": "bun run build",
     "typecheck": "tsc --noEmit -p tsconfig.build.json && tsc --noEmit -p tsconfig.types.json",
+    "test": "bun test",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt .",

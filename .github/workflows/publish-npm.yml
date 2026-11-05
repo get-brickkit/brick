@@ -75,25 +75,11 @@ jobs:
         id: target
         run: |
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          # Every non-private packages/*/package.json, as a JSON array of directories.
-          packages="$(bun scripts/published-packages.ts)"
-          echo "packages=$packages" >> "$GITHUB_OUTPUT"
-          first="$(jq -r '.[0]' <<<"$packages")"
-          version="$(node -p "require('./packages/$first/package.json').version")"
-          tag="v${version}"
-          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "$tag" ]]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version"
-            exit 1
-          fi
-          for pkg in $(jq -r '.[]' <<<"$packages"); do
-            if [[ "$(node -p "require('./packages/$pkg/package.json').version")" != "$version" ]]; then
-              echo "::error::$pkg version does not match $tag"
-              exit 1
-            fi
-          done
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          # packages: every non-private packages/*/package.json directory, as a JSON
+          # array; tag: v<their one version>. Fails on a version or tag mismatch.
+          bun scripts/published-packages.ts >> "$GITHUB_OUTPUT"
       # Private manifests ride along unchanged; only published ones were staged.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-manifests
           path: |
@@ -112,36 +98,30 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.sha }}
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-manifests
           path: .
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: .bun-version
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
       - run: bun install --frozen-lockfile
-      - name: Build packages and their workspace dependencies
+      - name: Build packages
         run: bun run build
-      - name: Build world packages
-        run: bun run build:worlds
       - name: Typecheck package
-        run: bun run --filter @brickkit/${{ matrix.pkg }} typecheck
+        run: bun run --cwd packages/${{ matrix.pkg }} typecheck
+      # Each package's own test script: bun test, or vitest for the worlds.
       - name: Test package
-        if: ${{ !endsWith(matrix.pkg, '-world') }}
-        run: bun test packages/${{ matrix.pkg }}
-      # Worlds use vitest (with Redis testcontainers), which bun test cannot run.
-      - name: Test world package
-        if: ${{ endsWith(matrix.pkg, '-world') }}
-        run: bun run --filter @brickkit/${{ matrix.pkg }} test
+        run: bun run --cwd packages/${{ matrix.pkg }} test
       - name: Pack the validated package
         working-directory: packages/${{ matrix.pkg }}
         run: |
           mkdir -p "$RUNNER_TEMP/package"
           npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/package"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: package-${{ matrix.pkg }}
           path: ${{ runner.temp }}/package/*.tgz
@@ -162,17 +142,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.sha }}
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-manifests
           path: .
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           registry-url: "https://registry.npmjs.org"
       - name: Ensure npm supports trusted publishing
         run: npm install --global npm@11
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: package-${{ matrix.pkg }}
           path: ${{ runner.temp }}/package
@@ -243,7 +223,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-manifests
           path: .
