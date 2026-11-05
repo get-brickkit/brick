@@ -180,3 +180,30 @@ func TestTypedNilError(t *testing.T) {
 		t.Fatal("a typed nil *Error is not an envelope")
 	}
 }
+
+func TestPrefixWithoutLeadingSlash(t *testing.T) {
+	t.Setenv("BRICK_PREFIX", "api/")
+	req := httptest.NewRequest(http.MethodPost, "/api/people/greet-person", strings.NewReader(`{"name":"alice","age":1,"role":"user"}`))
+	req.Header.Set("x-brick-internal", "secret")
+	rec := httptest.NewRecorder()
+	testService(t).Handler().ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestForwardedNullUser(t *testing.T) {
+	rec := call(testService(t), `{"name":"alice","age":1,"role":"user"}`, map[string]string{"x-brick-user": "bnVsbA=="})
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"user":null`) {
+		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestNormalizedIntegers(t *testing.T) {
+	value, _ := decodeOrdered([]byte(`[18446744073709551615,-0]`))
+	var b bytes.Buffer
+	writeJSON(&b, value)
+	if b.String() != `[18446744073709551615,0]` {
+		t.Fatalf("got %s", b.String())
+	}
+}

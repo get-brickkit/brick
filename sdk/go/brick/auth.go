@@ -132,6 +132,8 @@ func (v *verifier) user(r *http.Request) json.RawMessage {
 		jwt.WithValidate(true),
 		jwt.WithIssuer(v.issuer),
 		jwt.WithAudience(v.audience),
+		// Without exp a token would never expire; Rust requires it too.
+		jwt.WithRequiredClaim(jwt.ExpirationKey),
 		jwt.WithAcceptableSkew(30*time.Second),
 	)
 	if err != nil {

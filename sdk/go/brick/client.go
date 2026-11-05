@@ -96,7 +96,10 @@ func Call(ctx context.Context, service, action string, in, out any) error {
 	defer res.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(res.Body, maxReply+1))
 	if err != nil {
-		return err
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return &Error{Name: "ActionExecutionError", Code: "SERVICE_UNAVAILABLE", Message: fmt.Sprintf("Service '%s' is not reachable", service), Status: 503}
 	}
 	if len(data) > maxReply {
 		return &Error{Name: "ActionExecutionError", Code: "INTERNAL_SERVER_ERROR", Message: fmt.Sprintf("Reply from '%s' is over %d bytes", service, maxReply), Status: 502}

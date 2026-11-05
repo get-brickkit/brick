@@ -128,8 +128,11 @@ func TestJWT(t *testing.T) {
 		t.Fatalf("valid: %d %s", rec.Code, rec.Body.String())
 	}
 	for name, token := range map[string]string{
-		"missing":       "",
-		"expired":       sign(t, private, func(b *jwt.Builder) *jwt.Builder { return b.Expiration(time.Now().Add(-time.Hour)) }),
+		"missing": "",
+		"expired": sign(t, private, func(b *jwt.Builder) *jwt.Builder { return b.Expiration(time.Now().Add(-time.Hour)) }),
+		"no exp": sign(t, private, func(*jwt.Builder) *jwt.Builder {
+			return jwt.NewBuilder().Issuer(issuer).Audience([]string{issuer}).Subject("u1").Claim("id", "u1")
+		}),
 		"wrong issuer":  sign(t, private, func(b *jwt.Builder) *jwt.Builder { return b.Issuer("http://evil.test") }),
 		"wrong aud":     sign(t, private, func(b *jwt.Builder) *jwt.Builder { return b.Audience([]string{"http://other.test"}) }),
 		"bad signature": sign(t, other, nil),

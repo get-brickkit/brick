@@ -117,9 +117,14 @@ func writeJSON(b *bytes.Buffer, v any) {
 	case bool:
 		b.WriteString(strconv.FormatBool(t))
 	case json.Number:
-		// An integer literal stays as sent: through float64 it would lose digits past 2^53.
-		if _, err := strconv.ParseInt(t.String(), 10, 64); err == nil {
-			b.WriteString(t.String())
+		// An integer literal stays exact: through float64 it would lose digits
+		// past 2^53. Formatting it again turns -0 into 0, as JavaScript sees it.
+		if n, err := strconv.ParseInt(t.String(), 10, 64); err == nil {
+			b.WriteString(strconv.FormatInt(n, 10))
+			return
+		}
+		if n, err := strconv.ParseUint(t.String(), 10, 64); err == nil {
+			b.WriteString(strconv.FormatUint(n, 10))
 			return
 		}
 		f, err := t.Float64()

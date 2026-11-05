@@ -1,6 +1,7 @@
 package brick
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -37,7 +38,10 @@ func newCtx(r *http.Request, action string, trusted bool, auth *verifier) *Ctx {
 		c.tenantID = r.Header.Get("x-brick-tenant")
 		if user := r.Header.Get("x-brick-user"); user != "" {
 			if raw, err := base64.StdEncoding.DecodeString(user); err == nil && json.Valid(raw) {
-				c.user = raw
+				// A forwarded null is no user, not a user that decodes to nothing.
+				if string(bytes.TrimSpace(raw)) != "null" {
+					c.user = raw
+				}
 			} else {
 				c.badUser = true
 			}

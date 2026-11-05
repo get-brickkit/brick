@@ -154,7 +154,11 @@ func Action[I, O any](s *Service, name string, fn func(ctx *Ctx, in I) (O, error
 		_, _ = w.Write(data)
 	}
 	s.router.Post("/"+kebab(name), handler)
-	prefix := strings.TrimRight(cmp.Or(os.Getenv("BRICK_PREFIX"), "/api"), "/")
+	// One leading slash and none trailing, whatever BRICK_PREFIX looks like ("api", "/api/", "/").
+	prefix := strings.Trim(cmp.Or(os.Getenv("BRICK_PREFIX"), "/api"), "/")
+	if prefix != "" {
+		prefix = "/" + prefix
+	}
 	s.router.Post(prefix+"/"+kebab(s.name)+"/"+kebab(name), handler)
 }
 
