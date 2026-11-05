@@ -1,5 +1,6 @@
 import { basename, dirname, relative, resolve, sep } from "node:path";
 import { kebabCase } from "@brickkit/core/client";
+import { PROJECT_DEFAULTS } from "../config";
 import {
   DEFINITION_FILE,
   TEST_FILE,
@@ -80,9 +81,9 @@ export function brickSettings(context: RuleContext): BrickSettings {
   const from = (path: string) => posix(relative(root, resolve(root, path)));
   return {
     root,
-    services: from(given.services ?? "src/services"),
-    entry: from(given.entry ?? "src/app.ts"),
-    generated: from(given.generated ?? "_brick"),
+    services: from(given.services ?? PROJECT_DEFAULTS.services),
+    entry: from(given.entry ?? PROJECT_DEFAULTS.entry),
+    generated: from(given.generated ?? PROJECT_DEFAULTS.generated),
   };
 }
 
