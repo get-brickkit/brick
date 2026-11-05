@@ -61,6 +61,8 @@ interface RouteSpec {
   production: boolean | "extension";
   /** The page's view that needs it; a view whose routes production lacks is hidden there. */
   view?: string;
+  /** It changes something, so the request must carry `CSRF_HEADER`. */
+  csrf?: true;
 }
 
 const GET = ["GET"] as const;
@@ -108,8 +110,18 @@ export const ROUTES = {
     production: false,
     view: "workflows",
   },
-  ingest: { path: "/api/ingest", methods: ["POST"], production: false },
-  restart: { path: "/api/restart", methods: ["POST"], production: false },
+  ingest: {
+    path: "/api/ingest",
+    methods: ["POST"],
+    production: false,
+    csrf: true,
+  },
+  restart: {
+    path: "/api/restart",
+    methods: ["POST"],
+    production: false,
+    csrf: true,
+  },
 } as const satisfies Record<string, RouteSpec>;
 
 export type RouteName = keyof typeof ROUTES;
@@ -177,13 +189,28 @@ export function decode(value: string): string {
 
 /** The page's address of a docs page, optionally at one of its headings. */
 export function docsHref(path: string[], anchor?: string): string {
-  const pages = path.map(encodeURIComponent).join("/");
+  const pages = encodePath(path);
   return `#/docs${pages ? `/${pages}` : ""}${anchor ? `#${encodeURIComponent(anchor)}` : ""}`;
 }
 
+const encodePath = (path: string[]): string =>
+  path.map(encodeURIComponent).join("/");
+
 /** Where a file in the docs folder is served, by its path inside it. */
 export const docsFileUrl = (path: string): string =>
-  `${DOCS_PATHS.files}/${path.split("/").map(encodeURIComponent).join("/")}`;
+  `${DOCS_PATHS.files}/${encodePath(path.split("/"))}`;
+
+/** Where a compiled docs page is served, by its slugs. */
+export const docsPageUrl = (path: string[]): string =>
+  `${DOCS_PATHS.page}/${encodePath(path)}`;
+
+/** Where the docs search answers `query`. */
+export const docsSearchUrl = (query: string): string =>
+  `${DOCS_PATHS.search}?q=${encodeURIComponent(query)}`;
+
+/** Whether a link names a scheme (`https:`, `mailto:`) and so leaves the dashboard. */
+export const isExternalHref = (href: string): boolean =>
+  /^[a-z][a-z\d+.-]*:/i.test(href);
 
 /**
  * Sent with every request that changes something (restart, ingest). A page on

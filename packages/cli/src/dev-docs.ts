@@ -15,6 +15,7 @@ import {
   decode,
   docsFileUrl,
   docsHref,
+  isExternalHref,
   SHARED_MODULES,
   type DocsInfo,
   type DocsNode,
@@ -223,8 +224,7 @@ function walk(node: MdastNode, visit: (node: MdastNode) => void): void {
 
 /** Ways a link inside a page can point at another page or a local image. */
 function resolveInside(from: string, href: string): string | undefined {
-  if (/^[a-z][a-z\d+.-]*:/i.test(href) || href.startsWith("#"))
-    return undefined;
+  if (isExternalHref(href) || href.startsWith("#")) return undefined;
   if (href.startsWith("/")) return undefined;
   const [target] = href.split(/[?#]/);
   if (!target) return undefined;
@@ -475,8 +475,7 @@ export class DevDocs {
       (hashAt >= 0 ? href.slice(0, hashAt) : href).split("?")[0] ?? "";
     const route = (slug: string) =>
       docsHref(slug ? slug.split("/") : [], anchor);
-    if (/^[a-z][a-z\d+.-]*:/i.test(href) || href.startsWith("#") || !target)
-      return undefined;
+    if (isExternalHref(href) || !target) return undefined;
     if (target.startsWith("/")) {
       // A docs site links by address (/guide/setup); so can these pages.
       const slug = target.replace(/^\/+|\/+$/g, "");

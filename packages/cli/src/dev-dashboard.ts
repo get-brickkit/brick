@@ -208,6 +208,13 @@ export function startDevDashboard(
       send(response, 404, "Not found");
       return;
     }
+    if (
+      "csrf" in ROUTES[route] &&
+      request.headers[CSRF_HEADER] !== CSRF_VALUE
+    ) {
+      send(response, 403, "Forbidden");
+      return;
+    }
     await handlers[route](request, response, url);
   }
 
@@ -261,6 +268,7 @@ export function startDevDashboard(
               }
             : undefined,
           theme: theme !== "",
+          mode: production ? "production" : "dev",
         }),
         {
           "content-type": "text/html; charset=utf-8",
@@ -303,10 +311,6 @@ export function startDevDashboard(
         send(response, 404, "Not found");
         return;
       }
-      if (request.headers[CSRF_HEADER] !== CSRF_VALUE) {
-        send(response, 403, "Forbidden");
-        return;
-      }
       options.restart();
       send(response, 202, "");
     },
@@ -333,10 +337,6 @@ export function startDevDashboard(
     request: IncomingMessage,
     response: ServerResponse,
   ): Promise<void> {
-    if (request.headers[CSRF_HEADER] !== CSRF_VALUE) {
-      send(response, 403, "Forbidden");
-      return;
-    }
     const body = await readBytes(request, MAX_INGEST_BYTES);
     if (!body) {
       send(response, 413, "Payload too large");

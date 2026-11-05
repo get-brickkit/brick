@@ -1,11 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import {
-  docsHref,
   initialState,
   parseRoute,
   reduce,
   routeHref,
 } from "../dashboard/state";
+import { docsHref } from "../src/dashboard-protocol";
 
 describe("parseRoute", () => {
   it("reads a view and a selected request", () => {

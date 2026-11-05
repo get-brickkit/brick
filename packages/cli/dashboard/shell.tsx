@@ -30,7 +30,6 @@ import { cn } from "@/lib/utils";
 import { routeHref, type SidebarState, type Theme, type View } from "@/state";
 import { Slot } from "@/extension";
 import type { NavItem } from "@/extension-registry";
-import { PRODUCTION_HIDDEN_VIEWS } from "../src/dashboard-protocol";
 
 const builtIn = (view: View, label: string, icon: ReactNode): NavItem => ({
   key: view,
@@ -111,11 +110,6 @@ export function Sidebar({
         {nav
           .filter(
             (item) =>
-              !(
-                production &&
-                item.view &&
-                PRODUCTION_HIDDEN_VIEWS.has(item.view)
-              ) &&
               (item.view !== "docs" || hasDocs) &&
               (item.view !== "workflows" || hasWorkflows),
           )

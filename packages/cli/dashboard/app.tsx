@@ -77,20 +77,22 @@ export function App({ loaded = {} }: { loaded?: LoadedExtension }) {
   // The extension's pages and links join the sidebar; a mistake in them (a
   // duplicate id, say) drops the extension and says why.
   const { nav, extension, extensionError } = useMemo(() => {
+    const visible = (items: typeof BUILT_IN_NAV) =>
+      items.filter((item) => !item.view || shown(item.view));
     try {
       return {
-        nav: mergeNav(BUILT_IN_NAV, loaded.extension, production),
+        nav: visible(mergeNav(BUILT_IN_NAV, loaded.extension, production)),
         extension: loaded.extension,
         extensionError: loaded.error ?? state.extension?.error,
       };
     } catch (error) {
       return {
-        nav: BUILT_IN_NAV,
+        nav: visible(BUILT_IN_NAV),
         extension: undefined,
         extensionError: error instanceof Error ? error.message : String(error),
       };
     }
-  }, [loaded, production, state.extension?.error]);
+  }, [loaded, production, shown, state.extension?.error]);
   const current = nav.find((item) => item.key === routeKey(route));
   const slotContext = useMemo<SlotContext>(
     () => ({
@@ -116,7 +118,6 @@ export function App({ loaded = {} }: { loaded?: LoadedExtension }) {
 
   // The monitoring dashboard has no APIs, Docs or Workflows; an old link lands on Requests.
   useEffect(() => {
-    document.title = production ? "Brick" : "Brick dev";
     if (!shown(route.view)) location.replace(routeHref("requests"));
   }, [production, route.view, shown]);
 

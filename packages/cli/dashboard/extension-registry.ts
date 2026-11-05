@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
-import type { TraceSummary } from "../src/dashboard-protocol";
+import { isExternalHref, type TraceSummary } from "../src/dashboard-protocol";
 import type { Route, View } from "./state";
 
 /*
@@ -214,7 +214,7 @@ export function mergeNav(
       label: link.label,
       icon: link.icon,
       href: link.href,
-      external: /^[a-z][a-z\d+.-]*:/i.test(link.href),
+      external: isExternalHref(link.href),
     });
 
   const nav: (NavItem & Placement)[] = [...builtIn];

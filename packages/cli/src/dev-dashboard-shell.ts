@@ -24,16 +24,17 @@ export function dashboardShell(
   options: {
     extension?: { revision: number; js: boolean; css: boolean };
     theme?: boolean;
+    mode?: "dev" | "production";
   } = {},
 ): string {
-  const { extension, theme } = options;
+  const { extension, theme, mode } = options;
   const version = extension ? `?v=${extension.revision}` : "";
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Brick dev</title>
+<title>${mode === "production" ? "Brick" : "Brick dev"}</title>
 <link rel="icon" href="data:,">
 <script>
 (function () {

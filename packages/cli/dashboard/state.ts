@@ -17,8 +17,6 @@ import {
   type ExtensionBuild,
 } from "../src/dashboard-protocol";
 
-export { docsHref } from "../src/dashboard-protocol";
-
 export interface DashboardState extends DashboardSnapshot {
   connected: boolean;
   loaded: boolean;
@@ -206,7 +204,6 @@ export function useRoute(): Route {
 }
 
 export type Theme = "light" | "dark" | "system";
-const THEME_KEY = THEME_STORAGE_KEY;
 
 function applyTheme(theme: Theme) {
   const dark =
@@ -218,7 +215,7 @@ function applyTheme(theme: Theme) {
 
 export function useTheme(): { theme: Theme; cycle: () => void } {
   const [theme, setTheme] = useState<Theme>(() => {
-    const stored = localStorage.getItem(THEME_KEY);
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
     return stored === "light" || stored === "dark" ? stored : "system";
   });
   useEffect(() => {
@@ -233,8 +230,8 @@ export function useTheme(): { theme: Theme; cycle: () => void } {
     setTheme((current) => {
       const next: Theme =
         current === "system" ? "dark" : current === "dark" ? "light" : "system";
-      if (next === "system") localStorage.removeItem(THEME_KEY);
-      else localStorage.setItem(THEME_KEY, next);
+      if (next === "system") localStorage.removeItem(THEME_STORAGE_KEY);
+      else localStorage.setItem(THEME_STORAGE_KEY, next);
       return next;
     });
   }, []);
