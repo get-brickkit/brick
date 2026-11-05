@@ -1,4 +1,9 @@
-import { DuplicateNameError, type Action, type Resource, type Service } from "./types";
+import {
+  DuplicateNameError,
+  type Action,
+  type Resource,
+  type Service,
+} from "./types";
 import {
   PLUGIN_KIND,
   PLUGIN_COMMIT,

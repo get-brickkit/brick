@@ -346,8 +346,7 @@ export function operations(model: CrudModel) {
       more ? fetched.slice(0, rowsOf.limit) : fetched,
     );
     if (operation === "get") {
-      if (!rows[0])
-        errors.NOT_FOUND("Resource not found");
+      if (!rows[0]) errors.NOT_FOUND("Resource not found");
       return scrub(call, rows[0]);
     }
     if (operation === "findOne") return rows[0] ? scrub(call, rows[0]) : null;
@@ -417,8 +416,7 @@ export function operations(model: CrudModel) {
             .where(where)
             .returning(record ? columns : { id: idColumn }),
       );
-      if (!rows.length)
-        errors.NOT_FOUND("Resource not found");
+      if (!rows.length) errors.NOT_FOUND("Resource not found");
       if (record)
         await record(crudEventName(resource.name, "delete"), {
           id: eventId(rows[0]),
@@ -435,7 +433,9 @@ export function operations(model: CrudModel) {
     const operation = call.operation as "create" | "update";
     // Create scope cannot be enforced with INSERT WHERE: require explicit authorization.
     if (operation === "create" && call.scope)
-      errors.FORBIDDEN("Row-scoped creation requires an explicit create policy");
+      errors.FORBIDDEN(
+        "Row-scoped creation requires an explicit create policy",
+      );
     const hooks = withHostHooks(options.hooks, resource, service);
     const rows = await transaction(call, hooks, async (target, record) => {
       const data = { ...(operation === "create" ? input : input.data) };
@@ -493,8 +493,7 @@ export function operations(model: CrudModel) {
             errors.CONFLICT("Resource already exists");
           throw cause;
         });
-      if (!written[0])
-        errors.NOT_FOUND("Resource not found");
+      if (!written[0]) errors.NOT_FOUND("Resource not found");
       if (record)
         await record(
           crudEventName(resource.name, operation),

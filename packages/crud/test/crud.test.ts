@@ -309,7 +309,11 @@ test("unique database constraints return conflict without modifying the existing
 });
 
 test("deeply nested where rejects with 400 before validation recurses", async () => {
-  const { resource: r, sqlite, service } = fixture({
+  const {
+    resource: r,
+    sqlite,
+    service,
+  } = fixture({
     access: "public",
     fields: {
       id: { read: true },

@@ -83,7 +83,9 @@ export function analyzeDeclaredApplication(
   const names = new Set<string>();
   for (const service of services) {
     if (names.has(service.name))
-      throw new DuplicateNameError(`Brick compiler: duplicate service '${service.name}'`);
+      throw new DuplicateNameError(
+        `Brick compiler: duplicate service '${service.name}'`,
+      );
     names.add(service.name);
   }
   const routes: RouteIR[] = [];

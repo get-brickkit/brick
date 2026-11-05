@@ -31,12 +31,18 @@ function pluginPath() {
   const building = `${file}.${process.pid}`;
   const result = spawnSync(
     process.execPath,
-    ["build", resolve(dirname(here), "oxlint.ts"), "--target", "node"]
-      .concat(["--packages", "external", "--outfile", building]),
+    ["build", resolve(dirname(here), "oxlint.ts"), "--target", "node"].concat([
+      "--packages",
+      "external",
+      "--outfile",
+      building,
+    ]),
     { encoding: "utf8" },
   );
   if (result.status !== 0)
-    throw new Error(`Brick: building the lint plugin failed:\n${result.stderr}`);
+    throw new Error(
+      `Brick: building the lint plugin failed:\n${result.stderr}`,
+    );
   renameSync(building, file);
   return (fromSource = file);
 }

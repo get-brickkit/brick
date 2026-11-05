@@ -84,12 +84,12 @@ The standard error helpers injected into `execute({ error })` and CRUD hooks thr
 
 Authorization failures are reported as follows in the current release:
 
-| Layer  | Trigger                              | Thrown Code    | HTTP Status     | Source Reference              |
-| :----- | :----------------------------------- | :------------- | :-------------- | :---------------------------- |
+| Layer  | Trigger                              | Thrown Code    | HTTP Status     | Source Reference                        |
+| :----- | :----------------------------------- | :------------- | :-------------- | :-------------------------------------- |
 | Action | `authorize()` returns `false`        | `UNAUTHORIZED` | `403 Forbidden` | `packages/core/src/compiler/runtime.ts` |
-| CRUD   | `access.authorize()` returns `false` | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/perform.ts` |
-| CRUD   | `access` object has no `authorize`   | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/perform.ts` |
-| CRUD   | `create` with a non-empty `scope`    | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/perform.ts` |
+| CRUD   | `access.authorize()` returns `false` | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/perform.ts`          |
+| CRUD   | `access` object has no `authorize`   | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/perform.ts`          |
+| CRUD   | `create` with a non-empty `scope`    | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/perform.ts`          |
 
 The message is `Access denied for action '<name>'`, where a CRUD operation's name is `<resource>.<operation>` (or `Row-scoped creation requires an explicit create policy` for scoped creates).
 

@@ -112,9 +112,7 @@ function sourceFiles(check: AppCheck, under = check.root): string[] {
     .filter((file) => {
       const rel = posix(relative(check.root, file));
       return (
-        !check.ignored(rel) &&
-        !TEST_FILE.test(rel) &&
-        !rel.startsWith("dist/")
+        !check.ignored(rel) && !TEST_FILE.test(rel) && !rel.startsWith("dist/")
       );
     });
 }
