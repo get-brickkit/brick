@@ -11,6 +11,7 @@ import type {
   BrickSocketConnectOptions,
 } from "./socket-types";
 export { BrickSocketError } from "./socket-types";
+export { kebabCase };
 export type {
   BrickClientSocket,
   BrickSocketClient,

@@ -138,6 +138,17 @@ const CASES: Record<string, Case[]> = {
       code: `orders.action({ name: "getSummary" });\n`,
       errors: 1,
     },
+    // The URL segment's kebab-case: acronyms split, underscores stay.
+    {
+      file: `${S}/orders/actions/import-csv.action.ts`,
+      code: `orders.action({ name: "importCSV" });\n`,
+      errors: 0,
+    },
+    {
+      file: `${S}/orders/actions/sync_stock.action.ts`,
+      code: `orders.action({ name: "sync_stock" });\n`,
+      errors: 0,
+    },
   ],
   "service-folder": [
     {

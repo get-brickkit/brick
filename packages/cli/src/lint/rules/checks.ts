@@ -18,6 +18,9 @@ import {
   type Rule,
   type RuleContext,
 } from "../ast";
+import { MANIFEST_FILE } from "../../definitions";
+
+const MANIFEST_STEM = MANIFEST_FILE.replace(/\.ts$/, "");
 
 function rule(
   description: string,
@@ -114,8 +117,8 @@ export const checkRules: Record<string, Rule> = {
           allowed =
             path.startsWith(`${web}/`) ||
             (path.startsWith(`${generated}/`) &&
-              !path.endsWith("services.gen") &&
-              !path.endsWith("services.gen.ts"));
+              !path.endsWith(MANIFEST_STEM) &&
+              !path.endsWith(MANIFEST_FILE));
         } else
           allowed =
             !/^(@brickkit\/|bun:|node:)/.test(source) ||

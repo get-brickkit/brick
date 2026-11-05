@@ -1,10 +1,11 @@
 import { readdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { kebabCase } from "@brickkit/core/client";
+import { DEFINITION_FILE } from "../../definitions";
 import {
   definitionOf,
   fileInfo,
   importSources,
-  kebab,
   resolveImport,
   type Definition,
   type Node,
@@ -164,13 +165,13 @@ export const layoutRules: Record<string, Rule> = {
         for (const definition of definitions) {
           if (definition.kind === "resource" && info.kind === "resource") {
             if (!folder || info.rest.length !== 3) continue; // kind-folders reports it
-            if (definition.name && kebab(definition.name) !== folder)
+            if (definition.name && kebabCase(definition.name) !== folder)
               context.report({
                 node: definition.nameNode,
-                message: `Resource "${definition.name}" lives in resources/${kebab(definition.name)}/, not resources/${folder}/.`,
+                message: `Resource "${definition.name}" lives in resources/${kebabCase(definition.name)}/, not resources/${folder}/.`,
               });
             const siblings = readdirSync(dirname(context.filename)).filter(
-              (file) => /\.resource\.[cm]?[jt]sx?$/.test(file),
+              (file) => DEFINITION_FILE.exec(file)?.[2] === "resource",
             );
             if (siblings.length > 1)
               context.report({
@@ -216,7 +217,7 @@ export const layoutRules: Record<string, Rule> = {
       return onDefinitions((definitions) => {
         for (const definition of definitions) {
           if (definition.kind !== info.kind || !definition.name) continue;
-          const expected = kebab(definition.name.split(".").pop()!);
+          const expected = kebabCase(definition.name.split(".").pop()!);
           if (expected !== info.stem)
             context.report({
               node: definition.nameNode,
@@ -247,10 +248,10 @@ export const layoutRules: Record<string, Rule> = {
         const service = services[0];
         if (!service?.name || !info.inServices) return;
         const folder = info.rest.length === 1 ? info.service : undefined;
-        if (folder !== kebab(service.name) && folder !== service.name)
+        if (folder !== kebabCase(service.name) && folder !== service.name)
           context.report({
             node: service.nameNode,
-            message: `Service "${service.name}" lives in ${info.servicesDir}/${kebab(service.name)}/${kebab(service.name)}.service.ts.`,
+            message: `Service "${service.name}" lives in ${info.servicesDir}/${kebabCase(service.name)}/${kebabCase(service.name)}.service.ts.`,
           });
       });
     },

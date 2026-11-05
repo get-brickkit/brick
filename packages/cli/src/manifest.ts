@@ -2,22 +2,13 @@ import { existsSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { writeContractSource } from "./client-contract-file";
 
-/** File suffixes of definition files, as in the project structure. */
-export const DEFINITION_SUFFIXES = [
-  "service",
-  "events",
-  "resource",
-  "table",
-  "action",
-  "command",
-  "tool",
-  "socket",
-  "listener",
-  "workflow",
-  "step",
-] as const;
+import {
+  DEFINITION_EXTENSIONS,
+  DEFINITION_KINDS,
+  MANIFEST_FILE,
+} from "./definitions";
 
-export const MANIFEST_FILE = "services.gen.ts";
+export { MANIFEST_FILE };
 
 function rank(file: string) {
   if (/\.service\.[^.]+$/.test(file)) return 0;
@@ -31,7 +22,7 @@ export function scanDefinitionFiles(services: string): string[] {
   // Built per call: index.ts re-exports this module, and Node (ESLint loading
   // brick.config.ts) has no Bun global.
   const glob = new Bun.Glob(
-    `**/*.{${DEFINITION_SUFFIXES.join(",")}}.{ts,tsx,mts,js,jsx,mjs}`,
+    `**/*.{${DEFINITION_KINDS.join(",")}}.{${DEFINITION_EXTENSIONS.join(",")}}`,
   );
   const files = [...glob.scanSync({ cwd: services, onlyFiles: true })]
     .map((file) => file.split(sep).join("/"))

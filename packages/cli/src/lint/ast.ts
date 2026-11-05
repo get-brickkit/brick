@@ -1,4 +1,9 @@
 import { basename, dirname, relative, resolve, sep } from "node:path";
+import {
+  DEFINITION_FILE,
+  TEST_FILE,
+  type DefinitionKind,
+} from "../definitions";
 
 // ESTree nodes as ESLint and oxlint hand them to rules. Kept loose on purpose:
 // the rules read a handful of fields and run under both linters.
@@ -47,25 +52,6 @@ export interface BrickSettings {
   web: string;
 }
 
-export const DEFINITION_KINDS = [
-  "service",
-  "events",
-  "resource",
-  "table",
-  "action",
-  "command",
-  "tool",
-  "socket",
-  "listener",
-  "workflow",
-  "step",
-] as const;
-export type DefinitionKind = (typeof DEFINITION_KINDS)[number];
-
-const SUFFIX = new RegExp(
-  `^(.*)\\.(${DEFINITION_KINDS.join("|")})\\.(ts|tsx|mts|js|jsx|mjs)$`,
-);
-
 const posix = (path: string) => path.split(sep).join("/");
 
 export function brickSettings(context: RuleContext): BrickSettings {
@@ -110,7 +96,7 @@ export function fileInfo(context: RuleContext): FileInfo {
   const base = basename(rel);
   const inServices = rel.startsWith(`${servicesDir}/`);
   const parts = inServices ? rel.slice(servicesDir.length + 1).split("/") : [];
-  const match = SUFFIX.exec(base);
+  const match = DEFINITION_FILE.exec(base);
   const segments = rel.split("/");
   return {
     settings,
@@ -123,7 +109,7 @@ export function fileInfo(context: RuleContext): FileInfo {
     kind: match?.[2] as DefinitionKind | undefined,
     stem: match?.[1],
     exempt:
-      /\.(test|spec)\.[cm]?[jt]sx?$/.test(base) ||
+      TEST_FILE.test(base) ||
       segments.includes("test") ||
       segments.includes("tests") ||
       segments.includes("__tests__") ||
@@ -131,13 +117,6 @@ export function fileInfo(context: RuleContext): FileInfo {
       segments.includes("node_modules") ||
       rel.startsWith(`${generated}/`),
   };
-}
-
-export function kebab(name: string): string {
-  return name
-    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
-    .replace(/[_\s.]+/g, "-")
-    .toLowerCase();
 }
 
 /** A string literal's value, or a template literal's text when it has no expressions. */

@@ -15,6 +15,7 @@ import {
   type Severity,
 } from "./lint/presets";
 import { runFileRules, type LintMessage } from "./lint/run";
+import { DEFINITION_FILE, TEST_FILE } from "./definitions";
 import { writeServiceManifest } from "./manifest";
 
 const posix = (path: string) => path.split(sep).join("/");
@@ -117,7 +118,7 @@ function sourceFiles(check: AppCheck, under = check.root): string[] {
       const rel = posix(relative(check.root, file));
       return (
         !check.ignored(rel) &&
-        !/\.(test|spec)\.[cm]?tsx?$/.test(rel) &&
+        !TEST_FILE.test(rel) &&
         !rel.startsWith("dist/")
       );
     });
@@ -359,8 +360,8 @@ function declaredEvents(check: AppCheck, app: BrickApp, add: Add) {
 function testColocated(check: AppCheck, add: Add) {
   if (check.severity("test-colocated") === "off") return;
   for (const file of sourceFiles(check, check.services)) {
-    const match = /^(.*)\.(action|command)\.[cm]?tsx?$/.exec(basename(file));
-    if (!match) continue;
+    const match = DEFINITION_FILE.exec(basename(file));
+    if (match?.[2] !== "action" && match?.[2] !== "command") continue;
     const test = resolve(dirname(file), `${match[1]}.test.ts`);
     if (!existsSync(test) && !existsSync(`${test}x`))
       add(
