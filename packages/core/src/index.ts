@@ -66,6 +66,7 @@ export {
   type RequestLoggingOptions,
 } from "./request-logger";
 export { traceRoute } from "./telemetry";
+export { SPAN, ATTR, GLOBAL_SYMBOL } from "./telemetry-names";
 export type { DashboardAuth, DashboardOptions } from "./dashboard";
 export {
   scalarDocsHTML,

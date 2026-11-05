@@ -12,6 +12,8 @@ import type {
   BrickSocketConnectOptions,
 } from "./socket-types";
 export { BrickSocketError } from "./socket-types";
+// For the dev dashboard page, which reads traces in the browser.
+export { SPAN, ATTR } from "./telemetry-names";
 export type {
   BrickClientSocket,
   BrickSocketClient,

@@ -1,3 +1,4 @@
+import { GLOBAL_SYMBOL } from "../telemetry-names";
 import { Dispatcher, type OutboxCounts } from "./dispatcher";
 import { newEventId } from "./id";
 import type { OutboxTable } from "./outbox";
@@ -34,7 +35,7 @@ export const recorders = new WeakMap<object, ServiceEvents>();
 
 // Shared by name: the CLI that stops the hubs may hold another copy of this package.
 const startedHubs = ((globalThis as Record<symbol, unknown>)[
-  Symbol.for("brickkit.events.started")
+  Symbol.for(GLOBAL_SYMBOL.eventsStarted)
 ] ??= new Set()) as Set<Pick<EventsHub, "stop">>;
 
 /**

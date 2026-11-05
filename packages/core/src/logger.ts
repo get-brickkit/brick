@@ -1,3 +1,4 @@
+import { ATTR, GLOBAL_SYMBOL, SPAN } from "./telemetry-names";
 import { formatWithOptions } from "node:util";
 import { trace, type Span } from "@opentelemetry/api";
 import type { Logger } from "./types";
@@ -10,10 +11,7 @@ type Level = keyof Logger;
  * an export: the CLI and the app may each hold their own copy of this package,
  * and nothing but a dashboard turns it on.
  */
-const CAPTURE = Symbol.for("brickkit.logs.capture");
-
-/** The span event a log line becomes; the dashboard reads these. */
-const LOG_EVENT = "log";
+const CAPTURE = Symbol.for(GLOBAL_SYMBOL.logsCapture);
 const MAX_MESSAGE_LENGTH = 4000;
 /**
  * Logs one span keeps. OpenTelemetry keeps 128 events per span by default,
@@ -60,12 +58,12 @@ function record(span: Span, level: Level, args: unknown[]): void {
   logged.set(span, count);
   if (count > MAX_LOGS_PER_SPAN) {
     // Counted, so the dashboard can say how many it left out.
-    span.setAttribute("brick.logs.dropped", count - MAX_LOGS_PER_SPAN);
+    span.setAttribute(ATTR.logsDropped, count - MAX_LOGS_PER_SPAN);
     return;
   }
-  span.addEvent(LOG_EVENT, {
-    "log.level": level,
-    "log.message": render(args),
+  span.addEvent(SPAN.logEvent, {
+    [ATTR.logLevel]: level,
+    [ATTR.logMessage]: render(args),
   });
 }
 
@@ -82,7 +80,7 @@ function recordActive(level: Level, args: unknown[]): boolean {
 
 // The dev server's console capture calls this by name, for the same reason
 // `CAPTURE` is a shared symbol: it may hold a different copy of this package.
-(globalThis as Record<symbol, unknown>)[Symbol.for("brickkit.logs.record")] =
+(globalThis as Record<symbol, unknown>)[Symbol.for(GLOBAL_SYMBOL.logsRecord)] =
   recordActive;
 
 /**
