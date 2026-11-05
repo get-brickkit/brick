@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
 import { isCrudEvent, kebabCase } from "@brickkit/core";
 import type { BrickApp } from "@brickkit/core";
@@ -12,11 +12,15 @@ import {
 } from "./lint/presets";
 import { settingsOf } from "./lint/project";
 import { runFileRules, type LintMessage } from "./lint/run";
-import { DEFINITION_FILE, TEST_FILE } from "./definitions";
+import {
+  DEFINITION_EXTENSIONS,
+  DEFINITION_FILE,
+  TEST_FILE,
+} from "./definitions";
 import { writeServiceManifest } from "./manifest";
 
 const posix = (path: string) => path.split(sep).join("/");
-const SOURCE = new Bun.Glob("**/*.{ts,tsx,mts,cts}");
+const SOURCE = new Bun.Glob(`**/*.{${DEFINITION_EXTENSIONS.join(",")}}`);
 
 interface AppCheck {
   root: string;
@@ -134,9 +138,19 @@ async function checkApp(check: AppCheck): Promise<LintMessage[]> {
     app = await loadBrickApp(check.entry);
   } catch (error) {
     // Startup refuses duplicate names; report it as the rule, not a crash.
+    // An app that cannot start fails lint even with the rule off.
     if ((error as Error).name === "DuplicateNameError") {
-      add("unique-names", check.entry, (error as Error).message);
-      return messages;
+      const severity = check.severity("unique-names");
+      return [
+        {
+          file: posix(relative(check.root, check.entry)),
+          line: 1,
+          column: 1,
+          rule: "brick/unique-names",
+          severity: severity === "off" ? "error" : severity,
+          message: (error as Error).message,
+        },
+      ];
     }
     throw error;
   }
@@ -205,8 +219,9 @@ function serviceOfFolder(app: BrickApp, folder: string) {
   )?.name;
 }
 
+// shortcut: a text search for static imports and re-exports; misses `import()`.
 const IMPORT =
-  /import\s+(type\s+)?([\w$]+\s*,?\s*)?(\*\s+as\s+[\w$]+|\{[^}]*\})?\s*from\s*["']([^"']+)["']/g;
+  /(?:import|export)\s+(type\s+)?([\w$]+\s*,?\s*)?(\*(?:\s+as\s+[\w$]+)?|\{[^}]*\})?\s*from\s*["']([^"']+)["']/g;
 
 async function noCrossServiceTables(check: AppCheck, app: BrickApp, add: Add) {
   const owners = tableOwners(app);
@@ -231,7 +246,7 @@ async function noCrossServiceTables(check: AppCheck, app: BrickApp, add: Add) {
       if (
         otherFolder &&
         otherFolder !== folder &&
-        /\.table\.[cm]?tsx?$/.test(target)
+        DEFINITION_FILE.exec(basename(target))?.[2] === "table"
       ) {
         add(
           "no-cross-service-tables",
@@ -306,8 +321,11 @@ function testColocated(check: AppCheck, add: Add) {
   for (const file of sourceFiles(check, check.services)) {
     const match = DEFINITION_FILE.exec(basename(file));
     if (match?.[2] !== "action" && match?.[2] !== "command") continue;
-    const test = resolve(dirname(file), `${match[1]}.test.ts`);
-    if (!existsSync(test) && !existsSync(`${test}x`))
+    const tested = readdirSync(dirname(file)).some(
+      (sibling) =>
+        TEST_FILE.test(sibling) && sibling.replace(TEST_FILE, "") === match[1],
+    );
+    if (!tested)
       add(
         "test-colocated",
         file,

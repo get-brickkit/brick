@@ -175,16 +175,16 @@ export interface Definition {
   nameNode?: Node;
 }
 
-const DEFINE_FUNCTIONS: Record<string, Definition["kind"]> = {
+export const DEFINE_FUNCTIONS: Record<string, Definition["kind"]> = {
   defineService: "service",
   defineAction: "action",
   defineTool: "tool",
   defineListener: "listener",
   definePlugin: "plugin",
+  defineResource: "resource",
   crud: "crud",
   sqliteTable: "table",
   pgTable: "table",
-  mysqlTable: "table",
 };
 
 const ATTACH_METHODS: Record<string, Definition["kind"]> = {
@@ -202,6 +202,11 @@ export function definitionOf(call: Node): Definition | undefined {
   const callee = call.callee;
   if (callee.type === "Identifier" && DEFINE_FUNCTIONS[callee.name]) {
     const kind = DEFINE_FUNCTIONS[callee.name]!;
+    // defineResource(service, config) is service.resource(config).
+    if (kind === "resource")
+      return first?.type === "Identifier"
+        ? attached(call, kind, first.name, second)
+        : undefined;
     if (kind === "service" || kind === "table") {
       const name = stringValue(first);
       if (name === undefined) return undefined;
@@ -232,12 +237,21 @@ export function definitionOf(call: Node): Definition | undefined {
       return undefined;
     return { kind, call, owner, name, nameNode: first, config: second };
   }
-  if (first?.type !== "ObjectExpression") return undefined;
-  const nameNode = getProperty(first, "name")?.value;
+  return attached(call, kind, owner, first);
+}
+
+function attached(
+  call: Node,
+  kind: Definition["kind"],
+  owner: string,
+  config: Node,
+): Definition | undefined {
+  if (config?.type !== "ObjectExpression") return undefined;
+  const nameNode = getProperty(config, "name")?.value;
   const name = stringValue(nameNode);
   // A resource needs its name and table; anything else called `.resource` is not one.
   if (kind === "resource" && name === undefined) return undefined;
-  return { kind, call, owner, config: first, name, nameNode };
+  return { kind, call, owner, config, name, nameNode };
 }
 
 /** The nearest enclosing definition of one of `kinds`. */
