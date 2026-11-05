@@ -4,6 +4,7 @@
 use axum::http::HeaderMap;
 use jsonwebtoken::{DecodingKey, Validation, decode, decode_header, jwk::JwkSet};
 use serde_json::{Map, Value};
+use std::sync::Mutex as StdMutex;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
@@ -17,11 +18,18 @@ pub(crate) struct Verifier {
     /// How often a token with an unknown key id (key rotation) may refetch the JWKS.
     min_refresh: Duration,
     max_age: Duration,
-    /// The cached keys with when they were fetched, and the last fetch attempt.
-    keys: Mutex<(Option<Fetched>, Option<Instant>)>,
+    state: StdMutex<KeyState>,
+    /// Held by the one fetch in flight, never by a lookup.
+    fetching: Mutex<()>,
 }
 
-type Fetched = (JwkSet, Instant);
+#[derive(Default)]
+struct KeyState {
+    /// The cached keys with when they were fetched.
+    keys: Option<(JwkSet, Instant)>,
+    /// The last fetch attempt.
+    tried: Option<Instant>,
+}
 
 /// How long a JWKS fetch may take.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
@@ -34,7 +42,8 @@ impl Verifier {
             audience: audience.into(),
             min_refresh: Duration::from_secs(10),
             max_age: Duration::from_secs(600),
-            keys: Mutex::new((None, None)),
+            state: StdMutex::default(),
+            fetching: Mutex::new(()),
         }
     }
 
@@ -61,27 +70,56 @@ impl Verifier {
             .await
     }
 
+    fn cached(&self) -> Option<JwkSet> {
+        let state = self.state.lock().unwrap();
+        state.keys.as_ref().map(|(set, _)| set.clone())
+    }
+
     async fn key_set(&self, kid: &str) -> Option<JwkSet> {
-        let mut guard = self.keys.lock().await;
-        let (keys, tried) = &mut *guard;
-        let stale = match &*keys {
-            None => true,
-            Some((set, at)) => {
-                at.elapsed() > self.max_age
-                    || (set.find(kid).is_none() && at.elapsed() >= self.min_refresh)
+        let (stale, have) = {
+            let state = self.state.lock().unwrap();
+            let stale = match &state.keys {
+                None => true,
+                Some((set, at)) => {
+                    at.elapsed() > self.max_age
+                        || (set.find(kid).is_none() && at.elapsed() >= self.min_refresh)
+                }
+            };
+            (stale, state.keys.is_some())
+        };
+        if !stale {
+            return self.cached();
+        }
+        // One fetch at a time, outside the state lock, so cached keys keep serving.
+        let _fetching = match self.fetching.try_lock() {
+            Ok(guard) => guard,
+            Err(_) if have => return self.cached(),
+            Err(_) => {
+                // The first fetch is in flight: wait for it rather than fail.
+                drop(self.fetching.lock().await);
+                return self.cached();
             }
         };
-        // A failed fetch is retried after min_refresh, so an outage or unknown
-        // key ids can't make every request fetch.
-        if stale && tried.is_none_or(|t| t.elapsed() >= self.min_refresh) {
-            *tried = Some(Instant::now());
-            match self.fetch().await {
-                Ok(set) => *keys = Some((set, Instant::now())),
+        {
+            // A failed fetch is retried after min_refresh, so an outage or
+            // unknown key ids can't make every request fetch.
+            let mut state = self.state.lock().unwrap();
+            if state.tried.is_some_and(|t| t.elapsed() < self.min_refresh) {
+                return state.keys.as_ref().map(|(set, _)| set.clone());
+            }
+            state.tried = Some(Instant::now());
+        }
+        match self.fetch().await {
+            Ok(set) => {
+                self.state.lock().unwrap().keys = Some((set.clone(), Instant::now()));
+                Some(set)
+            }
+            Err(err) => {
                 // Keep the keys we have.
-                Err(err) => eprintln!("[brick] JWKS fetch from {} failed: {err}", self.url),
+                eprintln!("[brick] JWKS fetch from {} failed: {err}", self.url);
+                self.cached()
             }
         }
-        keys.as_ref().map(|(set, _)| set.clone())
     }
 
     /// The user of the request's bearer JWT (its claims without the registered
@@ -314,5 +352,48 @@ mod tests {
             assert_eq!(v.user(&bearer(&key.sign(claims(|_| {})))).await, None);
         }
         assert_eq!(calls.load(Ordering::SeqCst), 1, "one fetch per min_refresh");
+    }
+
+    #[tokio::test]
+    async fn cached_keys_serve_during_a_fetch() {
+        let (k1, k2) = (Key::new("k1", 1), Key::new("k2", 3));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (c, jwk) = (calls.clone(), k1.jwk());
+        let app = Router::new().route(
+            "/jwks",
+            get(move || {
+                let first = c.fetch_add(1, Ordering::SeqCst) == 0;
+                let jwk = jwk.clone();
+                async move {
+                    if !first {
+                        // A refetch that hangs.
+                        tokio::time::sleep(Duration::from_secs(30)).await;
+                    }
+                    Json(json!({ "keys": [jwk] }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/jwks", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let mut v = Verifier::new(&url, ISSUER, ISSUER);
+        v.min_refresh = Duration::ZERO;
+        let v = Arc::new(v);
+        assert!(v.user(&bearer(&k1.sign(claims(|_| {})))).await.is_some());
+        let refetch = {
+            let (v, token) = (v.clone(), k2.sign(claims(|_| {})));
+            tokio::spawn(async move { v.user(&bearer(&token)).await })
+        };
+        while calls.load(Ordering::SeqCst) < 2 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let cached = tokio::time::timeout(
+            Duration::from_secs(1),
+            v.user(&bearer(&k1.sign(claims(|_| {})))),
+        )
+        .await
+        .expect("a cached key waited for the JWKS fetch");
+        assert!(cached.is_some());
+        refetch.abort();
     }
 }

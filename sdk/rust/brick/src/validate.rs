@@ -56,11 +56,39 @@ fn push(issues: &mut Vec<Issue>, path: &str, message: String, value: Option<&Val
     });
 }
 
+/// `value` with every whole float that fits exactly (up to 2^53) as an integer.
+pub(crate) fn whole_numbers(value: Value) -> Value {
+    match value {
+        Value::Number(n) => match n.as_f64() {
+            Some(f) if n.is_f64() && f.fract() == 0.0 && f.abs() <= 9_007_199_254_740_992.0 => {
+                Value::from(f as i64)
+            }
+            _ => Value::Number(n),
+        },
+        Value::Array(items) => Value::Array(items.into_iter().map(whole_numbers).collect()),
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(key, item)| (key, whole_numbers(item)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
 /// A number as JavaScript prints it, for the common cases.
 pub(crate) fn js_number(f: f64) -> String {
-    if f.fract() == 0.0 && f.abs() < 1e21 {
+    if f != 0.0 && (f.abs() < 1e-6 || f.abs() >= 1e21) {
+        // JavaScript's exponent form: 1e-7, 1e+21.
+        let s = format!("{f:e}");
+        if s.contains("e-") {
+            s
+        } else {
+            s.replace('e', "e+")
+        }
+    } else if f.fract() == 0.0 && f.abs() <= 9_007_199_254_740_992.0 {
         format!("{}", f as i64)
     } else {
+        // Beyond 2^53 too: the shortest digits, padded with zeros.
         format!("{f}")
     }
 }
@@ -347,4 +375,24 @@ fn pattern_matches(pattern: &str, text: &str) -> bool {
         })
         .clone();
     validator.is_valid(&Value::String(text.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prints_numbers_as_javascript_does() {
+        for (f, want) in [
+            (3.0, "3"),
+            (0.5, "0.5"),
+            (-0.0, "0"),
+            (1e-7, "1e-7"),
+            (1e21, "1e+21"),
+            (1_152_921_504_606_846_976.0, "1152921504606847000"),
+            (9_223_372_036_854_775_808.0, "9223372036854776000"),
+        ] {
+            assert_eq!(js_number(f), want, "{f}");
+        }
+    }
 }

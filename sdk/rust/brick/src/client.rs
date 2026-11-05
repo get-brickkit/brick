@@ -19,6 +19,15 @@ pub(crate) fn http() -> &'static reqwest::Client {
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
+            // A redirect elsewhere would carry the internal token there.
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                let first = &attempt.previous()[0];
+                if attempt.url().origin() != first.origin() || attempt.previous().len() > 10 {
+                    attempt.stop()
+                } else {
+                    attempt.follow()
+                }
+            }))
             .build()
             .expect("http client")
     })
@@ -82,7 +91,11 @@ pub async fn call<I: Serialize, O: DeserializeOwned>(
         return Err(
             serde_json::from_slice::<Error>(&body).unwrap_or_else(|_| Error {
                 status: status.as_u16(),
-                ..Error::new("INTERNAL_SERVER_ERROR", status.as_u16(), status.as_str())
+                ..Error::new(
+                    "INTERNAL_SERVER_ERROR",
+                    status.as_u16(),
+                    status.canonical_reason().unwrap_or(status.as_str()),
+                )
             }),
         );
     }

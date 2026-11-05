@@ -207,6 +207,23 @@ async fn typed_error_and_context() {
 }
 
 #[tokio::test]
+async fn reads_integers_written_as_floats() {
+    let (status, body) = call(r#"{"name":"alice","age":30.0,"role":"user"}"#, &[]).await;
+    assert_eq!(status, 200, "{body}");
+}
+
+#[tokio::test]
+async fn rejects_a_malformed_forwarded_user() {
+    let (status, body) = call(
+        r#"{"name":"alice","age":1,"role":"user"}"#,
+        &[("x-brick-user", "eyJpZCI6")],
+    )
+    .await;
+    assert_eq!(status, 400);
+    assert!(body.contains(r#""code":"BAD_REQUEST""#), "{body}");
+}
+
+#[tokio::test]
 async fn rejects_without_token() {
     let (status, _) = call("{}", &[("x-brick-internal", "wrong")]).await;
     assert_eq!(status, 401);

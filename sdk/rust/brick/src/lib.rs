@@ -312,7 +312,13 @@ impl Service {
             let f = f.clone();
             let action_name = action_name.clone();
             Box::pin(async move {
-                let input: I = serde_json::from_value(value).map_err(|e| {
+                // JSON integers may be written 30.0, which pass validation as in
+                // TS but which serde won't read into an integer: retry with them as 30.
+                let input = match I::deserialize(&value) {
+                    Ok(input) => Ok(input),
+                    Err(_) => serde_json::from_value(validate::whole_numbers(value)),
+                };
+                let input: I = input.map_err(|e| {
                     validate::validation_error(
                         &action_name,
                         vec![Issue {
@@ -435,11 +441,24 @@ async fn handle(
     body: Bytes,
 ) -> Response {
     let (serve, trust) = check_token(&headers);
-    let ctx = Ctx::from_request(&action.name, &headers, trust, action.auth.as_deref()).await;
-    let request_id = ctx.request_id.clone();
     if !serve {
+        // Before Ctx, so a bad token costs no JWT verification.
+        let request_id = headers
+            .get("x-request-id")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
         return error_response(
             Error::new("UNAUTHORIZED", 401, "Invalid internal token"),
+            request_id,
+        );
+    }
+    let ctx = Ctx::from_request(&action.name, &headers, trust, action.auth.as_deref()).await;
+    let request_id = ctx.request_id.clone();
+    if trust && ctx.user.is_none() && headers.get("x-brick-user").is_some_and(|v| !v.is_empty()) {
+        // A trusted x-brick-user that isn't base64 JSON, as the TS internal call handler answers it.
+        return error_response(
+            Error::new("BAD_REQUEST", 400, "Invalid x-brick-user header"),
             request_id,
         );
     }
@@ -473,6 +492,7 @@ async fn handle(
 fn error_response(mut e: Error, request_id: String) -> Response {
     e.request_id = request_id;
     let status = StatusCode::from_u16(e.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    e.status = status.as_u16();
     let body = serde_json::to_string(&e).unwrap_or_default();
     (status, [(header::CONTENT_TYPE, "application/json")], body).into_response()
 }
