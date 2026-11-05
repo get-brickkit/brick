@@ -224,6 +224,30 @@ async fn rejects_a_malformed_forwarded_user() {
 }
 
 #[tokio::test]
+async fn counts_lengths_in_utf16_units_like_typebox() {
+    // Two emoji: 4 UTF-16 units, so minLength 3 passes as in TS.
+    let (status, body) = call(r#"{"name":"😀😀","age":1,"role":"user"}"#, &[]).await;
+    assert_eq!(status, 200, "{body}");
+}
+
+#[tokio::test]
+async fn answers_an_oversized_body_with_the_envelope() {
+    let big = format!(r#"{{"name":"{}"}}"#, "a".repeat(1 << 20));
+    let (status, body) = call(&big, &[("x-request-id", "r5")]).await;
+    assert_eq!(status, 413);
+    assert!(body.contains(r#""code":"PAYLOAD_TOO_LARGE""#), "{body}");
+}
+
+#[test]
+#[should_panic(expected = "both serve /greet-person")]
+fn rejects_actions_with_the_same_path() {
+    let _ = service().action(
+        "greet-person",
+        |_ctx, _input: serde_json::Value| async move { Ok(serde_json::Value::Null) },
+    );
+}
+
+#[tokio::test]
 async fn rejects_without_token() {
     let (status, _) = call("{}", &[("x-brick-internal", "wrong")]).await;
     assert_eq!(status, 401);

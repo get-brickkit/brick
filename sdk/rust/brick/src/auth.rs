@@ -146,6 +146,8 @@ impl Verifier {
         validation.set_issuer(&[&self.issuer]);
         validation.set_audience(&[&self.audience]);
         validation.set_required_spec_claims(&["exp", "iss", "aud"]);
+        // Off by default in jsonwebtoken; Go checks it.
+        validation.validate_nbf = true;
         validation.leeway = 30;
         let claims = decode::<Map<String, Value>>(token, &key, &validation)
             .ok()?
@@ -155,7 +157,9 @@ impl Verifier {
             .into_iter()
             .filter(|(k, _)| !REGISTERED.contains(&k.as_str()))
             .collect();
-        if let (false, Some(sub)) = (user.contains_key("id"), sub) {
+        if !user.contains_key("id") {
+            // No id and no sub: a token with no identity is no user, as in Go.
+            let sub = sub.filter(|s| s.as_str().is_some_and(|s| !s.is_empty()))?;
             user.insert("id".into(), sub);
         }
         Some(Value::Object(user))
@@ -272,6 +276,13 @@ mod tests {
                 "wrong audience",
                 bearer(&key.sign(claims(|c| {
                     c.insert("aud".into(), json!("http://other.test"));
+                }))),
+            ),
+            (
+                "not yet valid",
+                bearer(&key.sign(claims(|c| {
+                    let nbf = c["iat"].as_u64().unwrap() + 3600;
+                    c.insert("nbf".into(), json!(nbf));
                 }))),
             ),
             ("bad signature", bearer(&impostor.sign(claims(|_| {})))),

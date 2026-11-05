@@ -14,6 +14,9 @@ fn urls() -> &'static HashMap<String, String> {
 }
 
 /// The shared client. A call that gets no answer in 30s fails as SERVICE_UNAVAILABLE.
+/// How much of a callee's reply `call` reads.
+const MAX_REPLY: usize = 16 << 20;
+
 pub(crate) fn http() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
@@ -84,20 +87,35 @@ pub async fn call<I: Serialize, O: DeserializeOwned>(
             &format!("Service '{service}' is not reachable"),
         )
     };
-    let response = request.send().await.map_err(|_| unreachable())?;
+    let mut response = request.send().await.map_err(|_| unreachable())?;
     let status = response.status();
-    let body = response.bytes().await.map_err(|_| unreachable())?;
+    // Capped, as in Go.
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| unreachable())? {
+        body.extend_from_slice(&chunk);
+        if body.len() > MAX_REPLY {
+            return Err(Error::new(
+                "INTERNAL_SERVER_ERROR",
+                502,
+                &format!("Reply from '{service}' is over {MAX_REPLY} bytes"),
+            ));
+        }
+    }
     if !status.is_success() {
-        return Err(
-            serde_json::from_slice::<Error>(&body).unwrap_or_else(|_| Error {
-                status: status.as_u16(),
-                ..Error::new(
-                    "INTERNAL_SERVER_ERROR",
-                    status.as_u16(),
-                    status.canonical_reason().unwrap_or(status.as_str()),
-                )
-            }),
-        );
+        return Err(match serde_json::from_slice::<Error>(&body) {
+            // Only an error status from the body; otherwise the HTTP one.
+            Ok(mut e) => {
+                if !(400..600).contains(&e.status) {
+                    e.status = status.as_u16();
+                }
+                e
+            }
+            Err(_) => Error::new(
+                "INTERNAL_SERVER_ERROR",
+                status.as_u16(),
+                status.canonical_reason().unwrap_or(status.as_str()),
+            ),
+        });
     }
     Ok(serde_json::from_slice(&body)?)
 }

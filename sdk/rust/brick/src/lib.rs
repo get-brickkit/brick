@@ -46,7 +46,7 @@ pub use validate::Issue;
 use axum::{
     Router,
     body::Bytes,
-    extract::State,
+    extract::{DefaultBodyLimit, State, rejection::BytesRejection},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -303,9 +303,19 @@ impl Service {
         F: Fn(Ctx, I) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<O, Error>> + Send + 'static,
     {
+        // Same path, which axum would only report as an overlapping route.
+        if let Some(other) = self.actions.iter().find(|a| kebab(&a.name) == kebab(name)) {
+            panic!(
+                "brick: actions \"{}\" and \"{name}\" both serve /{}",
+                other.name,
+                kebab(name)
+            );
+        }
         let input = schema_of::<I>();
         let output = schema_of::<O>();
-        let validator = jsonschema::validator_for(&input).expect("valid input schema");
+        // Lengths are the walk's: it counts UTF-16 units as TypeBox does, jsonschema code points.
+        let validator = jsonschema::validator_for(&validate::without_lengths(&input))
+            .expect("valid input schema");
         let action_name = name.to_string();
         let f = Arc::new(f);
         let handler: Handler = Arc::new(move |ctx, value| {
@@ -370,7 +380,11 @@ impl Service {
     /// tracing and CORS are added around them.
     pub fn router(self) -> Router {
         let mut router = Router::new().route("/_health", get(|| async { r#"{"status":"ok"}"# }));
-        let prefix = std::env::var("BRICK_PREFIX").unwrap_or_else(|_| "/api".into());
+        // Empty counts as unset, as in Go.
+        let prefix = std::env::var("BRICK_PREFIX")
+            .ok()
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| "/api".into());
         let base = format!("{}/{}", prefix.trim_end_matches('/'), kebab(&self.name));
         for action in self.actions {
             let path = kebab(&action.name);
@@ -378,7 +392,8 @@ impl Service {
                 .route(&format!("/{path}"), post(handle).with_state(action.clone()))
                 .route(&format!("{base}/{path}"), post(handle).with_state(action));
         }
-        http::wrap(router)
+        // 1 MiB, as in Go.
+        http::wrap(router.layer(DefaultBodyLimit::max(1 << 20)))
     }
 
     /// Print the manifest and exit when run with `--brick-manifest` (or
@@ -438,7 +453,7 @@ fn check_token(headers: &HeaderMap) -> (bool, bool) {
 async fn handle(
     State(action): State<Arc<ActionEntry>>,
     headers: HeaderMap,
-    body: Bytes,
+    body: Result<Bytes, BytesRejection>,
 ) -> Response {
     let (serve, trust) = check_token(&headers);
     if !serve {
@@ -462,6 +477,16 @@ async fn handle(
             request_id,
         );
     }
+    let body = match body {
+        Ok(body) => body,
+        Err(rejection) if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+            return error_response(
+                Error::new("PAYLOAD_TOO_LARGE", 413, "Request body too large"),
+                request_id,
+            );
+        }
+        Err(_) => return error_response(Error::internal(), request_id),
+    };
     let value: Value = if body.iter().all(u8::is_ascii_whitespace) {
         json!({})
     } else {
@@ -491,7 +516,11 @@ async fn handle(
 
 fn error_response(mut e: Error, request_id: String) -> Response {
     e.request_id = request_id;
-    let status = StatusCode::from_u16(e.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    // An error is a 4xx or 5xx; anything else is a 500, as in Go.
+    let status = StatusCode::from_u16(e.status)
+        .ok()
+        .filter(|s| s.is_client_error() || s.is_server_error())
+        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     e.status = status.as_u16();
     let body = serde_json::to_string(&e).unwrap_or_default();
     (status, [(header::CONTENT_TYPE, "application/json")], body).into_response()

@@ -56,6 +56,22 @@ fn push(issues: &mut Vec<Issue>, path: &str, message: String, value: Option<&Val
     });
 }
 
+/// `schema` without minLength and maxLength (numbers, so a property of that name stays).
+pub(crate) fn without_lengths(schema: &Value) -> Value {
+    match schema {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .filter(|(k, v)| {
+                    !(matches!(k.as_str(), "minLength" | "maxLength") && v.is_number())
+                })
+                .map(|(k, v)| (k.clone(), without_lengths(v)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(without_lengths).collect()),
+        other => other.clone(),
+    }
+}
+
 /// `value` with every whole float that fits exactly (up to 2^53) as an integer.
 pub(crate) fn whole_numbers(value: Value) -> Value {
     match value {
