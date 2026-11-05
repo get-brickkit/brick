@@ -38,12 +38,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   const cursor = url.searchParams.get("cursor") ?? undefined;
 
   try {
-    const result = await readStreamChunksServerAction(
-      {},
-      streamId,
-      runId,
-      cursor,
-    );
+    const result = await readStreamChunksServerAction(streamId, runId, cursor);
 
     if (!("buffer" in result)) {
       return Response.json(result, { status: 500 });
@@ -52,10 +47,8 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     const headers: HeadersInit = {
       "Content-Type": "application/octet-stream",
       "X-Stream-Done": String(result.done),
+      "X-Stream-Cursor": result.cursor,
     };
-    if (result.cursor) {
-      headers["X-Stream-Cursor"] = result.cursor;
-    }
 
     return new Response(new Uint8Array(result.buffer), { headers });
   } catch (error) {

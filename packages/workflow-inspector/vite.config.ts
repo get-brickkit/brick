@@ -1,14 +1,14 @@
 import { reactRouter } from "@react-router/dev/vite";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
+import { BASE_PATH } from "./base-path";
 import { nodeRequireBanner } from "./vite-plugin-node-require";
 
 export default defineConfig(({ command, isSsrBuild }) => ({
-  // The dashboard serves the page, and so its files, at /workflows (INSPECTOR_PATH
-  // in the CLI). Every URL the build writes, in the page and in the scripts
-  // (preloads, the zstd wasm), then points there and not at the dashboard's own
-  // /assets/.
-  base: "/workflows/",
+  // The dashboard serves the page, and so its files, at BASE_PATH. Every URL the
+  // build writes, in the page and in the scripts (preloads, the zstd wasm), then
+  // points there and not at the dashboard's own /assets/.
+  base: `${BASE_PATH}/`,
   build: {
     // A developer's tool for current browsers: no lowering of modern syntax.
     target: "es2022",

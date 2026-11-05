@@ -1,15 +1,19 @@
 /**
  * WORKFLOW_TARGET_WORLD module for e2e workers that need tunables the
- * package's env-var configuration does not expose (heartbeatTtlMs, maxAttempts, backoffDelayMs, ...).
+ * package's env-var configuration does not expose (heartbeatTtlMs, lockDuration,
+ * maxAttempts, backoffDelayMs, ...).
  *
- * It wraps the BUILT package (dist/), never src/, and takes its tunables from
- * E2E_WORLD_CONFIG (JSON). Connection and prefixes come from the same
- * WORKFLOW_REDIS_* variables the package itself reads.
+ * It wraps the BUILT package under test (E2E_WORLD_ENTRY, its dist/), never
+ * src/, and takes its tunables from E2E_WORLD_CONFIG (JSON). Connection and
+ * prefixes come from the WORKFLOW_REDIS_* variables, which createWorld reads
+ * under the config it is passed.
  *
  * With E2E_TRACE_WORLD=1 it also logs every events.create / events.list call
  * the SDK makes against the world (diagnosis aid; off by default).
  */
-import { createWorld as createRedisWorld } from "../../../dist/index.js";
+const { createWorld: createRedisWorld } = await import(
+  process.env.E2E_WORLD_ENTRY
+);
 
 const short = (id) => (typeof id === "string" ? id.slice(-6) : id);
 
@@ -53,16 +57,6 @@ function trace(world) {
 
 export function createWorld() {
   const tuning = JSON.parse(process.env.E2E_WORLD_CONFIG || "{}");
-  const world = createRedisWorld({
-    redis: process.env.WORKFLOW_REDIS_URL,
-
-    keyPrefix: process.env.WORKFLOW_REDIS_KEY_PREFIX,
-    queueConcurrency:
-      Number.parseInt(
-        process.env.WORKFLOW_REDIS_WORKER_CONCURRENCY || "10",
-        10,
-      ) || 10,
-    ...tuning,
-  });
+  const world = createRedisWorld(tuning);
   return process.env.E2E_TRACE_WORLD === "1" ? trace(world) : world;
 }

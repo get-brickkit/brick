@@ -1,11 +1,10 @@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@workflow/web-shared";
 import { Check, Copy, Loader2 } from "lucide-react";
 import { useState } from "react";
-import type { EnvMap } from "~/lib/types";
-import { fetchHookToken } from "~/lib/workflow-api-client";
+import { unwrapOrThrow } from "~/lib/client/workflow-errors";
+import { rpc } from "~/lib/rpc-client";
 
 interface HookTokenCellProps {
-  env: EnvMap;
   runId: string;
   hookId: string;
 }
@@ -17,7 +16,7 @@ interface HookTokenCellProps {
  * time (via `fetchHookToken`) only when the user clicks to copy it. This keeps
  * the secret out of bulk list responses while preserving the copy affordance.
  */
-export function HookTokenCell({ env, runId, hookId }: HookTokenCellProps) {
+export function HookTokenCell({ runId, hookId }: HookTokenCellProps) {
   const [status, setStatus] = useState<"idle" | "loading" | "copied">("idle");
   const [error, setError] = useState<string | null>(null);
 
@@ -27,7 +26,9 @@ export function HookTokenCell({ env, runId, hookId }: HookTokenCellProps) {
     setStatus("loading");
     setError(null);
     try {
-      const token = await fetchHookToken(env, runId, hookId);
+      const { token } = await unwrapOrThrow(
+        rpc("fetchHookToken", { runId, hookId }),
+      );
       await navigator.clipboard.writeText(token);
       setStatus("copied");
       setTimeout(() => setStatus("idle"), 2000);

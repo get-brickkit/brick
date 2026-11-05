@@ -1,43 +1,24 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import {
-  MessageId,
-  parseQueueName,
-  parseQueueRoute,
-  ValidQueueName,
-  type Queue as QueueInterface,
-  type QueuePrefix,
-} from "@workflow/world";
-import {
-  createAppRouteUrl,
-  createWorkflowBaseUrl,
-  createWorkflowUrl,
-} from "@workflow/utils";
+import { MessageId, ValidQueueName } from "@workflow/world";
 import type { Redis } from "ioredis";
-import { monotonicFactory } from "ulid";
 import type { RedisWorldConfig } from "./config.js";
-import { initialMessageKey } from "./run-id.js";
-import { debug, hasBinary, uint8ArrayReplacer } from "./util.js";
+import { keys } from "./keys.js";
+import { debug } from "./util.js";
+import {
+  createWorldQueue,
+  type Deliver,
+  type Delivery,
+  type QueueBackend,
+  type WorldQueue,
+  type WorldQueueOptions,
+} from "./world-queue.js";
 
-export interface QueueStats {
-  waiting: number;
-  active: number;
-  delayed: number;
-  /** Completed and failed delivery records are not retained. */
-  completed: number;
-  failed: number;
-}
+export type { QueueStats } from "./world-queue.js";
 
-interface Envelope {
-  messageId: MessageId;
-  queueName: ValidQueueName;
-  message: string;
-  attempt: number;
-  deliveryCount: number;
-  createdAt: number;
+interface Envelope extends Delivery {
   dedupKey: string;
   headers: Record<string, string>;
-  route?: string;
 }
 
 // Derived from the upstream reliable Redis list queue. Every transition is a
@@ -160,55 +141,12 @@ function parseEnvelope(raw: string): Envelope {
   };
 }
 
-function serializeQueueMessage(message: unknown): string {
-  return hasBinary(message)
-    ? JSON.stringify(message, uint8ArrayReplacer)
-    : JSON.stringify(message);
-}
-
-function queueMessageReviver(_key: string, value: unknown): unknown {
-  if (value !== null && typeof value === "object") {
-    const tagged = value as { __type?: unknown; data?: unknown };
-    if (tagged.__type === "Uint8Array" && typeof tagged.data === "string") {
-      return new Uint8Array(Buffer.from(tagged.data, "base64"));
-    }
-  }
-  return value;
-}
-
-function deserializeQueueMessage(text: string): unknown {
-  // Queue messages carry no Date fields, so with the tag absent a plain parse
-  // is exactly equivalent.
-  return text.includes('"__type"')
-    ? JSON.parse(text, queueMessageReviver)
-    : JSON.parse(text);
-}
-
-function resolveBaseUrl(config: RedisWorldConfig): string {
-  return (
-    config.baseUrl ||
-    process.env.WORKFLOW_BASE_URL ||
-    `http://localhost:${process.env.PORT ?? "3000"}`
-  );
-}
-
 export function createQueue(
   redis: Redis,
   config: RedisWorldConfig,
-  options: {
-    /**
-     * Whether a run has moved past `pending`. The first message of a run is not
-     * queued again once it has, see `initialMessageKey`.
-     */
-    runHasStarted?: (runId: string) => Promise<boolean>;
-  } = {},
-): QueueInterface & {
-  start(): Promise<void>;
-  close(): Promise<void>;
-  getQueueStats(): Promise<QueueStats>;
-} {
-  const generateMessageId = monotonicFactory();
-  const root = `${config.keyPrefix || "workflow:"}queue:flows`;
+  options: WorldQueueOptions = {},
+): WorldQueue {
+  const root = keys(config.keyPrefix || "workflow:").queueKey;
   const ready = root;
   const delayed = `${root}:delayed`;
   const owners = `${root}:workers`;
@@ -243,11 +181,6 @@ export function createQueue(
       );
     }
   }
-  const directHandlers = new Map<
-    QueuePrefix,
-    (req: Request) => Promise<Response>
-  >();
-  const routes = new Map<QueuePrefix, string>();
   let closed = false;
   let startPromise: Promise<void> | undefined;
   let loop: Promise<void> | undefined;
@@ -258,36 +191,25 @@ export function createQueue(
   const sleep = () =>
     delay(50, undefined, { signal: abort.signal }).catch(() => {});
 
-  const queue: QueueInterface["queue"] = async (queueName, message, opts) => {
-    if (closed) throw new Error("Queue is closed");
-    const { prefix } = parseQueueName(queueName);
-    const messageId = MessageId.parse(`msg_${generateMessageId()}`);
-    const idempotencyKey = opts?.idempotencyKey ?? initialMessageKey(message);
-    if (
-      !opts?.idempotencyKey &&
-      idempotencyKey &&
-      (await options.runHasStarted?.((message as { runId: string }).runId))
-    ) {
-      debug("run already started, not queueing its first message again", {
-        runId: (message as { runId: string }).runId,
-      });
-      return { messageId };
-    }
-    const dedupKey = idempotencyKey
-      ? `${root}:idempotent:${idempotencyKey}`
+  async function enqueue(
+    message: Parameters<QueueBackend["enqueue"]>[0],
+    opts: Parameters<QueueBackend["enqueue"]>[1],
+  ): Promise<MessageId> {
+    const dedupKey = opts.idempotencyKey
+      ? `${root}:idempotent:${opts.idempotencyKey}`
       : "";
     const envelope: Envelope = {
-      messageId,
-      queueName,
-      message: serializeQueueMessage(message),
+      messageId: message.messageId,
+      queueName: message.queueName,
+      message: message.message,
       attempt: 0,
       deliveryCount: 0,
       createdAt: Date.now(),
       dedupKey,
-      headers: opts?.headers ?? {},
-      ...(routes.has(prefix) && { route: routes.get(prefix) }),
+      headers: message.headers ?? {},
+      ...(message.route && { route: message.route }),
     };
-    const delayMs = Math.max(0, (opts?.delaySeconds ?? 0) * 1000);
+    const delayMs = Math.max(0, (opts.delaySeconds ?? 0) * 1000);
     if (!Number.isFinite(delayMs))
       throw new RangeError("delaySeconds must be finite");
     const result = await redis.eval(
@@ -297,148 +219,27 @@ export function createQueue(
       ready,
       delayed,
       dedupKey,
-      messageId,
+      message.messageId,
       config.idempotencyTtlMs ?? 0,
       JSON.stringify(envelope),
       delayMs > 0 ? Date.now() + delayMs : 0,
     );
-    return { messageId: MessageId.parse(result) };
-  };
-
-  function parseReschedule(text: string): number | undefined {
-    try {
-      const seconds: unknown = JSON.parse(text)?.timeoutSeconds;
-      if (
-        typeof seconds === "number" &&
-        Number.isFinite(seconds) &&
-        seconds >= 0
-      )
-        return seconds;
-    } catch {
-      /* A response without a timeout acknowledges the message. */
-    }
-    return undefined;
+    return MessageId.parse(result);
   }
 
-  async function dispatch(job: Envelope): Promise<number | undefined> {
-    const { prefix: queuePrefix } = parseQueueName(job.queueName);
-    const messageId = job.messageId;
-    const headers = new Headers(job.headers);
-    headers.set("content-type", "application/json");
-    headers.set("x-vqs-queue-name", job.queueName);
-    headers.set("x-vqs-message-id", messageId);
-    // Reservation persists attempts before dispatch, including crash redeliveries.
-    headers.set("x-vqs-message-attempt", String(job.attempt));
-    // Every delivery that reached a handler, reschedules included.
-    headers.set("x-vqs-message-delivery-count", String(job.deliveryCount));
-    headers.set(
-      "x-vqs-message-created-at",
-      new Date(job.createdAt).toISOString(),
-    );
-
-    const deliveryRoute = routes.get(queuePrefix) ?? job.route;
-    const directHandler = directHandlers.get(queuePrefix);
-
-    let response: Response;
-    if (directHandler) {
-      // In process: the request a route serving `createQueueHandler(prefix, ...)`
-      // would receive, without the network hop.
-      const localBase = createWorkflowBaseUrl("http://localhost");
-      response = await directHandler(
-        new Request(
-          deliveryRoute
-            ? createAppRouteUrl(localBase, deliveryRoute)
-            : createWorkflowUrl(localBase, { type: "flow" }),
-          { method: "POST", headers, body: job.message },
-        ),
-      );
-    } else {
-      const baseUrl = resolveBaseUrl(config);
-      response = await fetch(
-        deliveryRoute
-          ? createAppRouteUrl(baseUrl, deliveryRoute)
-          : createWorkflowUrl(baseUrl, { type: "flow" }),
-        {
-          method: "POST",
-          headers,
-          body: job.message,
-          signal: AbortSignal.timeout(httpTimeoutMs),
-        },
-      );
-    }
-
-    const text = await response.text();
-
-    if (!response.ok) throw new Error(`HTTP ${response.status}: ${text}`);
-    return parseReschedule(text);
-  }
-
-  const createQueueHandler: QueueInterface["createQueueHandler"] = (
-    queueNamePrefix,
-    handler,
-  ) => {
-    return async (req) => {
-      const queueName = req.headers.get(
-        "x-vqs-queue-name",
-      ) as ValidQueueName | null;
-      const messageId = req.headers.get("x-vqs-message-id") as MessageId | null;
-      const attemptStr = req.headers.get("x-vqs-message-attempt");
-      const deliveryCountStr = req.headers.get("x-vqs-message-delivery-count");
-      const createdAtStr = req.headers.get("x-vqs-message-created-at");
-
-      if (!queueName || !messageId || !attemptStr || !req.body) {
-        return Response.json(
-          { error: "Missing required headers or body" },
-          { status: 400 },
-        );
-      }
-      if (!queueName.startsWith(queueNamePrefix)) {
-        return Response.json({ error: "Unhandled queue" }, { status: 400 });
-      }
-
-      const attempt = Number.parseInt(attemptStr, 10);
-      const deliveryCount = deliveryCountStr
-        ? Number.parseInt(deliveryCountStr, 10)
-        : attempt;
-      const createdAt = createdAtStr ? new Date(createdAtStr) : undefined;
-
-      try {
-        const body = deserializeQueueMessage(await req.text());
-        const result = await handler(body, {
-          attempt,
-          deliveryCount,
-          ...(createdAt && !Number.isNaN(createdAt.getTime()) && { createdAt }),
-          queueName,
-          messageId,
-        });
-
-        const timeoutSeconds = (
-          result as { timeoutSeconds?: unknown } | null | undefined
-        )?.timeoutSeconds;
-        if (
-          typeof timeoutSeconds === "number" &&
-          Number.isFinite(timeoutSeconds)
-        ) {
-          return Response.json({ timeoutSeconds: Math.max(0, timeoutSeconds) });
-        }
-        return Response.json({ ok: true });
-      } catch (error) {
-        debug("queue handler error:", error);
-        return Response.json({ error: String(error) }, { status: 500 });
-      }
-    };
-  };
-
-  const getDeploymentId: QueueInterface["getDeploymentId"] = async () =>
-    "redis";
-
-  async function settle(raw: string, claimOwner: string): Promise<void> {
+  async function settle(
+    raw: string,
+    claimOwner: string,
+    deliver: Deliver,
+  ): Promise<void> {
     try {
       const job = parseEnvelope(raw);
       let seconds: number | undefined;
       let failed = false;
       try {
-        seconds = await dispatch(job);
+        // Reservation persists the attempt before delivery, so a crash
+        // redelivery reports one more.
+        seconds = await deliver(job);
       } catch (error) {
         failed = true;
         debug(
@@ -504,7 +305,7 @@ export function createQueue(
     return next;
   }
 
-  async function run(): Promise<void> {
+  async function run(deliver: Deliver): Promise<void> {
     let renewedAt = Date.now();
     let maintainedAt = 0;
     while (!closed) {
@@ -557,7 +358,7 @@ export function createQueue(
             heartbeat(claimOwner),
           );
           if (typeof raw !== "string") break;
-          const task = settle(raw, claimOwner);
+          const task = settle(raw, claimOwner, deliver);
           inflight.add(task);
           void task.finally(() => inflight.delete(task));
         }
@@ -568,16 +369,8 @@ export function createQueue(
     }
   }
 
-  return {
-    queue,
-    createQueueHandler,
-    getDeploymentId,
-    registerHandler(prefix, handler) {
-      directHandlers.set(prefix, handler);
-    },
-    registerRoute(prefix, path) {
-      routes.set(prefix, parseQueueRoute(path));
-    },
+  const backend: QueueBackend = {
+    enqueue,
     async getQueueStats() {
       const counts = await redis.eval(STATS, 3, ready, delayed, owners, root);
       if (
@@ -594,11 +387,11 @@ export function createQueue(
         failed: 0,
       };
     },
-    start() {
+    start(deliver) {
       if (closed) return Promise.reject(new Error("Queue is closed"));
       startPromise ??= (async () => {
         owner = await register();
-        loop = run();
+        loop = run(deliver);
       })().catch((error) => {
         startPromise = undefined;
         throw error;
@@ -641,4 +434,5 @@ export function createQueue(
       }
     },
   };
+  return createWorldQueue(backend, config, { ...options, debug });
 }

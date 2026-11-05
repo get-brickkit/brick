@@ -2,7 +2,8 @@
  * Server-only module for workflow data access.
  *
  * The `.server.ts` suffix ensures Vite excludes this from client bundles.
- * These functions are called from React Router route loaders/actions.
+ * `rpcMethods` is served by the `api/rpc` route, and its type is what the
+ * client's `rpc()` checks calls against.
  */
 
 import * as workflowRunHelpers from "@workflow/core/runtime";
@@ -10,7 +11,6 @@ import { resumeHook as resumeHookRuntime } from "@workflow/core/runtime/resume-h
 
 import { WorkflowRunNotFoundError, WorkflowWorldError } from "@workflow/errors";
 import type {
-  BulkCancelWorkflowRunsResult,
   Event,
   Hook,
   Step,
@@ -18,133 +18,13 @@ import type {
   WorkflowRunStatus,
   World,
 } from "@workflow/world";
-import type { HookListItem, HookTokenResult } from "~/lib/types";
+import type {
+  HookListItem,
+  PaginatedResult,
+  ServerActionError,
+  ServerActionResult,
+} from "~/lib/types";
 import { getInspectorHost } from "./inspector-host.server";
-
-/**
- * Environment variable map for world configuration.
- *
- * NOTE: This type is still exported for potential future use cases where
- * dynamic world configuration at runtime may be needed. Currently, the
- * @workflow/web package uses server-side environment variables exclusively
- * and does not pass EnvMap from the client. The server actions still accept
- * this parameter for backwards compatibility and future extensibility.
- */
-export type EnvMap = Record<string, string | undefined>;
-
-/**
- * Public configuration info that is safe to send to the client.
- *
- * IMPORTANT:
- * - The web UI must not be able to read arbitrary server env vars.
- * - The only env-derived data we expose is from a strict per-world allowlist.
- */
-export interface PublicServerConfig {
-  /** Human-readable backend name for display (e.g., "PostgreSQL", "Local", "Vercel") */
-  backendDisplayName: string;
-  /** The raw backend identifier (e.g., "@workflow/world-postgres", "local", "vercel") */
-  backendId: string;
-  /**
-   * Safe, whitelisted, env-derived values.
-   *
-   * Keys MUST match the canonical environment variable names (e.g. "WORKFLOW_VERCEL_PROJECT").
-   * This keeps configuration naming consistent across CLI + web + docs.
-   */
-  publicEnv: Record<string, string>;
-  /**
-   * Keys for env vars that are allowed/known but considered sensitive.
-   * The server will NOT return their values; UIs should display `*****`.
-   */
-  sensitiveEnvKeys: string[];
-  /**
-   * Additional safe, derived info for display (never contains secrets).
-   * These keys are not env var names; they are UI-friendly derived fields.
-   */
-  displayInfo?: Record<string, string>;
-}
-
-/**
- * Public configuration info that is safe to send to the client.
- *
- * Brick change: upstream derives this from `WORKFLOW_*` environment variables.
- * The inspector here always reads the world of the app that hosts it, so the
- * config is fixed and exposes nothing from the environment.
- */
-export async function getPublicServerConfig(): Promise<PublicServerConfig> {
-  return {
-    backendDisplayName: "Brick",
-    backendId: "brick",
-    publicEnv: {},
-    sensitiveEnvKeys: [],
-  };
-}
-
-export interface PaginatedResult<T> {
-  data: T[];
-  cursor?: string;
-  hasMore: boolean;
-  pageInfo?: AnalyticsPageInfo;
-}
-
-/**
- * Structured error information that can be sent to the client
- */
-export interface ServerActionError {
-  message: string;
-  // "Server" if the error originates in this file, "API" if the error originates in the World interface
-  layer: "server" | "API";
-  cause?: string;
-  request?: {
-    operation: string;
-    params: Record<string, any>;
-    status?: number;
-    url?: string;
-    code?: string;
-  };
-}
-
-/**
- * Result wrapper for server actions that can return either data or error
- */
-export type ServerActionResult<T> =
-  | { success: true; data: T }
-  | { success: false; error: ServerActionError };
-
-interface AnalyticsPageInfo {
-  currentLookbackDays: number;
-  maxLookbackDays: number;
-  currentWindowStart: Date;
-  maxWindowStart: Date;
-  upgradeAvailable: boolean;
-}
-
-const OBSERVABILITY_UPGRADE_REQUIRED_CODE = "observability-upgrade-required";
-const OBSERVABILITY_UPGRADE_REQUIRED_MESSAGE =
-  "This workflow observability data is outside your current plan window. Upgrade Observability Plus to view up to 30 days of workflow data.";
-
-function getPageInfo(result: unknown): AnalyticsPageInfo | undefined {
-  if (
-    typeof result !== "object" ||
-    result === null ||
-    !("pageInfo" in result)
-  ) {
-    return undefined;
-  }
-  return (result as { pageInfo?: AnalyticsPageInfo }).pageInfo;
-}
-
-/**
- * The world the host process runs on. Brick change: upstream builds one from the
- * environment; the host passes its own to `createFetchHandler`. Like
- * upstream it also makes it the SDK's world, which `resumeHook` reads: an app
- * that only records events may never have set it, and the SDK would then build
- * one from the environment.
- */
-async function getWorldFromEnv(_userEnvMap?: EnvMap): Promise<World> {
-  const { world } = getInspectorHost();
-  workflowRunHelpers.setWorld(world);
-  return world;
-}
 
 function createServerActionError<T>(
   error: unknown,
@@ -163,7 +43,7 @@ function createServerActionError<T>(
       console.error(`[web-api] ${operation} error:`, err);
     }
     errorResponse = {
-      message: getUserFacingErrorMessage(err, error.status, error.code),
+      message: getUserFacingErrorMessage(err, error.status),
       layer: "API",
       cause: err.stack || err.message,
       request: {
@@ -202,17 +82,9 @@ function createServerActionError<T>(
 /**
  * Converts an error into a user-facing message
  */
-function getUserFacingErrorMessage(
-  error: Error,
-  status?: number,
-  code?: string,
-): string {
+function getUserFacingErrorMessage(error: Error, status?: number): string {
   if (!status) {
     return `Error creating response: ${error.message}`;
-  }
-
-  if (status === 402 && code === OBSERVABILITY_UPGRADE_REQUIRED_CODE) {
-    return OBSERVABILITY_UPGRADE_REQUIRED_MESSAGE;
   }
 
   // Check for common error patterns
@@ -236,544 +108,318 @@ function getUserFacingErrorMessage(
   return error.message || "An unexpected error occurred";
 }
 
+type SortOrder = "asc" | "desc";
+type ResolveData = "none" | "all";
+
 /**
- * Helper to create successful responses.
- * Data is passed through as-is — CBOR transport preserves Uint8Array
- * and other types. Hydration happens client-side.
+ * One RPC method: reads the host's world and answers with the data, or with the
+ * error as a `ServerActionError` naming the operation that failed.
  */
-function createResponse<T>(data: T): ServerActionResult<T> {
-  return {
-    success: true,
-    data,
+function method<P extends object, T>(
+  operation: string,
+  run: (world: World, params: P) => Promise<T>,
+): (params: P) => Promise<ServerActionResult<T>> {
+  return async (params) => {
+    try {
+      return {
+        success: true,
+        data: await run(getInspectorHost().world, params),
+      };
+    } catch (error) {
+      return createServerActionError<T>(error, operation, params);
+    }
   };
 }
 
-/**
- * Fetch paginated list of workflow runs
- */
-export async function fetchRuns(
-  worldEnv: EnvMap,
-  params: {
-    cursor?: string;
-    sortOrder?: "asc" | "desc";
-    limit?: number;
-    workflowName?: string;
-    status?: WorkflowRunStatus;
-    /**
-     * Optional listing window (ISO timestamps, both required together).
-     * Honored by the analytics read path, where it bounds the backend scan;
-     * the runtime storage APIs have no time filter, so the fallback path
-     * ignores it. Windows outside the plan's observability lookback surface
-     * as a 402 `observability-upgrade-required` error.
-     */
-    startTime?: string;
-    endTime?: string;
-  },
-): Promise<ServerActionResult<PaginatedResult<WorkflowRun>>> {
-  const {
-    cursor,
-    sortOrder = "desc",
-    limit = 10,
-    workflowName,
-    status,
-    startTime,
-    endTime,
-  } = params;
-  try {
-    const world = await getWorldFromEnv(worldEnv);
-    // Prefer the metadata-only analytics read path when the backend provides
-    // one; fall back to the runtime storage API otherwise.
-    const result = world.analytics
-      ? await world.analytics.runs.list({
-          ...(workflowName ? { workflowName } : {}),
-          ...(status ? { status } : {}),
-          ...(startTime && endTime ? { startTime, endTime } : {}),
-          pagination: { cursor, limit, sortOrder },
-        })
-      : await world.runs.list({
-          ...(workflowName ? { workflowName } : {}),
-          ...(status ? { status } : {}),
-          pagination: { cursor, limit, sortOrder },
-          resolveData: "none",
-        });
-    return createResponse({
-      data: result.data as unknown as WorkflowRun[],
-      cursor: result.cursor ?? undefined,
-      hasMore: result.hasMore,
-      pageInfo: getPageInfo(result),
-    });
-  } catch (error) {
-    return createServerActionError<PaginatedResult<WorkflowRun>>(
-      error,
-      "world.runs.list",
-      params,
-    );
-  }
+function page<T>(result: {
+  data: T[];
+  cursor: string | null;
+  hasMore: boolean;
+}): PaginatedResult<T> {
+  return {
+    data: result.data,
+    cursor: result.cursor ?? undefined,
+    hasMore: result.hasMore,
+  };
 }
 
-/**
- * Fetch a single workflow run with full data
- */
-export async function fetchRun(
-  worldEnv: EnvMap,
-  runId: string,
-  resolveData: "none" | "all" = "all",
-): Promise<ServerActionResult<WorkflowRun>> {
-  try {
-    const world = await getWorldFromEnv(worldEnv);
-    const run = await world.runs.get(runId, { resolveData });
-    return createResponse(run as WorkflowRun);
-  } catch (error) {
-    return createServerActionError<WorkflowRun>(error, "world.runs.get", {
-      runId,
-      resolveData,
-    });
-  }
-}
-
-/**
- * Fetch a single step with full data
- */
-export async function fetchStep(
-  worldEnv: EnvMap,
-  runId: string,
-  stepId: string,
-  resolveData: "none" | "all" = "all",
-): Promise<ServerActionResult<Step>> {
-  try {
-    const world = await getWorldFromEnv(worldEnv);
-    const step = await world.steps.get(runId, stepId, { resolveData });
-    return createResponse(step as Step);
-  } catch (error) {
-    return createServerActionError<Step>(error, "world.steps.get", {
-      runId,
-      stepId,
-      resolveData,
-    });
-  }
-}
-
-/**
- * Fetch paginated list of events for a run
- */
-export async function fetchEvents(
-  worldEnv: EnvMap,
-  runId: string,
-  params: {
-    cursor?: string;
-    sortOrder?: "asc" | "desc";
-    limit?: number;
-    withData?: boolean;
-  },
-): Promise<ServerActionResult<PaginatedResult<Event>>> {
-  const { cursor, sortOrder = "asc", limit = 1000, withData = false } = params;
-  try {
-    const world = await getWorldFromEnv(worldEnv);
-    // Run-scoped, so it reads storage rather than analytics. The analytics
-    // namespace is a metadata mirror with a shorter retention window and
-    // asynchronous ingestion, so it returned an empty list for a run older
-    // than that window and could trail a run still executing. This listing
-    // backs both the trace viewer and the events tab.
-    const result = await world.events.list({
-      runId,
-      pagination: { cursor, limit, sortOrder },
-      resolveData: withData ? "all" : "none",
-    });
-    return createResponse({
-      data: result.data as unknown as Event[],
-      cursor: result.cursor ?? undefined,
-      hasMore: result.hasMore,
-      pageInfo: getPageInfo(result),
-    });
-  } catch (error) {
-    return createServerActionError<PaginatedResult<Event>>(
-      error,
-      "world.events.list",
-      {
-        runId,
-        ...params,
-      },
-    );
-  }
-}
-
-/**
- * Fetch a single event by run ID and event ID
- */
-export async function fetchEvent(
-  worldEnv: EnvMap,
-  runId: string,
-  eventId: string,
-  resolveData: "none" | "all" = "all",
-): Promise<ServerActionResult<Event>> {
-  try {
-    const world = await getWorldFromEnv(worldEnv);
-    const event = await world.events.get(runId, eventId, { resolveData });
-    return createResponse(event as Event);
-  } catch (error) {
-    return createServerActionError<Event>(error, "world.events.get", {
-      runId,
-      eventId,
-      resolveData,
-    });
-  }
-}
-
-/**
- * Fetch paginated events for a step correlation ID.
- */
-export async function fetchEventsByCorrelationId(
-  worldEnv: EnvMap,
-  correlationId: string,
-  params: {
-    cursor?: string;
-    sortOrder?: "asc" | "desc";
-    limit?: number;
-    withData?: boolean;
-    /**
-     * The run the correlation id belongs to. A correlation id is unique per
-     * run, not globally — a slot-numbered run numbers its own steps — so the
-     * search is always made from a run's page and names it.
-     */
-    runId: string;
-  },
-): Promise<ServerActionResult<PaginatedResult<Event>>> {
-  const {
-    cursor,
-    sortOrder = "asc",
-    limit = 100,
-    withData = false,
-    runId,
-  } = params;
-  try {
-    const world = await getWorldFromEnv(worldEnv);
-    // Run-scoped, so it reads storage — see `fetchEvents` for why the
-    // analytics path was withdrawn. `runId` is required, which keeps the
-    // answer scoped to one run: a correlation id is unique within its run,
-    // not across runs.
-    const result = await world.events.listByCorrelationId({
-      correlationId,
-      runId,
-      pagination: { cursor, limit, sortOrder },
-      resolveData: withData ? "all" : "none",
-    });
-    return createResponse({
-      data: result.data as unknown as Event[],
-      cursor: result.cursor ?? undefined,
-      hasMore: result.hasMore,
-      pageInfo: getPageInfo(result),
-    });
-  } catch (error) {
-    return createServerActionError<PaginatedResult<Event>>(
-      error,
-      "world.events.listByCorrelationId",
-      {
-        correlationId,
-        ...params,
-      },
-    );
-  }
-}
-
-/**
- * Fetch paginated list of hooks
- */
-export function hookToListItem(hook: Hook): HookListItem {
+function hookToListItem(hook: Hook): HookListItem {
   const { token: _token, ...hookListItem } = hook;
   return hookListItem;
 }
 
-export async function fetchHooks(
-  worldEnv: EnvMap,
-  params: {
-    runId?: string;
-    cursor?: string;
-    sortOrder?: "asc" | "desc";
-    limit?: number;
-  },
-): Promise<ServerActionResult<PaginatedResult<HookListItem>>> {
-  const { runId, cursor, sortOrder = "desc", limit = 10 } = params;
-  try {
-    const world = await getWorldFromEnv(worldEnv);
-    // Prefer the metadata-only analytics read path when the backend provides
-    // one and the run scope required by analytics is present. The hook list is
-    // metadata only — the secret `token` is fetched on demand per hook via
-    // `fetchHookToken` for the copy-token and resume affordances — so the list
-    // never carries it.
-    if (world.analytics && runId) {
-      const result = await world.analytics.hooks.list({
-        runId,
-        pagination: { cursor, limit, sortOrder },
-      });
-      return createResponse({
-        data: result.data as unknown as HookListItem[],
-        cursor: result.cursor ?? undefined,
-        hasMore: result.hasMore,
-        pageInfo: getPageInfo(result),
-      });
-    }
-    const result = await world.hooks.list({
-      ...(runId ? { runId } : {}),
-      pagination: { cursor, limit, sortOrder },
-      resolveData: "none",
-    });
-    return createResponse({
-      data: result.data.map(hookToListItem),
-      cursor: result.cursor ?? undefined,
-      hasMore: result.hasMore,
-      pageInfo: getPageInfo(result),
-    });
-  } catch (error) {
-    return createServerActionError<PaginatedResult<HookListItem>>(
-      error,
-      "world.hooks.list",
-      params,
-    );
-  }
-}
-
 /**
- * Fetch a single hook's secret token on demand.
- *
- * Hook list rows are metadata-only; the token is read from the runtime storage
- * API one hook at a time, only when the user reveals/copies it or resumes the
- * hook. This keeps the secret out of bulk list responses.
+ * The calls the browser can make. Data is passed through as-is: CBOR transport
+ * preserves Uint8Array and other types, and hydration happens client-side.
  */
-export async function fetchHookToken(
-  worldEnv: EnvMap,
-  runId: string,
-  hookId: string,
-): Promise<ServerActionResult<HookTokenResult>> {
-  try {
-    const world = await getWorldFromEnv(worldEnv);
-    const hook = await world.hooks.get(hookId, { resolveData: "none" });
-    return createResponse({ token: hook.token });
-  } catch (error) {
-    return createServerActionError<HookTokenResult>(error, "world.hooks.get", {
-      runId,
-      hookId,
-    });
-  }
-}
-
-/**
- * Fetch a single hook with full data
- */
-export async function fetchHook(
-  worldEnv: EnvMap,
-  hookId: string,
-  resolveData: "none" | "all" = "all",
-): Promise<ServerActionResult<Hook>> {
-  try {
-    const world = await getWorldFromEnv(worldEnv);
-    const hook = await world.hooks.get(hookId, { resolveData });
-    return createResponse(hook as Hook);
-  } catch (error) {
-    return createServerActionError<Hook>(error, "world.hooks.get", {
-      hookId,
-      resolveData,
-    });
-  }
-}
-
-/**
- * Cancel a workflow run
- */
-export async function cancelRun(
-  worldEnv: EnvMap,
-  runId: string,
-): Promise<ServerActionResult<void>> {
-  try {
-    const world = await getWorldFromEnv(worldEnv);
-    await workflowRunHelpers.cancelRun(world, runId);
-    return createResponse(undefined);
-  } catch (error) {
-    return createServerActionError<void>(error, "world.events.create", {
-      runId,
-    });
-  }
-}
-
-/**
- * Bulk-cancel workflow runs in a single operation.
- *
- * Delegates to `cancelRuns`, which uses the world's native batch endpoint when
- * available and otherwise falls back to bounded-concurrency single-run
- * cancellation. Per-run outcomes are reported in the returned summary rather
- * than thrown, so a partial failure still resolves.
- */
-export async function bulkCancelRuns(
-  worldEnv: EnvMap,
-  runIds: string[],
-): Promise<ServerActionResult<BulkCancelWorkflowRunsResult>> {
-  try {
-    const world = await getWorldFromEnv(worldEnv);
-    const result = await workflowRunHelpers.cancelRuns(world, runIds);
-    return createResponse(result);
-  } catch (error) {
-    return createServerActionError<BulkCancelWorkflowRunsResult>(
-      error,
-      "world.runs.cancelMany",
-      { runIdCount: runIds.length },
-    );
-  }
-}
-
-/**
- * Start a new workflow run.
- *
- * This requires the ID of an existing run of which to re-use the deployment ID of.
- */
-export async function recreateRun(
-  worldEnv: EnvMap,
-  runId: string,
-  deploymentId?: string,
-): Promise<ServerActionResult<string>> {
-  try {
-    const world = await getWorldFromEnv({ ...worldEnv });
-    const newRunId = await workflowRunHelpers.recreateRunFromExisting(
+export const rpcMethods = {
+  fetchRuns: method(
+    "world.runs.list",
+    async (
       world,
-      runId,
       {
-        deploymentId,
+        cursor,
+        sortOrder = "desc",
+        limit = 10,
+        workflowName,
+        status,
+      }: {
+        cursor?: string;
+        sortOrder?: SortOrder;
+        limit?: number;
+        workflowName?: string;
+        status?: WorkflowRunStatus;
       },
-    );
-    return createResponse(newRunId);
-  } catch (error) {
-    return createServerActionError<string>(error, "recreateRun", { runId });
-  }
-}
+    ) =>
+      // Listed without input and output; the UI reads those per run.
+      page(
+        await world.runs.list({
+          ...(workflowName ? { workflowName } : {}),
+          ...(status ? { status } : {}),
+          pagination: { cursor, limit, sortOrder },
+          resolveData: "none",
+        }),
+      ) as unknown as PaginatedResult<WorkflowRun>,
+  ),
 
-/**
- * Re-enqueue a workflow run.
- *
- * This re-enqueues the workflow orchestration layer. It's a no-op unless the workflow
- * got stuck due to an implementation issue in the World. Useful for debugging custom Worlds.
- */
-export async function reenqueueRun(
-  worldEnv: EnvMap,
-  runId: string,
-): Promise<ServerActionResult<void>> {
-  try {
-    const world = await getWorldFromEnv({ ...worldEnv });
-    await workflowRunHelpers.reenqueueRun(world, runId);
-    return createResponse(undefined);
-  } catch (error) {
-    return createServerActionError<void>(error, "reenqueueRun", { runId });
-  }
-}
+  fetchRun: method(
+    "world.runs.get",
+    async (
+      world,
+      {
+        runId,
+        resolveData = "all",
+      }: { runId: string; resolveData?: ResolveData },
+    ) => (await world.runs.get(runId, { resolveData })) as WorkflowRun,
+  ),
 
-export interface StopSleepResult {
-  /** Number of pending sleeps that were stopped */
-  stoppedCount: number;
-}
+  fetchStep: method(
+    "world.steps.get",
+    async (
+      world,
+      {
+        runId,
+        stepId,
+        resolveData = "all",
+      }: { runId: string; stepId: string; resolveData?: ResolveData },
+    ): Promise<Step> => world.steps.get(runId, stepId, { resolveData }),
+  ),
 
-export interface StopSleepOptions {
+  fetchEvents: method(
+    "world.events.list",
+    async (
+      world,
+      {
+        runId,
+        cursor,
+        sortOrder = "asc",
+        limit = 1000,
+        withData = false,
+      }: {
+        runId: string;
+        cursor?: string;
+        sortOrder?: SortOrder;
+        limit?: number;
+        withData?: boolean;
+      },
+    ) =>
+      page<Event>(
+        await world.events.list({
+          runId,
+          pagination: { cursor, limit, sortOrder },
+          resolveData: withData ? "all" : "none",
+        }),
+      ),
+  ),
+
+  fetchEvent: method(
+    "world.events.get",
+    async (
+      world,
+      {
+        runId,
+        eventId,
+        resolveData = "all",
+      }: { runId: string; eventId: string; resolveData?: ResolveData },
+    ): Promise<Event> => world.events.get(runId, eventId, { resolveData }),
+  ),
+
   /**
-   * Optional list of specific correlation IDs to target.
-   * If provided, only these sleep calls will be interrupted.
-   * If not provided, all pending sleep calls will be interrupted.
+   * Events for one correlation id. `runId` is required: a correlation id is
+   * unique within its run (a slot-numbered run numbers its own steps), not
+   * across runs.
    */
-  correlationIds?: string[];
-}
+  fetchEventsByCorrelationId: method(
+    "world.events.listByCorrelationId",
+    async (
+      world,
+      {
+        correlationId,
+        runId,
+        cursor,
+        sortOrder = "asc",
+        limit = 100,
+        withData = false,
+      }: {
+        correlationId: string;
+        runId: string;
+        cursor?: string;
+        sortOrder?: SortOrder;
+        limit?: number;
+        withData?: boolean;
+      },
+    ) =>
+      page<Event>(
+        await world.events.listByCorrelationId({
+          correlationId,
+          runId,
+          pagination: { cursor, limit, sortOrder },
+          resolveData: withData ? "all" : "none",
+        }),
+      ),
+  ),
 
-/**
- * Wake up a workflow run by interrupting pending sleep() calls.
- *
- * This finds wait_created events without matching wait_completed events,
- * creates wait_completed events for them, and then re-enqueues the run.
- *
- * @param worldEnv - Environment configuration for the World
- * @param runId - The run ID to wake up
- * @param options - Optional settings to narrow down targeting (specific correlation IDs)
- */
-export async function wakeUpRun(
-  worldEnv: EnvMap,
-  runId: string,
-  options?: StopSleepOptions,
-): Promise<ServerActionResult<StopSleepResult>> {
-  try {
-    const world = await getWorldFromEnv({ ...worldEnv });
-    const result = await workflowRunHelpers.wakeUpRun(world, runId, options);
-    return createResponse(result);
-  } catch (error) {
-    return createServerActionError<StopSleepResult>(error, "wakeUpRun", {
-      runId,
-      correlationIds: options?.correlationIds,
-    });
-  }
-}
+  /** Hook rows without their secret `token`, which `fetchHookToken` reads one hook at a time. */
+  fetchHooks: method(
+    "world.hooks.list",
+    async (
+      world,
+      {
+        runId,
+        cursor,
+        sortOrder = "desc",
+        limit = 10,
+      }: {
+        runId?: string;
+        cursor?: string;
+        sortOrder?: SortOrder;
+        limit?: number;
+      },
+    ): Promise<PaginatedResult<HookListItem>> => {
+      const result = await world.hooks.list({
+        ...(runId ? { runId } : {}),
+        pagination: { cursor, limit, sortOrder },
+        resolveData: "none",
+      });
+      return { ...page(result), data: result.data.map(hookToListItem) };
+    },
+  ),
 
-export interface ResumeHookResult {
-  /** The hook ID that was resumed */
-  hookId: string;
-  /** The run ID associated with the hook */
-  runId: string;
-}
+  /** One hook's secret token, read only when the user copies it or resumes the hook. */
+  fetchHookToken: method(
+    "world.hooks.get",
+    async (world, { hookId }: { runId: string; hookId: string }) => {
+      const hook = await world.hooks.get(hookId, { resolveData: "none" });
+      return { token: hook.token };
+    },
+  ),
 
-/**
- * Resume a hook by sending a payload.
- *
- * This sends a payload to a hook identified by its token, which resumes
- * the associated workflow run. The payload will be available as the return
- * value of the `createHook()` call in the workflow.
- *
- * @param worldEnv - Environment configuration for the World
- * @param token - The hook token
- * @param payload - The JSON payload to send to the hook
- */
-export async function resumeHook(
-  worldEnv: EnvMap,
-  token: string,
-  payload: unknown,
-): Promise<ServerActionResult<ResumeHookResult>> {
-  try {
-    // Initialize the world so resumeHookRuntime can access it
-    await getWorldFromEnv({ ...worldEnv });
+  fetchHook: method(
+    "world.hooks.get",
+    async (
+      world,
+      {
+        hookId,
+        resolveData = "all",
+      }: { hookId: string; resolveData?: ResolveData },
+    ): Promise<Hook> => world.hooks.get(hookId, { resolveData }),
+  ),
 
-    const hook = await resumeHookRuntime(token, payload);
+  cancelRun: method(
+    "world.events.create",
+    async (world, { runId }: { runId: string }): Promise<void> => {
+      await workflowRunHelpers.cancelRun(world, runId);
+    },
+  ),
 
-    return createResponse({
-      hookId: hook.hookId,
-      runId: hook.runId,
-    });
-  } catch (error) {
-    return createServerActionError<ResumeHookResult>(error, "resumeHook", {
-      token,
-    });
-  }
-}
+  /**
+   * Cancels runs in one operation: the world's batch endpoint when it has one,
+   * else bounded-concurrency single cancels. Per-run outcomes are in the
+   * summary, so a partial failure still resolves.
+   */
+  bulkCancelRuns: method(
+    "world.runs.cancelMany",
+    async (world, { runIds }: { runIds: string[] }) =>
+      workflowRunHelpers.cancelRuns(world, runIds),
+  ),
 
-export async function readStreamServerAction(
-  env: EnvMap,
-  streamId: string,
-  startIndex: number | undefined,
-  runId: string,
-): Promise<ReadableStream<Uint8Array> | ServerActionError> {
-  try {
-    const world = await getWorldFromEnv(env);
-    // Return the raw binary stream — deserialization and decryption
-    // happen entirely client-side.
-    return await world.streams.get(runId, streamId, startIndex);
-  } catch (error) {
-    const actionError = createServerActionError(error, "world.streams.get", {
-      streamId,
-      startIndex,
-    });
-    if (!actionError.success) {
-      return actionError.error;
-    }
-    // Shouldn't happen, this is just a type guard
-    throw new Error();
-  }
-}
+  /** Starts a new run with the same workflow and input as an existing one. */
+  recreateRun: method(
+    "recreateRun",
+    async (
+      world,
+      { runId, deploymentId }: { runId: string; deploymentId?: string },
+    ) =>
+      workflowRunHelpers.recreateRunFromExisting(world, runId, {
+        deploymentId,
+      }),
+  ),
+
+  /**
+   * Re-enqueues the workflow orchestration layer. A no-op unless the run got
+   * stuck on a World bug; useful for debugging custom Worlds.
+   */
+  reenqueueRun: method(
+    "reenqueueRun",
+    async (world, { runId }: { runId: string }): Promise<void> => {
+      await workflowRunHelpers.reenqueueRun(world, runId);
+    },
+  ),
+
+  /**
+   * Interrupts pending sleep() calls (all, or only `correlationIds`) and
+   * re-enqueues the run.
+   */
+  wakeUpRun: method(
+    "wakeUpRun",
+    async (
+      world,
+      { runId, correlationIds }: { runId: string; correlationIds?: string[] },
+    ) => workflowRunHelpers.wakeUpRun(world, runId, { correlationIds }),
+  ),
+
+  /**
+   * Sends a payload to the hook with this token, which the workflow receives
+   * from its `createHook()` call. Brick change: the SDK reads its own world
+   * here, and an app that only records events may never have set it, so the
+   * host's world is made the SDK's first.
+   */
+  resumeHook: method(
+    "resumeHook",
+    async (world, { token, payload }: { token: string; payload: unknown }) => {
+      workflowRunHelpers.setWorld(world);
+      const hook = await resumeHookRuntime(token, payload);
+      return { hookId: hook.hookId, runId: hook.runId };
+    },
+  ),
+
+  fetchStreams: method(
+    "world.streams.list",
+    async (world, { runId }: { runId: string }) => world.streams.list(runId),
+  ),
+
+  /**
+   * The run's encryption key, for decrypting in the browser, or null when the
+   * World does not encrypt. The World derives it from the full run.
+   */
+  getEncryptionKeyForRun: method(
+    "getEncryptionKeyForRun",
+    async (world, { runId }: { runId: string }): Promise<Uint8Array | null> => {
+      if (!world.getEncryptionKeyForRun) return null;
+      const run = await world.runs.get(runId);
+      return (await world.getEncryptionKeyForRun(run)) ?? null;
+    },
+  ),
+};
+
+export type RpcMethods = typeof rpcMethods;
 
 const CHUNKS_PAGE_SIZE = 500;
 
 export interface StreamChunksResult {
   buffer: Uint8Array;
-  /** Cursor the client should send back on the next poll to resume, or null */
-  cursor: string | null;
+  /** Cursor the client sends back on the next poll to read only newer chunks */
+  cursor: string;
   /** Whether the stream is fully closed (no more chunks will ever be written) */
   done: boolean;
 }
@@ -781,27 +427,28 @@ export interface StreamChunksResult {
 /**
  * Fetch stream chunks using paginated batch API.
  *
- * When `startCursor` is provided, only chunks after that position are
- * returned — used for incremental polling so previously-seen data is
- * never re-transferred. Returns a `cursor` the client passes back on
- * the next request.
+ * A world's cursor points past a full page, and is null after the last one,
+ * so the next poll can only restart from the start of the last page read. The
+ * cursor returned here is `<skip>:<world cursor>`: that start, and how many of
+ * its chunks this response already carried, which the next read drops. Pass
+ * it back as `cursor` to get only the chunks written since.
  */
 export async function readStreamChunksServerAction(
-  env: EnvMap,
   streamId: string,
   runId: string,
-  startCursor?: string,
+  cursor?: string,
 ): Promise<StreamChunksResult | ServerActionError> {
   try {
-    const world = await getWorldFromEnv(env);
+    const { world } = getInspectorHost();
     const allChunks: Uint8Array[] = [];
-    let pageCursor: string | undefined = startCursor;
+    const separator = cursor?.indexOf(":") ?? -1;
+    let skip = separator > 0 ? Number(cursor!.slice(0, separator)) : 0;
+    let pageCursor =
+      separator > 0 ? cursor!.slice(separator + 1) || undefined : undefined;
+    // Where the last page read starts, and how many chunks it has had so far.
+    let lastPageCursor = pageCursor;
+    let lastPageCount = 0;
     let streamDone = false;
-    // Track the last non-null cursor so we can resume from the start of
-    // the final page on the next poll. When getChunks returns
-    // cursor=null we've exhausted all pages, but this saved cursor lets
-    // the client re-fetch only the last page + any new chunks.
-    let resumeCursor: string | null = startCursor ?? null;
 
     do {
       const result = await world.streams.getChunks(runId, streamId, {
@@ -810,12 +457,15 @@ export async function readStreamChunksServerAction(
       });
 
       for (const chunk of result.data) {
-        allChunks.push(chunk.data);
+        if (skip > 0) skip--;
+        else allChunks.push(chunk.data);
       }
+      lastPageCount += result.data.length;
 
       streamDone = result.done;
       if (result.cursor) {
-        resumeCursor = result.cursor;
+        lastPageCursor = result.cursor;
+        lastPageCount = 0;
       }
       pageCursor = result.cursor ?? undefined;
     } while (pageCursor);
@@ -832,7 +482,11 @@ export async function readStreamChunksServerAction(
       offset += chunk.length;
     }
 
-    return { buffer: body, cursor: resumeCursor, done: streamDone };
+    return {
+      buffer: body,
+      cursor: `${lastPageCount}:${lastPageCursor ?? ""}`,
+      done: streamDone,
+    };
   } catch (error) {
     const actionError = createServerActionError(
       error,
@@ -843,56 +497,5 @@ export async function readStreamChunksServerAction(
       return actionError.error;
     }
     throw new Error();
-  }
-}
-
-/**
- * List all stream IDs for a run
- */
-export async function fetchStreams(
-  env: EnvMap,
-  runId: string,
-): Promise<ServerActionResult<string[]>> {
-  try {
-    const world = await getWorldFromEnv(env);
-    const streams = await world.streams.list(runId);
-    return createResponse(streams);
-  } catch (error) {
-    return createServerActionError<string[]>(error, "world.streams.list", {
-      runId,
-    });
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Encryption key retrieval for client-side decryption
-// ---------------------------------------------------------------------------
-
-/**
- * Retrieve the encryption key for a specific run.
- *
- * The World resolves the per-run AES-256 key (including HKDF derivation
- * and cross-deployment key retrieval). The raw key bytes are returned
- * to the browser for client-side decryption via core's AES-GCM.
- */
-export async function getEncryptionKeyForRun(
-  worldEnv: EnvMap,
-  runId: string,
-): Promise<ServerActionResult<Uint8Array | null>> {
-  try {
-    const world = await getWorldFromEnv(worldEnv);
-    if (!world.getEncryptionKeyForRun) {
-      return createResponse(null);
-    }
-    // Fetch the full run so the World can inspect deploymentId etc.
-    const run = await world.runs.get(runId);
-    const key = await world.getEncryptionKeyForRun(run);
-    return createResponse(key ?? null);
-  } catch (error) {
-    return createServerActionError<Uint8Array | null>(
-      error,
-      "getEncryptionKeyForRun",
-      { runId },
-    );
   }
 }

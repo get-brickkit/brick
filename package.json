@@ -2,6 +2,10 @@
   "name": "brick-ts-monorepo",
   "version": "0.1.1",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/get-brickkit/brick.git"
+  },
   "workspaces": [
     "packages/*",
     "examples/showcase",
@@ -18,9 +22,11 @@
     "release": "bun scripts/release.ts",
     "test": "bun test packages examples/extensions/test examples/websocket/test scripts --path-ignore-patterns='**/*-world/**' && bun run --cwd examples/events test",
     "typecheck": "bun run --filter @brickkit/core typecheck && bun run --filter @brickkit/crud typecheck && bun run --filter @brickkit/cli typecheck && bun run --filter @brickkit/workflow-inspector typecheck",
-    "build:worlds": "bun run --filter @brickkit/redis-world build && bun run --filter @brickkit/bullmq-world build",
+    "build:worlds": "bun run --filter '@brickkit/*-world' build",
     "typecheck:worlds": "bun run --filter '@brickkit/*-world' typecheck",
     "test:worlds": "bun run --filter '@brickkit/*-world' test",
+    "test:e2e": "bun run --filter '@brickkit/*-world' test:e2e",
+    "check:www": "bun run build && bun run --cwd www lint && bun run --cwd www types:check && bun run --cwd www docs:check",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt .",

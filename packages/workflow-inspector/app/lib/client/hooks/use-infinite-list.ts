@@ -5,8 +5,8 @@ import {
   unwrapOrThrow,
   WorkflowWebAPIError,
 } from "~/lib/client/workflow-errors";
-import { fetchRuns } from "~/lib/rpc-client";
-import type { AnalyticsPageInfo, EnvMap, PaginatedResult } from "~/lib/types";
+import type { PaginatedResult } from "~/lib/types";
+import { rpc } from "~/lib/rpc-client";
 
 export interface InfiniteList<T> {
   /** All rows accumulated so far, in fetch order (deduped by item key). */
@@ -21,10 +21,6 @@ export interface InfiniteList<T> {
   loadMore: () => void;
   /** Reset to the first page and revalidate it. */
   reload: () => void;
-  /** Alias of reload — cached rows stay visible while revalidating. */
-  refresh: () => void;
-  /** Analytics window metadata from the first page response. */
-  pageInfo?: AnalyticsPageInfo;
 }
 
 /**
@@ -120,8 +116,6 @@ export function useInfiniteList<T>(
     hasMore,
     loadMore,
     reload,
-    refresh: reload,
-    pageInfo: pages?.[0]?.pageInfo,
   };
 }
 
@@ -132,49 +126,28 @@ export function useInfiniteList<T>(
  * accumulate; with the ClickHouse-backed analytics read path this keeps the
  * number of round-trips low while scrolling.
  */
-export function useWorkflowRunsInfinite(
-  env: EnvMap,
-  params: {
-    workflowName?: string;
-    status?: WorkflowRunStatus;
-    limit?: number;
-    sortOrder?: "asc" | "desc";
-    /**
-     * Optional listing window (ISO timestamps, both required together).
-     * Callers should freeze the window per selection/refresh so every page
-     * of one list shares the same bounds. Honored on the analytics read
-     * path; windows beyond the plan lookback surface as a 402
-     * `observability-upgrade-required` error.
-     */
-    startTime?: string;
-    endTime?: string;
-  },
-): InfiniteList<WorkflowRun> {
-  const {
-    workflowName,
-    status,
-    limit = 25,
-    sortOrder = "desc",
-    startTime,
-    endTime,
-  } = params;
+export function useWorkflowRunsInfinite(params: {
+  workflowName?: string;
+  status?: WorkflowRunStatus;
+  limit?: number;
+  sortOrder?: "asc" | "desc";
+}): InfiniteList<WorkflowRun> {
+  const { workflowName, status, limit = 25, sortOrder = "desc" } = params;
 
-  const cacheKey = `workflow-runs:${workflowName ?? ""}:${status ?? ""}:${sortOrder}:${limit}:${startTime ?? ""}:${endTime ?? ""}`;
+  const cacheKey = `workflow-runs:${workflowName ?? ""}:${status ?? ""}:${sortOrder}:${limit}`;
 
   const fetchFn = useCallback(
     (cursor?: string) =>
       unwrapOrThrow(
-        fetchRuns(env, {
+        rpc("fetchRuns", {
           cursor,
           sortOrder,
           limit,
           workflowName,
           status,
-          startTime,
-          endTime,
         }),
       ),
-    [env, workflowName, limit, sortOrder, status, startTime, endTime],
+    [workflowName, limit, sortOrder, status],
   );
 
   const getItemKey = useCallback((run: WorkflowRun) => run.runId, []);

@@ -13,7 +13,7 @@ import {
   XCircle,
   Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   DropdownMenu,
@@ -21,13 +21,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
-import type { EnvMap } from "~/lib/types";
-import {
-  cancelRun,
-  recreateRun,
-  reenqueueRun,
-  wakeUpRun,
-} from "~/lib/workflow-api-client";
+import { unwrapOrThrow } from "~/lib/client/workflow-errors";
+import { rpc } from "~/lib/rpc-client";
 
 // ============================================================================
 // Shared Props and Types
@@ -39,7 +34,6 @@ export interface RunActionCallbacks {
 }
 
 export interface RunActionsBaseProps {
-  env: EnvMap;
   runId: string;
   runStatus: WorkflowRunStatus | undefined;
   events?: Event[];
@@ -53,7 +47,6 @@ export interface RunActionsBaseProps {
 // ============================================================================
 
 interface UseRunActionsOptions {
-  env: EnvMap;
   runId: string;
   runStatus: WorkflowRunStatus | undefined;
   events?: Event[];
@@ -62,7 +55,6 @@ interface UseRunActionsOptions {
 }
 
 function useRunActions({
-  env,
   runId,
   runStatus,
   events,
@@ -82,7 +74,7 @@ function useRunActions({
 
     try {
       setRerunning(true);
-      const newRunId = await recreateRun(env, runId);
+      const newRunId = await unwrapOrThrow(rpc("recreateRun", { runId }));
       toast.success("New run started", {
         description: `Run ID: ${newRunId}`,
       });
@@ -97,14 +89,14 @@ function useRunActions({
     } finally {
       setRerunning(false);
     }
-  }, [env, runId, rerunning, replayDisabledReason, callbacks]);
+  }, [runId, rerunning, replayDisabledReason, callbacks]);
 
   const handleReenqueue = useCallback(async () => {
     if (reenqueuing) return;
 
     try {
       setReenqueuing(true);
-      await reenqueueRun(env, runId);
+      await unwrapOrThrow(rpc("reenqueueRun", { runId }));
       toast.success("Run re-enqueued", {
         description: "The workflow orchestration layer has been re-enqueued.",
       });
@@ -116,14 +108,14 @@ function useRunActions({
     } finally {
       setReenqueuing(false);
     }
-  }, [env, runId, reenqueuing, callbacks]);
+  }, [runId, reenqueuing, callbacks]);
 
   const handleWakeUp = useCallback(async () => {
     if (wakingUp) return;
 
     try {
       setWakingUp(true);
-      const result = await wakeUpRun(env, runId);
+      const result = await unwrapOrThrow(rpc("wakeUpRun", { runId }));
       if (result.stoppedCount > 0) {
         toast.success("Active sleeps cancelled", {
           description: `Cancelled ${result.stoppedCount} active sleep${result.stoppedCount > 1 ? "s" : ""} and resumed the run.`,
@@ -141,7 +133,7 @@ function useRunActions({
     } finally {
       setWakingUp(false);
     }
-  }, [env, runId, wakingUp, callbacks]);
+  }, [runId, wakingUp, callbacks]);
 
   const handleCancel = useCallback(async () => {
     if (cancelling) return;
@@ -156,7 +148,7 @@ function useRunActions({
 
     try {
       setCancelling(true);
-      await cancelRun(env, runId);
+      await unwrapOrThrow(rpc("cancelRun", { runId }));
       toast.success("Run cancelled");
       callbacks?.onSuccess?.();
     } catch (err) {
@@ -166,7 +158,7 @@ function useRunActions({
     } finally {
       setCancelling(false);
     }
-  }, [env, runId, runStatus, cancelling, callbacks]);
+  }, [runId, runStatus, cancelling, callbacks]);
 
   return {
     // State
@@ -221,7 +213,6 @@ export interface RunActionsDropdownItemsProps extends RunActionsBaseProps {
 }
 
 export function RunActionsDropdownItems({
-  env,
   runId,
   runStatus,
   events,
@@ -241,7 +232,6 @@ export function RunActionsDropdownItems({
     handleWakeUp,
     handleCancel,
   } = useRunActions({
-    env,
     runId,
     runStatus,
     events,
@@ -346,7 +336,6 @@ export interface RunActionsButtonsProps extends RunActionsBaseProps {
 }
 
 export function RunActionsButtons({
-  env,
   runId,
   runStatus,
   events,
@@ -363,7 +352,7 @@ export function RunActionsButtons({
     hasPendingSleeps,
     handleReenqueue,
     handleWakeUp,
-  } = useRunActions({ env, runId, runStatus, events, callbacks });
+  } = useRunActions({ runId, runStatus, events, callbacks });
 
   const isRunActive = runStatus === "pending" || runStatus === "running";
   const canCancel = isRunActive;
@@ -497,46 +486,4 @@ export function RunActionsButtons({
       </DropdownMenu>
     </>
   );
-}
-
-// ============================================================================
-// Hook for lazy loading events (alternative approach)
-// ============================================================================
-
-export function useLazyEvents(
-  fetchEvents: () => Promise<Event[]>,
-  enabled: boolean,
-) {
-  const [events, setEvents] = useState<Event[] | undefined>(undefined);
-  const [loading, setLoading] = useState(false);
-  const [hasFetched, setHasFetched] = useState(false);
-
-  useEffect(() => {
-    if (!enabled || hasFetched) return;
-
-    let cancelled = false;
-    setLoading(true);
-
-    fetchEvents()
-      .then((result) => {
-        if (!cancelled) {
-          setEvents(result);
-          setHasFetched(true);
-        }
-      })
-      .catch((err) => {
-        console.error("Failed to fetch events:", err);
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled, hasFetched, fetchEvents]);
-
-  return { events, loading };
 }

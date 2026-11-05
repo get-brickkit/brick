@@ -6,7 +6,7 @@ import { renderToPipeableStream } from "react-dom/server";
 import type { AppLoadContext, EntryContext } from "react-router";
 import { ServerRouter } from "react-router";
 
-export const streamTimeout = 5_000;
+const streamTimeout = 5_000;
 
 /**
  * This custom base request handler is based on the default react-router template, modified so that the `@react-router/dev` build plugin no longer requires `@react-router/node` and `isbot` in the dependencies field of `package.json`, allowing us to extract them as peer dependencies.

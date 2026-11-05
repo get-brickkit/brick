@@ -50,38 +50,25 @@ import {
   bulkCancelToastSeverity,
   shouldRetainSelectionAfterBulkCancel,
 } from "~/lib/bulk-cancel-ui";
-import {
-  advanceListingWindow,
-  getListingWindow,
-} from "~/lib/client/listing-window";
 import { useTableSelection } from "~/lib/hooks/use-table-selection";
-import { fetchEvents, fetchRun } from "~/lib/rpc-client";
 import { getRunReplayDisabledReason } from "~/lib/run-replay";
-import type { EnvMap } from "~/lib/types";
-import {
-  bulkCancelRuns,
-  getErrorMessage,
-  getErrorTitle,
-  reenqueueRun,
-  useLoadMoreOnScroll,
-  useWorkflowRunsInfinite,
-} from "~/lib/workflow-api-client";
-import { useServerConfig } from "~/lib/world-config-context";
 import { CopyableText } from "./display-utils/copyable-text";
 import { RelativeTime } from "./display-utils/relative-time";
 import { SelectionBar } from "./display-utils/selection-bar";
 import { StatusBadge } from "./display-utils/status-badge";
 import { RunActionsDropdownItems } from "./run-actions";
 import { Checkbox } from "./ui/checkbox";
+import { useWorkflowRunsInfinite } from "~/lib/client/hooks/use-infinite-list";
+import { useLoadMoreOnScroll } from "~/lib/client/hooks/use-load-more-on-scroll";
+import { getErrorMessage, unwrapOrThrow } from "~/lib/client/workflow-errors";
+import { rpc } from "~/lib/rpc-client";
 
 // Inner content that fetches events when it mounts (only rendered when dropdown is open)
 function RunActionsDropdownContentInner({
-  env,
   runId,
   runStatus,
   onSuccess,
 }: {
-  env: EnvMap;
   runId: string;
   runStatus: WorkflowRunStatus | undefined;
   onSuccess: () => void;
@@ -95,7 +82,7 @@ function RunActionsDropdownContentInner({
   useEffect(() => {
     setRun(undefined);
     setRunIdentityLoading(true);
-    fetchRun(env, runId, "none")
+    rpc("fetchRun", { runId, resolveData: "none" })
       .then((runResult) => {
         if (runResult.success) {
           setRun(runResult.data);
@@ -110,7 +97,7 @@ function RunActionsDropdownContentInner({
 
     setEvents(undefined);
     setEventsLoading(true);
-    fetchEvents(env, runId, { limit: 1000, sortOrder: "desc" })
+    rpc("fetchEvents", { runId, limit: 1000, sortOrder: "desc" })
       .then((eventsResult) => {
         if (eventsResult.success) {
           setEvents(eventsResult.data.data);
@@ -122,11 +109,10 @@ function RunActionsDropdownContentInner({
       .finally(() => {
         setEventsLoading(false);
       });
-  }, [env, runId]);
+  }, [runId]);
 
   return (
     <RunActionsDropdownItems
-      env={env}
       runId={runId}
       runStatus={status}
       events={events}
@@ -140,12 +126,10 @@ function RunActionsDropdownContentInner({
 
 // Wrapper that only renders content when dropdown is open (lazy loading)
 function LazyDropdownMenu({
-  env,
   runId,
   runStatus,
   onSuccess,
 }: {
-  env: EnvMap;
   runId: string;
   runStatus: WorkflowRunStatus | undefined;
   onSuccess: () => void;
@@ -168,7 +152,6 @@ function LazyDropdownMenu({
       {isOpen && (
         <DropdownMenuContent align="end">
           <RunActionsDropdownContentInner
-            env={env}
             runId={runId}
             runStatus={runStatus}
             onSuccess={onSuccess}
@@ -190,31 +173,6 @@ const statusMap: Record<WorkflowRunStatus, { label: string; color: string }> = {
   failed: { label: "Failed", color: "bg-red-600 dark:bg-red-400" },
   cancelled: { label: "Cancelled", color: "bg-gray-600 dark:bg-gray-400" },
 };
-
-const HOUR_MS = 60 * 60 * 1000;
-const DAY_MS = 24 * HOUR_MS;
-
-/**
- * Listing-window presets, mirroring front's workflows o11y period picker.
- * The selected preset is sent to the backend as an explicit
- * startTime/endTime window so the analytics scan stays bounded. Presets
- * longer than the plan's observability lookback are disabled in the picker
- * (the backend would reject them with 402 observability-upgrade-required).
- */
-const PERIOD_PRESETS = [
-  { id: "1h", label: "Last hour", ms: HOUR_MS },
-  { id: "6h", label: "Last 6 hours", ms: 6 * HOUR_MS },
-  { id: "24h", label: "Last 24 hours", ms: DAY_MS },
-  { id: "3d", label: "Last 3 days", ms: 3 * DAY_MS },
-  { id: "7d", label: "Last 7 days", ms: 7 * DAY_MS },
-  { id: "30d", label: "Last 30 days", ms: 30 * DAY_MS },
-] as const;
-type PeriodId = (typeof PERIOD_PRESETS)[number]["id"];
-const DEFAULT_PERIOD: PeriodId = "24h";
-
-function isPeriodId(value: string | null): value is PeriodId {
-  return PERIOD_PRESETS.some((preset) => preset.id === value);
-}
 
 // Helper: Handle workflow filter changes
 function useWorkflowFilter() {
@@ -257,26 +215,6 @@ function useStatusFilter() {
   );
 }
 
-// Helper: Handle listing-window period changes
-function usePeriodFilter() {
-  const navigate = useNavigate();
-  const { pathname } = useLocation();
-  const [searchParams] = useSearchParams();
-
-  return useCallback(
-    (value: string) => {
-      const params = new URLSearchParams(searchParams.toString());
-      if (value === DEFAULT_PERIOD) {
-        params.delete("period");
-      } else {
-        params.set("period", value);
-      }
-      navigate(`${pathname}?${params.toString()}`);
-    },
-    [navigate, pathname, searchParams],
-  );
-}
-
 // Filter controls component
 interface FilterControlsProps {
   workflowNameFilter: string | "all";
@@ -284,15 +222,8 @@ interface FilterControlsProps {
   seenWorkflowNames: Set<string>;
   sortOrder: "asc" | "desc";
   loading: boolean;
-  period: PeriodId;
-  /** Whether the backend supports listing windows (analytics read path). */
-  showPeriodPicker: boolean;
-  /** Plan observability lookback in ms; presets beyond it are disabled. */
-  planWindowMs: number | undefined;
-  planUpgradeAvailable: boolean;
   onWorkflowChange: (value: string) => void;
   onStatusChange: (value: string) => void;
-  onPeriodChange: (value: string) => void;
   onSortToggle: () => void;
   onRefresh: () => void;
   lastRefreshTime: Date | null;
@@ -304,13 +235,8 @@ function FilterControls({
   seenWorkflowNames,
   sortOrder,
   loading,
-  period,
-  showPeriodPicker,
-  planWindowMs,
-  planUpgradeAvailable,
   onWorkflowChange,
   onStatusChange,
-  onPeriodChange,
   onSortToggle,
   onRefresh,
   lastRefreshTime,
@@ -328,50 +254,6 @@ function FilterControls({
         )}
       </div>
       <div className="flex items-center gap-4">
-        {showPeriodPicker && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div>
-                <Select
-                  value={period}
-                  onValueChange={onPeriodChange}
-                  disabled={loading}
-                >
-                  <SelectTrigger className="w-[150px] h-9">
-                    <SelectValue placeholder="Time window" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PERIOD_PRESETS.map((preset) => {
-                      const beyondPlan =
-                        planWindowMs !== undefined && preset.ms > planWindowMs;
-                      return (
-                        <SelectItem
-                          key={preset.id}
-                          value={preset.id}
-                          disabled={beyondPlan}
-                        >
-                          <div className="flex items-center gap-2">
-                            {preset.label}
-                            {beyondPlan && planUpgradeAvailable && (
-                              <span className="text-xs text-muted-foreground">
-                                Observability Plus
-                              </span>
-                            )}
-                          </div>
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent>
-              {planUpgradeAvailable
-                ? "Time window for the runs list. Longer windows require Observability Plus."
-                : "Time window for the runs list"}
-            </TooltipContent>
-          </Tooltip>
-        )}
         <Select
           value={workflowNameFilter ?? "all"}
           onValueChange={onWorkflowChange}
@@ -467,15 +349,11 @@ function FilterControls({
  * RunsTable - Displays workflow runs with server-side pagination.
  * Uses the PaginatingTable pattern: fetches data for each page as needed from the server.
  * The table and fetching behavior are intertwined - pagination controls trigger new API calls.
- *
- * World configuration is read from server-side environment variables.
- * The env object passed to server actions is empty - the server uses process.env.
  */
 export function RunsTable({ onRunClick }: RunsTableProps) {
   const [searchParams] = useSearchParams();
   const handleWorkflowFilter = useWorkflowFilter();
   const handleStatusFilter = useStatusFilter();
-  const { serverConfig } = useServerConfig();
 
   // Validate status parameter - only allow known valid statuses or 'all'
   const rawStatus = searchParams.get("status");
@@ -486,54 +364,17 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
       ? (rawStatus as WorkflowRunStatus | "all")
       : undefined;
   const workflowNameFilter = searchParams.get("workflow") as string | "all";
-  const rawPeriod = searchParams.get("period");
-  const period: PeriodId = isPeriodId(rawPeriod) ? rawPeriod : DEFAULT_PERIOD;
-  const periodPreset =
-    PERIOD_PRESETS.find((preset) => preset.id === period) ?? PERIOD_PRESETS[2];
-  const handlePeriodFilter = usePeriodFilter();
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(
     () => new Date(),
   );
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
-  // Empty env object - server actions read from process.env
-  const env: EnvMap = useMemo(() => ({}), []);
-  const isLocal =
-    serverConfig.backendId === "local" ||
-    serverConfig.backendId === "@workflow/world-local";
-  const localDataDirPath = serverConfig.displayInfo?.["local.dataDirPath"];
-  const localShortName = serverConfig.displayInfo?.["local.shortName"];
 
   // TODO: This is a workaround. We should be getting a list of valid workflow names
   // from the manifest.
   const [seenWorkflowNames, setSeenWorkflowNames] = useState<Set<string>>(
     new Set(),
   );
-
-  // Listing windows only apply to the analytics read path; the runtime
-  // storage APIs have no time filter, so on other backends we omit the
-  // window entirely — this also keeps the SWR cache key stable across the
-  // local backend's empty-data poll.
-  const isVercelBackend = serverConfig.backendId?.includes("vercel") ?? false;
-
-  // Frozen listing window per period so every cursor page shares the same
-  // bounds. Read from a module-scope store (not component state) so the SWR
-  // cache key survives remounts — tab switches remount this component — and
-  // only advances on explicit refresh/reload, keeping cache-key churn
-  // bounded to user-triggered refreshes.
-  const [listingWindow, setListingWindow] = useState(() =>
-    isVercelBackend ? getListingWindow(period, periodPreset.ms) : undefined,
-  );
-  useEffect(() => {
-    setListingWindow(
-      isVercelBackend ? getListingWindow(period, periodPreset.ms) : undefined,
-    );
-  }, [isVercelBackend, period, periodPreset.ms]);
-  const refreshListingWindow = useCallback(() => {
-    if (isVercelBackend) {
-      setListingWindow(advanceListingWindow(period, periodPreset.ms));
-    }
-  }, [isVercelBackend, period, periodPreset.ms]);
 
   const {
     items: runs,
@@ -543,27 +384,11 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
     hasMore,
     loadMore,
     reload,
-    refresh,
-    pageInfo: analyticsPageInfo,
-  } = useWorkflowRunsInfinite(env, {
+  } = useWorkflowRunsInfinite({
     sortOrder,
     workflowName: workflowNameFilter === "all" ? undefined : workflowNameFilter,
     status: status === "all" ? undefined : status,
-    startTime: listingWindow?.startTime,
-    endTime: listingWindow?.endTime,
   });
-
-  // Remember the plan window across period changes (a 402 response for an
-  // out-of-plan window carries no pageInfo, but the picker should stay
-  // gated by the last known plan limits).
-  const [planInfo, setPlanInfo] = useState<typeof analyticsPageInfo>(undefined);
-  useEffect(() => {
-    if (analyticsPageInfo) {
-      setPlanInfo(analyticsPageInfo);
-    }
-  }, [analyticsPageInfo]);
-  const planWindowMs =
-    planInfo !== undefined ? planInfo.currentLookbackDays * DAY_MS : undefined;
 
   // Scroll container doubles as the IntersectionObserver root so the
   // sentinel's rootMargin prefetch is measured against the table viewport.
@@ -582,9 +407,6 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
   // Bulk action states
   const [isBulkCancelling, setIsBulkCancelling] = useState(false);
   const [isBulkReenqueuing, setIsBulkReenqueuing] = useState(false);
-
-  const isLocalAndHasMissingData =
-    isLocal && (!localDataDirPath || !runs.length);
 
   // Track seen workflow names from loaded data
   useEffect(() => {
@@ -618,17 +440,8 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
   const onReload = useCallback(() => {
     setLastRefreshTime(() => new Date());
     setHasLoadedOnce(false);
-    // Slide the frozen window forward so the reload can see newer runs.
-    refreshListingWindow();
     reload();
-  }, [reload, refreshListingWindow]);
-
-  // Refresh current page without resetting state (prevents layout shift)
-  const onRefresh = useCallback(() => {
-    setLastRefreshTime(() => new Date());
-    refreshListingWindow();
-    refresh();
-  }, [refresh, refreshListingWindow]);
+  }, [reload]);
 
   // Get selected runs that are cancellable (pending or running)
   const selectedRuns = useMemo(() => {
@@ -658,9 +471,10 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
 
     setIsBulkCancelling(true);
     try {
-      const { summary, results } = await bulkCancelRuns(
-        env,
-        cancellableSelectedRuns.map((run) => run.runId),
+      const { summary, results } = await unwrapOrThrow(
+        rpc("bulkCancelRuns", {
+          runIds: cancellableSelectedRuns.map((run) => run.runId),
+        }),
       );
 
       // Summarize as a single toast, listing only the categories that occurred.
@@ -698,7 +512,7 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
     } finally {
       setIsBulkCancelling(false);
     }
-  }, [env, cancellableSelectedRuns, isBulkCancelling, selection, onReload]);
+  }, [cancellableSelectedRuns, isBulkCancelling, selection, onReload]);
 
   const handleBulkReenqueue = useCallback(async () => {
     if (isBulkReenqueuing || selectedRuns.length === 0) return;
@@ -706,7 +520,9 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
     setIsBulkReenqueuing(true);
     try {
       const results = await Promise.allSettled(
-        selectedRuns.map((run) => reenqueueRun(env, run.runId)),
+        selectedRuns.map((run) =>
+          unwrapOrThrow(rpc("reenqueueRun", { runId: run.runId })),
+        ),
       );
 
       const succeeded = results.filter((r) => r.status === "fulfilled").length;
@@ -735,24 +551,11 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
     } finally {
       setIsBulkReenqueuing(false);
     }
-  }, [env, selectedRuns, isBulkReenqueuing, selection, onReload]);
+  }, [selectedRuns, isBulkReenqueuing, selection, onReload]);
 
   const toggleSortOrder = () => {
     setSortOrder((prev) => (prev === "desc" ? "asc" : "desc"));
   };
-
-  // Only for local env and while we don't already have data,
-  // we periodically refresh the data to check for new runs.
-  // This is both to improve UX slightly, while also ensuring that
-  // we react to a workflow data directory being created after the first run.
-  useEffect(() => {
-    if (isLocalAndHasMissingData) {
-      const interval = setInterval(() => {
-        onRefresh();
-      }, 5000);
-      return () => clearInterval(interval);
-    }
-  }, [isLocalAndHasMissingData, onRefresh]);
 
   // Refresh when tab regains focus after a delay, to prevent stale UI.
   // TODO: We should generally move to using SWR or similar for _all_ API calls here.
@@ -774,10 +577,6 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
     };
   }, [lastRefreshTime, onReload]);
 
-  const localDirText = (
-    <code className="font-mono">{localShortName || "current directory"}</code>
-  );
-
   return (
     <div>
       <FilterControls
@@ -786,13 +585,8 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
         seenWorkflowNames={seenWorkflowNames}
         sortOrder={sortOrder}
         loading={loading}
-        period={period}
-        showPeriodPicker={isVercelBackend}
-        planWindowMs={planWindowMs}
-        planUpgradeAvailable={planInfo?.upgradeAvailable ?? false}
         onWorkflowChange={handleWorkflowFilter}
         onStatusChange={handleStatusFilter}
-        onPeriodChange={handlePeriodFilter}
         onSortToggle={toggleSortOrder}
         onRefresh={onReload}
         lastRefreshTime={lastRefreshTime}
@@ -840,9 +634,7 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
                     <div className="flex items-center justify-center h-full">
                       <Alert variant="destructive" className="max-w-md">
                         <AlertCircle className="h-4 w-4" />
-                        <AlertTitle>
-                          {getErrorTitle(error, "Error loading runs")}
-                        </AlertTitle>
+                        <AlertTitle>Error loading runs</AlertTitle>
                         <AlertDescription>
                           {getErrorMessage(error)}
                         </AlertDescription>
@@ -862,20 +654,7 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
                 <TableRow>
                   <TableCell colSpan={7} className="h-[400px]">
                     <div className="text-sm text-center text-muted-foreground flex flex-col items-center justify-center gap-3 h-full">
-                      <span className="text-sm">
-                        No workflow runs found
-                        {isLocalAndHasMissingData ? (
-                          <> in {localDirText}</>
-                        ) : (
-                          ""
-                        )}
-                        .
-                      </span>
-                      {isLocalAndHasMissingData && (
-                        <span className="text-sm flex items-center gap-2">
-                          This view will update once you run a workflow.
-                        </span>
-                      )}
+                      <span className="text-sm">No workflow runs found.</span>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -934,7 +713,6 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
                     </TableCell>
                     <TableCell className="py-2">
                       <LazyDropdownMenu
-                        env={env}
                         runId={run.runId}
                         runStatus={run.status}
                         onSuccess={onReload}
@@ -970,14 +748,6 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
             </>
           )}
         </div>
-        {isVercelBackend && (
-          <div>
-            {periodPreset.label}
-            {planInfo?.upgradeAvailable
-              ? ` · plan window ${planInfo.currentLookbackDays} day${planInfo.currentLookbackDays === 1 ? "" : "s"}`
-              : ""}
-          </div>
-        )}
       </div>
 
       <SelectionBar

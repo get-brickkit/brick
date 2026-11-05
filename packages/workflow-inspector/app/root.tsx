@@ -9,24 +9,14 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
+  useLocation,
   useNavigate,
   useRouteError,
   useSearchParams,
 } from "react-router";
 import { Toaster } from "~/components/ui/sonner";
-import { ServerConfigProvider } from "~/lib/world-config-context";
-import { getPublicServerConfig } from "~/server/workflow-server-actions.server";
 
-import type { Route } from "./+types/root";
 import "./globals.css";
-
-// Server-side loader: provides config data on initial render and navigation.
-// `basename` is the embed mount path (e.g. "/_workflow"), threaded through the
-// load context by the embedded handler; "" when served standalone at the root.
-export async function loader({ context }: Route.LoaderArgs) {
-  const serverConfig = await getPublicServerConfig();
-  return { serverConfig, basename: context?.basename ?? "" };
-}
 
 // Catch-all action: handles stray POST requests (e.g. from Radix UI dialogs
 // that render internal <form method="dialog"> elements).
@@ -144,6 +134,7 @@ function computeResourceUrl(params: {
 
 function LayoutContent({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const [searchParams] = useSearchParams();
   const { setTheme } = useTheme();
 
@@ -154,7 +145,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   const resource = searchParams.get("resource");
   const themeParam = searchParams.get("theme");
 
-  const hasNavigatedRef = useRef(false);
+  const deepLinkReadRef = useRef(false);
 
   // Sync theme from URL param to next-themes
   useEffect(() => {
@@ -168,24 +159,17 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
     }
   }, [themeParam, setTheme]);
 
-  // Deep-link navigation on mount
+  // Deep-link navigation, once, when the page opens on the home route. The
+  // router's `pathname` is relative to the base path, unlike `window.location`.
   useEffect(() => {
-    const pathname = window.location.pathname;
-
-    if (pathname.startsWith("/run/")) {
-      hasNavigatedRef.current = true;
-      return;
-    }
-
-    if (pathname !== "/" && hasNavigatedRef.current) {
-      return;
-    }
+    if (deepLinkReadRef.current) return;
+    deepLinkReadRef.current = true;
+    if (pathname !== "/") return;
 
     if (resource) {
       if (!id) return;
       const url = computeResourceUrl({ resource, id, runId });
       if (url) {
-        hasNavigatedRef.current = true;
         navigate(url);
       } else {
         console.warn(`Can't deep-link to ${resource} ${id}.`);
@@ -194,11 +178,9 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
     }
 
     if (runId) {
-      hasNavigatedRef.current = true;
       navigate(computeDirectRunUrl({ runId, stepId, hookId }));
-      return;
     }
-  }, [resource, id, runId, stepId, hookId, navigate]);
+  }, [pathname, resource, id, runId, stepId, hookId, navigate]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -212,12 +194,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function App({ loaderData }: Route.ComponentProps) {
-  // Surface the embed mount path to client-only fetches (RPC + stream reads).
-  // Set during the first (hydration) render, before any post-mount data fetch.
-  if (typeof window !== "undefined") {
-    window.__WORKFLOW_BASENAME__ = loaderData.basename ?? "";
-  }
+export default function App() {
   return (
     <ThemeProvider
       attribute="class"
@@ -226,12 +203,10 @@ export default function App({ loaderData }: Route.ComponentProps) {
       disableTransitionOnChange
       storageKey="workflow-theme"
     >
-      <ServerConfigProvider serverConfig={loaderData.serverConfig}>
-        <FollowParentTheme />
-        <LayoutContent>
-          <Outlet />
-        </LayoutContent>
-      </ServerConfigProvider>
+      <FollowParentTheme />
+      <LayoutContent>
+        <Outlet />
+      </LayoutContent>
     </ThemeProvider>
   );
 }

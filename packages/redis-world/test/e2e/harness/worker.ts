@@ -1,29 +1,23 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import {
+  DIST_ENTRY,
   PACKAGE_NAME,
   PKG_ROOT,
   SERVER_ENTRY,
   TARGET_WORLD_ENTRY,
 } from "./paths.js";
-
-/** The world options a test may tune (see src/config.ts). */
-export interface WorldTuning {
-  heartbeatTtlMs?: number;
-  maxAttempts?: number;
-  backoffDelayMs?: number;
-  backoffType?: "fixed" | "exponential";
-  httpTimeoutMs?: number;
-  queueConcurrency?: number;
-}
+import type { WorldTuning } from "./world.js";
 
 export interface WorkerOptions {
   name: string;
   redisUrl: string;
   keyPrefix: string;
-
+  /** WORKFLOW_REDIS_JOB_PREFIX, for a queue that keeps its keys elsewhere. */
+  jobPrefix?: string;
   /**
    * With no tuning the worker loads the package by name
-   * (WORKFLOW_TARGET_WORLD=@brickkit/redis-world) and configures it
+   * (WORKFLOW_TARGET_WORLD=@brickkit/<world>) and configures it
    * only through its documented WORKFLOW_REDIS_* variables. With tuning, it
    * loads target-world.mjs, which wraps the same built package.
    */
@@ -33,7 +27,7 @@ export interface WorkerOptions {
   readyTimeoutMs?: number;
 }
 
-/** One worker process: a server.mts instance with its own port and Redis queue worker. */
+/** One worker process: a server.mts instance with its own port and queue worker. */
 export class WorkerProc {
   readonly output: string[] = [];
   readonly exited: Promise<{
@@ -72,6 +66,8 @@ export class WorkerProc {
         WORKFLOW_REDIS_URL: opts.redisUrl,
         REDIS_URL: opts.redisUrl,
         WORKFLOW_REDIS_KEY_PREFIX: opts.keyPrefix,
+        ...(opts.jobPrefix && { WORKFLOW_REDIS_JOB_PREFIX: opts.jobPrefix }),
+        E2E_WORLD_ENTRY: pathToFileURL(DIST_ENTRY).href,
         WORKFLOW_REDIS_WORKER_CONCURRENCY: String(opts.concurrency ?? 10),
         E2E_WORLD_CONFIG: JSON.stringify(opts.tuning ?? {}),
         E2E_WORKER_NAME: opts.name,

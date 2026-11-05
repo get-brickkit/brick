@@ -7,6 +7,7 @@ import type {
   Streamer,
 } from "@workflow/world";
 import type { Redis } from "ioredis";
+import { keys } from "./keys.js";
 import { Mutex, Rc } from "./util.js";
 
 interface StreamPublishMessage {
@@ -187,16 +188,13 @@ export function createStreamer(
   });
   const scripted = redis as RedisWithStreamScript;
 
-  // Run IDs (`wrun_<ulid>`) never contain ':', so the first ':' after the run
-  // ID always starts the stream name, even if the name contains colons itself.
-  const streamKey = (runId: string, name: string) =>
-    `${keyPrefix}stream:${runId}:${name}`;
-  // Per-run index of stream names, mirroring the `<entity>:by_run:<runId>`
-  // convention used by storage. Populated on every write/close so
-  // `streams.list` can enumerate a run's streams.
-  const streamsByRunKey = (runId: string) =>
-    `${keyPrefix}streams:by_run:${runId}`;
-  const STREAM_CHANNEL = `${keyPrefix}stream_notify`;
+  // `streamsByRunKey` indexes a run's stream names, populated on every
+  // write/close so `streams.list` can enumerate them.
+  const {
+    streamKey,
+    streamsByRunKey,
+    streamChannel: STREAM_CHANNEL,
+  } = keys(keyPrefix);
   const emitterKey = (runId: string, name: string) =>
     `strm:${runId}:${name}` as const;
 

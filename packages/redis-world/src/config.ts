@@ -1,7 +1,8 @@
 import type { RedisOptions } from "ioredis";
 import type { RunRetention } from "./reaper.js";
 
-export interface RedisWorldConfig {
+/** The options every Redis-backed world shares, whatever its queue. */
+export interface RedisBackedWorldConfig {
   /**
    * Redis connection URL or connection options
    * Examples:
@@ -17,27 +18,12 @@ export interface RedisWorldConfig {
    */
   queueConcurrency?: number;
 
-  /** Worker liveness TTL in milliseconds. Default 90000; minimum 300.
-   * Set above the longest event-loop pause. Renewed every TTL / 3. */
-  heartbeatTtlMs?: number;
-
   /**
    * Optional key prefix for all Redis keys
    * Useful for multi-tenancy or namespace isolation
    * Default: 'workflow:'
    */
   keyPrefix?: string;
-
-  /**
-   * Delivery budget before retries continue at maxBackoffMs. Messages are never silently retired.
-   *
-   * Keep it above the runtime's own delivery ceiling (48). The runtime records a
-   * run as failed (`MAX_DELIVERIES_EXCEEDED`) on delivery 49; a job retired
-   * earlier strands its run in `running`, with nothing to redeliver it until a
-   * process calls `start()` again.
-   * Default: 73
-   */
-  maxAttempts?: number;
 
   /**
    * Backoff strategy for retries: 'fixed' replays at the same interval,
@@ -61,7 +47,7 @@ export interface RedisWorldConfig {
   maxBackoffMs?: number;
 
   /**
-   * Base URL the worker uses to dispatch jobs back to the user's HTTP
+   * Base URL the queue worker uses to dispatch jobs back to the user's HTTP
    * server, which must serve `world.createQueueHandler(...)` at
    * `/.well-known/workflow/v1/flow` (steps travel on the same route). A route
    * registered with `world.registerRoute`, or an in-process handler registered
@@ -76,19 +62,6 @@ export interface RedisWorldConfig {
    * Default: 300_000 (5 minutes)
    */
   httpTimeoutMs?: number;
-
-  /**
-   * Optional TTL (ms) for queue deduplication when `idempotencyKey`
-   * is supplied to `queue()`. By default no TTL is applied: the dedup key
-   * lives until the job is acknowledged, so duplicate enqueues are dropped
-   * for the entire lifetime of the pending/delayed job (the semantics the
-   * workflow runtime relies on when re-enqueuing pending steps on replay).
-   * Only set this if you need the dedup guard to expire on wall-clock time;
-   * it must be much larger than the longest expected queue delay/backlog,
-   * otherwise duplicate step executions become possible.
-   * Default: undefined (dedup key released on job completion)
-   */
-  idempotencyTtlMs?: number;
 
   /** Maximum events a run may accumulate, reported as `EventResult.maxEvents`.
    * Default: `WORKFLOW_MAX_EVENTS` || 25_000 */
@@ -115,4 +88,53 @@ export interface RedisWorldConfig {
    * }
    */
   retention?: RunRetention;
+}
+
+export interface RedisWorldConfig extends RedisBackedWorldConfig {
+  /** Worker liveness TTL in milliseconds. Default 90000; minimum 300.
+   * Set above the longest event-loop pause. Renewed every TTL / 3. */
+  heartbeatTtlMs?: number;
+
+  /**
+   * Delivery budget before retries continue at maxBackoffMs. Messages are never silently retired.
+   *
+   * Keep it above the runtime's own delivery ceiling (48). The runtime records a
+   * run as failed (`MAX_DELIVERIES_EXCEEDED`) on delivery 49; a job retired
+   * earlier strands its run in `running`, with nothing to redeliver it until a
+   * process calls `start()` again.
+   * Default: 73
+   */
+  maxAttempts?: number;
+
+  /**
+   * Optional TTL (ms) for queue deduplication when `idempotencyKey`
+   * is supplied to `queue()`. By default no TTL is applied: the dedup key
+   * lives until the job is acknowledged, so duplicate enqueues are dropped
+   * for the entire lifetime of the pending/delayed job (the semantics the
+   * workflow runtime relies on when re-enqueuing pending steps on replay).
+   * Only set this if you need the dedup guard to expire on wall-clock time;
+   * it must be much larger than the longest expected queue delay/backlog,
+   * otherwise duplicate step executions become possible.
+   * Default: undefined (dedup key released on job completion)
+   */
+  idempotencyTtlMs?: number;
+}
+
+/**
+ * The config the `WORKFLOW_REDIS_*` variables give. `createWorld` lays the
+ * config it is passed over this, so an option left out still comes from env.
+ */
+export function configFromEnv() {
+  return {
+    redis:
+      process.env.WORKFLOW_REDIS_URL ||
+      process.env.REDIS_URL ||
+      "redis://localhost:6379",
+    queueConcurrency:
+      Number.parseInt(
+        process.env.WORKFLOW_REDIS_WORKER_CONCURRENCY || "10",
+        10,
+      ) || 10,
+    keyPrefix: process.env.WORKFLOW_REDIS_KEY_PREFIX || "workflow:",
+  };
 }
