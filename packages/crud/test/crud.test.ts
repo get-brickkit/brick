@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { test, expect } from "bun:test";
+import { test, expect, spyOn } from "bun:test";
 
 import { defineService, defineDatabase, brick, t } from "@brickkit/core";
 import { eq } from "drizzle-orm";
@@ -266,18 +266,23 @@ test("authorization and scoped-create rejection do not modify storage", async ()
     sqlite.close();
   }
 });
-test("preparation prewarming preserves projection and repeated IDs", async () => {
+test("preparation prewarming prepares the default list and get statements", async () => {
   const { resource: r, service, sqlite } = fixture();
   try {
-    service.prepareContributions();
     await r.create.run({ name: "A" });
     await r.create.run({ name: "B" });
+    service.prepareContributions();
+    const prepare = spyOn(sqlite, "prepare");
     expect((await r.get.run({ id: 1 })).name).toBe("A");
     expect((await r.get.run({ id: 2 })).name).toBe("B");
     expect((await r.list.run({})).items).toHaveLength(2);
+    // Served by the warmed statements: nothing new is prepared.
+    expect(prepare).not.toHaveBeenCalled();
     expect(
       (await r.list.run({ select: ["name"], limit: 1, offset: 1 })).items,
     ).toEqual([{ name: "B" }]);
+    expect(prepare).toHaveBeenCalledTimes(1);
+    prepare.mockRestore();
   } finally {
     sqlite.close();
   }
