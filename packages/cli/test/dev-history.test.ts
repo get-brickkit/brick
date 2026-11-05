@@ -156,6 +156,39 @@ describe("openHistory", () => {
 });
 
 describe("DevHistory", () => {
+  it("warns once per kind of failure when it cannot write or prune", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "brick-history-"));
+    directories.push(directory);
+    const warnings: string[] = [];
+    const history = (await openHistory({
+      directory,
+      days: 90,
+      warn: (message) => warnings.push(message),
+    }))!;
+    opened.push(history);
+    const specifier = "bun:sqlite";
+    const { Database } = (await import(specifier)) as {
+      Database: new (file: string) => {
+        exec(sql: string): void;
+        close(): void;
+      };
+    };
+    const raw = new Database(join(directory, ".brick", "telemetry.sqlite"));
+    raw.exec("DROP TABLE traces");
+    raw.close();
+
+    for (const id of ["a", "b"]) {
+      history.saveTrace(trace(id));
+      history.flush();
+      history.prune();
+    }
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain(
+      "Could not save requests to the request history",
+    );
+    expect(warnings[1]).toContain("Could not prune the request history");
+  });
+
   it("returns a saved request with its spans, and replaces it when saved again", async () => {
     const history = await open();
     history.saveTrace(trace("a", { httpStatus: 200 }));

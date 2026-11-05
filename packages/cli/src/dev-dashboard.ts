@@ -718,7 +718,10 @@ function history(
       if (trace) return json(response, trace);
     }
     send(response, 404, "Not found");
-  } catch {
+  } catch (error) {
+    // A malformed `%` in the trace id is the caller's mistake.
+    if (error instanceof URIError) return send(response, 400, error.message);
+    console.error("[Brick-TS] A dashboard history query failed:", error);
     send(response, 500, "History query failed");
   }
 }

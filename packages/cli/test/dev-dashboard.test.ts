@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -335,6 +335,32 @@ describe("startDevDashboard", () => {
       expect(detail.status).toBe(200);
       expect((await detail.json()).httpStatus).toBe(404);
       expect((await fetch(`${base}/api/history/traces/nope`)).status).toBe(404);
+      // A malformed escape is the caller's mistake, not a failed query.
+      expect((await fetch(`${base}/api/history/traces/%E0%A4%A`)).status).toBe(
+        400,
+      );
+
+      // A query that fails is logged, not swallowed.
+      const { Database } = (await import("bun:sqlite")) as {
+        Database: new (file: string) => {
+          exec(sql: string): void;
+          close(): void;
+        };
+      };
+      const raw = new Database(join(directory, ".brick", "telemetry.sqlite"));
+      raw.exec("DROP TABLE traces");
+      raw.close();
+      const logged = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        expect(
+          (await fetch(`${base}/api/history/summary?${window}`)).status,
+        ).toBe(500);
+        expect(String(logged.mock.calls[0]?.[0])).toContain(
+          "history query failed",
+        );
+      } finally {
+        logged.mockRestore();
+      }
     } finally {
       dashboard.stop();
       history.close();

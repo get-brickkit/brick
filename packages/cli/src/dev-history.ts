@@ -113,7 +113,7 @@ export async function openHistory(
     const ignore = join(folder, ".gitignore");
     if (!existsSync(ignore)) writeFileSync(ignore, "*\n");
     const database = await openDatabase(join(folder, "telemetry.sqlite"));
-    return new DevHistory(database, options.days);
+    return new DevHistory(database, options.days, options.warn);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     options.warn?.(
@@ -210,10 +210,18 @@ export class DevHistory {
   #flushTimer: ReturnType<typeof setTimeout> | undefined;
   readonly #pruneTimer: ReturnType<typeof setInterval>;
   #closed = false;
+  readonly #warn?: (message: string) => void;
+  /** Failure kinds already reported: one warning each, not one per batch. */
+  readonly #warned = new Set<string>();
 
-  constructor(database: Database, days: number) {
+  constructor(
+    database: Database,
+    days: number,
+    warn?: (message: string) => void,
+  ) {
     this.#database = database;
     this.days = days;
+    this.#warn = warn;
     database.exec(`
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = NORMAL;
@@ -315,8 +323,9 @@ export class DevHistory {
         );
       }
       this.#database.exec("COMMIT");
-    } catch {
+    } catch (error) {
       // A failed write loses a batch of history; it must not break the app.
+      this.#warnOnce("save requests to", error);
       try {
         this.#database.exec("ROLLBACK");
       } catch {
@@ -344,9 +353,19 @@ export class DevHistory {
           )
           .run(count - MAX_TRACES);
       }
-    } catch {
+    } catch (error) {
       // Pruning is housekeeping; try again next time.
+      this.#warnOnce("prune", error);
     }
+  }
+
+  #warnOnce(action: string, error: unknown): void {
+    if (this.#warned.has(action)) return;
+    this.#warned.add(action);
+    const reason = error instanceof Error ? error.message : String(error);
+    this.#warn?.(
+      `[Brick-TS] Could not ${action} the request history (${reason}).`,
+    );
   }
 
   info(): HistoryInfo {
