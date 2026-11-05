@@ -1,6 +1,5 @@
 import type { Redis } from "ioredis";
 import { keys as redisKeys } from "./keys.js";
-import { debug } from "./util.js";
 
 /** How long finished runs are kept, using `age` and `count` limits. */
 export interface KeepRuns {
@@ -79,10 +78,8 @@ export function createReaper(options: {
   redis: Redis;
   keyPrefix: string;
   retention: RunRetention;
-  /** Logs sweep failures; each world passes its own debug namespace. */
-  log?: (...args: unknown[]) => void;
 }): Reaper {
-  const { redis, keyPrefix, retention, log = debug } = options;
+  const { redis, keyPrefix, retention } = options;
   const intervalMs = retention.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS;
   const batchSize = retention.batchSize ?? DEFAULT_BATCH_SIZE;
   const k = redisKeys(keyPrefix);
@@ -219,7 +216,7 @@ export function createReaper(options: {
         try {
           if (await deleteRun(runId, status)) deleted++;
         } catch (err) {
-          log("reaper failed to delete run", runId, err);
+          console.warn(`Retention: could not delete run ${runId}:`, err);
         }
       }
     }
@@ -231,7 +228,9 @@ export function createReaper(options: {
     start() {
       if (timer) return;
       const tick = () => {
-        running = sweep().catch((err) => log("reaper sweep failed", err));
+        running = sweep().catch((err) =>
+          console.warn("Retention sweep failed:", err),
+        );
       };
       timer = setInterval(tick, intervalMs);
       timer.unref();

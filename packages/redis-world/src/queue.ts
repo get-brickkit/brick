@@ -280,6 +280,7 @@ export function createQueue(
   async function run(deliver: Deliver): Promise<void> {
     let renewedAt = Date.now();
     let maintainedAt = 0;
+    let failing = false;
     while (!closed) {
       try {
         for (const lost of lostOwners) {
@@ -334,8 +335,12 @@ export function createQueue(
           inflight.add(task);
           void task.finally(() => inflight.delete(task));
         }
+        failing = false;
       } catch (error) {
-        if (!closed) debug("Queue polling error:", error);
+        // Warn once per outage: a queue that lost Redis otherwise looks idle.
+        if (!closed && !failing) console.warn("Queue polling failed:", error);
+        else if (!closed) debug("Queue polling error:", error);
+        failing = true;
       }
       await sleep();
     }

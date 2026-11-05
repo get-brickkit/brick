@@ -100,24 +100,6 @@ const app = new Hono()
         });
       }
     }
-    if (
-      process.env.E2E_ATTEMPT_FROM_DELIVERY === "1" &&
-      deliveryCount &&
-      Number(deliveryCount) > Number(attempt ?? 1)
-    ) {
-      // Diagnosis knob (off by default): report a crash/stall redelivery to the
-      // SDK as attempt >= 2, i.e. what a queue's crash redelivery would give it.
-      const headers = new Headers(h);
-      headers.set("x-vqs-message-attempt", deliveryCount);
-      return (async () =>
-        flowPOST(
-          new Request(ctx.req.raw.url, {
-            method: "POST",
-            headers,
-            body: await ctx.req.raw.arrayBuffer(),
-          }),
-        ))();
-    }
     return flowPOST(ctx.req.raw);
   })
   .get("/_ping", (ctx) =>

@@ -15,7 +15,6 @@ import { defineConfig } from "vitest/config";
 //                                          unset, global-setup starts one
 //   E2E_DUMP=1                             print worker logs + event logs even when a test passes
 //   E2E_TRACE_WORLD=1                      workers log every events.create/list call (tuned workers only)
-//   E2E_ATTEMPT_FROM_DELIVERY=1            diagnosis: report a redelivery to the SDK as attempt>=2
 export default defineConfig({
   test: {
     globals: true,

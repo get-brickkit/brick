@@ -73,7 +73,6 @@ export function createRedisBackedWorld<C extends RedisBackedWorldConfig>(
         redis,
         keyPrefix,
         retention: cfg.retention,
-        log: world.debug,
       })
     : undefined;
 

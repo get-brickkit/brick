@@ -8,7 +8,7 @@ import type {
 } from "@workflow/world";
 import type { Redis } from "ioredis";
 import { keys } from "./keys.js";
-import { Mutex, Rc } from "./internal/util.js";
+import { debug } from "./util.js";
 
 interface StreamPublishMessage {
   runId: string;
@@ -131,6 +131,15 @@ const LUA_APPEND_AND_PUBLISH = `
   return 1
 `;
 
+/** An XRANGE entry, by the field order `LUA_APPEND_AND_PUBLISH` writes: data, then eof. */
+function decodeEntry([id, fields]: [string, string[]]): StreamChunkEvent {
+  return {
+    id,
+    data: Buffer.from(fields[1]!, "base64"),
+    eof: fields[3] === "true",
+  };
+}
+
 type RedisWithStreamScript = Redis & {
   wfStreamAppend(...args: string[]): Promise<number>;
 };
@@ -155,31 +164,21 @@ export function createStreamer(
   const events = new EventEmitter<{
     [key: `strm:${string}`]: [StreamChunkEvent];
   }>();
-  const mutexes = new Map<string, { mutex: Mutex; rc: Rc }>();
+  const tails = new Map<string, Promise<unknown>>();
 
-  // Serialize work per stream key through a shared, ref-counted Mutex so
-  // concurrent pub/sub notifications for the same stream are processed in
-  // order. The entry is dropped once the last holder releases it.
-  const withStreamMutex = async <T>(
+  // Serialize work per stream key, so concurrent pub/sub notifications for the
+  // same stream are processed in order. A key's tail is dropped once it settles last.
+  const withStreamMutex = <T>(
     key: string,
     fn: () => Promise<T>,
   ): Promise<T> => {
-    let entry = mutexes.get(key);
-    if (!entry) {
-      entry = {
-        mutex: new Mutex(),
-        rc: new Rc(() => {
-          mutexes.delete(key);
-        }),
-      };
-      mutexes.set(key, entry);
-    }
-    entry.rc.inc();
-    try {
-      return await entry.mutex.andThen(fn);
-    } finally {
-      await entry.rc.dec();
-    }
+    const run = (tails.get(key) ?? Promise.resolve()).then(fn, fn);
+    const tail = run.catch(() => {});
+    tails.set(key, tail);
+    void tail.then(() => {
+      if (tails.get(key) === tail) tails.delete(key);
+    });
+    return run;
   };
 
   redis.defineCommand("wfStreamAppend", {
@@ -239,7 +238,6 @@ export function createStreamer(
         });
       });
     } catch (error) {
-      // Ignore parse errors
       console.error("Error processing stream notification:", error);
     }
   });
@@ -387,16 +385,11 @@ export function createStreamer(
                     lastEntryId === "" ? "-" : `(${lastEntryId}`,
                     "+",
                   );
-                  for (const [id, fields] of entries) {
-                    enqueue({
-                      id,
-                      data: Buffer.from(fields[1] as string, "base64"),
-                      eof: fields[3] === "true",
-                    });
-                  }
+                  for (const entry of entries) enqueue(decodeEntry(entry));
                 } while (again && !cleanedUp);
-              } catch {
+              } catch (error) {
                 // Transient (connection loss): the next trigger reads again.
+                debug("Stream catch-up failed:", error);
               } finally {
                 catchingUp = false;
               }
@@ -438,16 +431,7 @@ export function createStreamer(
                 throw err;
               });
 
-            const parsedChunks: StreamChunkEvent[] = [];
-            for (const [id, fields] of chunks) {
-              const data = Buffer.from(fields[1] as string, "base64");
-              const eof = fields[3] === "true";
-              parsedChunks.push({
-                id,
-                data,
-                eof,
-              });
-            }
+            const parsedChunks = chunks.map(decodeEntry);
 
             // Resolve a negative start index against the data chunks stored
             // right now (everything before the eof marker): -3 on a stream
@@ -541,8 +525,9 @@ export function createStreamer(
         let hasMore = false;
         let lastId: string | null = null;
 
-        for (const [id, fields] of entries) {
-          if (fields[3] === "true") {
+        for (const entry of entries) {
+          const { id, data: bytes, eof } = decodeEntry(entry);
+          if (eof) {
             // The eof marker is always the terminal entry, so reaching it means
             // the stream is complete and no further data pages exist.
             done = true;
@@ -555,7 +540,7 @@ export function createStreamer(
           }
           data.push({
             index: dataIndex,
-            data: new Uint8Array(Buffer.from(fields[1] as string, "base64")),
+            data: new Uint8Array(bytes),
           });
           dataIndex++;
           lastId = id;
