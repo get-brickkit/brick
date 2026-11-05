@@ -144,11 +144,12 @@ const version = bumpVersion(current, bump);
 const tag = `v${version}`;
 // Point every dependency on a sibling package at the new version, keeping its
 // range: `^x` stays a caret, an exact pin (bullmq-world -> redis-world) stays exact.
+// `workspace:` ranges are left for the package manager to rewrite.
 const names = new Set(releases.map((r) => r.data.name));
 for (const { data } of releases)
   for (const field of ["dependencies", "peerDependencies", "devDependencies"])
     for (const dep of Object.keys(data[field] ?? {}))
-      if (names.has(dep))
+      if (names.has(dep) && !data[field][dep].startsWith("workspace:"))
         data[field][dep] = data[field][dep].startsWith("^")
           ? `^${version}`
           : version;
