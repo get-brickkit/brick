@@ -98,6 +98,10 @@ describe("defineDatabase", () => {
       defineDatabase({ engine: "sqlite", url: "postgres://localhost/db" }),
     ).toThrow("url");
     expect(() =>
+      // @ts-expect-error Prepared statements are a Postgres option.
+      defineDatabase({ engine: "sqlite", prepare: false }),
+    ).toThrow('Database option "prepare" is not valid for sqlite');
+    expect(() =>
       // @ts-expect-error Postgres cannot take a SQLite path.
       defineDatabase({ engine: "postgres", path: ":memory:" }),
     ).toThrow("path");

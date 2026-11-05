@@ -140,6 +140,7 @@ export function defineDatabase(
           "database",
           "ssl",
           "max",
+          "prepare",
           "schemaName",
         ]
       : ["path", "filename", "wal", "foreignKeys"];

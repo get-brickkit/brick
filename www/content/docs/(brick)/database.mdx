@@ -150,5 +150,5 @@ A plugin made with `definePlugin` can own tables (such as `page_comments`). Bric
 Brick-TS provides explicit opt-in helpers for secondary indexes and search
 (no indexes are created automatically — call these yourself):
 
-- **Secondary B-Tree Indexes**: `ensureResourceIndexes(db, table, { sortFields, ownerField })` creates indexes on hot lookup and sorting paths. Pass `searchFields` on PostgreSQL to also add `pg_trgm` GIN indexes for fast substring matching.
+- **Secondary B-Tree Indexes**: `ensureResourceIndexes(db, table, { sortFields, ownerField })` creates indexes on hot lookup and sorting paths. Pass `searchFields` on PostgreSQL to also add `pg_trgm` GIN indexes for fast substring matching. It returns a promise: await it on PostgreSQL. A statement that fails (a read-only replica, no right to create `pg_trgm`) logs a warning and the rest still run.
 - **SQLite FTS5 Full-Text Search**: `ensureSQLiteFts(db, table, searchCols)` builds an FTS5 sidecar virtual table with sync triggers for rapid text search queries.

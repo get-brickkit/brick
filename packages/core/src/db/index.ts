@@ -222,10 +222,13 @@ export function generateSQLiteIndexDdl(
 /**
  * Ensures secondary indexes exist for a resource table.
  * SQLite: B-tree indexes for owner scope + sort + composite hot path.
- * Postgres: same B-trees plus pg_trgm GIN indexes for substring search.
- * Best-effort: failures warn and continue (e.g. read-only replicas).
+ * Postgres: same B-trees plus pg_trgm GIN indexes for substring search,
+ * created one after another (each GIN index needs the extension).
+ * Best-effort: a failed statement warns and the rest still run (e.g. a
+ * read-only replica, or no right to create pg_trgm); queries still work, only
+ * slower. On SQLite every statement has run when it returns.
  */
-export function ensureResourceIndexes(
+export async function ensureResourceIndexes(
   db: any,
   table: any,
   opts: {
@@ -233,13 +236,11 @@ export function ensureResourceIndexes(
     sortFields?: string[];
     searchFields?: string[];
   } = {},
-): void {
+): Promise<void> {
   if (!db) return;
   const isPostgres =
     typeof (db as any).execute === "function" && !(db as any).$client?.run;
   const stmts = generateSQLiteIndexDdl(table, opts);
-  // Postgres trigram support for LIKE %term% (requires superuser for extension;
-  // failure is silently ignored — LIKE still works, just slower).
   if (isPostgres && opts.searchFields && opts.searchFields.length > 0) {
     const tableName = getTableName(table);
     const columns = getTableColumns(table);
@@ -260,23 +261,18 @@ export function ensureResourceIndexes(
     }
   }
   if (stmts.length === 0) return;
-  const run = (stmt: string) => {
+  if (isPostgres) stmts.unshift(`CREATE EXTENSION IF NOT EXISTS pg_trgm;`);
+  for (const stmt of stmts) {
     try {
-      if ((db as any).$client?.run) {
-        (db as any).$client.run(stmt);
-      } else if (typeof (db as any).execute === "function") {
-        void (db as any).execute(sql.raw(stmt)).catch(() => {});
-      } else if ((db as any).run) {
-        (db as any).run(stmt);
-      }
-    } catch {
-      // best-effort
+      if ((db as any).$client?.run) (db as any).$client.run(stmt);
+      else if (isPostgres) await (db as any).execute(sql.raw(stmt));
+      else (db as any).run?.(stmt);
+    } catch (error) {
+      console.warn(
+        `[Brick-TS DB] Skipped an index: ${stmt} (${error instanceof Error ? error.message : String(error)})`,
+      );
     }
-  };
-  if (isPostgres) {
-    run(`CREATE EXTENSION IF NOT EXISTS pg_trgm;`);
   }
-  for (const s of stmts) run(s);
 }
 
 /**

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, spyOn } from "bun:test";
 import {
   defineService,
   defineDatabase,
@@ -13,7 +13,9 @@ import {
   integer,
   eq,
   sql,
+  ensureResourceIndexes,
 } from "../src";
+import { pgTable, text as pgText } from "drizzle-orm/pg-core";
 
 // Define Drizzle tables for testing
 export const itemsTable = sqliteTable("items", {
@@ -302,4 +304,36 @@ describe("@brickkit/core Database & Drizzle Integration", () => {
     expect(result.title).toBe("Remote Controlled Drone");
     expect(result.quantity).toBe(42);
   });
+});
+
+it("creates Postgres indexes one after another, the extension first, and warns on a failure", async () => {
+  const pages = pgTable("pages", {
+    id: pgText("id").primaryKey(),
+    title: pgText("title"),
+    createdAt: pgText("created_at"),
+  });
+  const ran: string[] = [];
+  let running = 0;
+  const db = {
+    async execute(query: any) {
+      expect(++running).toBe(1);
+      await Bun.sleep(1);
+      running--;
+      const text = query.queryChunks.map((chunk: any) => chunk.value).join("");
+      if (text.includes("created_at")) throw new Error("read-only");
+      ran.push(text);
+    },
+  };
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await ensureResourceIndexes(db, pages, {
+      sortFields: ["createdAt"],
+      searchFields: ["title"],
+    });
+    expect(ran[0]).toBe("CREATE EXTENSION IF NOT EXISTS pg_trgm;");
+    expect(ran.at(-1)).toContain("gin_trgm_ops");
+    expect(warn).toHaveBeenCalledTimes(1);
+  } finally {
+    warn.mockRestore();
+  }
 });
