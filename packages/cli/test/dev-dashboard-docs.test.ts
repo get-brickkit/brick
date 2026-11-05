@@ -36,7 +36,10 @@ async function setup(
     await writeFile(join(root, path), content);
   }
   const store = new DevTelemetryStore();
-  const host = new DocsHost(store, () => {});
+  const host = new DocsHost(
+    (docs) => store.setDocs(docs),
+    () => {},
+  );
   if (documentation) await host.configure(root, documentation);
   const dashboard = await startDevDashboard({
     port: 0,

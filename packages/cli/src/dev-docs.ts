@@ -23,7 +23,6 @@ import {
   type DocsSnapshot,
   type DocsTree,
 } from "./dashboard-protocol";
-import type { DevTelemetryStore } from "./dev-telemetry-store";
 
 /*
  * Developer documentation for the dashboard's Docs tab. The folder follows
@@ -41,6 +40,8 @@ export type OpenedDocs =
   | { status: "error"; message: string };
 
 const PACKAGES = ["fumadocs-core", "@mdx-js/mdx"] as const;
+/** What the docs are called when their folder does not name them. */
+const DEFAULT_TITLE = "Docs";
 const PAGE_EXTENSIONS = new Set([".md", ".mdx"]);
 const IMAGE_TYPES: Record<string, string> = {
   ".png": "image/png",
@@ -254,7 +255,7 @@ export class DevDocs {
   #timer: ReturnType<typeof setTimeout> | undefined;
   #refreshing: Promise<void> = Promise.resolve();
   #closed = false;
-  #title = "Docs";
+  #title = DEFAULT_TITLE;
   revision = 0;
 
   constructor(
@@ -314,7 +315,7 @@ export class DevDocs {
     this.#compiled.clear();
     this.#search = undefined;
     const tree = this.#loader.getPageTree();
-    this.#title = typeof tree.name === "string" ? tree.name : "Docs";
+    this.#title = typeof tree.name === "string" ? tree.name : DEFAULT_TITLE;
     this.revision++;
     for (const listener of this.#listeners) listener();
   }
@@ -671,7 +672,7 @@ function simplify(tree: RawTree | undefined): DocsTree {
     return undefined;
   };
   return {
-    name: text(tree?.name) || "Docs",
+    name: text(tree?.name) || DEFAULT_TITLE,
     children: (tree?.children ?? []).flatMap((child) => convert(child) ?? []),
   };
 }
@@ -713,15 +714,19 @@ export async function openDocs(options: {
  * are, replaced when that changes, and closed when it stops asking for them.
  */
 export class DocsHost {
-  readonly #store: DevTelemetryStore;
+  /** Where each new state of the docs goes: the dashboard's store. */
+  readonly #publish: (docs: DocsSnapshot | null) => void;
   readonly #warn: (message: string) => void;
   #docs: DevDocs | undefined;
   #stopListening: (() => void) | undefined;
   #key: string | undefined;
   #pending: Promise<void> = Promise.resolve();
 
-  constructor(store: DevTelemetryStore, warn: (message: string) => void) {
-    this.#store = store;
+  constructor(
+    publish: (docs: DocsSnapshot | null) => void,
+    warn: (message: string) => void,
+  ) {
+    this.#publish = publish;
     this.#warn = warn;
   }
 
@@ -752,7 +757,7 @@ export class DocsHost {
     this.#key = key;
     this.#release();
     if (!documentation) {
-      this.#store.setDocs(null);
+      this.#publish(null);
       return;
     }
     const opened = await openDocs({
@@ -766,10 +771,10 @@ export class DocsHost {
           ? `The docs need ${opened.packages.join(" and ")}. Install with: bun add -d ${opened.packages.join(" ")}`
           : opened.message;
       this.#warn(`[Brick-TS] Docs are off. ${message}`);
-      this.#store.setDocs({
+      this.#publish({
         revision: 1,
         status: opened.status,
-        title: "Docs",
+        title: DEFAULT_TITLE,
         components: false,
         message,
         ...(opened.status === "missing" ? { packages: opened.packages } : {}),
@@ -778,9 +783,9 @@ export class DocsHost {
     }
     this.#docs = opened.docs;
     this.#stopListening = opened.docs.onChange(() =>
-      this.#store.setDocs(opened.docs.snapshot()),
+      this.#publish(opened.docs.snapshot()),
     );
-    this.#store.setDocs(opened.docs.snapshot());
+    this.#publish(opened.docs.snapshot());
   }
 
   #release(): void {
