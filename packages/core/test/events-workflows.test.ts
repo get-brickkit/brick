@@ -209,7 +209,7 @@ describe("workflow listeners", () => {
         new EventsHub({
           listeners: [{ name: "raw", on: ["x"] }],
         }),
-    ).toThrow("exactly one of run and workflow");
+    ).toThrow("needs a run handler or a workflow");
   });
 
   it("needs a world", () => {

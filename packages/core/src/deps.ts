@@ -38,7 +38,7 @@ export function port<T>(): Port<T> {
   return Object.freeze({}) as Port<T>;
 }
 
-/** Where a listener a plugin added keeps the plugin's deps, for its workflow steps; global so a second core copy finds it. */
+/** Where a listener a plugin added keeps the plugin's deps, for its handler and workflow steps; global so a second core copy finds it. */
 export const PLUGIN_DEPS: unique symbol = Symbol.for("brickkit.plugin.deps");
 
 const running = new AsyncLocalStorage<Record<string, unknown>>();

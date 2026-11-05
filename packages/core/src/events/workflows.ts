@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { PLUGIN_DEPS, runWithDeps } from "../deps";
+import { runWithDeps } from "../deps";
+import { listenerDeps } from "./listener";
 import type {
   EventDelivery,
   EventListener,
@@ -102,24 +103,18 @@ export class WorkflowRuntime {
    *
    * @param listener - The workflow listener the delivery is for.
    * @param delivery - The delivery.
-   * @returns The run id.
    */
   async startRun(
     listener: EventListener,
     delivery: EventDelivery,
-  ): Promise<string> {
+  ): Promise<void> {
     const sdk = await this.ensure();
     const { attempt: _attempt, ...event } = delivery;
-    const run = await sdk.start(
-      listener.workflow,
-      [event satisfies WorkflowEvent],
-      {
-        world: this.world,
-        runKey: delivery.deliveryId,
-        runKeyTime: Date.parse(delivery.occurredAt),
-      },
-    );
-    return run.runId;
+    await sdk.start(listener.workflow, [event satisfies WorkflowEvent], {
+      world: this.world,
+      runKey: delivery.deliveryId,
+      runKeyTime: Date.parse(delivery.occurredAt),
+    });
   }
 
   /**
@@ -281,10 +276,7 @@ export class WorkflowRuntime {
         throw new Error(
           `The workflow bundle does not contain '${id}' (listener '${listener.name}'). Rebuild it with brick dev or brick start.`,
         );
-      const deps =
-        ((listener as unknown as Record<symbol, unknown>)[PLUGIN_DEPS] as
-          | Record<string, unknown>
-          | undefined) ?? this.deps;
+      const deps = listenerDeps(listener) ?? this.deps;
       if ((depsOf.get(id) ?? deps) !== deps)
         throw new Error(
           `Workflow '${id}' is run by listeners with different deps (listener '${listener.name}'); give each app or plugin install its own workflow.`,

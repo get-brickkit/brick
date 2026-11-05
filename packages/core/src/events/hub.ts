@@ -1,7 +1,8 @@
 import { GLOBAL_SYMBOL } from "../telemetry-names";
 import { Dispatcher, type OutboxCounts } from "./dispatcher";
 import { newEventId } from "./id";
-import type { OutboxTable } from "./outbox";
+import { listenerDeps, validateListener } from "./listener";
+import { outboxRows, OUTBOX_STATUSES, type OutboxTable } from "./outbox";
 import { runInTransaction } from "./transaction";
 import type {
   DispatchOptions,
@@ -14,15 +15,8 @@ import type {
 } from "./types";
 import { WorkflowRuntime } from "./workflows";
 import { runWithDeps } from "../deps";
-
-interface EventsHost {
-  readonly name: string;
-  getDb(): unknown;
-  getOutbox?(): OutboxTable | undefined;
-  setRecorder?(recorder: ServiceEvents | undefined): void;
-  /** Throws for an event the service's catalog does not allow. */
-  checkEvent?(name: string, payload: unknown): void;
-}
+import { portOf, type ServicePort } from "../service-port";
+import type { Service } from "../types";
 
 export function matchesEvent(pattern: string, name: string): boolean {
   if (pattern === "*") return true;
@@ -30,8 +24,8 @@ export function matchesEvent(pattern: string, name: string): boolean {
   return pattern === name;
 }
 
-/** The recorder of each service database, so `emitEvent(ctx, ...)` can find it from `ctx.db`. */
-export const recorders = new WeakMap<object, ServiceEvents>();
+/** The service of each database that records events, so `emitEvent(ctx, ...)` can find it from `ctx.db`. */
+export const recordingServices = new WeakMap<object, ServicePort>();
 
 // Shared by name: the CLI that stops the hubs may hold another copy of this package.
 const startedHubs = ((globalThis as Record<symbol, unknown>)[
@@ -97,22 +91,9 @@ export class EventsHub {
     private readonly deps: Record<string, unknown> = {},
   ) {
     for (const listener of options.listeners ?? []) {
-      if (typeof listener.name !== "string" || !listener.name)
-        throw new Error("An event listener needs a name");
-      if (listener.name.includes(":"))
-        throw new Error(
-          `Event listener name '${listener.name}' must not contain ':'`,
-        );
-      if (!listener.on?.length)
-        throw new Error(
-          `Event listener '${listener.name}' listens for nothing`,
-        );
+      validateListener(listener);
       if (this.byName.has(listener.name))
         throw new Error(`Duplicate event listener '${listener.name}'`);
-      if (!listener.run === !listener.workflow)
-        throw new Error(
-          `Event listener '${listener.name}' needs exactly one of run and workflow`,
-        );
       this.byName.set(listener.name, listener);
     }
     const workflowListeners = [...this.byName.values()].filter(
@@ -147,39 +128,32 @@ export class EventsHub {
    * @param services - The app's services.
    * @returns The hub, for chaining.
    */
-  attach(services: readonly EventsHost[]): this {
-    let attached = 0;
-    for (const service of services) {
-      const table = service.getOutbox?.();
+  attach(services: readonly Service[]): this {
+    for (const service of services.map(portOf)) {
+      const table = service.getOutbox();
       if (!table) continue;
-      attached++;
       this.recorderNames.push(service.name);
-      const bound = this.bind(table, (name, payload) =>
-        service.checkEvent?.(name, payload),
+      service.setRecorder(
+        this.bind(table, (name, payload) => service.checkEvent(name, payload)),
       );
-      service.setRecorder?.(bound);
       const db = service.getDb();
-      if (db && typeof db === "object") recorders.set(db, bound);
-    }
-    if (attached === 0 && this.byName.size > 0) {
-      console.warn(
-        "[Brick-TS] events are configured, but no service database has an outbox table. " +
-          "Add outboxTable() to a database's tables so its writes can record events.",
-      );
-    }
-    for (const service of services) {
-      const table = service.getOutbox?.();
-      if (table && !this.dispatchers.has(table)) {
+      if (db && typeof db === "object") recordingServices.set(db, service);
+      if (!this.dispatchers.has(table))
         this.dispatchers.set(
           table,
           new Dispatcher(
-            service.getDb(),
+            db,
             table,
             (name) => this.deliverable(name),
             this.dispatchOptions || {},
           ),
         );
-      }
+    }
+    if (this.recorderNames.length === 0 && this.byName.size > 0) {
+      console.warn(
+        "[Brick-TS] events are configured, but no service database has an outbox table. " +
+          "Add outboxTable() to a database's tables so its writes can record events.",
+      );
     }
     return this;
   }
@@ -285,16 +259,12 @@ export class EventsHub {
 
   /** How many rows are in each state, across the app's outbox tables. */
   async counts(): Promise<OutboxCounts> {
-    const total: OutboxCounts = {
-      pending: 0,
-      claimed: 0,
-      delivered: 0,
-      dead: 0,
-    };
+    const total = Object.fromEntries(
+      OUTBOX_STATUSES.map((status) => [status, 0]),
+    ) as OutboxCounts;
     for (const dispatcher of this.dispatchers.values()) {
       const counts = await dispatcher.counts();
-      for (const status of Object.keys(total) as (keyof OutboxCounts)[])
-        total[status] += counts[status];
+      for (const status of OUTBOX_STATUSES) total[status] += counts[status];
     }
     return total;
   }
@@ -317,26 +287,15 @@ export class EventsHub {
     if (!listener) return undefined;
     let found = this.deliverables.get(name);
     if (!found) {
-      const runtime = this.runtime;
+      const { run, workflow, maxAttempts, errors, retry } = listener;
+      const deps = listenerDeps(listener) ?? this.deps;
       found = {
-        ...(listener.errors ? { errors: listener.errors } : {}),
-        ...(listener.retry ? { retry: listener.retry } : {}),
-        ...(listener.workflow
-          ? {
-              ...(listener.maxAttempts !== undefined
-                ? { maxAttempts: listener.maxAttempts }
-                : {}),
-              run: async (delivery) => {
-                await runtime!.startRun(listener, delivery);
-              },
-            }
-          : {
-              ...(listener.maxAttempts !== undefined
-                ? { maxAttempts: listener.maxAttempts }
-                : {}),
-              run: (delivery) =>
-                runWithDeps(this.deps, () => listener.run!(delivery)),
-            }),
+        ...(errors ? { errors } : {}),
+        ...(retry ? { retry } : {}),
+        ...(maxAttempts !== undefined ? { maxAttempts } : {}),
+        run: workflow
+          ? (delivery) => this.runtime!.startRun(listener, delivery)
+          : (delivery) => runWithDeps(deps, () => run!(delivery)),
       };
       this.deliverables.set(name, found);
     }
@@ -360,22 +319,17 @@ export class EventsHub {
       check(name, payload);
       const listeners = this.matching(name);
       if (!listeners.length) return false;
-      const eventId = newEventId();
-      const occurredAt = new Date();
       await tx.insert(table as any).values(
-        listeners.map((listener) => ({
-          id: `${eventId}:${listener.name}`,
-          eventId,
-          listener: listener.name,
-          name,
-          payload,
-          traceId: context.traceId ?? null,
-          source: context.source ?? null,
-          occurredAt,
-          status: "pending",
-          attempts: 0,
-          availableAt: occurredAt,
-        })),
+        outboxRows(
+          {
+            id: newEventId(),
+            name,
+            payload,
+            occurredAt: new Date(),
+            ...context,
+          },
+          listeners.map((listener) => listener.name),
+        ),
       );
       return true;
     };
