@@ -172,13 +172,15 @@ export function defineAction(config: any): any {
   actionFn.errorHelpers = errorHelpers;
 
   actionFn.validateInput = (input: unknown) => {
-    return validateWithSchema(config.input, input);
+    const errors = actionMeta(actionFn).checkInput?.(input);
+    return errors
+      ? { success: false as const, errors }
+      : validateWithSchema(config.input, input);
   };
 
-  // `outputValidationSchema`: a runtime-only output schema (crud's), checked instead of `config.output`.
   actionFn.validateOutput = (output: unknown) =>
     validateWithSchema(
-      actionFn.outputValidationSchema ?? config.output,
+      actionMeta(actionFn).runtimeOutput ?? config.output,
       output,
     );
 
@@ -204,7 +206,7 @@ export function defineAction(config: any): any {
       }
       await authorizeCall(config.authorize, ctx, input, config.name);
       const result = await config.execute({ input, ctx, error: errorHelpers });
-      if (actionFn.outputValidationSchema ?? config.output) {
+      if (actionMeta(actionFn).runtimeOutput ?? config.output) {
         const checked = actionFn.validateOutput(result);
         if (!checked.success)
           throw invalid(config.name, "output", checked.errors);

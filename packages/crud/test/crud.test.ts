@@ -309,7 +309,7 @@ test("unique database constraints return conflict without modifying the existing
 });
 
 test("deeply nested where rejects with 400 before validation recurses", async () => {
-  const { resource: r, sqlite } = fixture({
+  const { resource: r, sqlite, service } = fixture({
     access: "public",
     fields: {
       id: { read: true },
@@ -334,6 +334,24 @@ test("deeply nested where rejects with 400 before validation recurses", async ()
     await expect(
       r.count.run({ where: deepWhere(20_000) as never }),
     ).rejects.toMatchObject({ status: 400 });
+    // Over HTTP too, as an input validation error, not only once the query is built.
+    const app = brick({
+      services: [service],
+      docs: false,
+      requestLogging: false,
+    });
+    const response = await app.handle(
+      new Request(`http://localhost/api/${service.name}/record/count`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ where: deepWhere(30) }),
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      code: "VALIDATION_FAILED",
+      errors: [{ path: "where", message: "Filter nesting exceeds 20 levels" }],
+    });
   } finally {
     sqlite.close();
   }

@@ -327,31 +327,23 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
           ...methods[operation],
           input: inputs[operation],
           output: outputs[operation],
+          runtimeOutput: looseOutputs[operation],
+          // Rejects an over-nested `where` before the compiled check recurses into it.
+          checkInput: (input) =>
+            whereDepthExceeded(input)
+              ? [
+                  {
+                    path: "where",
+                    message: `Filter nesting exceeds ${MAX_WHERE_DEPTH} levels`,
+                  },
+                ]
+              : undefined,
           execute: ({ input, ctx, error }) =>
             operation in bulkOperations
               ? performBulk(operation as BulkOperation, input, ctx, error)
               : perform(operation as Operation, input, ctx, error),
         });
-        // Runtime output validation accepts subset projections while the
-        // published `config.output` stays strict for contracts/OpenAPI.
-        action.outputValidationSchema = looseOutputs[operation];
         setActionAccess(action, crudAccess);
-        // Pre-validation depth guard: action input validation runs before
-        // execute()/condition(), so reject over-nested `where` here instead
-        // of recursing inside the compiled TypeBox check.
-        const innerValidateInput = action.validateInput.bind(action);
-        action.validateInput = (rawInput: unknown) =>
-          whereDepthExceeded(rawInput)
-            ? {
-                success: false as const,
-                errors: [
-                  {
-                    path: "where",
-                    message: `Filter nesting exceeds ${MAX_WHERE_DEPTH} levels`,
-                  },
-                ],
-              }
-            : innerValidateInput(rawInput);
         api[operation] = action;
       }
       service.contributePreparation({

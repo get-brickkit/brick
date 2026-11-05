@@ -342,9 +342,18 @@ export function installPlugin(
         throw new DuplicateNameError(
           `Duplicate plugin action '${name}' (from plugin '${descriptor.name}')`,
         );
-      const { scope: _scope, ...actionConfig } = config;
+      const {
+        scope: _scope,
+        runtimeOutput,
+        checkInput,
+        ...actionConfig
+      } = config;
       const action = defineAction({ ...actionConfig, name });
-      actionMeta(action).route = binding;
+      Object.assign(actionMeta(action), {
+        route: binding,
+        runtimeOutput,
+        checkInput,
+      });
       service.action(action);
       ownedActions.add(action);
       state.actions.set(action, binding);

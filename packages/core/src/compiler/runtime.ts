@@ -38,6 +38,8 @@ export interface CompiledRoutePlan {
   readonly contextHook?: (baseCtx: any) => unknown;
   readonly inputChecker?: Checker;
   readonly outputChecker?: Checker;
+  /** A plugin's check that runs before `inputChecker`. */
+  readonly checkInput?: (input: unknown) => ValidationErrorItem[] | undefined;
   readonly errorBuilder: unknown;
   readonly logger: Logger;
   readonly cachedDb: unknown;
@@ -169,7 +171,14 @@ function validate(
   );
 }
 
-function validateInput(check: Checker, input: unknown, action: string) {
+function validateInput(
+  check: Checker,
+  input: unknown,
+  action: string,
+  checkInput: CompiledRoutePlan["checkInput"],
+) {
+  const errors = checkInput?.(input);
+  if (errors) throw invalid(action, "input", errors);
   if (inputTooDeep(input))
     throw invalid(action, "input", [
       { path: "", message: "Input exceeds maximum nesting depth" },
@@ -243,6 +252,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
     authorize,
     inputChecker,
     outputChecker,
+    checkInput,
     errorBuilder,
   } = plan;
   const name = route.action;
@@ -260,7 +270,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
           if (extra) Object.assign(ctx, extra);
           if (plan.deps) ctx.deps = plan.deps;
         }
-        if (inputChecker) validateInput(inputChecker, input, name);
+        if (inputChecker) validateInput(inputChecker, input, name, checkInput);
         await authorizeCall(authorize, ctx, input, name);
         return checkOutput(await execute({ input, ctx, error: errorBuilder }));
       } catch (err) {
@@ -272,7 +282,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
     const input = readInput(route, context);
     const ctx = requestContext(plan, context);
     try {
-      if (inputChecker) validateInput(inputChecker, input, name);
+      if (inputChecker) validateInput(inputChecker, input, name, checkInput);
       const result = execute({ input, ctx, error: errorBuilder });
       if (isThenable(result))
         return Promise.resolve(result)

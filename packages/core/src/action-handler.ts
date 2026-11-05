@@ -12,10 +12,8 @@ export function planRoute(
   service: Service,
   action: Action,
 ): CompiledRoutePlan {
-  // A runtime-only output schema (crud's subset projections) is checked instead of the published `config.output`.
-  const outputSchema =
-    (action as { outputValidationSchema?: Action["config"]["output"] })
-      .outputValidationSchema ?? action.config.output;
+  const meta = actionMeta(action);
+  const outputSchema = meta.runtimeOutput ?? action.config.output;
   return {
     route,
     service: portOf(service),
@@ -32,7 +30,8 @@ export function planRoute(
     errorBuilder: action.errorHelpers,
     logger: createLogger(`[${service.name}:${action.name}]`),
     cachedDb: service.getDb(),
-    deps: actionMeta(action).deps?.values,
+    checkInput: meta.checkInput,
+    deps: meta.deps?.values,
   };
 }
 

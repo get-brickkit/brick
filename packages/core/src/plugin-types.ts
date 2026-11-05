@@ -1,6 +1,7 @@
 import type { HttpMethod } from "./http";
 import type { TSchema } from "@sinclair/typebox";
 import type { PluginInstance } from "./define-plugin";
+import type { PluginActionChecks } from "./action-meta";
 import type {
   Action,
   ActionConfigWithAuthorize,
@@ -45,11 +46,12 @@ export interface PluginRouteRegistrar<
       ActionErrorDefinition
     >,
   >(
-    config: ActionConfigWithAuthorize<I, O, E, C> & {
-      path: string;
-      method: PluginRouteMethod;
-      scope?: S;
-    },
+    config: ActionConfigWithAuthorize<I, O, E, C> &
+      PluginActionChecks & {
+        path: string;
+        method: PluginRouteMethod;
+        scope?: S;
+      },
   ): Action<I, O, E, C>;
   action<
     I extends TSchema | undefined = undefined,
@@ -59,11 +61,12 @@ export interface PluginRouteRegistrar<
       ActionErrorDefinition
     >,
   >(
-    config: ActionConfigWithoutAuthorize<I, O, E, C> & {
-      path: string;
-      method: PluginRouteMethod;
-      scope?: S;
-    },
+    config: ActionConfigWithoutAuthorize<I, O, E, C> &
+      PluginActionChecks & {
+        path: string;
+        method: PluginRouteMethod;
+        scope?: S;
+      },
   ): Action<I, O, E, C>;
   endpoint(config: {
     name: string;

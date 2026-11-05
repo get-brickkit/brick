@@ -1,5 +1,10 @@
 import type { HttpMethod } from "./http";
-import type { ActionAccessPolicy, ResourceActionAccess } from "./types";
+import type { TSchema } from "@sinclair/typebox";
+import type {
+  ActionAccessPolicy,
+  ResourceActionAccess,
+  ValidationErrorItem,
+} from "./types";
 import type { ServicePort } from "./service-port";
 
 /** Where a plugin mounted one of its actions or endpoints. */
@@ -43,6 +48,18 @@ export interface ActionMeta {
   access?: ActionAccessInfo;
   /** The deps of the plugin install that created the action, and when they were bound. */
   deps?: { values: Readonly<Record<string, unknown>>; at: number };
+  /** Checked instead of `config.output` at runtime; `config.output` stays the published contract. */
+  runtimeOutput?: TSchema;
+  /** Runs before input validation; errors reject the input. */
+  checkInput?: PluginActionChecks["checkInput"];
+}
+
+/** What a plugin action adds to the validation of `routes.action`. */
+export interface PluginActionChecks {
+  /** Checked instead of `output` at runtime, while `output` stays the published contract (client types, OpenAPI). */
+  runtimeOutput?: TSchema;
+  /** Runs before input validation, in-process and over HTTP; the errors it returns reject the input with a 400. */
+  checkInput?: (input: unknown) => ValidationErrorItem[] | undefined;
 }
 
 /**

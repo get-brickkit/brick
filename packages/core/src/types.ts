@@ -333,14 +333,6 @@ export interface Action<
   name: string;
   serviceName?: string;
   config: ActionConfig<TInputSchema, TOutputSchema, TErrors, TContext>;
-  /**
-   * Optional runtime-only output schema. When present, `validateOutput` and
-   * HTTP output checking validate against it instead of `config.output`,
-   * while `config.output` remains the published contract (client types,
-   * OpenAPI). Lets projected/subset responses validate at runtime without
-   * leaking optionality into the generated contract.
-   */
-  outputValidationSchema?: TSchema;
   run(
     input?: TInputSchema extends TSchema ? Static<TInputSchema> : any,
     ctx?: Partial<TContext>,

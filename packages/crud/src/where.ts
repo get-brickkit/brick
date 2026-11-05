@@ -169,7 +169,7 @@ export function whereSchema(
   // seconds. Each $id member above compiles to one shared function, so
   // the recursion through the module $refs stays linear. Runtime
   // `condition()` still rejects nesting beyond 20, and the
-  // `validateInput` wrapper rejects it before validation runs.
+  // action's `checkInput` rejects it before validation runs.
   // The Recursive callback ignores Self on purpose: recursion flows
   // through the named module $refs back to this root $id.
   return t.Recursive(
