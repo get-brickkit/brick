@@ -218,6 +218,14 @@ export async function startProdServer(options: DevServerOptions = {}) {
         cwd: options.root,
       })
     : undefined;
+  // Until the delivery handler below takes over: a signal while starting (the
+  // readiness wait can be long) must not leave the children's groups running.
+  const onStartupSignal = (signal: NodeJS.Signals) =>
+    void (children?.stop() ?? Promise.resolve()).finally(() =>
+      process.exit(signal === "SIGINT" ? 130 : 143),
+    );
+  process.once("SIGINT", onStartupSignal);
+  process.once("SIGTERM", onStartupSignal);
   let dashboard: Awaited<ReturnType<typeof startProductionDashboard>>;
   try {
     // Before listening, so the first request is already traced and its logs kept.
@@ -234,6 +242,9 @@ export async function startProdServer(options: DevServerOptions = {}) {
     // The children run in their own process groups: don't leave them behind.
     await children?.stop();
     throw error;
+  } finally {
+    process.off("SIGINT", onStartupSignal);
+    process.off("SIGTERM", onStartupSignal);
   }
   // Finish deliveries, then stop the server and the plugins (reverse order).
   finishDeliveriesOnSignal({

@@ -35,6 +35,32 @@ export interface PolyglotContract {
 
 const run = promisify(execFile);
 
+// The process groups of the manifest reads in flight, all killed by one signal
+// handler: Ctrl+C reaches only this process, not their own groups.
+const manifestGroups = new Set<number>();
+const killGroups = (groups: Iterable<number>) => {
+  for (const group of groups)
+    try {
+      process.kill(-group, "SIGKILL");
+    } catch {}
+};
+const onManifestSignal = (signal: NodeJS.Signals) => {
+  killGroups(manifestGroups);
+  process.exit(signal === "SIGINT" ? 130 : 143);
+};
+function manifestGroup(group: number, running: boolean) {
+  if (running) manifestGroups.add(group);
+  else manifestGroups.delete(group);
+  const listening = process.listeners("SIGINT").includes(onManifestSignal);
+  if (manifestGroups.size && !listening) {
+    process.on("SIGINT", onManifestSignal);
+    process.on("SIGTERM", onManifestSignal);
+  } else if (!manifestGroups.size && listening) {
+    process.off("SIGINT", onManifestSignal);
+    process.off("SIGTERM", onManifestSignal);
+  }
+}
+
 /**
  * Run a remote service's `dev` command with `BRICK_MANIFEST=1` and read the manifest it prints.
  *
@@ -53,24 +79,14 @@ export async function readRemoteManifest(
     detached: true,
   };
   const pending = run("/bin/sh", ["-c", remote.options.dev], options);
-  const killGroup = () => {
-    try {
-      process.kill(-pending.child.pid!, "SIGKILL");
-    } catch {}
-  };
+  const group = pending.child.pid!;
+  manifestGroup(group, true);
   // A service whose SDK ignores BRICK_MANIFEST would serve forever.
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
-    killGroup();
+    killGroups([group]);
   }, 120_000);
-  // Ctrl+C reaches only this process, not the command's own group.
-  const onSignal = (signal: NodeJS.Signals) => {
-    killGroup();
-    process.exit(signal === "SIGINT" ? 130 : 143);
-  };
-  process.once("SIGINT", onSignal);
-  process.once("SIGTERM", onSignal);
   const { stdout } = await pending
     .catch((error: Error & { stderr?: string }) => {
       throw new Error(
@@ -79,8 +95,7 @@ export async function readRemoteManifest(
     })
     .finally(() => {
       clearTimeout(timer);
-      process.off("SIGINT", onSignal);
-      process.off("SIGTERM", onSignal);
+      manifestGroup(group, false);
     });
   const line = stdout.trim().split("\n").at(-1) ?? "";
   let manifest: ServiceManifest;
@@ -154,7 +169,13 @@ export async function writePolyglotContract(
     version: 1,
     services: [
       ...tsManifests(app),
-      ...(await Promise.all(remote.map((r) => readRemoteManifest(r, cwd)))),
+      ...(await Promise.all(
+        remote.map((r) => readRemoteManifest(r, cwd)),
+      ).catch((error) => {
+        // The others' groups would outlive the CLI's exit on this error.
+        killGroups(manifestGroups);
+        throw error;
+      })),
     ],
   };
   const written: string[] = [];
@@ -395,10 +416,11 @@ export function rustClient(contract: PolyglotContract, self: string): string {
         ([key, prop]) => {
           let field = snake(key) || "field";
           if (/^[0-9]/.test(field)) field = `f${field}`;
-          claim(fieldNames, `${name}.${field}`, `property "${key}"`, "Rust");
           // self, super and crate can't be raw identifiers.
           if (["self", "super", "crate"].includes(field)) field = `${field}_`;
-          else if (RUST_KEYWORDS.has(field)) field = `r#${field}`;
+          // Claimed after the rename, which can collide too (self and self_).
+          claim(fieldNames, `${name}.${field}`, `property "${key}"`, "Rust");
+          if (RUST_KEYWORDS.has(field)) field = `r#${field}`;
           let type = rustType(prop, name + pascal(key));
           const optional = !required.has(key);
           const attrs = [`rename = ${JSON.stringify(key)}`];

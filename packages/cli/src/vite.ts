@@ -1,3 +1,4 @@
+import type { AddressInfo } from "node:net";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeContractSource } from "./client-contract-file";
@@ -39,6 +40,28 @@ export interface BrickClientPluginOptions {
   dashboard?:
     | ({ port?: number; historyDays?: number } & DashboardExtensionOptions)
     | false;
+}
+
+/**
+ * The origin the Go and Rust services reach the dev server at: the address it
+ * bound (IPv6 bracketed; `localhost` can be ::1 alone), or `localhost` for a
+ * wildcard and over https, which is what dev certificates cover (the services'
+ * clients still need to trust it).
+ */
+export function devOrigin(
+  address: AddressInfo | string | null,
+  https: boolean,
+  fallbackPort: number,
+): string {
+  const bound = address && typeof address === "object" ? address : undefined;
+  const port = bound?.port ?? fallbackPort;
+  const host =
+    !bound || https || bound.address === "0.0.0.0" || bound.address === "::"
+      ? "localhost"
+      : bound.address.includes(":")
+        ? `[${bound.address}]`
+        : bound.address;
+  return `${https ? "https" : "http"}://${host}:${port}`;
 }
 
 // Module scope: a Vite restart builds a new plugin, and its children wait for these.
@@ -157,16 +180,11 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
       if (remote.length && httpServer) {
         const env = remoteEnv(requireBrickApp(app).definition);
         httpServer.once("listening", () => {
-          const address = httpServer.address();
-          const port =
-            address && typeof address === "object"
-              ? address.port
-              : (server.config.server.port ?? 5173);
-          // Over https, localhost: what dev certificates cover. The services'
-          // clients still need to trust that certificate.
-          const origin = server.config.server.https
-            ? `https://localhost:${port}`
-            : `http://127.0.0.1:${port}`;
+          const origin = devOrigin(
+            httpServer.address(),
+            Boolean(server.config.server.https),
+            server.config.server.port ?? 5173,
+          );
           // After the previous server's children stopped: a restart must not
           // race them for their ports.
           const children = remotesStopped.then(() =>

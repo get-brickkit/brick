@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { remoteService } from "@brickkit/core";
+import { devOrigin } from "../src/vite";
 import {
   goClient,
   readRemoteManifest,
@@ -78,5 +79,18 @@ describe("polyglot clients", () => {
     await expect(readRemoteManifest(x("echo listening"))).rejects.toThrow(
       'the manifest of "x"',
     );
+  });
+});
+
+describe("devOrigin", () => {
+  it("uses the address Vite bound", () => {
+    const at = (address: string) => ({ address, family: "", port: 5174 });
+    expect(devOrigin(at("::1"), false, 5173)).toBe("http://[::1]:5174");
+    expect(devOrigin(at("127.0.0.1"), false, 5173)).toBe(
+      "http://127.0.0.1:5174",
+    );
+    expect(devOrigin(at("0.0.0.0"), false, 5173)).toBe("http://localhost:5174");
+    expect(devOrigin(at("::1"), true, 5173)).toBe("https://localhost:5174");
+    expect(devOrigin(null, false, 5173)).toBe("http://localhost:5173");
   });
 });
