@@ -342,13 +342,8 @@ export const rpcMethods = {
   /** Starts a new run with the same workflow and input as an existing one. */
   recreateRun: method(
     "recreateRun",
-    async (
-      world,
-      { runId, deploymentId }: { runId: string; deploymentId?: string },
-    ) =>
-      workflowRunHelpers.recreateRunFromExisting(world, runId, {
-        deploymentId,
-      }),
+    async (world, { runId }: { runId: string }) =>
+      workflowRunHelpers.recreateRunFromExisting(world, runId),
   ),
 
   /**

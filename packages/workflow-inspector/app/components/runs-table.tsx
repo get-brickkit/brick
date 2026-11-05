@@ -11,6 +11,7 @@ import {
   type WorkflowRun,
   type WorkflowRunStatus,
 } from "@workflow/world";
+import { STATUS_COLORS } from "~/lib/status-colors";
 import {
   AlertCircle,
   ArrowDownAZ,
@@ -167,11 +168,11 @@ interface RunsTableProps {
 }
 
 const statusMap: Record<WorkflowRunStatus, { label: string; color: string }> = {
-  pending: { label: "Pending", color: "bg-neutral-600 dark:bg-neutral-400" },
-  running: { label: "Running", color: "bg-blue-600 dark:bg-blue-400" },
-  completed: { label: "Completed", color: "bg-green-600 dark:bg-green-400" },
-  failed: { label: "Failed", color: "bg-red-600 dark:bg-red-400" },
-  cancelled: { label: "Cancelled", color: "bg-gray-600 dark:bg-gray-400" },
+  pending: { label: "Pending", color: STATUS_COLORS.pending },
+  running: { label: "Running", color: STATUS_COLORS.running },
+  completed: { label: "Completed", color: STATUS_COLORS.completed },
+  failed: { label: "Failed", color: STATUS_COLORS.failed },
+  cancelled: { label: "Cancelled", color: STATUS_COLORS.cancelled },
 };
 
 // Helper: Handle workflow filter changes

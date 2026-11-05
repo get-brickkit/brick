@@ -24,13 +24,7 @@ export default function Home() {
 
   const selectedHookId = sidebar === "hook" && hookId ? hookId : undefined;
 
-  const handleRunClick = (runId: string, streamId?: string) => {
-    if (!streamId) {
-      navigate(`/run/${runId}`);
-    } else {
-      navigate(`/run/${runId}/streams/${streamId}`);
-    }
-  };
+  const handleRunClick = (runId: string) => navigate(`/run/${runId}`);
 
   const handleHookSelect = (hookId: string, runId?: string) => {
     if (hookId) {

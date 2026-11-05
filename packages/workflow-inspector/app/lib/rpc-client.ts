@@ -7,6 +7,7 @@
  */
 
 import { decode, encode } from "cbor-x";
+import { API_PATHS } from "~/lib/types";
 import type { RpcMethods } from "~/server/workflow-server-actions.server";
 
 /** Calls a server RPC method; type-checked against the server's own signature. */
@@ -14,7 +15,7 @@ export async function rpc<M extends keyof RpcMethods>(
   method: M,
   params: Parameters<RpcMethods[M]>[1],
 ): Promise<Awaited<ReturnType<RpcMethods[M]>>> {
-  const res = await fetch(`${import.meta.env.BASE_URL}api/rpc`, {
+  const res = await fetch(`${import.meta.env.BASE_URL}${API_PATHS.rpc}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/cbor",
