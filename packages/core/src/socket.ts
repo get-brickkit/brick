@@ -20,6 +20,7 @@ import {
   isSocketRoom,
   isSocketSeq,
   replayFrame,
+  replayHeadroom,
   signSeq,
   splitSeq,
   SOCKET_BUFFER_BYTES,
@@ -27,7 +28,6 @@ import {
   SOCKET_CONTROL,
   SOCKET_MAX_BYTES,
   SOCKET_PROTOCOL,
-  SOCKET_REPLAY_HEADROOM,
   SOCKET_SIGNATURE_LENGTH,
   SOCKET_TOKEN_PROTOCOL,
 } from "./protocol";
@@ -247,14 +247,18 @@ export function defineServiceSocket<
     handle: {
       name: config.name,
       emit(rooms, ...[event, payload, options]: SocketEmitArgs<any>) {
-        const topics = [
+        const unique = [
           ...new Set(typeof rooms === "string" ? [rooms] : rooms),
-        ].map(topic);
+        ];
+        const topics = unique.map(topic);
         const frame = outputFrame(output, event, payload);
         // Room and sequence are added to each replayed frame on delivery.
         if (
           replay &&
-          byteLength(frame) > SOCKET_MAX_BYTES - SOCKET_REPLAY_HEADROOM
+          unique.some(
+            (room) =>
+              byteLength(frame) + replayHeadroom(room) > SOCKET_MAX_BYTES,
+          )
         )
           throw new Error("Socket output too large");
         publish(

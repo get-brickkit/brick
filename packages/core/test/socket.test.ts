@@ -996,3 +996,22 @@ it("doesn't replay a room's messages from before the client could join it", asyn
     frames.filter((f) => f.event === "message").map((f) => f.data),
   ).toEqual(["after"]);
 });
+
+it("refuses a replayed emit that its room and sequence would push past the frame limit", () => {
+  const service = defineService("chat");
+  const live = service.socket({
+    name: "live",
+    input: {},
+    output: { message: t.String() },
+    handlers: {},
+    replay: { keep: 10, maxAgeMs: 60_000 },
+  });
+  // Each `"` doubles when the room is written into the frame as JSON.
+  const room = `doc:${'"'.repeat(196)}`;
+  // `{"event":"message","data":"…"}` is 300 bytes under the 64 KiB limit.
+  const length = 64 * 1024 - 300 - 29;
+  expect(() => live.emit(room, "message", "a".repeat(length))).toThrow(
+    "too large",
+  );
+  expect(() => live.emit("doc:1", "message", "a".repeat(length))).not.toThrow();
+});

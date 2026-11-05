@@ -105,8 +105,6 @@ export const SOCKET_STOP_CODES: ReadonlySet<number> = new Set([
 export const SOCKET_MAX_BYTES = 64 * 1024;
 export const SOCKET_BUFFER_BYTES = 1024 * 1024;
 const ROOM_MAX_BYTES = 200;
-/** Bytes a replayed emit gains on delivery for its `room` and signed `seq`. */
-export const SOCKET_REPLAY_HEADROOM = 300;
 /** The length of a sequence's signature: base64url of an HMAC, cut short. */
 export const SOCKET_SIGNATURE_LENGTH = 22;
 
@@ -119,6 +117,13 @@ export const encodeFrame = (event: string, data: unknown) =>
 /** Adds the room and signed sequence to an encoded frame of a socket with replay. */
 export const replayFrame = (frame: string, room: string, seq: string) =>
   `${frame.slice(0, -1)},"room":${JSON.stringify(room)},"seq":${JSON.stringify(seq)}}`;
+
+/** The longest signed sequence: two 20-digit numbers and a signature. */
+const LONGEST_SEQ = `${"9".repeat(20)}-${"9".repeat(20)}.${"x".repeat(SOCKET_SIGNATURE_LENGTH)}`;
+
+/** Bytes an emit to `room` gains when replay adds its `room` and signed `seq` on delivery. */
+export const replayHeadroom = (room: string) =>
+  byteLength(replayFrame("{}", room, LONGEST_SEQ)) - 2;
 
 export function isSocketEnvelope(
   value: unknown,
