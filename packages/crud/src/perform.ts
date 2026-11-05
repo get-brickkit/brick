@@ -1,9 +1,12 @@
 import {
   ActionExecutionError,
+  crudEventName,
+  crudEventSource,
   deny,
   getHostHooks,
   runInTransaction,
   onTransactionCommit,
+  type CrudEventPayload,
   type EventRecorder,
   type ResourcePluginContext,
 } from "@brickkit/core";
@@ -132,14 +135,14 @@ export function operations(model: CrudModel) {
     if (!db) throw new Error("CRUD requires a configured database");
     return db;
   };
-  const recorder = (operation: string) =>
+  const recorder = (operation: "create" | "update" | "delete") =>
     options.events !== false &&
-    service.recorder?.wants(`${resource.name}.${operation}`)
+    service.recorder?.wants(crudEventName(resource.name, operation))
       ? service.recorder
       : undefined;
   const eventContext = (ctx: any) => ({
     traceId: ctx.traceId,
-    source: `${service.name}.${resource.name}`,
+    source: crudEventSource(service.name, resource.name),
   });
   const eventRow = (row: Record<string, unknown>) =>
     Object.fromEntries(readable.map((field) => [field, jsonValue(row[field])]));
@@ -415,10 +418,10 @@ export function operations(model: CrudModel) {
       if (!rows.length)
         errors.NOT_FOUND("Resource not found");
       if (record)
-        await record(`${resource.name}.delete`, {
+        await record(crudEventName(resource.name, "delete"), {
           id: eventId(rows[0]),
           row: eventRow(rows[0]),
-        });
+        } satisfies CrudEventPayload);
       await hooks.afterDelete?.({ id: input.id, ctx, error, tx: target });
     });
     await committed(call, hooks, { operation: "delete" });
@@ -492,14 +495,14 @@ export function operations(model: CrudModel) {
         errors.NOT_FOUND("Resource not found");
       if (record)
         await record(
-          `${resource.name}.${operation}`,
-          operation === "create"
+          crudEventName(resource.name, operation),
+          (operation === "create"
             ? { id: eventId(written[0]), row: eventRow(written[0]) }
             : {
                 id: eventId(written[0]),
                 before: eventRow(before ?? {}),
                 after: eventRow(written[0]),
-              },
+              }) satisfies CrudEventPayload,
         );
       if (operation === "create")
         await hooks.afterCreate?.({ row: written[0], ctx, error, tx: target });

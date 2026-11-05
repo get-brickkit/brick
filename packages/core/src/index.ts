@@ -143,6 +143,13 @@ export { port, useDeps, type Port, type Ports, type DepsOf } from "./deps";
 export { stepErrors, stepFailure, type StepErrorBuilder } from "./workflow";
 
 export {
+  CRUD_EVENT_OPERATIONS,
+  crudEventName,
+  crudEventSource,
+  isCrudEvent,
+  type CrudEventOperation,
+} from "./events/catalog";
+export {
   defineListener,
   emitEvent,
   isEventRef,

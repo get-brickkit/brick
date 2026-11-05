@@ -1,6 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
-import { actionMeta, getPluginActionRoute, kebabCase } from "@brickkit/core";
+import {
+  actionMeta,
+  getPluginActionRoute,
+  isCrudEvent,
+  kebabCase,
+} from "@brickkit/core";
 import { loadBrickApp, type BrickApp } from "./app-entry";
 import { ConfigError, type LoadedConfig } from "./config";
 import {
@@ -322,15 +327,8 @@ function declaredEvents(check: AppCheck, app: BrickApp, add: Add) {
     if (!service.options.events) continue; // no catalog: any name goes
     const names = new Set(Object.values(service.events).map((e) => e.name));
     const resources = service.listResources().map((r) => r.name);
-    // Catalog events are <service>.<event>; CRUD writes still emit
-    // <resource>.create|update|delete.
-    const declared = (name: string) => {
-      const [owner, event] = name.split(".", 2);
-      return (
-        names.has(name) ||
-        (resources.includes(owner!) && /^(create|update|delete)$/.test(event!))
-      );
-    };
+    const declared = (name: string) =>
+      names.has(name) || isCrudEvent(name, resources);
     for (const action of service.listActions())
       for (const name of action.config.emits ?? [])
         if (!declared(name))

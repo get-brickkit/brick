@@ -9,7 +9,7 @@ import { actionMeta, type ResourceActionInfo } from "./action-meta";
 import { portOf } from "./service-port";
 import { Type } from "./typebox";
 import { runInTransaction } from "./events/transaction";
-import type { EventRef } from "./events/catalog";
+import { crudEventSource, type EventRef } from "./events/catalog";
 import {
   ActionExecutionError,
   DuplicateNameError,
@@ -338,7 +338,10 @@ function defineCommand(
     return recorder
       ? recorder.transaction(
           db,
-          { traceId: ctx.traceId, source: `${service.name}.${resource.name}` },
+          {
+            traceId: ctx.traceId,
+            source: crudEventSource(service.name, resource.name),
+          },
           body,
         )
       : runInTransaction(db, (tx) => body(tx));
