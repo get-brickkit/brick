@@ -214,12 +214,22 @@ export async function callRemoteAction(
     body = text ? JSON.parse(text) : undefined;
   } catch {
     // Not JSON (a panic page, a proxy's 502): the status below still reports it.
+    if (response.ok)
+      throw new ActionExecutionError(
+        "INTERNAL_SERVER_ERROR",
+        `Service '${remote.name}' answered ${response.status} without JSON`,
+        502,
+      );
   }
   if (response.ok) return body;
+  const status = body?.status;
   throw new ActionExecutionError(
     body?.code ?? "INTERNAL_SERVER_ERROR",
     body?.message ?? response.statusText,
-    body?.status ?? response.status,
+    // Only an error status from the body; otherwise the HTTP one.
+    Number.isInteger(status) && status >= 400 && status < 600
+      ? status
+      : response.status,
     body?.details ?? body?.errors,
   );
 }
@@ -446,6 +456,7 @@ export async function startRemoteServices(
   // Restarts of one service run one after another, so overlapping ones can't
   // launch two children on its port.
   const restarts = new Map<string, Promise<void>>();
+  let stopped = false;
 
   return {
     urls,
@@ -453,8 +464,10 @@ export async function startRemoteServices(
       const remote = services.find((service) => service.name === name);
       if (!remote) return Promise.resolve();
       const next = (restarts.get(name) ?? Promise.resolve()).then(async () => {
+        if (stopped) return;
         await kill(name);
-        launch(remote);
+        // A restart that was queued when stop ran must not relaunch.
+        if (!stopped) launch(remote);
       });
       restarts.set(
         name,
@@ -466,7 +479,12 @@ export async function startRemoteServices(
       const deadline = Date.now() + timeoutMs;
       for (const remote of services) {
         for (;;) {
-          const ok = await fetch(`${urls[remote.name]}/_health`).then(
+          const ok = await fetch(`${urls[remote.name]}/_health`, {
+            // A child that accepts but never answers can't outlast the deadline.
+            signal: AbortSignal.timeout(
+              Math.max(1, Math.min(2000, deadline - Date.now())),
+            ),
+          }).then(
             (response) => response.ok,
             () => false,
           );
@@ -480,6 +498,8 @@ export async function startRemoteServices(
       }
     },
     async stop() {
+      stopped = true;
+      await Promise.all(restarts.values());
       process.off("exit", killOnExit);
       await Promise.all([...children.keys()].map(kill));
     },

@@ -602,7 +602,7 @@ function mountInternalCalls(
     "/_brick/call/:service/:action",
     async ({ request, params, body, set }: any) => {
       const requestId =
-        request.headers.get("x-request-id") || `req_i${Date.now()}`;
+        request.headers.get("x-request-id") || `req_i${crypto.randomUUID()}`;
       const traceId = request.headers.get("x-trace-id") || undefined;
       set.headers["x-request-id"] = requestId;
       try {

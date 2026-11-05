@@ -22,6 +22,9 @@ const child = Bun.serve({
     const body = await request.text();
     const headers = Object.fromEntries(request.headers);
     seen.push({ path: url.pathname + url.search, headers, body });
+    if (url.pathname === "/html") return new Response("<html>hi</html>");
+    if (url.pathname === "/odd-status")
+      return Response.json({ code: "ODD", status: "error" }, { status: 500 });
     if (url.pathname === "/panic")
       return new Response("<html>502 Bad Gateway</html>", {
         status: 502,
@@ -197,6 +200,15 @@ describe("remote services", () => {
     const panic = await client.panic({}).catch((e: unknown) => e);
     expect(panic).toBeInstanceOf(ActionExecutionError);
     expect(panic).toMatchObject({ status: 502, message: "Bad Gateway" });
+    // A 2xx that isn't JSON is a failure, not an undefined result.
+    expect(await client.html({}).catch((e: unknown) => e)).toMatchObject({
+      status: 502,
+    });
+    // A body status that isn't an error status leaves the HTTP one.
+    expect(await client.oddStatus({}).catch((e: unknown) => e)).toMatchObject({
+      code: "ODD",
+      status: 500,
+    });
   });
 
   it("rejects two remote services with the same name", () => {
