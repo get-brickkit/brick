@@ -1,5 +1,7 @@
 import {
   ActionExecutionError,
+  deny,
+  getHostHooks,
   runInTransaction,
   onTransactionCommit,
   type EventRecorder,
@@ -23,6 +25,7 @@ import {
   databaseValue,
   decodeCursor,
   encodeCursor,
+  errors,
   invalid,
   jsonValue,
 } from "./codec";
@@ -53,9 +56,6 @@ const writeHooks = {
   delete: ["beforeDelete", "afterDelete"],
 } as const;
 
-// Where definePlugin's `hooks.*` puts a plugin's hooks, on the resource or the
-// service it is installed on. A process-global symbol, so core needs no crud import.
-const HOST_HOOKS = Symbol.for("brickkit.plugin.hooks");
 type Hook = (args: any) => unknown;
 /** The crud() hooks, then those of plugins installed on the resource, then on the service. */
 function withHostHooks(
@@ -64,7 +64,7 @@ function withHostHooks(
   service: object,
 ): Hooks {
   const hosted = [resource, service]
-    .map((host) => (host as Record<symbol, unknown>)[HOST_HOOKS])
+    .map(getHostHooks)
     .filter(Boolean) as Record<string, Hook[]>[];
   if (!hosted.length) return hooks ?? {};
   const merged: Record<string, Hook> = { ...hooks };
@@ -156,11 +156,7 @@ export function operations(model: CrudModel) {
         { operation, input, ctx } as CrudAuthorizeArgs<any>,
       ))
     )
-      throw new ActionExecutionError(
-        ctx.user == null ? "UNAUTHORIZED" : "FORBIDDEN",
-        "Access denied",
-        ctx.user == null ? 401 : 403,
-      );
+      deny(`${resource.name}.${operation}`, ctx.user);
   };
 
   /** A call's statement and where: the scope, the filters and, for one row, its ID. */
@@ -346,7 +342,7 @@ export function operations(model: CrudModel) {
     );
     if (operation === "get") {
       if (!rows[0])
-        throw new ActionExecutionError("NOT_FOUND", "Resource not found", 404);
+        errors.NOT_FOUND("Resource not found");
       return scrub(call, rows[0]);
     }
     if (operation === "findOne") return rows[0] ? scrub(call, rows[0]) : null;
@@ -417,7 +413,7 @@ export function operations(model: CrudModel) {
             .returning(record ? columns : { id: idColumn }),
       );
       if (!rows.length)
-        throw new ActionExecutionError("NOT_FOUND", "Resource not found", 404);
+        errors.NOT_FOUND("Resource not found");
       if (record)
         await record(`${resource.name}.delete`, {
           id: eventId(rows[0]),
@@ -434,11 +430,7 @@ export function operations(model: CrudModel) {
     const operation = call.operation as "create" | "update";
     // Create scope cannot be enforced with INSERT WHERE: require explicit authorization.
     if (operation === "create" && call.scope)
-      throw new ActionExecutionError(
-        "FORBIDDEN",
-        "Row-scoped creation requires an explicit create policy",
-        403,
-      );
+      errors.FORBIDDEN("Row-scoped creation requires an explicit create policy");
     const hooks = withHostHooks(options.hooks, resource, service);
     const rows = await transaction(call, hooks, async (target, record) => {
       const data = { ...(operation === "create" ? input : input.data) };
@@ -493,15 +485,11 @@ export function operations(model: CrudModel) {
         )
         .catch((cause: unknown) => {
           if (uniqueViolation(cause))
-            throw new ActionExecutionError(
-              "CONFLICT",
-              "Resource already exists",
-              409,
-            );
+            errors.CONFLICT("Resource already exists");
           throw cause;
         });
       if (!written[0])
-        throw new ActionExecutionError("NOT_FOUND", "Resource not found", 404);
+        errors.NOT_FOUND("Resource not found");
       if (record)
         await record(
           `${resource.name}.${operation}`,

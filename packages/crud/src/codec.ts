@@ -1,4 +1,4 @@
-import { ActionExecutionError, t } from "@brickkit/core";
+import { buildErrorHelpers, t } from "@brickkit/core";
 import { FormatRegistry, Kind, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { Column } from "drizzle-orm";
@@ -94,9 +94,9 @@ export function columnSchema(column: Column): TSchema {
 export function object(properties: Record<string, TSchema>) {
   return t.Object(properties, { additionalProperties: false });
 }
-export const invalid = (message: string): never => {
-  throw new ActionExecutionError("BAD_REQUEST", message, 400);
-};
+/** Core's standard error helpers, for code that runs outside an action's `execute`. */
+export const errors = buildErrorHelpers();
+export const invalid = (message: string): never => errors.BAD_REQUEST(message);
 /** An opaque list cursor: the orderBy it was made for, and the last row's sort values. */
 export function encodeCursor(spec: string, values: unknown[]): string {
   return Buffer.from(JSON.stringify([spec, values.map(jsonValue)])).toString(

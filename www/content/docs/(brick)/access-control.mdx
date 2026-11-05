@@ -144,11 +144,11 @@ A rejected `authorize` answers 401 when the request has no `ctx.user` and 403 wh
 
 | Mechanism                                      | Code           | Status | Location in Code              |
 | :--------------------------------------------- | :------------- | :----- | :---------------------------- |
-| Action `authorize` rejection, no `ctx.user`    | `UNAUTHORIZED` | `401`  | `packages/core/src/action.ts` |
-| Action `authorize` rejection, with `ctx.user`  | `FORBIDDEN`    | `403`  | `packages/core/src/action.ts` |
-| CRUD `authorize` rejection or missing, no user | `UNAUTHORIZED` | `401`  | `packages/crud/src/index.ts`  |
-| CRUD `authorize` rejection or missing, a user  | `FORBIDDEN`    | `403`  | `packages/crud/src/index.ts`  |
-| CRUD `scope` returned a condition on create    | `FORBIDDEN`    | `403`  | `packages/crud/src/index.ts`  |
+| Action `authorize` rejection, no `ctx.user`    | `UNAUTHORIZED` | `401`  | `packages/core/src/compiler/runtime.ts` |
+| Action `authorize` rejection, with `ctx.user`  | `FORBIDDEN`    | `403`  | `packages/core/src/compiler/runtime.ts` |
+| CRUD `authorize` rejection or missing, no user | `UNAUTHORIZED` | `401`  | `packages/crud/src/perform.ts`  |
+| CRUD `authorize` rejection or missing, a user  | `FORBIDDEN`    | `403`  | `packages/crud/src/perform.ts`  |
+| CRUD `scope` returned a condition on create    | `FORBIDDEN`    | `403`  | `packages/crud/src/perform.ts`  |
 | `error.UNAUTHORIZED()` in your own code        | `UNAUTHORIZED` | `401`  | `packages/core/src/action.ts` |
 
 ### Schema

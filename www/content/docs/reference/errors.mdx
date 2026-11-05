@@ -86,12 +86,12 @@ Authorization failures are reported as follows in the current release:
 
 | Layer  | Trigger                              | Thrown Code    | HTTP Status     | Source Reference              |
 | :----- | :----------------------------------- | :------------- | :-------------- | :---------------------------- |
-| Action | `authorize()` returns `false`        | `UNAUTHORIZED` | `403 Forbidden` | `packages/core/src/action.ts` |
-| CRUD   | `access.authorize()` returns `false` | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/index.ts`  |
-| CRUD   | `access` object has no `authorize`   | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/index.ts`  |
-| CRUD   | `create` with a non-empty `scope`    | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/index.ts`  |
+| Action | `authorize()` returns `false`        | `UNAUTHORIZED` | `403 Forbidden` | `packages/core/src/compiler/runtime.ts` |
+| CRUD   | `access.authorize()` returns `false` | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/perform.ts` |
+| CRUD   | `access` object has no `authorize`   | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/perform.ts` |
+| CRUD   | `create` with a non-empty `scope`    | `FORBIDDEN`    | `403 Forbidden` | `packages/crud/src/perform.ts` |
 
-The action message is `Access denied for action '<name>'`; the CRUD message is `Access denied` (or `Row-scoped creation requires an explicit create policy` for scoped creates).
+The message is `Access denied for action '<name>'`, where a CRUD operation's name is `<resource>.<operation>` (or `Row-scoped creation requires an explicit create policy` for scoped creates).
 
 <Callout type="warn">
   **Known inconsistency (Issue #53)**: In the current release, an action

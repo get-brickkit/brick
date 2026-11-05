@@ -92,7 +92,7 @@ export {
   type HandlerFactory,
 } from "./compiler";
 export { emitHandlerFactory } from "./compiler/emit";
-export { compilerRuntime } from "./compiler/runtime";
+export { compilerRuntime, deny } from "./compiler/runtime";
 
 // Core Primitives
 export { defineService, ServiceImpl } from "./service";
