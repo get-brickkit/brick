@@ -1,3 +1,4 @@
+import { keys } from "../../../src/keys.js";
 import { WORLD } from "./paths.js";
 
 /** The world options a test may tune (see each package's src/config.ts). */
@@ -36,7 +37,7 @@ const worlds: Record<string, WorldUnderTest> = {
     },
     churnBudget: { maxAttempts: 73 },
     jobPrefix: () => undefined,
-    queueKeyPattern: (keyPrefix) => `${keyPrefix}queue:*`,
+    queueKeyPattern: (keyPrefix) => keys(keyPrefix).queue.pattern,
   },
   "bullmq-world": {
     fastRecovery: { lockDuration: 2000, stalledInterval: 1000 },
