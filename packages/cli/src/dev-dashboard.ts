@@ -20,6 +20,7 @@ import {
   requestProtocol,
 } from "./dashboard-access";
 import {
+  ASSETS,
   CSRF_HEADER,
   CSRF_VALUE,
   DOCS_PATHS,
@@ -278,7 +279,7 @@ export function startDevDashboard(
     assets(_request, response, url) {
       const name = url.pathname.slice(ROUTES.assets.path.length + 1);
       // The project's own files, kept in memory beside the dashboard's.
-      const own = name === "brick-theme.css" ? theme : extension?.asset(name);
+      const own = name === ASSETS.theme ? theme : extension?.asset(name);
       if (own !== undefined)
         send(response, 200, own, {
           "content-type": assetType(name),

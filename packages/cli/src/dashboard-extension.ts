@@ -4,7 +4,11 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { ConfigError } from "./config";
-import { SHARED_MODULES, type ExtensionPart } from "./dashboard-protocol";
+import {
+  ASSETS,
+  SHARED_MODULES,
+  type ExtensionPart,
+} from "./dashboard-protocol";
 
 /*
  * The dashboard's extension: one module of the project's own, built with the
@@ -322,7 +326,7 @@ export async function writeDashboardExtension(
 
 /** Whether `path` is a folder `brick build` wrote, which is served as it is. */
 const isBuiltFolder = (path: string): boolean =>
-  existsSync(join(path, "extension.js"));
+  existsSync(join(path, ASSETS.extension));
 
 /** Write the extensions as `layoutParts` lays them out; `readBuiltFolder` reads them back. */
 async function writeBuiltFolder(
@@ -330,20 +334,20 @@ async function writeBuiltFolder(
   layout: BuiltExtension,
 ): Promise<void> {
   await mkdir(outdir, { recursive: true });
-  await writeFile(join(outdir, "extension.js"), layout.js);
-  await writeFile(join(outdir, "extension.css"), layout.css);
+  await writeFile(join(outdir, ASSETS.extension), layout.js);
+  await writeFile(join(outdir, ASSETS.extensionCss), layout.css);
   for (const [name, js] of Object.entries(layout.parts ?? {}))
     await writeFile(join(outdir, name), js);
 }
 
 async function readBuiltFolder(path: string): Promise<BuiltExtension> {
-  const css = join(path, "extension.css");
+  const css = join(path, ASSETS.extensionCss);
   const parts: Record<string, string> = {};
   for (const name of await readdir(path))
     if (/^extension-\d+\.js$/.test(name))
       parts[name] = await readFile(join(path, name), "utf8");
   return {
-    js: await readFile(join(path, "extension.js"), "utf8"),
+    js: await readFile(join(path, ASSETS.extension), "utf8"),
     css: existsSync(css) ? await readFile(css, "utf8") : "",
     parts,
   };
@@ -559,8 +563,8 @@ export class DashboardExtensions {
 
   /** A file under `/assets/` this serves, or undefined. */
   asset(name: string): string | undefined {
-    if (name === "extension.js") return this.built?.js;
-    if (name === "extension.css") return this.built?.css;
+    if (name === ASSETS.extension) return this.built?.js;
+    if (name === ASSETS.extensionCss) return this.built?.css;
     // From the layout, or the `brick build` folder the app's names.
     return this.built?.parts?.[name];
   }

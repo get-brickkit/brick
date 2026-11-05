@@ -8,6 +8,7 @@ import {
 import {
   LIVE_LIMITS,
   ROUTES,
+  SHELL,
   TELEMETRY_EVENTS,
   THEME_STORAGE_KEY,
   decode,
@@ -28,7 +29,7 @@ export interface DashboardState extends DashboardSnapshot {
  */
 function followExtension(build: ExtensionBuild | null) {
   const served = document
-    .querySelector('meta[name="brick-extension"]')
+    .querySelector(SHELL.extensionMeta)
     ?.getAttribute("data-revision");
   // A page served without an extension reloads when one appears (a plugin's).
   if (build && served !== String(build.revision)) location.reload();

@@ -1,11 +1,13 @@
-import { SHARED_MODULES, THEME_STORAGE_KEY } from "./dashboard-protocol";
+import {
+  ASSETS,
+  assetUrl,
+  SHARED_MODULES,
+  THEME_STORAGE_KEY,
+} from "./dashboard-protocol";
 
 const IMPORT_MAP = JSON.stringify({
   imports: Object.fromEntries(
-    SHARED_MODULES.map((module) => [
-      module.specifier,
-      `/assets/${module.file}`,
-    ]),
+    SHARED_MODULES.map((module) => [module.specifier, assetUrl(module.file)]),
   ),
 });
 
@@ -45,14 +47,14 @@ export function dashboardShell(
   } catch (error) {}
 })();
 </script>
-<link rel="stylesheet" href="/assets/app.css">
-${extension?.css ? `<link rel="stylesheet" href="/assets/extension.css${version}">\n` : ""}${theme ? `<link rel="stylesheet" href="/assets/brick-theme.css" data-brick-theme>\n` : ""}${extension ? `<meta name="brick-extension" data-revision="${extension.revision}"${extension.js ? ` data-src="/assets/extension.js${version}"` : ""}>\n` : ""}<script type="importmap">
+<link rel="stylesheet" href="${assetUrl(ASSETS.appCss)}">
+${extension?.css ? `<link rel="stylesheet" href="${assetUrl(ASSETS.extensionCss)}${version}">\n` : ""}${theme ? `<link rel="stylesheet" href="${assetUrl(ASSETS.theme)}" data-brick-theme>\n` : ""}${extension ? `<meta name="brick-extension" data-revision="${extension.revision}"${extension.js ? ` data-src="${assetUrl(ASSETS.extension)}${version}"` : ""}>\n` : ""}<script type="importmap">
 ${IMPORT_MAP}
 </script>
 </head>
 <body>
 <div id="root"></div>
-<script type="module" src="/assets/app.js"></script>
+<script type="module" src="${assetUrl(ASSETS.app)}"></script>
 </body>
 </html>
 `;

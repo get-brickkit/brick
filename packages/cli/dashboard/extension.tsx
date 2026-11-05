@@ -17,6 +17,7 @@ import {
 } from "@brickkit/core/client";
 import {
   ROUTES,
+  SHELL,
   type ExtensionPart,
   type TraceSummary,
 } from "../src/dashboard-protocol";
@@ -47,7 +48,7 @@ export interface LoadedExtension {
  */
 export async function loadExtension(): Promise<LoadedExtension> {
   const src = document
-    .querySelector('meta[name="brick-extension"]')
+    .querySelector(SHELL.extensionMeta)
     ?.getAttribute("data-src");
   if (!src) return {};
   try {

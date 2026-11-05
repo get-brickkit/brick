@@ -232,6 +232,33 @@ export interface IngestPayload {
 }
 
 // ---------------------------------------------------------------------------
+// The shell and its assets
+
+/** The files the shell loads from `ROUTES.assets.path`. `app.*` come from the dashboard's build. */
+export const ASSETS = {
+  app: "app.js",
+  appCss: "app.css",
+  /** The project's extension, or the list of parts when plugins have one too. */
+  extension: "extension.js",
+  extensionCss: "extension.css",
+  /** The project's theme tokens; see `themeCss`. */
+  theme: "brick-theme.css",
+} as const;
+
+/** Where an asset is served. */
+export const assetUrl = (file: string): string =>
+  `${ROUTES.assets.path}/${file}`;
+
+/**
+ * What the shell tells the page in its markup: a `<meta name="brick-extension"
+ * data-revision data-src>` for the extension, and the theme's `<link>`.
+ */
+export const SHELL = {
+  extensionMeta: 'meta[name="brick-extension"]',
+  themeLink: "link[data-brick-theme]",
+} as const;
+
+// ---------------------------------------------------------------------------
 // Modules the page shares with the project's own
 
 /**
