@@ -292,11 +292,10 @@ export async function startDevServer(options: DevServerOptions = {}) {
     console.log(`📊 Dev dashboard:       http://127.0.0.1:${dashboard.port}`);
   }
   let child = launch();
+  // The worker reports the other files the entry imports (brick:dependencies).
   const watchDirs = [
     ...new Set([
-      resolve("src"),
-      resolve("app"),
-      resolve(resolvedEntry, ".."),
+      dirname(resolvedEntry),
       ...(manifest ? [manifest.services] : []),
     ]),
   ].filter(existsSync);

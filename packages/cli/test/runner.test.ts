@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, spyOn } from "bun:test";
 import { brick, defineService, resetGlobalRegistry } from "@brickkit/core";
 import { startDevServer } from "../src/runner";
 import { printBanner } from "../src/serve";
-import { existsSync } from "fs";
+import { existsSync, mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
 import path from "path";
 
 describe("startDevServer", () => {
@@ -33,6 +34,29 @@ describe("startDevServer", () => {
     } finally {
       if (existsSync(entryPath)) await Bun.file(entryPath).delete();
     }
+  });
+
+  it("watches the entry's folder, not folders named after the working directory", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "brick-watch-"));
+    const entry = path.join(root, "server", "app.ts");
+    await Bun.write(entry, "export {};");
+    const lines: string[] = [];
+    const log = spyOn(console, "log").mockImplementation((line) => {
+      lines.push(String(line));
+    });
+    try {
+      const dev = (await startDevServer({ entry, port: 45114 })) as {
+        stop(): void;
+      };
+      dev.stop();
+    } finally {
+      log.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+    // The working directory here has a src folder of its own.
+    expect(lines.find((line) => line.includes("Watching"))).toEndWith(
+      `Watching for changes in: ${path.join(root, "server")}`,
+    );
   });
 
   it("refuses a dashboard on the app's port, when PORT sets it too", async () => {
