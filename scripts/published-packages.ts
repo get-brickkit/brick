@@ -14,5 +14,13 @@ export function publishedPackages(root = join(import.meta.dir, "..")) {
     });
 }
 
+/** The repository's web address, from the root package.json: https://github.com/<owner>/<name>. */
+export function repositoryUrl(root = join(import.meta.dir, "..")): string {
+  const { repository } = JSON.parse(
+    readFileSync(join(root, "package.json"), "utf8"),
+  );
+  return repository.url.replace(/^git\+|\.git$/g, "");
+}
+
 if (import.meta.main)
   console.log(JSON.stringify(publishedPackages().map((p) => p.dir)));

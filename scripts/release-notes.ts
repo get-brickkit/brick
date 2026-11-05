@@ -1,16 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { publishedPackages } from "./published-packages.ts";
+import { publishedPackages, repositoryUrl } from "./published-packages.ts";
 
 const root = join(import.meta.dir, "..");
 const packages = publishedPackages(root);
 // Released in lockstep, so any package carries the release version.
 const version = packages[0]!.data.version;
 const tag = `v${version}`;
-const repo = JSON.parse(
-  readFileSync(join(root, "package.json"), "utf8"),
-).repository.url.replace(/^git\+|\.git$/g, "");
+const repo = repositoryUrl(root);
 const SECTIONS: Record<string, string> = {
   feat: "Features",
   fix: "Bug Fixes",

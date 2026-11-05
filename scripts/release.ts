@@ -17,7 +17,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { publishedPackages } from "./published-packages.ts";
+import { publishedPackages, repositoryUrl } from "./published-packages.ts";
 
 const ROOT = join(import.meta.dir, "..");
 const DRY = process.argv.includes("--dry-run");
@@ -177,7 +177,7 @@ if (!PREPARE) {
     "run",
     "publish-npm.yml",
     "--repo",
-    "get-brickkit/brick",
+    new URL(repositoryUrl(ROOT)).pathname.slice(1),
     "--ref",
     releaseBranch,
     "-f",
