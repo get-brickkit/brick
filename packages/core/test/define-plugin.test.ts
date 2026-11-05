@@ -691,6 +691,38 @@ describe("plugin deps", () => {
     });
   });
 
+  it("keeps a nested install's deps on its own actions, and the outer's on the rest", async () => {
+    const inner = definePlugin({
+      name: "@acme/inner",
+      deps: { mailer: port<Mailer>() },
+      service: ({ service }) => {
+        service.action({
+          name: "innerSend",
+          execute: ({ ctx }) => ({ sent: ctx.deps.mailer.send("i") }),
+        });
+      },
+    });
+    const outer = definePlugin({
+      name: "@acme/outer",
+      deps: { mailer: port<Mailer>() },
+      service: ({ service }) => {
+        service.use(inner({}, { deps: { mailer: mailer("inner") } }));
+        service.action({
+          name: "outerSend",
+          execute: ({ ctx }) => ({ sent: ctx.deps.mailer.send("o") }),
+        });
+      },
+    });
+    const service = defineService("nested_deps");
+    service.use(outer({}, { deps: { mailer: mailer("outer") } }));
+    expect(await (service.getAction("innerSend") as any).run()).toEqual({
+      sent: "inner:i",
+    });
+    expect(await (service.getAction("outerSend") as any).run()).toEqual({
+      sent: "outer:o",
+    });
+  });
+
   it("refuses one action object shared by two installs with different deps", () => {
     const shared = defineAction({ name: "shared", execute: () => null });
     const sharing = definePlugin({
