@@ -38,6 +38,18 @@ export async function applyMigrations(url: string): Promise<void> {
       await sql`INSERT INTO _applied_migrations (name) VALUES (${files[0]!})`;
       applied.add(files[0]);
     }
+    // A database `drizzle-kit migrate` set up has the first N, in order, in its journal.
+    const [journal] =
+      await sql`SELECT to_regclass('drizzle.__drizzle_migrations') AS name`;
+    if (journal?.name) {
+      const [{ count }] =
+        await sql`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`;
+      for (const file of files.slice(0, count))
+        if (!applied.has(file)) {
+          await sql`INSERT INTO _applied_migrations (name) VALUES (${file})`;
+          applied.add(file);
+        }
+    }
     for (const file of files) {
       if (applied.has(file)) continue;
       await sql.begin(async (tx) => {

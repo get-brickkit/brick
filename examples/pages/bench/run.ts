@@ -154,19 +154,10 @@ const children = await startRemoteServices([benchGo, benchRust], {
   appUrl: `http://127.0.0.1:${port}`,
   services: ["pages", "bench"],
   cwd: root,
-  env: { DATABASE_URL: databaseUrl },
-});
-const app = spawn("bun", [".output/server/index.mjs"], {
-  cwd: root,
-  stdio: ["ignore", "ignore", "inherit"],
+  // Docker's Caddy reaches the host through its bridge on Linux, not loopback.
   env: {
-    ...process.env,
-    NODE_ENV: "production",
-    BRICK_BENCH: "1",
-    PORT: String(port),
-    BASE_URL: appUrl,
     DATABASE_URL: databaseUrl,
-    AUTH_SECRET,
+    ...(process.platform === "linux" ? { BRICK_HOST: "0.0.0.0" } : {}),
   },
 });
 // 3. Caddy, routing by path straight to each process: the production setup.
@@ -189,6 +180,21 @@ writeFileSync(
 const caddyPort = await freePort();
 const nativePort = await freePort();
 let native: ReturnType<typeof spawn> | undefined;
+
+// The app last, so nothing that can throw runs between it and the try.
+const app = spawn("bun", [".output/server/index.mjs"], {
+  cwd: root,
+  stdio: ["ignore", "ignore", "inherit"],
+  env: {
+    ...process.env,
+    NODE_ENV: "production",
+    BRICK_BENCH: "1",
+    PORT: String(port),
+    BASE_URL: appUrl,
+    DATABASE_URL: databaseUrl,
+    AUTH_SECRET,
+  },
+});
 
 // The built server closes gracefully but its pools keep it alive: kill it after 6s.
 const stop = async () => {
