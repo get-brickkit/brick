@@ -104,6 +104,8 @@ export const SOCKET_STOP_CODES: ReadonlySet<number> = new Set([
 
 export const SOCKET_MAX_BYTES = 64 * 1024;
 export const SOCKET_BUFFER_BYTES = 1024 * 1024;
+/** How many messages of one connection may wait for their handlers. */
+export const SOCKET_BUFFER_MESSAGES = 32;
 const ROOM_MAX_BYTES = 200;
 /** The length of a sequence's signature: base64url of an HMAC, cut short. */
 export const SOCKET_SIGNATURE_LENGTH = 22;

@@ -192,12 +192,10 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
 
   // Request logging first so every route below is timed.
   const requestLogging = options.requestLogging ?? true;
-  if (requestLogging !== false) {
-    const pluginOpts = requestLogging === true ? {} : requestLogging;
-    if (pluginOpts.enabled !== false) {
-      app.use(requestLoggingPlugin(pluginOpts));
-    }
-  }
+  if (requestLogging !== false)
+    app.use(
+      requestLoggingPlugin(requestLogging === true ? {} : requestLogging),
+    );
 
   // Scalar API reference page (opt-in): `reference: true`, or options with a path.
   const reference = options.reference ?? false;

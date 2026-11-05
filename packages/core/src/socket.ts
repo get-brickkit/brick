@@ -25,6 +25,8 @@ import {
   signSeq,
   splitSeq,
   SOCKET_BUFFER_BYTES,
+  SOCKET_BUFFER_MESSAGES,
+  STANDARD_ERRORS,
   SOCKET_CLOSE,
   SOCKET_CONTROL,
   SOCKET_MAX_BYTES,
@@ -566,7 +568,7 @@ export function mountSockets(
       });
     };
     // The codes a handler can raise with `error.CODE()`: declared plus standard.
-    const raisable = buildErrorHelpers(definition.errors);
+    const raisable = { ...STANDARD_ERRORS, ...definition.errors };
     const fail = (ws: Peer, error: unknown) => {
       if (!(error instanceof SocketDenied))
         logger.error({ error, service, socket: definition.schema.name });
@@ -671,7 +673,10 @@ export function mountSockets(
           ws.close(SOCKET_CLOSE.tooLarge, "Message too large");
           return;
         }
-        if (state.pending >= 32 || state.bytes + size > SOCKET_BUFFER_BYTES) {
+        if (
+          state.pending >= SOCKET_BUFFER_MESSAGES ||
+          state.bytes + size > SOCKET_BUFFER_BYTES
+        ) {
           ws.close(SOCKET_CLOSE.tryAgainLater, "Socket queue full");
           return;
         }

@@ -17,6 +17,9 @@ export function reconnectDelay(failures: number): number {
   return ceiling / 2 + Math.random() * (ceiling / 2);
 }
 
+/** How long a call waits for Redis to connect before going on without it. */
+const REDIS_WAIT_MS = 1000;
+
 /** One Redis connection that reconnects by itself and reports each fresh connection. */
 export function connection(
   url: string | undefined,
@@ -66,8 +69,11 @@ export function connection(
       if (redis?.connected) return Promise.resolve();
       start();
       return new Promise((resolve) => {
-        waiters.push(resolve);
-        setTimeout(resolve, ms);
+        const timeout = setTimeout(resolve, ms);
+        waiters.push(() => {
+          clearTimeout(timeout);
+          resolve();
+        });
       });
     },
     close() {
@@ -159,7 +165,7 @@ export function redisBroker(options: RedisBrokerOptions = {}): SocketBroker {
     },
     async head() {
       try {
-        await publisher.opened(1000);
+        await publisher.opened(REDIS_WAIT_MS);
         const [seconds, micros] = (await publisher.get()!.send("TIME", [])) as [
           string,
           string,
@@ -172,7 +178,7 @@ export function redisBroker(options: RedisBrokerOptions = {}): SocketBroker {
     async history(topic, since, replay) {
       let raw: [string, string[]][];
       try {
-        await publisher.opened(1000);
+        await publisher.opened(REDIS_WAIT_MS);
         raw = await publisher.get()!.send("XRANGE", [stream(topic), "-", "+"]);
       } catch {
         return undefined;
@@ -217,7 +223,7 @@ export function redisBroker(options: RedisBrokerOptions = {}): SocketBroker {
     async ready(topic) {
       const name = channel(topic);
       // Wait briefly for Redis, so a join is acknowledged once its emits can arrive.
-      if (!pending.has(name)) await subscriber.opened(1000);
+      if (!pending.has(name)) await subscriber.opened(REDIS_WAIT_MS);
       await pending.get(name);
     },
     close() {
