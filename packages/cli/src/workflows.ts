@@ -52,17 +52,19 @@ function loaderFor(path: string): "ts" | "tsx" | "js" | "jsx" {
 async function loadBuilders(
   root: string,
 ): Promise<{ builders: Builders; path: string } | undefined> {
+  let path: string;
   try {
-    const path = createRequire(join(root, "package.json")).resolve(
+    path = createRequire(join(root, "package.json")).resolve(
       "@workflow/builders",
     );
-    return {
-      builders: (await import(pathToFileURL(path).href)) as Builders,
-      path,
-    };
   } catch {
+    // Not installed: the app uses no workflows. A broken install throws below.
     return undefined;
   }
+  return {
+    builders: (await import(pathToFileURL(path).href)) as Builders,
+    path,
+  };
 }
 
 /**
