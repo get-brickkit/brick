@@ -8,6 +8,8 @@ publish = false
 [workspace]
 
 [dependencies]
+# Its lockfile has crypto-bigint 0.5.5 and rsa 0.9.10 through brickkit's
+# jsonwebtoken: see sdk/rust/brick/Cargo.toml for why neither is reachable.
 brickkit = { path = "../../../../sdk/rust/brick" }
 schemars = { version = "1.2.3", features = ["preserve_order"] }
 serde = { version = "1.0.229", features = ["derive"] }

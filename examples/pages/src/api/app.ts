@@ -4,16 +4,18 @@ import { getAuth } from "./auth";
 import { registerMcpRoutes } from "./mcp";
 import { baseUrlSecret, portSecret } from "./secrets";
 import {
-  benchAuthService,
-  benchGo,
-  benchRust,
-  benchService,
-} from "./services/bench/service";
-import {
   pagesService,
   pagesTable,
   renderPageDocument,
 } from "./services/pages/service";
+
+// The benchmark's services, only with BRICK_BENCH=1 (bench/run.ts sets it):
+// imported only then, so a real deployment neither serves nor registers their
+// unauthenticated endpoints, and the app needs no Go or Rust toolchain.
+const bench =
+  process.env.BRICK_BENCH === "1"
+    ? await import("./services/bench/service")
+    : undefined;
 
 export interface PagesEnv {
   port: number;
@@ -35,11 +37,11 @@ const NOT_FOUND_HTML =
 export function buildApp() {
   const port = portSecret.require();
   const app = brick({
-    services: [pagesService, benchService, benchAuthService],
-    // The benchmark's Go and Rust services, only with BRICK_BENCH=1 (bench/run.ts
-    // sets it), so the app needs no Go or Rust toolchain. `brick dev` proxies
-    // /api/bench-go/* and /api/bench-rust/* to them.
-    remote: process.env.BRICK_BENCH === "1" ? [benchGo, benchRust] : [],
+    // `brick dev` proxies /api/bench-go/* and /api/bench-rust/* to Go and Rust.
+    services: bench
+      ? [pagesService, bench.benchService, bench.benchAuthService]
+      : [pagesService],
+    remote: bench ? [bench.benchGo, bench.benchRust] : [],
     cors: {
       origin: new URL(baseUrlSecret.value() as string).origin,
       credentials: true,
