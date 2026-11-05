@@ -42,8 +42,9 @@ import { useWorkflowHooks } from "~/lib/client/hooks/use-paginated-list";
 import { getErrorMessage, unwrapOrThrow } from "~/lib/client/workflow-errors";
 import { rpc } from "~/lib/rpc-client";
 
+const INVOCATION_EVENTS_LIMIT = 100;
+
 interface HooksTableProps {
-  runId?: string;
   onHookClick: (hookId: string, runId?: string) => void;
   selectedHookId?: string;
 }
@@ -60,11 +61,7 @@ interface InvocationData {
  * Fetches invocation counts in the background for each hook.
  *
  */
-export function HooksTable({
-  runId,
-  onHookClick,
-  selectedHookId,
-}: HooksTableProps) {
+export function HooksTable({ onHookClick, selectedHookId }: HooksTableProps) {
   const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(
     () => new Date(),
   );
@@ -78,10 +75,7 @@ export function HooksTable({
     hasPreviousPage,
     refresh,
     pageInfo,
-  } = useWorkflowHooks({
-    runId,
-    sortOrder: "desc",
-  });
+  } = useWorkflowHooks({ sortOrder: "desc" });
 
   // Hook actions for resolve functionality
   const hookActions = useHookActions({
@@ -112,91 +106,46 @@ export function HooksTable({
     Map<string, InvocationData>
   >(new Map());
 
-  // Fetch invocation counts for hooks by loading all events for the run
+  // Count each hook's invocations from its own run's events, at most
+  // INVOCATION_EVENTS_LIMIT of them.
   useEffect(() => {
-    if (!hooks.length || !runId) return;
-
-    const fetchInvocations = async () => {
-      // Initialize all hooks as loading
-      const initialData = new Map<string, InvocationData>();
-      for (const hook of hooks) {
-        initialData.set(hook.hookId, {
-          count: 0,
-          hasMore: false,
-          loading: true,
-        });
-      }
-      setInvocationData(initialData);
-
-      try {
-        const serverResult = await rpc("fetchEvents", {
-          runId,
-          sortOrder: "asc",
-          limit: 1000,
-        });
-
-        if (!serverResult.success) {
-          // Mark all as not loading with 0 counts
-          setInvocationData((prev) => {
-            const updated = new Map(prev);
-            for (const hook of hooks) {
-              updated.set(hook.hookId, {
-                count: 0,
-                hasMore: false,
-                loading: false,
-              });
-            }
-            return updated;
-          });
-          return;
-        }
-
-        const allEvents = serverResult.data.data;
-        const hookIds = new Set(hooks.map((h) => h.hookId));
-
-        // Count hook_received events per hook
-        const counts = new Map<string, number>();
-        for (const event of allEvents) {
-          if (
-            event.eventType === "hook_received" &&
-            event.correlationId &&
-            hookIds.has(event.correlationId)
-          ) {
-            counts.set(
-              event.correlationId,
-              (counts.get(event.correlationId) ?? 0) + 1,
-            );
-          }
-        }
-
-        setInvocationData((prev) => {
-          const updated = new Map(prev);
-          for (const hook of hooks) {
-            updated.set(hook.hookId, {
-              count: counts.get(hook.hookId) ?? 0,
-              hasMore: serverResult.data.hasMore,
-              loading: false,
-            });
-          }
-          return updated;
-        });
-      } catch {
-        setInvocationData((prev) => {
-          const updated = new Map(prev);
-          for (const hook of hooks) {
-            updated.set(hook.hookId, {
-              count: 0,
-              hasMore: false,
-              loading: false,
-            });
-          }
-          return updated;
-        });
-      }
+    if (!hooks.length) return;
+    let ignore = false;
+    setInvocationData(
+      new Map(
+        hooks.map((hook) => [
+          hook.hookId,
+          { count: 0, hasMore: false, loading: true },
+        ]),
+      ),
+    );
+    const settle = (hookId: string, data: InvocationData) => {
+      if (ignore) return;
+      setInvocationData((prev) => new Map(prev).set(hookId, data));
     };
-
-    fetchInvocations();
-  }, [hooks, runId]);
+    for (const hook of hooks) {
+      unwrapOrThrow(
+        rpc("fetchEventsByCorrelationId", {
+          correlationId: hook.hookId,
+          runId: hook.runId,
+          limit: INVOCATION_EVENTS_LIMIT,
+        }),
+      ).then(
+        ({ data: events, hasMore }) =>
+          settle(hook.hookId, {
+            count: events.filter((event) => event.eventType === "hook_received")
+              .length,
+            hasMore,
+            loading: false,
+          }),
+        (error: Error) =>
+          settle(hook.hookId, { count: error, hasMore: false, loading: false }),
+      );
+    }
+    return () => {
+      ignore = true;
+    };
+  }, [hooks]);
 
   // Render invocation count for a hook
   const renderInvocationCount = (hook: HookListItem) => {
@@ -224,7 +173,8 @@ export function HooksTable({
           </TooltipTrigger>
           <TooltipContent className="max-w-xs">
             <div className="text-xs">
-              Showing first 100 invocations. There may be more.
+              Counted from the first {INVOCATION_EVENTS_LIMIT} events. There may
+              be more.
             </div>
           </TooltipContent>
         </Tooltip>
