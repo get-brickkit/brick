@@ -18,7 +18,7 @@ import {
   type Rule,
   type RuleContext,
 } from "../ast";
-import { STANDARD_ERRORS } from "@brickkit/core/client";
+import { isControlEvent, STANDARD_ERRORS } from "@brickkit/core/client";
 import { MANIFEST_FILE } from "../../definitions";
 import { version } from "../../../package.json";
 
@@ -462,7 +462,7 @@ export const checkRules: Record<string, Rule> = {
             if (schemas?.type !== "ObjectExpression") continue;
             for (const property of schemas.properties) {
               const name = propertyName(property);
-              if (name?.startsWith("$"))
+              if (name !== undefined && isControlEvent(name))
                 context.report({
                   node: property.key,
                   message: `Socket ${key} event "${name}" starts with $, which is reserved for control messages.`,
