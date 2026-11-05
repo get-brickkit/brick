@@ -18,6 +18,7 @@ import { migrate as migrateSQLite } from "drizzle-orm/bun-sqlite/migrator";
 export * from "./sqlite";
 export * from "./postgres";
 export * from "./define";
+export { columnValue } from "./column";
 
 // Re-export core Drizzle SQL expressions & operators for convenience
 export {

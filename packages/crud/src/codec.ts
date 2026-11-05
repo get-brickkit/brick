@@ -1,4 +1,4 @@
-import { buildErrorHelpers, t } from "@brickkit/core";
+import { buildErrorHelpers, columnValue, t } from "@brickkit/core";
 import { FormatRegistry, Kind, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { Column } from "drizzle-orm";
@@ -21,13 +21,12 @@ export function jsonValue(value: unknown): unknown {
     );
   return value;
 }
+/** `columnValue`, with a string the column can't hold rejected as a bad request. */
 export function databaseValue(column: Column, value: unknown): unknown {
-  if (value === null || value === undefined) return value;
-  if (column.dataType === "date" && typeof value === "string")
-    return new Date(value);
-  if (column.dataType === "bigint" && typeof value === "string")
-    return BigInt(value);
-  return value;
+  const stored = columnValue(column, value);
+  return stored === undefined && value !== undefined
+    ? invalid(`Invalid value for column '${column.name}'`)
+    : stored;
 }
 export function checkJsonSchema(
   schema: TSchema,

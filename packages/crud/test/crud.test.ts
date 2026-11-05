@@ -696,3 +696,37 @@ for (const compiler of [false, true]) {
     }
   });
 }
+
+test("a value its column can't hold is a bad request, also past a custom schema", async () => {
+  const events = sqliteTable("events", {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    at: integer("at", { mode: "timestamp_ms" }).notNull(),
+  });
+  const database = defineDatabase({ tables: [events] });
+  const db = database.getDb();
+  const sqlite = (db as typeof db & { $client: Database }).$client;
+  sqlite.exec(
+    "CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL)",
+  );
+  const service = defineService(`test_${sequence++}`, { database });
+  const r: any = service.resource({ name: "event", table: events }).use(
+    crud({
+      access: "public",
+      fields: {
+        id: { read: true },
+        at: { read: true, create: true, schema: t.String() },
+      },
+    }),
+  );
+  try {
+    await expect(r.create.run({ at: "not a date" })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      status: 400,
+    });
+    expect(
+      await r.create.run({ at: "2026-01-01T00:00:00.000Z" }),
+    ).toMatchObject({ id: 1 });
+  } finally {
+    sqlite.close();
+  }
+});
