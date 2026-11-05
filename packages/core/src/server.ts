@@ -519,7 +519,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
         : handler;
     app.all(`${base}/*`, { parse: "none" }, traced(`${base}/*`));
   }
-  if (remote.length) mountInternalCalls(app, services);
+  if (remote.length) mountInternalCalls(app, services, telemetry);
 
   mountSockets(
     app,
@@ -598,48 +598,63 @@ const internalLogger = createLogger("[brick:internal]");
 function mountInternalCalls(
   app: Elysia<any, any, any, any, any, any, any>,
   services: readonly Service<any, any>[],
+  telemetry: boolean,
 ) {
-  app.post(
-    "/_brick/call/:service/:action",
-    async ({ request, params, body, set }: any) => {
-      const requestId =
-        request.headers.get("x-request-id") || `req_i${crypto.randomUUID()}`;
-      const traceId = request.headers.get("x-trace-id") || undefined;
-      set.headers["x-request-id"] = requestId;
-      try {
-        const envelope = trustedEnvelope(request.headers);
-        if (!envelope)
-          throw new ActionExecutionError(
-            "UNAUTHORIZED",
-            "Missing or invalid internal token",
-            401,
-          );
-        const service = services.find(
-          (candidate) => kebabCase(candidate.name) === params.service,
+  const path = "/_brick/call/:service/:action";
+  const handler = async ({ request, params, body, set }: any) => {
+    const requestId =
+      request.headers.get("x-request-id") || `req_i${crypto.randomUUID()}`;
+    const traceId = request.headers.get("x-trace-id") || undefined;
+    set.headers["x-request-id"] = requestId;
+    try {
+      const envelope = trustedEnvelope(request.headers);
+      if (!envelope)
+        throw new ActionExecutionError(
+          "UNAUTHORIZED",
+          "Missing or invalid internal token",
+          401,
         );
-        const action = service
-          ?.listActions()
-          .find((candidate) => kebabCase(candidate.name) === params.action);
-        if (!action)
-          throw new ActionExecutionError(
-            "NOT_FOUND",
-            `No action '${params.service}.${params.action}'`,
-            404,
-          );
-        const result = await action.execute({
-          input: body,
-          ctx: { request, requestId, traceId, ...envelope },
-        });
-        return jsonActionResult(result);
-      } catch (err) {
-        const response = toErrorResponse(err, {
-          logger: internalLogger,
+      const service = services.find(
+        (candidate) => kebabCase(candidate.name) === params.service,
+      );
+      const action = service
+        ?.listActions()
+        .find((candidate) => kebabCase(candidate.name) === params.action);
+      if (!action)
+        throw new ActionExecutionError(
+          "NOT_FOUND",
+          `No action '${params.service}.${params.action}'`,
+          404,
+        );
+      // What a public call's ctx has too: the headers and the action's logger.
+      const result = await action.execute({
+        input: body,
+        ctx: {
+          request,
           requestId,
-        });
-        set.status = response.status;
-        return response;
-      }
-    },
+          traceId,
+          metadata: { headers: Object.fromEntries(request.headers) },
+          logger: createLogger(`[${service!.name}:${action.name}]`),
+          ...envelope,
+        },
+      });
+      return jsonActionResult(result);
+    } catch (err) {
+      const response = toErrorResponse(err, {
+        logger: internalLogger,
+        requestId,
+      });
+      set.status = response.status;
+      return response;
+    }
+  };
+  // Traced like the other routes, so a call from Go or Rust keeps its span.
+  app.post(
+    path,
+    telemetry
+      ? (context: any) =>
+          traceHttpRequest(context, "POST", path, () => handler(context))
+      : handler,
   );
 }
 

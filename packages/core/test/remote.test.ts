@@ -7,6 +7,7 @@ import {
   remoteEnv,
   remoteService,
   resetGlobalRegistry,
+  startRemoteServices,
   t,
   useService,
 } from "../src";
@@ -275,5 +276,22 @@ describe("remote services", () => {
     const body = await response.json();
     expect(body.user).toBeUndefined();
     expect(body.caller).toBeUndefined();
+  });
+
+  it("ready fails at once when a child exits", async () => {
+    const crash = remoteService({ name: "crash", dir: ".", dev: "exit 1" });
+    const services = process.env.BRICK_SERVICES;
+    const children = await startRemoteServices([crash], {
+      mode: "dev",
+      appUrl: "http://127.0.0.1:1",
+    });
+    const started = Date.now();
+    await expect(children.ready(30_000)).rejects.toThrow(
+      'remote service "crash" exited before it was ready',
+    );
+    expect(Date.now() - started).toBeLessThan(5_000);
+    await children.stop();
+    if (services === undefined) delete process.env.BRICK_SERVICES;
+    else process.env.BRICK_SERVICES = services;
   });
 });

@@ -499,6 +499,12 @@ export async function startRemoteServices(
             () => false,
           );
           if (ok) break;
+          // Dead (exited, or failed to spawn): no point waiting for the deadline.
+          const child = children.get(remote.name);
+          if (!child || child.exitCode !== null || child.signalCode !== null)
+            throw new Error(
+              `Brick: remote service "${remote.name}" exited before it was ready`,
+            );
           if (Date.now() > deadline)
             throw new Error(
               `Brick: remote service "${remote.name}" did not start`,
