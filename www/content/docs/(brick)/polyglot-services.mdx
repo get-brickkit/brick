@@ -342,7 +342,9 @@ The generated clients import the published SDKs: `github.com/get-brickkit/brick/
 
 Set `BRICK_JWT_ISSUER` in the app's environment (a `.env` file works): the services inherit it in `brick dev` and `brick start`.
 
-To run the binaries yourself, call `startRemoteServices(services, { mode: "start", appUrl, env: remoteEnv(app.definition) })` from `@brickkit/core` before the app starts. It sets `BRICK_SERVICES` and `BRICK_INTERNAL_TOKEN` in the process, so start the app from the same process or pass them on.
+With Vite's `server.https`, the services call TypeScript services at `https://localhost:<port>`, so their HTTP clients must trust the dev certificate. A self-signed one fails: use a locally trusted one such as mkcert's.
+
+To run the binaries yourself, call `startRemoteServices(services, { mode: "start", appUrl, services: tsServiceNames, env: remoteEnv(app.definition) })` from `@brickkit/core` before the app starts, where `tsServiceNames` lists the TypeScript services' names so the Go and Rust services can call them. It sets `BRICK_SERVICES` and `BRICK_INTERNAL_TOKEN` in the process, so start the app from the same process or pass them on.
 
 ## Deploy
 
