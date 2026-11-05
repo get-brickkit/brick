@@ -96,6 +96,7 @@ export function resolveRules(
       );
     resolved[`brick/${name}`] = severity;
   }
+  resolved[`brick/${ALWAYS_ERROR}`] = "error";
   return resolved;
 }
 

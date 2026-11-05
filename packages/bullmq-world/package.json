@@ -51,8 +51,7 @@
     "@brickkit/redis-world": "0.12.0",
     "@workflow/world": "5.1.0",
     "bullmq": "^6.5.4",
-    "ioredis": "^6.0.0",
-    "ulid": "^3.0.2"
+    "ioredis": "^6.0.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

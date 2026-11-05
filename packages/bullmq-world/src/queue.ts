@@ -1,8 +1,10 @@
 import {
   createWorldQueue,
+  retryDelayMs,
   type Deliver,
   type QueueBackend,
   type QueuedMessage,
+  type ResolvedConfig,
   type WorldQueue,
   type WorldQueueOptions,
 } from "@brickkit/redis-world/internal";
@@ -15,7 +17,6 @@ import {
   Worker,
 } from "bullmq";
 import type { Redis } from "ioredis";
-import { monotonicFactory } from "ulid";
 import type { RedisWorldConfig } from "./config.js";
 import { debug } from "./util.js";
 
@@ -30,27 +31,26 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 /** BullMQ job data: the message, whose id is the job id. */
 type QueueJobData = Omit<QueuedMessage, "messageId">;
 
+/** BullMQ's queue name and key pattern for a job prefix. */
+export function bullKeys(jobPrefix?: string) {
+  const prefix = jobPrefix || "workflow_";
+  // v5 has one queue kind: a step travels on the workflow queue.
+  return { queueName: `${prefix}flows`, pattern: `bull:${prefix}*` };
+}
+
 /**
  * BullMQ-backed Queue. Job dispatch happens via HTTP fetch to the user's
  * server; this package does not embed a workflow runtime.
  */
 export function createQueue(
   redis: Redis,
-  config: RedisWorldConfig,
+  config: ResolvedConfig<RedisWorldConfig>,
   options: WorldQueueOptions = {},
 ): WorldQueue {
-  const generateMessageId = monotonicFactory();
-
-  const prefix = config.jobPrefix || "workflow_";
-  // v5 has one queue kind: a step travels on the workflow queue.
-  const flowQueueName = `${prefix}flows`;
-
-  const maxAttempts = config.maxAttempts ?? 73;
-  const backoffType = config.backoffType ?? "exponential";
-  const backoffDelayMs = config.backoffDelayMs ?? 1000;
+  const flowQueueName = bullKeys(config.jobPrefix).queueName;
+  const { maxAttempts, backoffDelayMs, idempotencyTtlMs } = config;
   const stalledInterval = config.stalledInterval ?? 30_000;
   const maxStalledCount = config.maxStalledCount ?? 10;
-  const maxBackoffMs = config.maxBackoffMs ?? 30_000;
   const lockDuration = config.lockDuration;
   if (
     lockDuration !== undefined &&
@@ -62,7 +62,6 @@ export function createQueue(
       `lockDuration must be a positive integer <= ${MAX_TIMER_DELAY_MS}, got ${lockDuration}`,
     );
   }
-  const idempotencyTtlMs = config.idempotencyTtlMs;
 
   // Reuse the full ioredis options (tls, username, path, sentinels, ...) so
   // rediss:// and ACL setups work for the queue half too; an allowlist here
@@ -127,7 +126,7 @@ export function createQueue(
 
     // A deduplicated add returns the job that is already queued: report its id,
     // not the one this call minted.
-    return MessageId.parse(job.id ?? messageId);
+    return MessageId.parse(job.id);
   };
 
   async function processJob(
@@ -137,7 +136,8 @@ export function createQueue(
   ): Promise<void> {
     const timeoutSeconds = await deliver({
       ...job.data,
-      messageId: (job.id ?? `msg_${generateMessageId()}`) as MessageId,
+      // Every job is added with `jobId: messageId`.
+      messageId: job.id as MessageId,
       // Failed deliveries, plus those a crash cut short: a reschedule does not
       // consume an attempt, but a worker that died holding the job does. The runtime
       // treats attempt 1 as a first delivery with nothing yet in the log, so a job
@@ -161,23 +161,13 @@ export function createQueue(
       (job, token) => processJob(deliver, job, token),
       {
         connection: connectionOptions,
-        concurrency: config.queueConcurrency || 10,
+        concurrency: config.queueConcurrency,
         stalledInterval,
         maxStalledCount,
         settings: {
           // The configured kind decides the curve; the cap keeps a late attempt from
           // waiting hours.
-          backoffStrategy: (attemptsMade, _type, _err, job) => {
-            const base = job?.opts.backoff
-              ? ((job.opts.backoff as { delay?: number }).delay ??
-                backoffDelayMs)
-              : backoffDelayMs;
-            const delay =
-              backoffType === "fixed"
-                ? base
-                : base * 2 ** Math.max(0, attemptsMade - 1);
-            return Math.min(delay, maxBackoffMs);
-          },
+          backoffStrategy: (attemptsMade) => retryDelayMs(attemptsMade, config),
         },
         ...(lockDuration !== undefined && { lockDuration }),
         // Low drainDelay reduces idle pickup latency.

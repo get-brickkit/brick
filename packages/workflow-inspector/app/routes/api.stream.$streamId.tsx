@@ -12,6 +12,7 @@
  *   X-Stream-Done    – "true" when the stream is fully closed
  */
 
+import { STREAM_CURSOR_HEADER, STREAM_DONE_HEADER } from "~/lib/types";
 import { readStreamChunksServerAction } from "~/server/workflow-server-actions.server";
 import type { Route } from "./+types/api.stream.$streamId";
 
@@ -37,27 +38,23 @@ export async function loader({ params, request, context }: Route.LoaderArgs) {
 
   const cursor = url.searchParams.get("cursor") ?? undefined;
 
-  try {
-    const result = await readStreamChunksServerAction(
-      context.world,
-      streamId,
-      runId,
-      cursor,
-    );
+  // The action catches its own errors and returns them.
+  const result = await readStreamChunksServerAction(
+    context.world,
+    streamId,
+    runId,
+    cursor,
+  );
 
-    if (!("buffer" in result)) {
-      return Response.json(result, { status: result.request?.status ?? 500 });
-    }
-
-    const headers: HeadersInit = {
-      "Content-Type": "application/octet-stream",
-      "X-Stream-Done": String(result.done),
-      "X-Stream-Cursor": result.cursor,
-    };
-
-    return new Response(new Uint8Array(result.buffer), { headers });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return Response.json({ message, layer: "server" }, { status: 500 });
+  if (!("buffer" in result)) {
+    return Response.json(result, { status: result.request?.status ?? 500 });
   }
+
+  const headers: HeadersInit = {
+    "Content-Type": "application/octet-stream",
+    [STREAM_DONE_HEADER]: String(result.done),
+    [STREAM_CURSOR_HEADER]: result.cursor,
+  };
+
+  return new Response(new Uint8Array(result.buffer), { headers });
 }

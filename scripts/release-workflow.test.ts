@@ -70,11 +70,10 @@ test("every package must build, typecheck, test, and pack before publishing, wit
   expect(validate!.strategy?.["fail-fast"]).toBe(false);
   const commands = validate!.steps.map((step) => step.run ?? "").join("\n");
   expect(commands).toMatch(/^bun run build$/m);
-  expect(commands).toContain("bun run build:worlds");
   expect(commands).toContain(
-    "bun run --filter @brickkit/${{ matrix.pkg }} typecheck",
+    "bun run --cwd packages/${{ matrix.pkg }} typecheck",
   );
-  expect(commands).toContain("bun test packages/${{ matrix.pkg }}");
+  expect(commands).toContain("bun run --cwd packages/${{ matrix.pkg }} test");
   expect(commands).toContain("npm pack --ignore-scripts");
   expect(commit!.needs).toContain("validate");
   expect(publish!.needs).toContain("validate");
@@ -85,7 +84,7 @@ test("every package must build, typecheck, test, and pack before publishing, wit
   expect(release!.needs).toContain("publish");
 });
 
-test("worlds are staged, built, tested with vitest, and committed with the other packages", () => {
+test("every package is staged and committed with the others", () => {
   const manifests =
     prepare!.steps.find((step) =>
       step.uses?.startsWith("actions/upload-artifact@"),
@@ -97,11 +96,16 @@ test("worlds are staged, built, tested with vitest, and committed with the other
         new Bun.Glob(pattern).match(`packages/${pkg}/package.json`),
       ),
     ).toBe(true);
-  const test = validate!.steps.find(
-    (step) => step.name === "Test world package",
-  );
-  expect(test?.if).toContain("endsWith(matrix.pkg, '-world')");
-  expect(test?.run).toBe("bun run --filter @brickkit/${{ matrix.pkg }} test");
+});
+
+test("every published package has its own test script", async () => {
+  for (const pkg of PACKAGES)
+    expect([
+      pkg,
+      typeof (
+        await Bun.file(join(ROOT, "packages", pkg, "package.json")).json()
+      ).scripts?.test,
+    ]).toEqual([pkg, "string"]);
 });
 
 test("candidate preparation cannot commit or publish, and dry runs stop after validation", () => {
@@ -135,7 +139,7 @@ test("publishing uses the exact checked tarballs without rerunning tests or buil
   expect(publish!.strategy?.matrix.pkg).toBe(MATRIX);
 });
 
-test("release jobs use Node 24 actions, CI's pins and Bun, and an explicit Ubuntu runner", async () => {
+test("release jobs pin actions to commits, share CI's pins and Bun, and use an explicit Ubuntu runner", async () => {
   const ci = await readWorkflow("ci.yml");
   const ciUses = Object.values(ci.jobs).flatMap((job) =>
     job.steps.flatMap((step) => (step.uses ? [step.uses] : [])),
@@ -148,12 +152,8 @@ test("release jobs use Node 24 actions, CI's pins and Bun, and an explicit Ubunt
       if (ciPin) expect(step.uses).toBe(ciPin);
       if (action === "oven-sh/setup-bun")
         expect(step.with?.["bun-version-file"]).toBe(".bun-version");
-      if (step.uses?.startsWith("actions/setup-node@"))
-        expect(step.uses).toBe("actions/setup-node@v7");
-      if (step.uses?.startsWith("actions/upload-artifact@"))
-        expect(step.uses).toBe("actions/upload-artifact@v7");
-      if (step.uses?.startsWith("actions/download-artifact@"))
-        expect(step.uses).toBe("actions/download-artifact@v8");
+      // Pinned to a commit: these jobs hold the npm token and id-token: write.
+      if (step.uses) expect(step.uses).toMatch(/@[0-9a-f]{40}$/);
     }
   }
 });

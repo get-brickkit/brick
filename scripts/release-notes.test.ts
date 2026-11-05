@@ -37,14 +37,21 @@ function fixture() {
     mkdirSync(join(root, "packages", dir), { recursive: true });
     writeFileSync(
       join(root, "packages", dir, "package.json"),
-      JSON.stringify({ name: data.name }),
+      JSON.stringify({
+        name: data.name,
+        devDependencies: data.devDependencies,
+      }),
     );
   }
   // The notes read the (lockstep) version from one package, so only it changes.
   const commit = (subject: string, version: string) => {
     writeFileSync(
       join(root, "packages", first!.dir, "package.json"),
-      JSON.stringify({ name: first!.data.name, version }),
+      JSON.stringify({
+        name: first!.data.name,
+        devDependencies: first!.data.devDependencies,
+        version,
+      }),
     );
     git("add", ".");
     git("commit", "--allow-empty", "-m", subject);

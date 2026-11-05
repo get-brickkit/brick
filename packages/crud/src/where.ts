@@ -19,7 +19,13 @@ import {
   sql,
 } from "drizzle-orm";
 
-import { databaseValue, invalid, object } from "./codec";
+import {
+  ORDERED_TYPES,
+  UNFILTERABLE_TYPES,
+  databaseValue,
+  invalid,
+  object,
+} from "./codec";
 import type { Fields, FilterOperator } from "./types";
 
 type Operator = {
@@ -98,15 +104,9 @@ export function checkFilters(
       throw new Error(
         `Text filter '${name}' requires a string column '${key}'`,
       );
-    if (
-      op.ordered &&
-      !["string", "number", "date", "bigint"].includes(column.dataType)
-    )
+    if (op.ordered && !ORDERED_TYPES.has(column.dataType))
       throw new Error(`Ordered filter '${name}' is unsupported for '${key}'`);
-    if (
-      op.operand !== "none" &&
-      ["json", "array", "buffer", "custom"].includes(column.dataType)
-    )
+    if (op.operand !== "none" && UNFILTERABLE_TYPES.has(column.dataType))
       throw new Error(`Filter '${name}' is unsupported for '${key}'`);
   }
 }
@@ -167,9 +167,8 @@ export function whereSchema(
   // Recursive rather than depth-inlined: TypeCompiler expands shared
   // inlined subschemas exponentially, stalling first validation for
   // seconds. Each $id member above compiles to one shared function, so
-  // the recursion through the module $refs stays linear. Runtime
-  // `condition()` still rejects nesting beyond 20, and the
-  // action's `checkInput` rejects it before validation runs.
+  // the recursion through the module $refs stays linear. The action's
+  // `checkInput` rejects nesting beyond 20 before validation runs.
   // The Recursive callback ignores Self on purpose: recursion flows
   // through the named module $refs back to this root $id.
   return t.Recursive(
@@ -215,21 +214,14 @@ export function condition(
   node: any,
   columns: Record<string, Column>,
   query: { bind: (value: unknown) => any; shape: unknown[] },
-  depth = 0,
 ): SQL {
-  if (depth > MAX_WHERE_DEPTH)
-    invalid(`Filter nesting exceeds ${MAX_WHERE_DEPTH} levels`);
   if (node.and) {
     query.shape.push("and", node.and.length);
-    return and(
-      ...node.and.map((n: any) => condition(n, columns, query, depth + 1)),
-    )!;
+    return and(...node.and.map((n: any) => condition(n, columns, query)))!;
   }
   if (node.or) {
     query.shape.push("or", node.or.length);
-    return or(
-      ...node.or.map((n: any) => condition(n, columns, query, depth + 1)),
-    )!;
+    return or(...node.or.map((n: any) => condition(n, columns, query)))!;
   }
   const column = columns[node.field];
   query.shape.push(node.field, node.op);

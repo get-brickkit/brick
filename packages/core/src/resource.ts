@@ -84,7 +84,8 @@ function notFound(
   error.NOT_FOUND(`${resource.name} '${String(id)}' not found`);
 }
 
-function idSchema(column: Column): TSchema {
+/** The schema of a resource's `:id`. */
+export function idSchema(column: Column): TSchema {
   return column.dataType === "number" ? Type.Number() : Type.String();
 }
 

@@ -187,3 +187,48 @@ export default orders.action({ name: "get-summary", execute: () => null });
   );
   expect(result.stdout).toContain("brick/unique-names");
 });
+
+it("fails an app with duplicate names even when unique-names is off", async () => {
+  const root = await project({
+    ...BASE,
+    "brick.config.ts": `export default { lint: { presets: [] } };\n`,
+    [`${S}/orders/actions/get-summary-copy.action.ts`]: `import { orders } from "../orders.service";
+
+export default orders.action({ name: "get-summary", execute: () => null });
+`,
+  });
+  const result = await lint(root);
+  expect(result.code).toBe(1);
+  expect(result.stdout).toContain(
+    'src/app.ts:1:1  error  Brick: duplicate name "get-summary" in service "orders"',
+  );
+});
+
+it("no-cross-service-tables sees tables re-exported from another service", async () => {
+  const root = await project({
+    ...BASE,
+    "brick.config.ts": `export default { lint: { presets: [] } };\n`,
+    [`${S}/billing/lib/tables.ts`]: `export { ordersTable } from "../../orders/tables/orders.table";\n`,
+    [`${S}/billing/lib/schema.ts`]: `export { ordersTable as orders } from "../../orders/schema";\n`,
+  });
+  const result = await lint(root);
+  expect(result.stdout).toContain(
+    `${S}/billing/lib/tables.ts:1:1  error  Service "billing" imports orders.table.ts from orders/`,
+  );
+  expect(result.stdout).toContain(
+    `${S}/billing/lib/schema.ts:1:1  error  Service "billing" imports table "ordersTable" owned by "orders"`,
+  );
+  expect(result.code).toBe(1);
+});
+
+it("test-colocated accepts any test file name beside the action", async () => {
+  const { [`${S}/orders/actions/get-summary.test.ts`]: _, ...base } = BASE;
+  const root = await project({
+    ...base,
+    "brick.config.ts": `export default { lint: { presets: [], rules: { "brick/test-colocated": "error" } } };\n`,
+    [`${S}/orders/actions/get-summary.spec.mts`]: "export {};\n",
+  });
+  const result = await lint(root);
+  expect(result.stdout).toContain("✔ No lint problems");
+  expect(result.code).toBe(0);
+});

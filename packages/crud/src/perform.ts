@@ -1,6 +1,7 @@
 import {
   ActionExecutionError,
   crudEventName,
+  columnValue,
   crudEventSource,
   deny,
   getHostHooks,
@@ -57,7 +58,7 @@ const writeHooks = {
   create: ["beforeCreate", "afterCreate"],
   update: ["beforeUpdate", "afterUpdate"],
   delete: ["beforeDelete", "afterDelete"],
-} as const;
+} as const satisfies Record<string, readonly (keyof Hooks)[]>;
 
 type Hook = (args: any) => unknown;
 /** The crud() hooks, then those of plugins installed on the resource, then on the service. */
@@ -182,7 +183,20 @@ export function operations(model: CrudModel) {
       scope,
       asked.where ? condition(asked.where, columns, query) : undefined,
       ["get", "update", "delete"].includes(operation)
-        ? eq(idColumn, query.bind(databaseValue(idColumn, input.id)))
+        ? eq(
+            idColumn,
+            // Encoded by the column: a placeholder's value is not.
+            new Param(
+              query.bind(
+                input.id === undefined // prewarm builds the statement with no id
+                  ? undefined
+                  : // An id its column can't hold names no row, as in core's loadRecord.
+                    (columnValue(idColumn, input.id) ??
+                      errors.NOT_FOUND("Resource not found")),
+              ),
+              idColumn,
+            ),
+          )
         : undefined,
     );
     return { operation, input, scope, db, derived, selected, query, where };
@@ -607,8 +621,9 @@ export function operations(model: CrudModel) {
   /** Prepares the unfiltered list and get statements ahead of the first call. */
   const prewarm = (enabled: readonly ("list" | "get")[]) => {
     const db: any = service.getDb();
-    if (!cacheable(db, options.access !== "public" && options.access.scope))
-      return;
+    // A scoped call binds its scope's SQL, so only unscoped statements warm.
+    const scoped = options.access !== "public" && !!options.access.scope;
+    if (scoped || !cacheable(db, undefined)) return;
     for (const operation of enabled) {
       const call = begin(operation, {}, undefined, db);
       call.query.warm(db, "rows", () => rowsQuery(call).build(db));

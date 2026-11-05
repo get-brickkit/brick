@@ -16,7 +16,8 @@ import {
   vi,
 } from "vitest";
 import { createQueue } from "../src/queue.js";
-import type { RedisWorldConfig } from "../src/config.js";
+import { resolveConfig, type RedisWorldConfig } from "../src/config.js";
+import { keys } from "../src/keys.js";
 
 const prefix = getQueueTopicPrefix("workflow");
 const queueName = `${prefix}list-tests`;
@@ -67,9 +68,9 @@ function setup(extra: Partial<RedisWorldConfig> = {}) {
     maxBackoffMs: 10,
     ...extra,
   };
-  const q = createQueue(redis, config);
+  const q = createQueue(redis, resolveConfig(config));
   queues.push(q);
-  return { q, config, root: `${config.keyPrefix}queue:flows` };
+  return { q, config, root: keys(config.keyPrefix).queue };
 }
 function held() {
   let release = () => {};
@@ -115,7 +116,7 @@ describe("reliable Redis list queue", () => {
     const { q, root } = setup();
     await Promise.all([q.start(), q.start()]);
     await q.start();
-    expect(await redis.scard(`${root}:workers`)).toBe(1);
+    expect(await redis.scard(root.workers)).toBe(1);
   });
 
   test.each([
@@ -160,7 +161,7 @@ describe("reliable Redis list queue", () => {
     expect(deliveries[0].get("x-vqs-message-attempt")).toBe("2");
     expect(deliveries[0].get("x-vqs-message-delivery-count")).toBe("2");
     await wait(async () =>
-      expect(await redis.exists(`${root}:idempotent:crash`)).toBe(0),
+      expect(await redis.exists(root.idempotent("crash"))).toBe(0),
     );
   });
 
@@ -289,8 +290,8 @@ describe("reliable Redis list queue", () => {
       );
       await q.start();
       await wait(() => expect(started).toBe(true));
-      const [owner] = await redis.smembers(`${root}:workers`);
-      await redis.del(`${root}:heartbeat:${owner}`);
+      const [owner] = await redis.smembers(root.workers);
+      await redis.del(root.heartbeat(owner!));
       const second = setup(config).q;
       second.registerHandler?.(prefix, async () => {
         recovered = true;
@@ -301,7 +302,7 @@ describe("reliable Redis list queue", () => {
       await wait(() => expect(recovered).toBe(true));
       old.release();
       await sleep(150);
-      expect(await redis.get(`${root}:idempotent:fence`)).toBe(id.messageId);
+      expect(await redis.get(root.idempotent("fence"))).toBe(id.messageId);
       expect(await q.getQueueStats()).toMatchObject({
         active: 1,
         waiting: 0,
@@ -316,7 +317,7 @@ describe("reliable Redis list queue", () => {
       ).toEqual(id);
       replacement.release();
       await wait(async () =>
-        expect(await redis.exists(`${root}:idempotent:fence`)).toBe(0),
+        expect(await redis.exists(root.idempotent("fence"))).toBe(0),
       );
     },
   );
@@ -363,7 +364,7 @@ describe("reliable Redis list queue", () => {
     );
     await wait(() => expect(count).toBe(53));
     await wait(async () =>
-      expect(await redis.exists(`${root}:idempotent:budget`)).toBe(0),
+      expect(await redis.exists(root.idempotent("budget"))).toBe(0),
     );
     expect(await q.getQueueStats()).toEqual({
       waiting: 0,
@@ -493,7 +494,7 @@ describe("reliable Redis list queue", () => {
   test("enqueue failures propagate instead of claiming durability", async () => {
     const bad = new Redis(url, { lazyConnect: true });
     bad.disconnect();
-    const q = createQueue(bad, { redis: url });
+    const q = createQueue(bad, resolveConfig({ redis: url }));
     await expect(q.queue(queueName, { runId: "wrun_error" })).rejects.toThrow();
     await q.close();
   });

@@ -5,7 +5,11 @@ import {
 } from "@workflow/world";
 import { WorkflowRunNotFoundError } from "@workflow/errors";
 import { Redis } from "ioredis";
-import type { RedisBackedWorldConfig } from "./config.js";
+import {
+  resolveConfig,
+  type RedisBackedWorldConfig,
+  type ResolvedConfig,
+} from "./config.js";
 import { createReaper, hasRetention, validateRetention } from "./reaper.js";
 import { createRunId } from "./run-id.js";
 import {
@@ -39,7 +43,7 @@ export function createRedisBackedWorld<C extends RedisBackedWorldConfig>(
     env: C;
     createQueue(
       redis: Redis,
-      config: C,
+      config: ResolvedConfig<C>,
       options: WorldQueueOptions,
     ): WorldQueue;
     /** Log prefix for run recovery on start. */
@@ -47,28 +51,28 @@ export function createRedisBackedWorld<C extends RedisBackedWorldConfig>(
     debug: (...args: unknown[]) => void;
   },
 ): RedisBackedWorld {
-  const cfg: C = { ...world.env };
+  const merged: C = { ...world.env };
   for (const [key, value] of Object.entries(config)) {
-    if (value !== undefined) (cfg as Record<string, unknown>)[key] = value;
+    if (value !== undefined) (merged as Record<string, unknown>)[key] = value;
   }
+  const cfg = resolveConfig(merged);
   // Batches commands issued in the same event-loop tick into one write. Does
   // nothing for a single serial run, but collapses syscalls under concurrency:
   // measured 1.75x at 256 concurrent invocations, 1.15x at 32, a slight loss
   // at 1. Workers default to 10 and go higher under load, so default on.
-  const autoPipelining = cfg.enableAutoPipelining ?? true;
+  const autoPipelining = cfg.enableAutoPipelining;
+  validateRetention(cfg.retention);
   const redis =
     typeof cfg.redis === "string"
       ? new Redis(cfg.redis, { enableAutoPipelining: autoPipelining })
       : new Redis({ enableAutoPipelining: autoPipelining, ...cfg.redis });
 
-  const keyPrefix = cfg.keyPrefix || "workflow:";
-  validateRetention(cfg.retention);
+  const { keyPrefix } = cfg;
   const reaper = hasRetention(cfg.retention)
     ? createReaper({
         redis,
         keyPrefix,
         retention: cfg.retention,
-        log: world.debug,
       })
     : undefined;
 
@@ -83,21 +87,17 @@ export function createRedisBackedWorld<C extends RedisBackedWorldConfig>(
     hooks: createHooksStorage(storageConfig),
     steps: createStepsStorage(storageConfig),
   };
-  const queue = world.createQueue(
-    redis,
-    { ...cfg, keyPrefix },
-    {
-      runHasStarted: async (runId) => {
-        try {
-          const run = await storage.runs.get(runId, { resolveData: "none" });
-          return run.status !== "pending";
-        } catch (error) {
-          if (WorkflowRunNotFoundError.is(error)) return false;
-          throw error;
-        }
-      },
+  const queue = world.createQueue(redis, cfg, {
+    runHasStarted: async (runId) => {
+      try {
+        const run = await storage.runs.get(runId, { resolveData: "none" });
+        return run.status !== "pending";
+      } catch (error) {
+        if (WorkflowRunNotFoundError.is(error)) return false;
+        throw error;
+      }
     },
-  );
+  });
   const streamer = createStreamer({ redis, keyPrefix });
 
   return {

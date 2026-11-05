@@ -5,6 +5,13 @@
 
 import type { Hook } from "@workflow/world";
 
+/** The API routes, relative to the base path (see routes.ts). */
+export const API_PATHS = { rpc: "api/rpc", stream: "api/stream/" } as const;
+
+/** Stream response headers: the cursor for the next request, and "true" once the stream is closed. */
+export const STREAM_CURSOR_HEADER = "X-Stream-Cursor";
+export const STREAM_DONE_HEADER = "X-Stream-Done";
+
 /**
  * Structured error information that can be sent to the client
  */

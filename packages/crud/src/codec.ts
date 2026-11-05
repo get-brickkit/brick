@@ -57,6 +57,22 @@ export function checkJsonSchema(
       checkJsonSchema(value as TSchema, seen);
   }
 }
+/** Column types that sort; all but `boolean` also take ordered filters. */
+export const SORTABLE_TYPES = new Set([
+  "string",
+  "number",
+  "date",
+  "bigint",
+  "boolean",
+]);
+export const ORDERED_TYPES = new Set(["string", "number", "date", "bigint"]);
+/** Column types no value filter can compare. */
+export const UNFILTERABLE_TYPES = new Set([
+  "json",
+  "array",
+  "buffer",
+  "custom",
+]);
 export function columnSchema(column: Column): TSchema {
   const c = column as Column & { enumValues?: string[] };
   let schema: TSchema;

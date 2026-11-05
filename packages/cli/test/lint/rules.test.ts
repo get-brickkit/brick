@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import * as core from "@brickkit/core";
+import { DEFINE_FUNCTIONS } from "../../src/lint/ast";
 import { rules } from "../../src/lint/presets";
 import { lintCases, type Case } from "./helpers";
 
@@ -104,6 +106,11 @@ const CASES: Record<string, Case[]> = {
     {
       file: `${S}/orders/resources/order/order.resource.ts`,
       code: `export const order = orders.resource({ name: "invoice", table });\n`,
+      errors: 1,
+    },
+    {
+      file: `${S}/orders/resources/order/order.resource.ts`,
+      code: `export const order = defineResource(orders, { name: "invoice", table });\n`,
       errors: 1,
     },
     {
@@ -236,6 +243,16 @@ const CASES: Record<string, Case[]> = {
       file: "src/db.ts",
       code: `const a = process.env.DB;\nconst b = Bun.env.DB;\n`,
       errors: 2,
+    },
+    {
+      file: "src/plugins/audit/audit.plugin.ts",
+      code: `export const key = process.env.AUDIT_KEY;\n`,
+      errors: 1,
+    },
+    {
+      file: "src/db.test.ts",
+      code: `const a = process.env.DB;\n`,
+      errors: 0,
     },
   ],
   "action-schemas": [
@@ -524,5 +541,23 @@ describe("lint file rules", () => {
     ]);
     expect(result.messages[0]?.message).toContain("ctx.deps");
     expect(result.messages[0]?.message).toContain("useDeps()");
+  });
+
+  it("maps every define* export of @brickkit/core, or ignores it on purpose", () => {
+    // Not definitions the rules check: values, errors and low-level plugin builders.
+    const ignored = [
+      "defineDatabase",
+      "defineError",
+      "defineSecret",
+      "defineServicePlugin",
+      "defineResourcePlugin",
+    ];
+    for (const name of Object.keys(core).filter((key) =>
+      key.startsWith("define"),
+    ))
+      expect([
+        name,
+        name in DEFINE_FUNCTIONS || ignored.includes(name),
+      ]).toEqual([name, true]);
   });
 });

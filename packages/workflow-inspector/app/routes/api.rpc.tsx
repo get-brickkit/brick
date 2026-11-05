@@ -51,18 +51,11 @@ export async function action({ request, context }: Route.ActionArgs) {
     );
   }
 
-  try {
-    // The client's `rpc()` is typed against `rpcMethods`; the body itself is not checked.
-    const handler = rpcMethods[method as keyof typeof rpcMethods] as (
-      world: typeof context.world,
-      params: object,
-    ) => Promise<unknown>;
-    return cborResponse(await handler(context.world, params ?? {}));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return cborResponse(
-      { success: false, error: { message, layer: "server" } },
-      500,
-    );
-  }
+  // The client's `rpc()` is typed against `rpcMethods`; the body itself is not checked.
+  // Each method catches its own errors and returns them.
+  const handler = rpcMethods[method as keyof typeof rpcMethods] as (
+    world: typeof context.world,
+    params: object,
+  ) => Promise<unknown>;
+  return cborResponse(await handler(context.world, params ?? {}));
 }
