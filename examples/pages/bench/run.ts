@@ -33,7 +33,7 @@ import { randomBytes } from "node:crypto";
 import { cpus, arch, platform, release, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 
-import { applyMigrations } from "../scripts/migrations";
+import { applyMigrations, seedBench } from "../scripts/migrations";
 import { brick, startRemoteServices } from "@brickkit/core";
 import { caddyfile, routingTable } from "@brickkit/cli";
 import postgres from "postgres";
@@ -134,6 +134,7 @@ const stats = (values: number[]) => {
 
 // 1. Database and builds.
 await applyMigrations(databaseUrl);
+await seedBench(databaseUrl);
 if (!process.env.BENCH_SKIP_BUILD) {
   sh("bun run --cwd ../.. build");
   sh("bun run build");
@@ -238,12 +239,18 @@ try {
       { stdio: "ignore" },
     );
   }
+  // A wrong BENCH_CADDY_BIN fails here, so finally still stops everything.
+  const nativeFailed = new Promise<never>((_, reject) =>
+    native?.once("error", reject),
+  );
+  nativeFailed.catch(() => {});
   await waitFor(`${appUrl}/_health`);
   await children.ready();
   const proxyUrl = `http://127.0.0.1:${caddyPort}`;
   const nativeUrl = `http://127.0.0.1:${nativePort}`;
   if (!LOAD) await waitFor(`${proxyUrl}/_health`);
-  if (native) await waitFor(`${nativeUrl}/_health`);
+  if (native)
+    await Promise.race([waitFor(`${nativeUrl}/_health`), nativeFailed]);
   if (LOAD) await load(nativeUrl);
   else {
     const targets: { language: Language; api: Api; path: Path; url: string }[] =
@@ -386,9 +393,12 @@ try {
 
 /** CPU seconds a process has used so far (`ps -o time=`: [[h:]m:]s.cc). */
 function cpuSeconds(pid: number): number {
-  const out = spawnSync("ps", ["-o", "time=", "-p", String(pid)], {
+  const ps = spawnSync("ps", ["-o", "time=", "-p", String(pid)], {
     encoding: "utf8",
-  }).stdout.trim();
+  });
+  const out = ps.stdout.trim();
+  // An exited process would otherwise read as 0 and give a negative figure.
+  if (ps.status !== 0 || !out) throw new Error(`process ${pid} is gone`);
   return out
     .split(":")
     .reduce((total, part) => total * 60 + Number(part.replace(",", ".")), 0);

@@ -103,8 +103,8 @@ framework tests without requiring the pages Postgres database.
 `services/bench-go` and `services/bench-rust` are Brick services in Go and Rust,
 wired into the app with `remoteService` in `src/api/services/bench/service.ts`.
 They have the same three APIs as the TS `bench` service: `echo`, `validate` and
-`db` (one `SELECT` from `bench_items`, which migrations 0001 and 0002 create and
-seed). They, and the TS `bench` service, are part of the app only with `BRICK_BENCH=1`:
+`db` (one `SELECT` from `bench_items`, which `bun run bench` creates and seeds in
+its own database; it is not part of the app's schema or migrations). They, and the TS `bench` service, are part of the app only with `BRICK_BENCH=1`:
 `BRICK_BENCH=1 bun run dev` starts them with `go run .` and `cargo run -q` (you
 need Go and Rust installed); a plain `bun run dev` skips them.
 

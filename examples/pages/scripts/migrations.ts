@@ -66,3 +66,17 @@ export async function applyMigrations(url: string): Promise<void> {
     await sql.end();
   }
 }
+
+/**
+ * The benchmark's lookup table, in the benchmark's database only (bench/run.ts):
+ * it is not part of the app's schema or migrations.
+ */
+export async function seedBench(url: string): Promise<void> {
+  const sql = postgres(url, { max: 1, onnotice: () => {} });
+  try {
+    await sql`CREATE TABLE IF NOT EXISTS bench_items (id integer PRIMARY KEY, name text NOT NULL, value integer NOT NULL)`;
+    await sql`INSERT INTO bench_items (id, name, value) SELECT i, 'item-' || i, i * 10 FROM generate_series(1, 100) AS i ON CONFLICT (id) DO NOTHING`;
+  } finally {
+    await sql.end();
+  }
+}

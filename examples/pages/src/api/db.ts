@@ -16,7 +16,6 @@ import {
   verification,
 } from "./auth/schema";
 import { databaseUrlSecret } from "./secrets";
-import { benchItemsTable } from "./services/bench/model";
 import { pagesTable } from "./services/pages/page/model";
 
 // The app owns one postgres-js pool; auth and pages reuse it.
@@ -32,7 +31,6 @@ export const appDb = defineDatabase({
   name: "pages",
   tables: {
     account,
-    benchItemsTable,
     jwks,
     oauthAccessToken,
     oauthClient,

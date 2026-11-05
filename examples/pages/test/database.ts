@@ -3,7 +3,6 @@ import postgres from "postgres";
 
 import { initAuth } from "../src/api/auth";
 import { appDb } from "../src/api/db";
-import { benchItemsTable } from "../src/api/services/bench/model";
 import { pagesService } from "../src/api/services/pages/service";
 import { applyMigrations } from "../scripts/migrations";
 
@@ -22,9 +21,7 @@ let migratedUrl: string | null = null;
 async function truncateAll(url: string): Promise<void> {
   const sql = postgres(url, { max: 1 });
   try {
-    // bench_items holds migration 0002's seed, which never runs again.
     const names = Object.values(appDb.schema)
-      .filter((table) => table !== benchItemsTable)
       .map((table) => `"${getTableName(table as never)}"`)
       .join(", ");
     await sql.unsafe(`TRUNCATE TABLE ${names} CASCADE`);
