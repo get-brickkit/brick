@@ -55,8 +55,7 @@ export function createTestApp<
     }),
     fetch,
     async cleanup() {
-      if (app.server) await app.stop(true);
-      await app.events?.stop();
+      await app.shutdown(true);
       resetGlobalRegistry();
     },
   };
