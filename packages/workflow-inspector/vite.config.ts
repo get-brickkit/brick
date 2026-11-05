@@ -12,8 +12,8 @@ export default defineConfig(({ command, isSsrBuild }) => ({
   build: {
     // A developer's tool for current browsers: no lowering of modern syntax.
     target: "es2022",
-    // The SSR entry is `server/app.ts`, which `handler.js` imports from
-    // `build/server/index.js`.
+    // The SSR entry is `server/app.ts`, built to `build/server/index.js`, which
+    // the CLI imports.
     rollupOptions: isSsrBuild ? { input: "./server/app.ts" } : undefined,
     // Unminified, as upstream ships it: readable code, and no "obfuscated code"
     // flags from supply-chain scanners.
