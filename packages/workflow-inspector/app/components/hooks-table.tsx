@@ -287,7 +287,7 @@ export function HooksTable({
           </DocsLink>
         </div>
       ) : loading && !data?.data ? (
-        <TableSkeleton variant="hooks" />
+        <TableSkeleton />
       ) : (
         <>
           <Card className="overflow-hidden mt-4 bg-background">

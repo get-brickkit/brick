@@ -1,10 +1,9 @@
-import type { WorkflowRun, WorkflowRunStatus } from "@workflow/world";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   unwrapOrThrow,
   WorkflowWebAPIError,
 } from "~/lib/client/workflow-errors";
-import { fetchHooks, fetchRuns } from "~/lib/rpc-client";
+import { fetchHooks } from "~/lib/rpc-client";
 import type {
   AnalyticsPageInfo,
   EnvMap,
@@ -253,31 +252,6 @@ export function usePaginatedList<T>(
     pageInfo,
     analyticsPageInfo: currentPageResult.pageInfo,
   };
-}
-
-/**
- * Returns a list of runs with pagination control
- */
-export function useWorkflowRuns(
-  env: EnvMap,
-  params: {
-    workflowName?: string;
-    status?: WorkflowRunStatus;
-    limit?: number;
-    sortOrder?: "asc" | "desc";
-  },
-): PaginatedList<WorkflowRun> {
-  const { workflowName, status, limit = 10, sortOrder = "desc" } = params;
-
-  const fetchFn = useCallback(
-    (cursor?: string) =>
-      unwrapOrThrow(
-        fetchRuns(env, { cursor, sortOrder, limit, workflowName, status }),
-      ),
-    [env, workflowName, limit, sortOrder, status],
-  );
-
-  return usePaginatedList(fetchFn);
 }
 
 /**

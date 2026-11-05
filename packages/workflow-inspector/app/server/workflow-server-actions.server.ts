@@ -478,7 +478,7 @@ export async function fetchEventsByCorrelationId(
 /**
  * Fetch paginated list of hooks
  */
-export function hookToListItem(hook: Hook): HookListItem {
+function hookToListItem(hook: Hook): HookListItem {
   const { token: _token, ...hookListItem } = hook;
   return hookListItem;
 }
@@ -741,30 +741,6 @@ export async function resumeHook(
     return createServerActionError<ResumeHookResult>(error, "resumeHook", {
       token,
     });
-  }
-}
-
-export async function readStreamServerAction(
-  env: EnvMap,
-  streamId: string,
-  startIndex: number | undefined,
-  runId: string,
-): Promise<ReadableStream<Uint8Array> | ServerActionError> {
-  try {
-    const world = await getWorldFromEnv(env);
-    // Return the raw binary stream — deserialization and decryption
-    // happen entirely client-side.
-    return await world.streams.get(runId, streamId, startIndex);
-  } catch (error) {
-    const actionError = createServerActionError(error, "world.streams.get", {
-      streamId,
-      startIndex,
-    });
-    if (!actionError.success) {
-      return actionError.error;
-    }
-    // Shouldn't happen, this is just a type guard
-    throw new Error();
   }
 }
 
