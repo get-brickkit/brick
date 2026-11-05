@@ -13,7 +13,7 @@ import { STANDARD_ERRORS } from "./protocol";
 import { validateWithSchema } from "./typebox";
 import { actionMeta } from "./action-meta";
 import { baseContext } from "./context";
-import { authorizeCall, invalid } from "./compiler/runtime";
+import { invalid, runStages, type Stages } from "./compiler/runtime";
 
 /**
  * The `error` helpers an action receives: one function per error code that
@@ -164,6 +164,25 @@ export function defineAction(config: any): any {
     return actionFn.execute({ input, ctx });
   };
 
+  const stages: Stages = {
+    name: config.name,
+    checkInput: (input) => {
+      if (!config.input) return;
+      const checked = actionFn.validateInput(input);
+      if (!checked.success) throw invalid(config.name, "input", checked.errors);
+    },
+    authorize: config.authorize,
+    execute: config.execute,
+    errorBuilder: errorHelpers,
+    checkOutput: (result) => {
+      if (!(actionMeta(actionFn).runtimeOutput ?? config.output)) return result;
+      const checked = actionFn.validateOutput(result);
+      if (!checked.success)
+        throw invalid(config.name, "output", checked.errors);
+      return result;
+    },
+  };
+
   actionFn.execute = async (params: { input?: any; ctx?: any }) => {
     const meta = actionMeta(actionFn);
     // The registered service resolves the context once per request, and
@@ -173,21 +192,8 @@ export function defineAction(config: any): any {
       : { ...baseContext(params?.ctx ?? {}), ...params?.ctx };
     // A plugin's action runs with the deps of the install that created it.
     if (meta.deps) ctx = { ...ctx, deps: meta.deps.values };
-    const input = params?.input;
     try {
-      if (config.input) {
-        const checked = actionFn.validateInput(input);
-        if (!checked.success)
-          throw invalid(config.name, "input", checked.errors);
-      }
-      await authorizeCall(config.authorize, ctx, input, config.name);
-      const result = await config.execute({ input, ctx, error: errorHelpers });
-      if (actionMeta(actionFn).runtimeOutput ?? config.output) {
-        const checked = actionFn.validateOutput(result);
-        if (!checked.success)
-          throw invalid(config.name, "output", checked.errors);
-      }
-      return result;
+      return await runStages(stages, params?.input, ctx);
     } catch (err) {
       throw normalizeActionError(err, ctx);
     }

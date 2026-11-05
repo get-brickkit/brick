@@ -197,7 +197,7 @@ export function deny(action: string, user: unknown): never {
 }
 
 /** Runs `authorize`, if any, and denies the call when it refuses. */
-export async function authorizeCall(
+async function authorizeCall(
   authorize: ((params: any) => unknown) | undefined,
   ctx: { user?: unknown },
   input: unknown,
@@ -205,6 +205,31 @@ export async function authorizeCall(
 ): Promise<void> {
   if (authorize && !(await authorize({ ctx, input, user: ctx.user })))
     deny(action, ctx.user);
+}
+
+/** What a call runs once its context is ready. */
+export interface Stages {
+  readonly name: string;
+  /** @throws The input's validation error. */
+  readonly checkInput: (input: unknown) => void;
+  readonly authorize?: (params: any) => unknown;
+  readonly execute: (params: any) => unknown;
+  readonly errorBuilder: unknown;
+  /** @throws The output's validation error; else returns the output. */
+  readonly checkOutput: (result: unknown) => unknown;
+}
+
+/** The stage order of every call, over HTTP and in-process: check input → authorize → execute → check output. */
+export async function runStages(
+  stages: Stages,
+  input: unknown,
+  ctx: { user?: unknown },
+): Promise<unknown> {
+  stages.checkInput(input);
+  await authorizeCall(stages.authorize, ctx, input, stages.name);
+  return stages.checkOutput(
+    await stages.execute({ input, ctx, error: stages.errorBuilder }),
+  );
 }
 
 function mapError(
@@ -251,9 +276,18 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
     errorBuilder,
   } = plan;
   const name = route.action;
-  const checkOutput = (result: unknown) => {
-    if (outputChecker) validate(outputChecker, result, name, "output");
-    return result;
+  const stages: Stages = {
+    name,
+    checkInput: (input) => {
+      if (inputChecker) validateInput(inputChecker, input, name, checkInput);
+    },
+    authorize,
+    execute,
+    errorBuilder,
+    checkOutput: (result) => {
+      if (outputChecker) validate(outputChecker, result, name, "output");
+      return result;
+    },
   };
   if (contextHook || authorize) {
     return async function brickAction(context) {
@@ -265,25 +299,24 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
           if (extra) Object.assign(ctx, extra);
           if (plan.deps) ctx.deps = plan.deps;
         }
-        if (inputChecker) validateInput(inputChecker, input, name, checkInput);
-        await authorizeCall(authorize, ctx, input, name);
-        return checkOutput(await execute({ input, ctx, error: errorBuilder }));
+        return await runStages(stages, input, ctx);
       } catch (err) {
         return mapError(err, context.set, ctx);
       }
     };
   }
+  // Nothing to wait for before `execute`: the same stages, without `authorize`, synchronously.
   return function brickAction(context) {
     const input = readInput(route, context);
     const ctx = requestContext(plan, context);
     try {
-      if (inputChecker) validateInput(inputChecker, input, name, checkInput);
+      stages.checkInput(input);
       const result = execute({ input, ctx, error: errorBuilder });
       if (isThenable(result))
         return Promise.resolve(result)
-          .then(checkOutput)
+          .then(stages.checkOutput)
           .catch((err) => mapError(err, context.set, ctx));
-      return checkOutput(result);
+      return stages.checkOutput(result);
     } catch (err) {
       return mapError(err, context.set, ctx);
     }
