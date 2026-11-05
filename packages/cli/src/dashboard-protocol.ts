@@ -151,12 +151,16 @@ export const PRODUCTION_HIDDEN_VIEWS: ReadonlySet<string> = new Set(
   ),
 );
 
-export type HistoryEndpoint =
-  | "summary"
-  | "traces"
-  | "facets"
-  | "volume"
-  | "export";
+/** What each history query endpoint answers, as JSON. */
+export interface HistoryResponses {
+  summary: HistorySummary;
+  traces: { total: number; traces: HistoryTrace[] };
+  facets: HistoryFacets;
+  volume: VolumeBucket[];
+}
+
+/** The history endpoints: the JSON queries, and `export` (CSV). */
+export type HistoryEndpoint = keyof HistoryResponses | "export";
 
 /** A history query's address; with no endpoint, what the history holds. */
 export const historyUrl = (

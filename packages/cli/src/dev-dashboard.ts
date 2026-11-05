@@ -10,7 +10,7 @@ import { pipeline } from "node:stream/promises";
 import { ConfigError } from "./config";
 import type { DevDocs } from "./dev-docs";
 import type { DevHistory } from "./dev-history";
-import { decodeHistoryQuery } from "./dashboard-query";
+import { decodeHistoryQuery, type HistoryQuery } from "./dashboard-query";
 import type { DevTelemetryStore } from "./dev-telemetry-store";
 import { dashboardShell } from "./dev-dashboard-shell";
 import type { DashboardAuth } from "@brickkit/core";
@@ -29,7 +29,7 @@ import {
   ROUTES,
   type DashboardEvents,
   type DashboardSnapshot,
-  type HistoryEndpoint,
+  type HistoryResponses,
   type IngestPayload,
   type RouteName,
 } from "./dashboard-protocol";
@@ -687,10 +687,9 @@ function history(
   params: URLSearchParams,
   response: ServerResponse,
 ): void {
-  const queries: Record<
-    Exclude<HistoryEndpoint, "export">,
-    (query: ReturnType<typeof decodeHistoryQuery>) => unknown
-  > = {
+  const queries: {
+    [K in keyof HistoryResponses]: (query: HistoryQuery) => HistoryResponses[K];
+  } = {
     summary: (query) => store.summary(query),
     traces: (query) => store.traces(query),
     facets: (query) => store.facets(query),

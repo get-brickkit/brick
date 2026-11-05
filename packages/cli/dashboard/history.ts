@@ -5,6 +5,7 @@ import {
   historyTraceUrl,
   historyUrl,
   type HistoryFacets,
+  type HistoryResponses,
   type HistorySummary,
   type TraceSummary,
   type VolumeBucket,
@@ -31,6 +32,13 @@ async function getJson<T>(url: string, signal: AbortSignal): Promise<T> {
   if (!response.ok) throw new Error(`${response.status}`);
   return (await response.json()) as T;
 }
+
+/** A history query, typed by what its endpoint answers. */
+const getHistory = <K extends keyof HistoryResponses>(
+  endpoint: K,
+  params: URLSearchParams,
+  signal: AbortSignal,
+) => getJson<HistoryResponses[K]>(historyUrl(endpoint, params), signal);
 
 /** A choice kept across visits, limited to the values this view offers. */
 export function useStoredChoice<T extends string>(
@@ -132,8 +140,9 @@ export function useRequestLog(
     setLoading(true);
     offset.current = 0;
     const query = historyParams(window, filters);
-    getJson<{ traces: LogRow[]; total: number }>(
-      historyUrl("traces", historyParams(window, filters, { offset: 0 })),
+    getHistory(
+      "traces",
+      historyParams(window, filters, { offset: 0 }),
       signal,
     ).then(
       (next) => {
@@ -149,18 +158,9 @@ export function useRequestLog(
       },
     );
     // Counts and volume are secondary; a miss leaves the last ones showing.
-    getJson<HistoryFacets>(historyUrl("facets", query), signal).then(
-      setFacets,
-      () => {},
-    );
-    getJson<VolumeBucket[]>(historyUrl("volume", query), signal).then(
-      setVolume,
-      () => {},
-    );
-    getJson<HistorySummary>(historyUrl("summary", query), signal).then(
-      setSummary,
-      () => {},
-    );
+    getHistory("facets", query, signal).then(setFacets, () => {});
+    getHistory("volume", query, signal).then(setVolume, () => {});
+    getHistory("summary", query, signal).then(setSummary, () => {});
     return () => controller.abort();
     // `filters` is compared by value through `filterKey`.
   }, [enabled, window, filterKey]);
@@ -169,8 +169,9 @@ export function useRequestLog(
     const { window, filters, key } = latest.current;
     const next = offset.current + HISTORY_PAGE_SIZE;
     offset.current = next;
-    void getJson<{ traces: LogRow[] }>(
-      historyUrl("traces", historyParams(window, filters, { offset: next })),
+    void getHistory(
+      "traces",
+      historyParams(window, filters, { offset: next }),
       new AbortController().signal,
     ).then(
       // Drop a page that arrives after the filters or window have changed.
