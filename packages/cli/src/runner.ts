@@ -22,6 +22,10 @@ import { buildAppWorkflows } from "./workflows";
 export interface DevServerOptions {
   port?: number;
   entry?: string;
+  /**
+   * @deprecated Only used without an `entry`; an exported app sets its own
+   * prefix in `brick({ prefix })`.
+   */
   prefix?: string;
   /** Generate a browser contract before starting the backend and frontend. */
   clientOutput?: string;

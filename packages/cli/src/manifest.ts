@@ -4,14 +4,20 @@ import { writeFileIfChanged } from "./client-contract-file";
 
 import {
   DEFINITION_EXTENSIONS,
+  DEFINITION_FILE,
   DEFINITION_KINDS,
   MANIFEST_FILE,
+  type DefinitionKind,
 } from "./definitions";
 
+/** Services register before the resources that join them; every other kind after. */
+const FIRST: readonly DefinitionKind[] = ["service", "resource"];
+
 function rank(file: string) {
-  if (/\.service\.[^.]+$/.test(file)) return 0;
-  if (/\.resource\.[^.]+$/.test(file)) return 1;
-  return 2;
+  const index = FIRST.indexOf(
+    DEFINITION_FILE.exec(file)?.[2] as DefinitionKind,
+  );
+  return index === -1 ? FIRST.length : index;
 }
 
 /** Definition files under `services`: service files first, then resources, then the rest, each by path. */
@@ -36,7 +42,7 @@ export function renderManifest(services: string, generated: string): string {
     let specifier = relative(generated, join(services, file))
       .split(sep)
       .join("/")
-      .replace(/\.(ts|tsx|mts|js|jsx|mjs)$/, "");
+      .replace(DEFINITION_FILE, "$1.$2");
     if (!specifier.startsWith(".")) specifier = `./${specifier}`;
     return `import ${JSON.stringify(specifier)};\n`;
   });

@@ -179,6 +179,19 @@ describe("brick dev dashboard on/off", () => {
   });
 });
 
+it("the package root, which still exports defineConfig, loads under Node", () => {
+  // ESLint may read brick.config.ts under Node, so nothing index reaches may
+  // touch Bun at load time (see scanDefinitionFiles). Needs `bun run build`.
+  const result = Bun.spawnSync([
+    "node",
+    "--input-type=module",
+    "-e",
+    `const m = await import(${JSON.stringify(resolve(import.meta.dir, "../dist/index.js"))}); console.log(typeof m.defineConfig);`,
+  ]);
+  expect(result.stderr.toString()).toBe("");
+  expect(result.stdout.toString().trim()).toBe("function");
+});
+
 describe("loading brick.config.ts", () => {
   it("finds the nearest config in parents, resolves paths from its folder, and is optional", async () => {
     const root = await project({
