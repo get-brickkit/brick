@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
 import { isCrudEvent, kebabCase } from "@brickkit/core";
-import { loadBrickApp, type BrickApp } from "./app-entry";
+import type { BrickApp } from "@brickkit/core";
+import { loadBrickApp } from "./app-entry";
 import { ConfigError, type LoadedConfig } from "./config";
 import {
   ALWAYS_ERROR,
@@ -9,6 +10,7 @@ import {
   resolveRules,
   type Severity,
 } from "./lint/presets";
+import { settingsOf } from "./lint/project";
 import { runFileRules, type LintMessage } from "./lint/run";
 import { DEFINITION_FILE, TEST_FILE } from "./definitions";
 import { writeServiceManifest } from "./manifest";
@@ -31,11 +33,11 @@ interface AppCheck {
  */
 export async function runLint(options: {
   entry?: string;
-  project?: LoadedConfig;
+  project: LoadedConfig;
 }): Promise<number> {
   const { project } = options;
-  const root = project?.root ?? process.cwd();
-  const config = project?.config.lint ?? {};
+  const { root } = project;
+  const config = project.config.lint ?? {};
   let resolved: Record<string, Severity>;
   try {
     resolved = resolveRules(config.presets, config.rules);
@@ -44,28 +46,19 @@ export async function runLint(options: {
       `brick.config.ts: lint.rules: ${(error as Error).message}`,
     );
   }
-  const fromRoot = (path: string) => posix(relative(root, path)) || ".";
-  const services = project?.services ?? resolve(root, "src/services");
-  const generated = project?.generated ?? resolve(root, "_brick");
-  const entry = options.entry
-    ? resolve(options.entry)
-    : (project?.entry ?? resolve(root, "src/app.ts"));
-  const ignore = [...(config.ignore ?? []), `${fromRoot(generated)}/**`];
+  const { services } = project;
+  const entry = options.entry ? resolve(options.entry) : project.entry;
+  const settings = settingsOf({ ...project, entry });
+  const ignore = [...(config.ignore ?? []), `${settings.generated}/**`];
   const messages = runFileRules({
     root,
     rules: fileRules(resolved),
-    settings: {
-      root,
-      services: fromRoot(services),
-      entry: fromRoot(entry),
-      generated: fromRoot(generated),
-      web: "web",
-    },
+    settings,
     ignore,
   });
   const globs = ignore.map((pattern) => new Bun.Glob(pattern));
   if (existsSync(entry)) {
-    if (project) await writeServiceManifest(project);
+    if (project.file) await writeServiceManifest(project);
     messages.push(
       ...(await checkApp({
         root,
@@ -80,7 +73,7 @@ export async function runLint(options: {
           globs.some((glob) => glob.match(rel)),
       })),
     );
-  } else if (options.entry || project)
+  } else if (options.entry || project.file)
     throw new Error(`Brick: entry not found: ${entry}`);
   return report(messages);
 }

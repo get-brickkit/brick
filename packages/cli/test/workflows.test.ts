@@ -5,12 +5,14 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadBrickApp } from "../src/app-entry";
 import { buildApplication } from "../src/build";
@@ -125,7 +127,12 @@ describe("apps with workflows", () => {
 
 describe("reusing the bundle", () => {
   // A copy, so the edits below do not touch the fixture the other tests use.
-  const copy = join(import.meta.dir, "fixtures", "workflow-app-reuse");
+  // Outside the repository, where this package's dependencies resolve from a
+  // node_modules link in the parent folder.
+  const copy = join(
+    realpathSync(mkdtempSync(join(tmpdir(), "brick-workflow-"))),
+    "app",
+  );
   const flow = join(copy, ".well-known", "workflow", "v1", "flow.mjs");
   const steps = join(
     copy,
@@ -150,7 +157,6 @@ describe("reusing the bundle", () => {
   const reuse = () => buildWorkflows({ root: copy, reuse: true });
 
   beforeAll(() => {
-    rmSync(copy, { recursive: true, force: true });
     cpSync(root, copy, {
       recursive: true,
       filter: (path) => !path.includes(".well-known"),
@@ -158,6 +164,10 @@ describe("reusing the bundle", () => {
     mkdirSync(join(copy, "node_modules", "@tsconfig", "test"), {
       recursive: true,
     });
+    symlinkSync(
+      join(import.meta.dir, "..", "node_modules"),
+      join(dirname(copy), "node_modules"),
+    );
     write("shared.ts", 'export const suffix = "!";\n');
     write("data.json", '{ "greeting": "hi" }\n');
     write(
@@ -176,7 +186,7 @@ async function greet(name: string) {
 `,
     );
   });
-  afterAll(() => rmSync(copy, { recursive: true, force: true }));
+  afterAll(() => rmSync(dirname(copy), { recursive: true, force: true }));
 
   it("builds when there is nothing to reuse, and keeps the bundle after that", async () => {
     expect(await reuse()).toBe(true);

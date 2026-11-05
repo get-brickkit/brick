@@ -1,7 +1,7 @@
 import { getGlobalRegistry, stopAllEvents } from "@brickkit/core";
 import { startInspector } from "./dev-inspector";
-import { startDevApplication } from "./runner";
-import { parsePort } from "./port-utils";
+import { startDevApplication } from "./dev-application";
+import type { WorkerOptions } from "./dev-protocol";
 import {
   installWorkerTelemetry,
   reportWorkerError,
@@ -33,8 +33,8 @@ if (process.connected && typeof process.send === "function") {
   process.on("SIGINT", stop);
 }
 
-// argv[6] is "1" when the supervisor serves the dashboard and needs spans.
-const telemetry = process.argv[6] === "1";
+const options: WorkerOptions = JSON.parse(process.argv[2]!);
+const { telemetry } = options;
 let startupComplete = false;
 let reported = false;
 
@@ -67,11 +67,11 @@ if (telemetry) {
 }
 
 // Scan local imports so dependencies outside the app directory are watched too.
-if (process.argv[2]) {
+{
   const files = new Set<string>();
   try {
     await Bun.build({
-      entrypoints: [process.argv[2]],
+      entrypoints: [options.entry],
       target: "bun",
       packages: "external",
       plugins: [
@@ -87,17 +87,13 @@ if (process.argv[2]) {
       ],
     });
   } finally {
-    process.send?.({ type: "brick:dependencies", files: [...files] });
+    // Awaited: a build error ends this process, and the list must arrive first.
+    await sendToSupervisor({ type: "brick:dependencies", files: [...files] });
   }
 }
 
 try {
-  const app = await startDevApplication({
-    entry: process.argv[2],
-    port: parsePort(process.argv[3] || undefined, process.env.PORT),
-    prefix: process.argv[4] || undefined,
-    clientOutput: process.argv[5] || undefined,
-  });
+  const app = await startDevApplication(options);
   startupComplete = true;
   if (telemetry) {
     void sendToSupervisor({
@@ -116,8 +112,6 @@ try {
           `[Brick-TS] Could not load the API documents: ${error instanceof Error ? error.message : String(error)}`,
         ),
     );
-  }
-  if (telemetry) {
     void startInspector(app).then(
       (inspector) =>
         inspector &&
@@ -131,11 +125,10 @@ try {
           `[Brick-TS] Could not start the workflow inspector: ${error instanceof Error ? error.message : String(error)}`,
         ),
     );
-  }
-  if (telemetry && !app.definition.telemetry) {
-    console.warn(
-      "[Brick-TS] The dashboard shows no requests: pass { telemetry: true } to brick() in your app entry.",
-    );
+    if (!app.definition.telemetry)
+      console.warn(
+        "[Brick-TS] The dashboard shows no requests: pass { telemetry: true } to brick() in your app entry.",
+      );
   }
 } catch (error) {
   await reportOnce("startup", error);

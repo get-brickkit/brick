@@ -1,15 +1,20 @@
 #!/usr/bin/env bun
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { Command, InvalidArgumentError } from "commander";
 import { startDevServer, startProdServer, startWorker } from "./runner";
-import { DEFAULT_DASHBOARD_PORT } from "./dev-dashboard";
-import { DEFAULT_HISTORY_DAYS } from "./dev-history";
 import { buildApplication } from "./build";
 import { writeClientContract } from "./client-contract-file";
-import { generateOpenApiSpec, getGlobalRegistry } from "@brickkit/core";
-import { parsePort, resolveDevPort } from "./port-utils";
+import { getGlobalRegistry } from "@brickkit/core";
 import { loadBrickApp } from "./app-entry";
-import { ConfigError, loadConfig, type LoadedConfig } from "./config";
+import {
+  ConfigError,
+  DEFAULT_DASHBOARD_PORT,
+  DEFAULT_HISTORY_DAYS,
+  DEFAULT_PORT,
+  resolvePort,
+  resolveProject,
+  type LoadedConfig,
+} from "./config";
 import { writeServiceManifest } from "./manifest";
 import { runLint } from "./lint";
 import { runDbCommand } from "./db";
@@ -18,8 +23,7 @@ import cliPkg from "../package.json";
 // Single source of truth for the CLI version (inlined at build time).
 const CLI_VERSION: string = cliPkg.version;
 
-const PORT_HELP =
-  "Port to listen on (CLI --port overrides PORT env, default 4000)";
+const PORT_HELP = `Port to listen on (CLI --port overrides PORT env, default ${DEFAULT_PORT})`;
 
 const EXTENSION_HELP =
   "Dashboard extension module (default export defineDashboard(...)), or the dashboard folder brick build wrote";
@@ -29,7 +33,7 @@ Port Resolution (dev/start commands):
   - CLI --port flag takes precedence
   - Falls back to PORT environment variable
   - Then dev.port in brick.config.ts (brick dev only)
-  - Defaults to 4000 if none is set
+  - Defaults to ${DEFAULT_PORT} if none is set
   - Valid range: 1-65535
 
 Examples:
@@ -42,11 +46,9 @@ Examples:
 const CONFIG_HELP =
   "Path to brick.config.ts (default: the nearest one in this folder or its parents)";
 
-type ConfigOpts = { config?: string };
-
 function parsePortOption(value: string): number {
   try {
-    return parsePort(value, undefined);
+    return resolvePort(value);
   } catch (err) {
     throw new InvalidArgumentError((err as Error).message);
   }
@@ -69,18 +71,23 @@ function parseFileOption(value: string, usage: string): string {
   return value;
 }
 
-/** `--config` on a `gen` subcommand: commander hands it to `gen`, which takes it too. */
-function configOf(command: Command): string | undefined {
-  return command.optsWithGlobals<ConfigOpts>().config;
+/** The project of the program-level `--config`, else the nearest config file. */
+function projectOf(command: Command): Promise<LoadedConfig> {
+  return resolveProject(command.optsWithGlobals<{ config?: string }>().config);
+}
+
+/** The entry argument, else the config's entry. */
+function entryOf(entry: string | undefined, project: LoadedConfig) {
+  return entry ?? (project.file ? project.entry : undefined);
 }
 
 /** The entry argument, else the config's entry; without either, commander's usual error. */
 function requireEntry(
   command: Command,
   entry: string | undefined,
-  project: LoadedConfig | undefined,
+  project: LoadedConfig,
 ): string {
-  const resolved = entry ?? project?.entry;
+  const resolved = entryOf(entry, project);
   if (!resolved)
     command.error("error: missing required argument 'entry'", {
       exitCode: 1,
@@ -90,28 +97,22 @@ function requireEntry(
 }
 
 /** Load the app after refreshing the services manifest it imports. */
-async function loadProjectApp(
-  entry: string,
-  project: LoadedConfig | undefined,
-) {
-  if (project) await writeServiceManifest(project);
+async function loadProjectApp(entry: string, project: LoadedConfig) {
+  if (project.file) await writeServiceManifest(project);
   return loadBrickApp(entry);
 }
 
 /** A config path, made absolute from the config file's folder. */
 function fromRoot(
-  project: LoadedConfig | undefined,
+  project: LoadedConfig,
   path: string | undefined,
 ): string | undefined {
-  return path && project ? resolve(project.root, path) : path;
+  return path && resolve(project.root, path);
 }
 
 /** The config's dashboard settings; a `--dashboard-extension` flag replaces its extension. */
-function configDashboard(
-  project: LoadedConfig | undefined,
-  extensionFlag?: string,
-) {
-  const dashboard = project?.config.dashboard;
+function configDashboard(project: LoadedConfig, extensionFlag?: string) {
+  const dashboard = project.config.dashboard;
   if (!dashboard && !extensionFlag) return undefined;
   return {
     extension: extensionFlag ?? fromRoot(project, dashboard?.extension),
@@ -122,14 +123,10 @@ function configDashboard(
 async function writeOpenApi(
   entry: string,
   output: string | undefined,
-  project: LoadedConfig | undefined,
+  project: LoadedConfig,
 ) {
   const app = await loadProjectApp(entry, project);
-  const spec = generateOpenApiSpec({
-    services: [...app.definition.services],
-    prefix: app.definition.prefix,
-  });
-  const json = JSON.stringify(spec, null, 2);
+  const json = JSON.stringify(app.openApiDocument(), null, 2);
   if (output) await Bun.write(output, json);
   return json;
 }
@@ -141,25 +138,12 @@ export function createProgram(): Command {
     .description("🧱 Brick-TS CLI")
     .version(CLI_VERSION)
     .showHelpAfterError()
+    .configureHelp({ showGlobalOptions: true })
+    .option("--config <path>", CONFIG_HELP)
     .addHelpText(
       "after",
       `
-Usage:
-  brick dev [entry] [--port <number>] [--dashboard-port <number>] [--history-days <number>] [--no-dashboard]  Start development server with live reload and dashboard
-  brick start [entry] [--port <number>]                  Start production server
-  brick worker <entry>                                   Deliver events without serving HTTP
-  brick build <app.ts> [--outdir <dir>] [--port <number>] [--no-aot]  Compile a default-exported BrickApp into a Bun server
-  brick gen openapi <entry> [--output <file>]            Generate OpenAPI 3.1 JSON specification
-  brick gen client <entry> [--output <file>]             Generate a typed browser client contract
-  brick gen manifest                                     Write <generated>/services.gen.ts
-  brick db generate [entry] [--out <dir>] [--name <name>]  Write a SQL migration for the schema changes
-  brick db migrate [entry] [--out <dir>]                 Apply the migrations that have not run yet
-  brick db push [entry] [--force]                        Change the database to match the schema (development)
-  brick lint [entry]                                     Check the project against the Brick lint rules
-  brick info <entry>                                     Export architecture JSON schema
-
-With a brick.config.ts, the entry and most flags come from the config file,
-and every command takes --config <path>.
+With a brick.config.ts, the entry and most flags come from the config file.
 ${PORT_RESOLUTION_HELP}`,
     );
 
@@ -188,12 +172,11 @@ ${PORT_RESOLUTION_HELP}`,
     .option("--dashboard-extension <file>", EXTENSION_HELP)
     .argument("[entry]", "Application entry file")
     .option("--port <number>", PORT_HELP, parsePortOption)
-    .option("--config <path>", CONFIG_HELP)
     .addHelpText("after", PORT_RESOLUTION_HELP)
     .action(
       async (
         entryArg: string | undefined,
-        opts: ConfigOpts & {
+        opts: {
           port?: number;
           client?: string;
           frontend?: string;
@@ -202,11 +185,12 @@ ${PORT_RESOLUTION_HELP}`,
           dashboard?: boolean;
           dashboardExtension?: string;
         },
+        command: Command,
       ) => {
-        const project = await loadConfig(opts.config);
-        const config = project?.config;
-        const entry = entryArg ?? project?.entry;
-        const port = resolveDevPort(opts.port, config?.dev?.port);
+        const project = await projectOf(command);
+        const { config } = project;
+        const entry = entryOf(entryArg, project);
+        const port = resolvePort(opts.port, config.dev?.port);
         if (opts.dashboard === false && opts.dashboardPort !== undefined) {
           throw new Error(
             "Brick: --dashboard-port cannot be combined with --no-dashboard.",
@@ -217,7 +201,7 @@ ${PORT_RESOLUTION_HELP}`,
             "Brick: --history-days cannot be combined with --no-dashboard.",
           );
         }
-        const configured = config?.dev?.dashboard;
+        const configured = config.dev?.dashboard;
         // The config can turn the dashboard off; a dashboard flag turns it back on.
         const dashboardOff =
           opts.dashboard === false ||
@@ -233,22 +217,18 @@ ${PORT_RESOLUTION_HELP}`,
         await startDevServer({
           entry,
           port,
-          clientOutput:
-            opts.client ?? fromRoot(project, config?.client?.output),
-          frontend: opts.frontend ?? config?.dev?.frontend,
+          clientOutput: opts.client ?? fromRoot(project, config.client?.output),
+          frontend: opts.frontend ?? config.dev?.frontend,
           // The dashboard reads the app's requests, so it needs an entry.
           dashboard:
             entry && !dashboardOff
               ? {
-                  port:
-                    opts.dashboardPort ??
-                    dashboardConfig?.port ??
-                    DEFAULT_DASHBOARD_PORT,
+                  port: opts.dashboardPort ?? dashboardConfig?.port,
                   historyDays: opts.historyDays ?? dashboardConfig?.historyDays,
                   ...configDashboard(project, opts.dashboardExtension),
                 }
               : false,
-          manifest: project,
+          manifest: project.file ? project : undefined,
         });
       },
     );
@@ -259,18 +239,17 @@ ${PORT_RESOLUTION_HELP}`,
     .argument("[entry]", "Application entry file")
     .option("--port <number>", PORT_HELP, parsePortOption)
     .option("--dashboard-extension <file>", EXTENSION_HELP)
-    .option("--config <path>", CONFIG_HELP)
     .addHelpText("after", PORT_RESOLUTION_HELP)
     .action(
       async (
         entry: string | undefined,
-        opts: ConfigOpts & { port?: number; dashboardExtension?: string },
+        opts: { port?: number; dashboardExtension?: string },
+        command: Command,
       ) => {
-        const project = await loadConfig(opts.config);
-        const port = resolveDevPort(opts.port);
+        const project = await projectOf(command);
         await startProdServer({
-          entry: entry ?? project?.entry,
-          port,
+          entry: entryOf(entry, project),
+          port: resolvePort(opts.port),
           dashboard: configDashboard(project, opts.dashboardExtension),
         });
       },
@@ -283,10 +262,9 @@ ${PORT_RESOLUTION_HELP}`,
       "[entry]",
       "Application entry file (must default-export a BrickApp)",
     )
-    .option("--config <path>", CONFIG_HELP)
     .action(
-      async (entry: string | undefined, opts: ConfigOpts, command: Command) => {
-        const project = await loadConfig(opts.config);
+      async (entry: string | undefined, _opts: object, command: Command) => {
+        const project = await projectOf(command);
         await startWorker({ entry: requireEntry(command, entry, project) });
       },
     );
@@ -298,7 +276,6 @@ ${PORT_RESOLUTION_HELP}`,
       "[entry]",
       "Application entry file (must default-export a BrickApp)",
     )
-    .option("--config <path>", CONFIG_HELP)
     .option("--outdir <dir>", "Output directory", (v: string) =>
       parseFileOption(v, "Usage: brick build <app.ts> [--outdir <directory>]"),
     )
@@ -319,7 +296,7 @@ ${PORT_RESOLUTION_HELP}`,
     .action(
       async (
         entryArg: string | undefined,
-        opts: ConfigOpts & {
+        opts: {
           outdir?: string;
           port?: number;
           aot?: boolean;
@@ -334,8 +311,8 @@ ${PORT_RESOLUTION_HELP}`,
             "Brick: configure prefix and requestLogging in your default-exported brick() app instead of build flags.",
           );
         }
-        const project = await loadConfig(opts.config);
-        const build = project?.config.build;
+        const project = await projectOf(command);
+        const build = project.config.build;
         // shortcut: brick() sets up request logging when the app is created, so
         // a build cannot switch it off; only the default (true) is accepted.
         if (build?.requestLogging === false)
@@ -343,10 +320,10 @@ ${PORT_RESOLUTION_HELP}`,
             "Brick: configure requestLogging in your default-exported brick() app instead of build.requestLogging.",
           );
         const entry = requireEntry(command, entryArg, project);
-        if (project) await writeServiceManifest(project);
+        if (project.file) await writeServiceManifest(project);
         const result = await buildApplication({
           entry,
-          outdir: opts.outdir ?? fromRoot(project, build?.outdir),
+          outdir: opts.outdir ?? project.outdir,
           port: opts.port,
           // --no-aot can only switch it off, so otherwise the config decides.
           aot: opts.aot === false ? false : build?.aot,
@@ -368,36 +345,38 @@ ${PORT_RESOLUTION_HELP}`,
     .command("gen")
     .description("Generate artifacts from a BrickApp entry")
     .argument("[subcommand]", "Generator to run (openapi, client, manifest)")
-    .option("--config <path>", CONFIG_HELP)
-    .action(async (subcommand: string | undefined, opts: ConfigOpts) => {
-      const project =
-        subcommand === undefined ? await loadConfig(opts.config) : undefined;
-      if (!project) {
-        console.error(
-          `Unknown generator: ${subcommand ?? "(none)"}. Available: openapi, client, manifest`,
-        );
-        process.exit(1);
-      }
-      // With a config, bare `brick gen` writes everything the config names.
-      const manifest = await writeServiceManifest(project);
-      console.log(`Services manifest written to ${manifest}`);
-      const client = fromRoot(project, project.config.client?.output);
-      if (client) {
-        await writeClientContract(project.entry, client);
-        console.log(`Client contract written to ${client}`);
-      }
-      const openapi = fromRoot(project, project.config.openapi?.output);
-      if (openapi) {
-        await writeOpenApi(project.entry, openapi, project);
-        console.log(`✅ OpenAPI 3.1 specification written to ${openapi}`);
-      }
-    });
+    .action(
+      async (
+        subcommand: string | undefined,
+        _opts: object,
+        command: Command,
+      ) => {
+        const project = await projectOf(command);
+        if (subcommand !== undefined || !project.file) {
+          console.error(
+            `Unknown generator: ${subcommand ?? "(none)"}. Available: openapi, client, manifest`,
+          );
+          process.exit(1);
+        }
+        // With a config, bare `brick gen` writes everything the config names.
+        const manifest = await writeServiceManifest(project);
+        console.log(`Services manifest written to ${manifest}`);
+        if (project.config.client?.output) {
+          await writeClientContract(project.entry, project.contract);
+          console.log(`Client contract written to ${project.contract}`);
+        }
+        const openapi = fromRoot(project, project.config.openapi?.output);
+        if (openapi) {
+          await writeOpenApi(project.entry, openapi, project);
+          console.log(`✅ OpenAPI 3.1 specification written to ${openapi}`);
+        }
+      },
+    );
 
   gen
     .command("openapi")
     .description("Generate OpenAPI 3.1 JSON specification")
     .argument("[entry]", "Application entry file")
-    .option("--config <path>", CONFIG_HELP)
     .option(
       "--output <file>",
       "Write specification to file instead of stdout",
@@ -410,12 +389,12 @@ ${PORT_RESOLUTION_HELP}`,
     .action(
       async (
         entry: string | undefined,
-        opts: ConfigOpts & { output?: string },
+        opts: { output?: string },
         command: Command,
       ) => {
-        const project = await loadConfig(configOf(command));
+        const project = await projectOf(command);
         const output =
-          opts.output ?? fromRoot(project, project?.config.openapi?.output);
+          opts.output ?? fromRoot(project, project.config.openapi?.output);
         const json = await writeOpenApi(
           requireEntry(command, entry, project),
           output,
@@ -431,7 +410,6 @@ ${PORT_RESOLUTION_HELP}`,
     .command("client")
     .description("Generate a typed browser client contract")
     .argument("[entry]", "Application entry file")
-    .option("--config <path>", CONFIG_HELP)
     .option(
       "--output <file>",
       "Write contract to file (default _brick/contract.ts)",
@@ -441,17 +419,15 @@ ${PORT_RESOLUTION_HELP}`,
     .action(
       async (
         entry: string | undefined,
-        opts: ConfigOpts & { output?: string },
+        opts: { output?: string },
         command: Command,
       ) => {
-        const project = await loadConfig(configOf(command));
+        const project = await projectOf(command);
         const target = requireEntry(command, entry, project);
-        if (project) await writeServiceManifest(project);
+        if (project.file) await writeServiceManifest(project);
         const output = await writeClientContract(
           target,
-          opts.output ??
-            fromRoot(project, project?.config.client?.output) ??
-            (project && join(project.generated, "contract.ts")),
+          opts.output ?? project.contract,
         );
         console.log(`Client contract written to ${output}`);
       },
@@ -462,15 +438,8 @@ ${PORT_RESOLUTION_HELP}`,
     .description(
       "Write <generated>/services.gen.ts, which imports every definition file",
     )
-    .option("--config <path>", CONFIG_HELP)
-    .action(async (_opts: ConfigOpts, command: Command) => {
-      const project = await loadConfig(configOf(command));
-      const output = await writeServiceManifest(
-        project ?? {
-          services: resolve("src/services"),
-          generated: resolve("_brick"),
-        },
-      );
+    .action(async (_opts: object, command: Command) => {
+      const output = await writeServiceManifest(await projectOf(command));
       console.log(`Services manifest written to ${output}`);
     });
 
@@ -486,8 +455,7 @@ ${PORT_RESOLUTION_HELP}`,
     db
       .command(name)
       .description(description)
-      .argument("[entry]", "Application entry file")
-      .option("--config <path>", CONFIG_HELP);
+      .argument("[entry]", "Application entry file");
   // push writes no files, so only generate and migrate take --out.
   const OUT_HELP =
     "Migrations folder (default drizzle, beside brick.config.ts); each database gets a subfolder named after it";
@@ -495,10 +463,10 @@ ${PORT_RESOLUTION_HELP}`,
     (name: "generate" | "migrate" | "push") =>
     async (
       entry: string | undefined,
-      opts: ConfigOpts & { out?: string; name?: string; force?: boolean },
+      opts: { out?: string; name?: string; force?: boolean },
       command: Command,
     ) => {
-      const project = await loadConfig(opts.config);
+      const project = await projectOf(command);
       const app = await loadProjectApp(
         requireEntry(command, entry, project),
         project,
@@ -530,22 +498,22 @@ ${PORT_RESOLUTION_HELP}`,
     .command("lint")
     .description("Check the project against the Brick lint rules")
     .argument("[entry]", "Application entry file")
-    .option("--config <path>", CONFIG_HELP)
-    .action(async (entry: string | undefined, opts: ConfigOpts) => {
-      const project = await loadConfig(opts.config);
-      const code = await runLint({ entry, project });
-      if (code !== 0) process.exit(code);
-    });
+    .action(
+      async (entry: string | undefined, _opts: object, command: Command) => {
+        const project = await projectOf(command);
+        const code = await runLint({ entry, project });
+        if (code !== 0) process.exit(code);
+      },
+    );
 
   program
     .command("info")
     .alias("services")
     .description("Export architecture JSON schema")
     .argument("[entry]", "Application entry file")
-    .option("--config <path>", CONFIG_HELP)
     .action(
-      async (entry: string | undefined, opts: ConfigOpts, command: Command) => {
-        const project = await loadConfig(opts.config);
+      async (entry: string | undefined, _opts: object, command: Command) => {
+        const project = await projectOf(command);
         const app = await loadProjectApp(
           requireEntry(command, entry, project),
           project,
@@ -562,19 +530,10 @@ ${PORT_RESOLUTION_HELP}`,
 
 async function main() {
   const program = createProgram();
-  const userArgs = process.argv.slice(2);
-  // With a config file, bare `brick` is `brick dev`.
-  if (userArgs.length === 0 && (await loadConfig())) {
-    await program.parseAsync([...process.argv, "dev"]);
-    return;
-  }
-  // Preserve legacy behavior: bare `brick` starts the dev server.
-  if (userArgs.length === 0) {
-    const port = parsePort(undefined, process.env.PORT);
-    await startDevServer({ port });
-    return;
-  }
-  await program.parseAsync(process.argv);
+  // Bare `brick` is `brick dev`.
+  await program.parseAsync(
+    process.argv.length > 2 ? process.argv : [...process.argv, "dev"],
+  );
 }
 
 main().catch((err) => {

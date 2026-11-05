@@ -205,6 +205,16 @@ export type BrickApp = Elysia<any, any, any, any, any, any, any> & {
    */
   start(): Promise<void>;
   /**
+   * Start the plugins, listen on `port`, then start event delivery. What
+   * `brick dev`, `brick start` and a built server run.
+   */
+  serve(options: { port: number }): Promise<BrickApp>;
+  /**
+   * Stop event delivery (finishing deliveries in flight), then the server, then
+   * the plugins. `closeActiveConnections` is passed to `stop()`.
+   */
+  shutdown(closeActiveConnections?: boolean): Promise<void>;
+  /**
    * The events of this app, when `events` is set: start and stop delivery, drain
    * what is due, and see or retry what is parked. `brick dev` and `brick start`
    * start it for you.
@@ -217,6 +227,8 @@ export type BrickApp = Elysia<any, any, any, any, any, any, any> & {
    * unless `docs` is false, then those from `reference.documents`.
    */
   referenceDocuments(): Promise<ApiDocument[]>;
+  /** This app's OpenAPI document, as `/openapi.json` serves it (also when `docs` is false). */
+  openApiDocument(): Record<string, any>;
   /** All endpoints registered via `endpoint()` (declaration order). */
   listEndpoints(): EndpointDefinition[];
 };

@@ -384,6 +384,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     mountEndpoint(def);
   };
   brickApp.listEndpoints = () => [...endpointDefs];
+  brickApp.openApiDocument = buildSpec;
   brickApp.referenceDocuments = async () => {
     const documents: ApiDocument[] = enableDocs
       ? [{ title, document: buildSpec() as unknown as OpenApiDocument }]
@@ -497,6 +498,20 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
       await lifecycle.stop();
     }
   }) as typeof brickApp.stop;
+  Object.defineProperty(brickApp, "serve", {
+    value: async ({ port }: { port: number }) => {
+      await lifecycle.start();
+      listen(port);
+      events?.start();
+      return brickApp;
+    },
+  });
+  Object.defineProperty(brickApp, "shutdown", {
+    value: async (closeActiveConnections?: boolean) => {
+      await events?.stop();
+      await brickApp.stop(closeActiveConnections);
+    },
+  });
 
   // Serialize stable metadata once; registry changes invalidate the snapshot.
   app.get(

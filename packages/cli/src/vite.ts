@@ -10,7 +10,7 @@ import {
   type EnvironmentModuleNode,
 } from "vite";
 import { generateClientContract } from "./client-contract";
-import { requireBrickApp } from "./app-entry";
+import { requireBrickApp } from "@brickkit/core";
 import { startViteDashboard, type ViteDashboard } from "./dev-vite-dashboard";
 import {
   themeCss,

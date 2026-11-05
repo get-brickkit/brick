@@ -15,11 +15,7 @@ import {
   type SpanProcessor,
 } from "@opentelemetry/sdk-trace";
 import { GLOBAL_SYMBOL } from "@brickkit/core";
-import type {
-  ApiDocument,
-  ArchitectureSchema,
-  DocumentationOptions,
-} from "@brickkit/core";
+import type { WorkerMessage } from "./dev-protocol";
 
 /** Read by @brickkit/core's logger; see `createLogger` there. */
 const LOG_CAPTURE = Symbol.for(GLOBAL_SYMBOL.logsCapture);
@@ -78,25 +74,6 @@ export interface SerializedError {
   message: string;
   stack?: string;
 }
-
-/** Messages the dev worker sends to the supervisor over the IPC channel. */
-export type WorkerMessage =
-  | { type: "brick:telemetry"; records: TelemetryRecord[] }
-  | { type: "brick:error"; phase: WorkerErrorPhase; error: SerializedError }
-  | { type: "brick:architecture"; architecture: ArchitectureSchema }
-  | { type: "brick:api-documents"; documents: ApiDocument[] }
-  | {
-      type: "brick:inspector";
-      /** The loopback port the workflow inspector listens on. */
-      port: number;
-      /** What the dashboard sends with each request to prove who it is. */
-      token: string;
-    }
-  | {
-      type: "brick:documentation";
-      /** The app's `documentation` option; absent when it has none. */
-      documentation?: DocumentationOptions;
-    };
 
 /**
  * Register the tracer provider, context manager, and W3C trace context

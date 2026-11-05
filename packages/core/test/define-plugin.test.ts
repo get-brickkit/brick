@@ -389,6 +389,45 @@ describe("app part and lifecycle", () => {
     await expect(app.start()).rejects.toThrow("no connection");
     expect(calls).toEqual(["start ok", "stop ok"]);
   });
+  it("serve starts plugins, listens, then delivers events; shutdown reverses it", async () => {
+    const calls: string[] = [];
+    const state = () => (app.server ? "listening" : "not listening");
+    const order = definePlugin({
+      name: "@acme/order",
+      app: ({ on, listeners }) => {
+        on("start", () => void calls.push(`plugins start, ${state()}`));
+        on("stop", () => void calls.push(`plugins stop, ${state()}`));
+        listeners(
+          defineListener({ name: "order-listener", on: "pages.*", run() {} }),
+        );
+      },
+    });
+    const { service } = host();
+    const app = brick({
+      services: [service],
+      requestLogging: false,
+      plugins: [order()],
+    });
+    const events = app.events!;
+    const start = events.start.bind(events);
+    const stop = events.stop.bind(events);
+    events.start = () => {
+      calls.push(`events start, ${state()}`);
+      start();
+    };
+    events.stop = async () => {
+      calls.push(`events stop, ${state()}`);
+      await stop();
+    };
+    await app.serve({ port: 0 });
+    await app.shutdown(true);
+    expect(calls).toEqual([
+      "plugins start, not listening",
+      "events start, listening",
+      "events stop, listening",
+      "plugins stop, not listening",
+    ]);
+  });
 
   it("resolves the dashboard extension next to the plugin's file", () => {
     const plugin = definePlugin({

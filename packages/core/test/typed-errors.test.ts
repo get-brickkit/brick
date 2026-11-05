@@ -12,7 +12,6 @@ import {
   createEndpointHandler,
   compileBrickApplication,
   compileRoutePlan,
-  emitHandlerFactory,
   compilerRuntime,
 } from "../src";
 import { createTestApp } from "../src/testing";
@@ -174,7 +173,7 @@ test("emitted handler authorization uses the shared envelope", async () => {
     }).action(action);
     const route = compileBrickApplication({ services: [service] }).ir
       .routes[0]!;
-    const bind = new Function("return (" + emitHandlerFactory(route) + ")")();
+    const bind = (binding: any, runtime: any) => runtime.bindRoute(binding);
     const handler = bind(
       compileRoutePlan(service, action, route.path, route.method),
       compilerRuntime,
@@ -207,7 +206,7 @@ test("emitted handlers redact synchronous and asynchronous failures and log caus
       const service = defineService("emitted_failure").action(action);
       const route = compileBrickApplication({ services: [service] }).ir
         .routes[0]!;
-      const bind = new Function("return (" + emitHandlerFactory(route) + ")")();
+      const bind = (binding: any, runtime: any) => runtime.bindRoute(binding);
       const handler = bind(
         compileRoutePlan(service, action, route.path, route.method),
         compilerRuntime,

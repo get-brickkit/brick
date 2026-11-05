@@ -75,7 +75,6 @@ export interface DbCommandOptions {
   name?: string;
   /** `push`: apply changes that drop data. */
   force?: boolean;
-  log?: (line: string) => void;
 }
 
 /** Run `brick db generate|migrate|push` against every database of the app. */
@@ -84,7 +83,6 @@ export async function runDbCommand(
   app: BrickApp,
   options: DbCommandOptions,
 ): Promise<void> {
-  const log = options.log ?? console.log;
   const databases = appDatabases(app);
   if (!databases.length)
     throw new Error("Brick: the app has no database with tables.");
@@ -104,13 +102,15 @@ export async function runDbCommand(
       const label = `${entry.name} (${entry.database.engine})`;
       if (command === "generate") {
         const file = await generate(entry, folder, options.name);
-        log(file ? `${label}: wrote ${file}` : `${label}: no schema changes`);
+        console.log(
+          file ? `${label}: wrote ${file}` : `${label}: no schema changes`,
+        );
       } else if (command === "migrate") {
         await migrateDatabase(entry.database, folder);
-        log(`${label}: migrations in ${folder} applied`);
+        console.log(`${label}: migrations in ${folder} applied`);
       } else {
-        const applied = await push(entry, options.force ?? false, log);
-        log(
+        const applied = await push(entry, options.force ?? false);
+        console.log(
           applied
             ? `${label}: applied ${applied} change${applied === 1 ? "" : "s"}`
             : `${label}: no schema changes`,
@@ -211,11 +211,7 @@ async function generate(
  * Make the database match the tables with drizzle-kit's push, touching only
  * the tables Brick knows. Returns how many statements ran.
  */
-async function push(
-  entry: AppDatabase,
-  force: boolean,
-  log: (line: string) => void,
-): Promise<number> {
+async function push(entry: AppDatabase, force: boolean): Promise<number> {
   const { pushSchema, pushSQLiteSchema } = await kit();
   const db = entry.database.getDb() as any;
   const names = new Set(entry.tables.map((table) => getTableName(table)));
@@ -244,7 +240,7 @@ async function push(
     : await pushSQLiteSchema(schema, onlyTables(db, names) as never);
   const statements = result.statementsToExecute;
   if (!statements.length) return 0;
-  for (const warning of result.warnings) log(warning);
+  for (const warning of result.warnings) console.log(warning);
   if (result.hasDataLoss && !force)
     throw new Error(
       `Brick: pushing ${entry.name} would lose data (see above). Rerun with --force to apply it, or use \`brick db generate\` and edit the migration.`,

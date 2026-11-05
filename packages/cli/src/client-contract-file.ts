@@ -2,21 +2,32 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { generateClientContract } from "./client-contract";
+import { requireBrickApp } from "@brickkit/core";
 import { loadBrickApp } from "./app-entry";
 
 /** Generate a client contract without loading Vite or starting a server. */
-export async function writeClientContract(
-  entryPath: string,
-  outputPath?: string,
-) {
-  const entry = resolve(entryPath);
-  const output = resolve(outputPath ?? "_brick/contract.ts");
-  if (entry === output)
+export async function writeClientContract(entry: string, output: string) {
+  checkContractOutput(entry, output);
+  await writeAppContract(await loadBrickApp(entry), entry, output);
+  return resolve(output);
+}
+
+function checkContractOutput(entry: string, output: string) {
+  if (resolve(output) === resolve(entry))
     throw new Error("Brick: contract output must not overwrite the app entry.");
-  const app = await loadBrickApp(entry);
-  const source = generateClientContract(app);
-  await writeContractSource(output, source);
-  return output;
+}
+
+/** Write the browser contract of the entry's `app` to `output`. */
+export async function writeAppContract(
+  app: unknown,
+  entry: string,
+  output: string,
+) {
+  checkContractOutput(entry, output);
+  await writeContractSource(
+    resolve(output),
+    generateClientContract(requireBrickApp(app)),
+  );
 }
 
 /** Atomically replace changed contracts, preserving timestamps when unchanged. */
