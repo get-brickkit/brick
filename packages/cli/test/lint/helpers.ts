@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { PROJECT_DEFAULTS } from "../../src/config";
 import { runFileRules, type LintMessage } from "../../src/lint/run";
 
 export interface Case {
@@ -39,12 +40,7 @@ export function lintCases(
             ? (["error", options.ruleOptions] as never)
             : "error",
         },
-        settings: {
-          root,
-          services: "src/services",
-          entry: "src/app.ts",
-          generated: "_brick",
-        },
+        settings: { root, ...PROJECT_DEFAULTS },
         fix,
       });
     const messages = run();
