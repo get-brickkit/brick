@@ -132,7 +132,7 @@ func Action[I, O any](s *Service, name string, fn func(ctx *Ctx, in I) (O, error
 			body = normalized.Bytes()
 		}
 		if err := json.Unmarshal(body, &in); err != nil {
-			writeError(w, ctx, validationError(name, []Issue{{Path: "", Message: err.Error()}}))
+			writeError(w, ctx, validationError(name, []Issue{decodeIssue(err)}))
 			return
 		}
 		out, err := fn(ctx, in)
@@ -245,4 +245,22 @@ func (s *Service) Manifest() Manifest {
 		actions = []manifestAction{}
 	}
 	return Manifest{Name: s.name, Language: "go", Actions: actions, Errors: errs}
+}
+
+// decodeIssue reports a decode failure the validation let through, such as an
+// integer beyond the Go field's range, at its field as TypeBox would.
+func decodeIssue(err error) Issue {
+	var te *json.UnmarshalTypeError
+	if errors.As(err, &te) && te.Type != nil {
+		path := ""
+		if te.Field != "" {
+			path = "/" + strings.ReplaceAll(te.Field, ".", "/")
+		}
+		switch te.Type.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			return Issue{Path: path, Message: "Expected integer"}
+		}
+	}
+	return Issue{Path: "", Message: err.Error()}
 }

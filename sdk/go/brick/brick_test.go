@@ -1,6 +1,7 @@
 package brick
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -144,5 +145,19 @@ func TestErrorStatusOutsideRange(t *testing.T) {
 	writeError(rec, &Ctx{requestID: "r"}, &Error{Code: "ODD"})
 	if rec.Code != 500 || !strings.Contains(rec.Body.String(), `"status":500`) {
 		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDecodeIssueAndIntegerPassthrough(t *testing.T) {
+	var p person
+	err := json.Unmarshal([]byte(`{"age":1e20}`), &p)
+	if got := decodeIssue(err); got.Path != "/age" || got.Message != "Expected integer" {
+		t.Fatalf("got %+v", got)
+	}
+	value, _ := decodeOrdered([]byte(`{"id":9007199254740993,"n":30.0}`))
+	var b bytes.Buffer
+	writeJSON(&b, value)
+	if b.String() != `{"id":9007199254740993,"n":30}` {
+		t.Fatalf("got %s", b.String())
 	}
 }
