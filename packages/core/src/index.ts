@@ -152,6 +152,8 @@ export {
   runInTransaction,
   onTransactionCommit,
   resolveWorkflowPaths,
+  WORKFLOW_BUNDLE,
+  WORKFLOW_QUEUE,
   EventsHub,
   stopAllEvents,
   Dispatcher,

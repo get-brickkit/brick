@@ -25,7 +25,11 @@ export {
   stopAllEvents,
   type EventsDefinition,
 } from "./hub";
-export { resolveWorkflowPaths } from "./workflows";
+export {
+  resolveWorkflowPaths,
+  WORKFLOW_BUNDLE,
+  WORKFLOW_QUEUE,
+} from "./workflows";
 export {
   Dispatcher,
   backoffMs,
