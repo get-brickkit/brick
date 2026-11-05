@@ -10,11 +10,14 @@ import {
   ROUTES,
   TELEMETRY_EVENTS,
   THEME_STORAGE_KEY,
+  decode,
   type DashboardEvents,
   type DashboardSnapshot,
   type DevTelemetryEvent,
   type ExtensionBuild,
 } from "../src/dashboard-protocol";
+
+export { docsHref } from "../src/dashboard-protocol";
 
 export interface DashboardState extends DashboardSnapshot {
   connected: boolean;
@@ -163,14 +166,6 @@ const VIEWS: View[] = [
   "reloads",
 ];
 
-/** A path segment as written, when it is not valid percent-encoding. */
-function decode(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
 
 export function parseRoute(hash: string): Route {
   const body = hash.replace(/^#\/?/, "");
@@ -200,11 +195,6 @@ export function routeHref(view: View, traceId?: string): string {
   return traceId ? `#/${view}/${encodeURIComponent(traceId)}` : `#/${view}`;
 }
 
-/** The address of a docs page, optionally at one of its headings. */
-export function docsHref(path: string[], anchor?: string): string {
-  const pages = path.map(encodeURIComponent).join("/");
-  return `#/docs${pages ? `/${pages}` : ""}${anchor ? `#${encodeURIComponent(anchor)}` : ""}`;
-}
 
 /** The view and selected request, kept in the URL hash so links can be shared. */
 export function useRoute(): Route {

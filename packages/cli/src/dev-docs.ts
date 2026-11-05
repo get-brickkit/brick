@@ -12,7 +12,9 @@ import {
 } from "node:path";
 import type { DocumentationOptions } from "@brickkit/core";
 import {
+  decode,
   docsFileUrl,
+  docsHref,
   SHARED_MODULES,
   type DocsInfo,
   type DocsNode,
@@ -467,10 +469,11 @@ export class DevDocs {
    */
   #route(from: string, href: string): string | undefined {
     const hashAt = href.indexOf("#");
-    const hash = hashAt >= 0 ? href.slice(hashAt) : "";
+    const anchor = hashAt >= 0 ? decode(href.slice(hashAt + 1)) : undefined;
     const target =
       (hashAt >= 0 ? href.slice(0, hashAt) : href).split("?")[0] ?? "";
-    const route = (slug: string) => `#/docs${slug ? `/${slug}` : ""}${hash}`;
+    const route = (slug: string) =>
+      docsHref(slug ? slug.split("/") : [], anchor);
     if (/^[a-z][a-z\d+.-]*:/i.test(href) || href.startsWith("#") || !target)
       return undefined;
     if (target.startsWith("/")) {

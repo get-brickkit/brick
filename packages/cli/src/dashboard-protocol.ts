@@ -130,6 +130,21 @@ export const DOCS_PATHS = {
   files: `${ROUTES.docs.path}/files`,
 } as const;
 
+/** A path segment as written, when it is not valid percent-encoding. */
+export function decode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/** The page's address of a docs page, optionally at one of its headings. */
+export function docsHref(path: string[], anchor?: string): string {
+  const pages = path.map(encodeURIComponent).join("/");
+  return `#/docs${pages ? `/${pages}` : ""}${anchor ? `#${encodeURIComponent(anchor)}` : ""}`;
+}
+
 /** Where a file in the docs folder is served, by its path inside it. */
 export const docsFileUrl = (path: string): string =>
   `${DOCS_PATHS.files}/${path.split("/").map(encodeURIComponent).join("/")}`;
