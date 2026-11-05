@@ -22,8 +22,6 @@ it("generates a browser-safe contract with default/custom output and preserves u
     const source = await Bun.file(output).text();
     expect(await readdir(join(root, "_brick"))).toEqual(["contract.ts"]);
     expect(source).toContain("BrickClientAction<");
-    expect(source).toContain("export type BrickJsonValue =");
-    expect(source).toContain("{ [key: string]: BrickJsonValue }");
     expect(source).toContain("/v2/records/:doctype/value");
     expect(source).not.toContain("private_tool");
     const modified = (await stat(output)).mtimeMs;

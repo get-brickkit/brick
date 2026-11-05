@@ -1,3 +1,4 @@
+import { connect } from "node:net";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { context, propagation, trace } from "@opentelemetry/api";
@@ -117,4 +118,25 @@ export function nodeVersion(): [number, number] | undefined {
 export function runsIf(ok: boolean, reason: string): boolean {
   if (!ok) console.warn(`Skipping: ${reason}`);
   return ok;
+}
+
+/** A one-pixel PNG. */
+export const PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+  "base64",
+);
+
+/** The status line of a raw `GET /api/state`, so the Host header can be anything. */
+export function raw(port: number, host: string, extra = ""): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write(
+        `GET /api/state HTTP/1.1\r\nHost: ${host}\r\n${extra}Connection: close\r\n\r\n`,
+      );
+    });
+    let data = "";
+    socket.on("data", (chunk) => (data += chunk.toString()));
+    socket.on("end", () => resolve(data.split("\r\n")[0] ?? ""));
+    socket.on("error", reject);
+  });
 }

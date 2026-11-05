@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { connect } from "node:net";
 import {
   defineAction,
   defineService,
@@ -10,7 +9,7 @@ import {
 import { startDevDashboard } from "../src/dev-dashboard";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
 import { startProductionDashboard } from "../src/production-dashboard";
-import { freePort, resetTracing, waitFor } from "./helpers";
+import { freePort, raw, resetTracing, waitFor } from "./helpers";
 
 const token = "0123456789abcdef-secret";
 const bearer = { authorization: `Bearer ${token}` };
@@ -19,21 +18,6 @@ beforeEach(() => {
   resetGlobalRegistry();
 });
 afterEach(resetTracing);
-
-/** One raw request, so the Host header can be anything. */
-function raw(port: number, host: string, extra = ""): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const socket = connect(port, "127.0.0.1", () => {
-      socket.write(
-        `GET /api/state HTTP/1.1\r\nHost: ${host}\r\n${extra}Connection: close\r\n\r\n`,
-      );
-    });
-    let data = "";
-    socket.on("data", (chunk) => (data += chunk.toString()));
-    socket.on("end", () => resolve(data.split("\r\n")[0] ?? ""));
-    socket.on("error", reject);
-  });
-}
 
 async function production(
   options: Partial<Parameters<typeof startDevDashboard>[0]> = {},

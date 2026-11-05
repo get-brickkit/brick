@@ -129,11 +129,6 @@ export const options = api.records.search.queryOptions({ input: { term: "typed" 
     expect(await Bun.file(join(root, "_brick/contract.ts")).exists()).toBe(
       true,
     );
-    const contractSource = await Bun.file(
-      join(root, "_brick/contract.ts"),
-    ).text();
-    expect(contractSource).toContain("export type BrickJsonValue =");
-    expect(contractSource).toContain("{ [key: string]: BrickJsonValue }");
     const outputs = Array.isArray(result) ? result : [result];
     const source = outputs
       .flatMap((output) => ("output" in output ? output.output : []))

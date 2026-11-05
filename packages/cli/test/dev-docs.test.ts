@@ -5,7 +5,14 @@ import { join } from "node:path";
 import { bundleComponents } from "../src/dashboard-extension";
 import { DevDocs, DocsHost, openDocs } from "../src/dev-docs";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
-import { nodeVersion, runsIf, settle, tempProject, waitFor } from "./helpers";
+import {
+  PNG,
+  nodeVersion,
+  runsIf,
+  settle,
+  tempProject,
+  waitFor,
+} from "./helpers";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -23,11 +30,6 @@ async function project(files: Record<string, string>): Promise<string> {
   }
   return root;
 }
-
-const PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
-  "base64",
-);
 
 const FILES = {
   "docs/index.mdx": `---

@@ -1,33 +1,17 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
-import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startDevDashboard } from "../src/dev-dashboard";
 import { openHistory } from "../src/dev-history";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
 import { historyUrl, type TraceSummary } from "../src/dashboard-protocol";
+import { raw } from "./helpers";
 
 async function setup(restart?: () => void) {
   const store = new DevTelemetryStore();
   const dashboard = await startDevDashboard({ port: 0, store, restart });
   return { store, dashboard, base: `http://localhost:${dashboard.port}` };
-}
-
-function rawStatusLine(port: number, host: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const socket = connect(port, "127.0.0.1", () => {
-      socket.write(
-        `GET /api/state HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`,
-      );
-    });
-    let data = "";
-    socket.on("data", (chunk) => {
-      data += chunk.toString();
-    });
-    socket.on("end", () => resolve(data.split("\r\n")[0]));
-    socket.on("error", reject);
-  });
 }
 
 describe("startDevDashboard", () => {
@@ -56,12 +40,12 @@ describe("startDevDashboard", () => {
   it("rejects requests that do not name a local host", async () => {
     const { dashboard } = await setup();
     try {
-      expect(await rawStatusLine(dashboard.port, "evil.example")).toBe(
+      expect(await raw(dashboard.port, "evil.example")).toBe(
         "HTTP/1.1 403 Forbidden",
       );
-      expect(
-        await rawStatusLine(dashboard.port, `localhost:${dashboard.port}`),
-      ).toBe("HTTP/1.1 200 OK");
+      expect(await raw(dashboard.port, `localhost:${dashboard.port}`)).toBe(
+        "HTTP/1.1 200 OK",
+      );
     } finally {
       dashboard.stop();
     }
