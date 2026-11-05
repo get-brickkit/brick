@@ -1,16 +1,29 @@
-import { loadOptionalEnvFile } from "./internal/env.js";
 import { Redis } from "ioredis";
+import { configFromEnv } from "./config.js";
+import { loadOptionalEnvFile } from "./internal/env.js";
+import { keys } from "./keys.js";
 
-async function setupRedis() {
+/** What the setup CLI says about, and flushes for, a world's queue. */
+export interface SetupQueue {
+  /** The bin users run, for the FLUSH hint. */
+  binName: string;
+  /** One line describing the queue's keys. */
+  description: string;
+  /** Queue keys outside `keyPrefix`, flushed with it. */
+  keyPattern?: string;
+}
+
+async function setupRedis(
+  queue: (keyPrefix: string) => SetupQueue = (keyPrefix) => ({
+    binName: "brickkit-redis-world-setup",
+    description: `Redis queue: ${keys(keyPrefix).queueKey}, processing lists and delayed set`,
+  }),
+) {
   // Load .env file if it exists.
   loadOptionalEnvFile();
 
-  const connectionString =
-    process.env.WORKFLOW_REDIS_URL ||
-    process.env.REDIS_URL ||
-    "redis://localhost:6379";
-
-  const keyPrefix = process.env.WORKFLOW_REDIS_KEY_PREFIX || "workflow:";
+  const { redis: connectionString, keyPrefix } = configFromEnv();
+  const { binName, description, keyPattern } = queue(keyPrefix);
 
   console.log("Setting up Redis for Workflow...");
   console.log(
@@ -37,6 +50,7 @@ async function setupRedis() {
 
     // Check if any workflow keys exist
     const existingKeys = await redis.keys(`${keyPrefix}*`);
+    if (keyPattern) existingKeys.push(...(await redis.keys(keyPattern)));
     if (existingKeys.length > 0) {
       console.log(
         `\nWarning: found ${existingKeys.length} existing workflow keys with prefix "${keyPrefix}"`,
@@ -44,7 +58,7 @@ async function setupRedis() {
       console.log(
         "\nTo flush existing workflow data, run with FLUSH=true environment variable:",
       );
-      console.log("  FLUSH=true npx brickkit-redis-world-setup");
+      console.log(`  FLUSH=true npx ${binName}`);
 
       if (process.env.FLUSH === "true") {
         console.log("\nFlushing existing workflow data...");
@@ -62,15 +76,9 @@ async function setupRedis() {
     console.log("\nRedis is ready for Workflow DevKit!");
     console.log("\nThe following Redis data structures will be used:");
     console.log(
-      `  - Hashes: ${keyPrefix}run:*, ${keyPrefix}step:*, ${keyPrefix}event:*, ${keyPrefix}hook:*`,
+      `  - Runs, event logs, steps, hooks and streams: ${keyPrefix}*`,
     );
-    console.log(
-      `  - Sorted Sets: ${keyPrefix}runs:*, ${keyPrefix}steps:*, ${keyPrefix}events:*`,
-    );
-    console.log(`  - Streams: ${keyPrefix}stream:*`);
-    console.log(
-      `  - Redis queue: ${keyPrefix}queue:flows, processing lists and delayed set`,
-    );
+    console.log(`  - ${description}`);
   } catch (error) {
     exitCode = 1;
     console.error("Failed to setup Redis:", error);
