@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import {
   ActionExecutionError,
@@ -15,6 +15,7 @@ import {
   t,
   type EventDelivery,
 } from "../src";
+import { postJson, track } from "./helpers";
 
 const orders = sqliteTable("orders", {
   id: text("id").primaryKey(),
@@ -29,8 +30,6 @@ const items = sqliteTable("order_items", {
   qty: integer("qty").notNull(),
 });
 const outbox = outboxTable("sqlite");
-
-const apps: { events?: { stop(): Promise<void> } }[] = [];
 
 function fixture(extra?: (order: any) => void) {
   const database = defineDatabase({ tables: { orders, items, outbox } });
@@ -118,24 +117,19 @@ function fixture(extra?: (order: any) => void) {
     on: service.events.itemAdded,
     run: () => {},
   });
-  const app = brick({
-    services: [service],
-    events: {
-      listeners: [shippedListener, added],
-      dispatch: { timer: false },
-    },
-    requestLogging: false,
-    docs: false,
-  });
-  apps.push(app);
+  const app = track(
+    brick({
+      services: [service],
+      events: {
+        listeners: [shippedListener, added],
+        dispatch: { timer: false },
+      },
+      requestLogging: false,
+      docs: false,
+    }),
+  );
   const call = (path: string, body: unknown, user = "ada") =>
-    app.handle(
-      new Request(`http://localhost${path}`, {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-user": user },
-        body: JSON.stringify(body),
-      }),
-    );
+    postJson(app, path, body, { "x-user": user });
   return { db, service, order, ship, editItems, app, call, seen };
 }
 
@@ -144,10 +138,7 @@ const statusOf = (db: any, id: string) =>
   db.select().from(orders).where(eq(orders.id, id)).get().status;
 
 beforeEach(resetGlobalRegistry);
-afterEach(async () => {
-  await Promise.all(apps.splice(0).map((app) => app.events?.stop()));
-  resetGlobalRegistry();
-});
+afterEach(resetGlobalRegistry);
 
 describe("commands", () => {
   it("decide runs alone, without a database", () => {
@@ -212,7 +203,7 @@ describe("commands", () => {
 
   it("rolls the write back when the event cannot be recorded", async () => {
     const { db, call } = fixture();
-    db.$client.exec("DROP TABLE brick_outbox");
+    db.run(sql`DROP TABLE ${outbox}`);
     const response = await call("/api/orders/order/o1/ship", {
       trackingId: "t",
     });

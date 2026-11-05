@@ -13,10 +13,12 @@ import {
   port,
   syncSchema,
   useDeps,
+  type EventsHub,
+  type EventsOptions,
   type EventsWorld,
 } from "../src";
 import { WORKFLOW_QUEUE } from "../src/events/workflows";
-import { EventsHub } from "../src/events/hub";
+import { track, waitFor } from "./helpers";
 
 const items = sqliteTable("wf_items", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -38,7 +40,11 @@ declare global {
 
 let serial = 0;
 const roots: string[] = [];
-const hubs: EventsHub[] = [];
+
+/** The events hub of an app with `events`, and services that hold no outbox unless given. */
+const hubOf = (events: EventsOptions, services: any[] = []) =>
+  track(brick({ services, events, requestLogging: false, docs: false }))
+    .events!;
 
 /**
  * A project with a stand-in Workflow SDK and a bundle, so the runtime's wiring
@@ -141,20 +147,22 @@ function setup(
   syncSchema([items, outbox], db);
   const service = defineService(`wf_events_${++serial}`, { database });
   const workflow = config.workflow ?? transformed();
-  const hub = new EventsHub({
-    listeners: [
-      defineListener({
-        name: "fulfil",
-        on: "item.create",
-        workflow,
-        ...(config.maxAttempts ? { maxAttempts: config.maxAttempts } : {}),
-      }),
-    ],
-    world: config.world,
-    workflows: { root: config.root },
-    dispatch: { timer: false, maxBackoffMs: 1, ...dispatch },
-  }).attach([service]);
-  hubs.push(hub);
+  const hub = hubOf(
+    {
+      listeners: [
+        defineListener({
+          name: "fulfil",
+          on: "item.create",
+          workflow,
+          ...(config.maxAttempts ? { maxAttempts: config.maxAttempts } : {}),
+        }),
+      ],
+      world: config.world,
+      workflows: { root: config.root },
+      dispatch: { timer: false, maxBackoffMs: 1, ...dispatch },
+    },
+    [service],
+  );
   const record = (label = "a") =>
     service.recorder!.transaction(db, { traceId: "tr_1" }, async (tx, rec) => {
       await tx.insert(items).values({ label });
@@ -165,15 +173,8 @@ function setup(
 
 const rows = (db: any) => db.select().from(outbox).all();
 
-async function settle(hub: EventsHub, done: () => boolean | Promise<boolean>) {
-  const deadline = Date.now() + 2000;
-  for (;;) {
-    await hub.drain();
-    if (await done()) return;
-    if (Date.now() > deadline) throw new Error("did not settle");
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-}
+const settle = (hub: EventsHub, done: () => boolean | Promise<boolean>) =>
+  waitFor(async () => (await hub.drain(), done()));
 
 let quiet: ReturnType<typeof spyOn>;
 
@@ -182,8 +183,7 @@ beforeEach(() => {
   quiet = spyOn(console, "error").mockImplementation(() => {});
 });
 
-afterEach(async () => {
-  await Promise.all(hubs.splice(0).map((hub) => hub.stop()));
+afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true });
   quiet.mockRestore();
 });
@@ -204,22 +204,18 @@ describe("workflow listeners", () => {
     expect(() =>
       defineListener({ name: "a", on: "x", workflow: "nope" } as any),
     ).toThrow("workflow must be a function");
-    expect(
-      () =>
-        new EventsHub({
-          listeners: [{ name: "raw", on: ["x"] }],
-        }),
-    ).toThrow("needs a run handler or a workflow");
+    expect(() => hubOf({ listeners: [{ name: "raw", on: ["x"] }] })).toThrow(
+      "needs a run handler or a workflow",
+    );
   });
 
   it("needs a world", () => {
-    expect(
-      () =>
-        new EventsHub({
-          listeners: [
-            defineListener({ name: "a", on: "x", workflow: transformed() }),
-          ],
-        }),
+    expect(() =>
+      hubOf({
+        listeners: [
+          defineListener({ name: "a", on: "x", workflow: transformed() }),
+        ],
+      }),
     ).toThrow("events needs a world");
   });
 
@@ -236,7 +232,7 @@ describe("workflow listeners", () => {
       world,
     });
     expect(
-      new EventsHub({
+      hubOf({
         listeners: [defineListener({ name: "h", on: "x", run: () => {} })],
       }).workflows,
     ).toBeUndefined();
@@ -339,26 +335,27 @@ describe("workflow listeners", () => {
       const host = defineService(`wf_plugin_${++serial}`, {
         deps: { carrier: port<string>() },
       });
-      const made = brick({
-        services: [host],
-        deps: { carrier: "app" },
-        requestLogging: false,
-        docs: false,
-        plugins: [sync({}, { deps: { mailer: "plugin" } })],
-        events: {
-          world,
-          workflows: { root },
-          dispatch: { timer: false },
-          listeners: [
-            defineListener({
-              name: "fulfil",
-              on: "item.create",
-              workflow: transformed(),
-            }),
-          ],
-        },
-      });
-      hubs.push(made.events!);
+      const made = track(
+        brick({
+          services: [host],
+          deps: { carrier: "app" },
+          requestLogging: false,
+          docs: false,
+          plugins: [sync({}, { deps: { mailer: "plugin" } })],
+          events: {
+            world,
+            workflows: { root },
+            dispatch: { timer: false },
+            listeners: [
+              defineListener({
+                name: "fulfil",
+                on: "item.create",
+                workflow: transformed(),
+              }),
+            ],
+          },
+        }),
+      );
       return made.events!;
     }
 
@@ -376,7 +373,7 @@ describe("workflow listeners", () => {
           await handler(
             new Request("http://x", {
               method: "POST",
-              headers: { "x-vqs-queue-name": `__wkf_workflow_${id}` },
+              headers: { [WORKFLOW_QUEUE.header]: WORKFLOW_QUEUE.prefix + id },
             }),
           )
         ).json();
@@ -422,7 +419,7 @@ describe("workflow listeners", () => {
   it("does not start the world in a process that only records", async () => {
     const { root } = project();
     const { world, calls } = fakeWorld();
-    const hub = new EventsHub({
+    const hub = hubOf({
       listeners: [
         defineListener({
           name: "fulfil",
@@ -434,9 +431,9 @@ describe("workflow listeners", () => {
       workflows: { root },
       dispatch: false,
     });
-    hubs.push(hub);
     hub.start();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Nothing to wait for: the world must not start.
+    await Bun.sleep(20);
     expect(calls.start).toBe(0);
   });
 
@@ -573,33 +570,31 @@ describe("webhooks", () => {
     const service = defineService(`wf_events_${++serial}`, {
       database: defineDatabase({ tables: { items, outbox } }),
     });
-    const app = brick({
-      services: [service],
-      events: {
-        world: fakeWorld().world,
-        workflows: { root },
-        listeners: [
-          defineListener({
-            name: "fulfil",
-            on: "item.create",
-            workflow: transformed(),
-          }),
-        ],
-        dispatch: false,
-      },
-      requestLogging: false,
-      docs: false,
-    });
-    try {
-      const response = await app.handle(
-        new Request("http://x/.well-known/workflow/v1/webhook/tok_2", {
-          method: "POST",
-          body: "{}",
-        }),
-      );
-      expect(await response.text()).toBe("resumed tok_2");
-    } finally {
-      await app.events?.stop();
-    }
+    const app = track(
+      brick({
+        services: [service],
+        events: {
+          world: fakeWorld().world,
+          workflows: { root },
+          listeners: [
+            defineListener({
+              name: "fulfil",
+              on: "item.create",
+              workflow: transformed(),
+            }),
+          ],
+          dispatch: false,
+        },
+        requestLogging: false,
+        docs: false,
+      }),
+    );
+    const response = await app.handle(
+      new Request("http://x/.well-known/workflow/v1/webhook/tok_2", {
+        method: "POST",
+        body: "{}",
+      }),
+    );
+    expect(await response.text()).toBe("resumed tok_2");
   });
 });
