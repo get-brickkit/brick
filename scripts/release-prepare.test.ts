@@ -3,8 +3,26 @@ import { execFileSync } from "node:child_process";
 import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { publishedPackages } from "./published-packages.ts";
 
-const PACKAGES = ["core", "crud", "cli", "bullmq-world", "redis-world"];
+const FIELDS = ["dependencies", "peerDependencies", "devDependencies"];
+const PACKAGES = publishedPackages();
+const NAMES = new Set(PACKAGES.map((p) => p.data.name));
+// The real packages, reduced to their dependencies on each other, at 0.7.2.
+const siblingDeps = (data: any, version: string) =>
+  Object.fromEntries(
+    FIELDS.map((field) => [
+      field,
+      Object.fromEntries(
+        Object.entries(data[field] ?? {})
+          .filter(([dep]) => NAMES.has(dep))
+          .map(([dep, range]) => [
+            dep,
+            `${String(range).startsWith("^") ? "^" : ""}${version}`,
+          ]),
+      ),
+    ]),
+  );
 
 test("prepares candidates and dispatches releases without creating release refs", async () => {
   const root = await mkdtemp(join(tmpdir(), "brick-release-prepare-"));
@@ -14,10 +32,11 @@ test("prepares candidates and dispatches releases without creating release refs"
   const git = (...args: string[]) =>
     execFileSync("git", args, { cwd: checkout, encoding: "utf8" }).trim();
   try {
-    await cp(
-      new URL("./release.ts", import.meta.url),
-      join(checkout, "scripts/release.ts"),
-    );
+    for (const script of ["release.ts", "published-packages.ts"])
+      await cp(
+        new URL(`./${script}`, import.meta.url),
+        join(checkout, "scripts", script),
+      );
     await writeFile(join(checkout, ".gitignore"), "node_modules\n");
     await writeFile(
       join(checkout, "package.json"),
@@ -27,26 +46,24 @@ test("prepares candidates and dispatches releases without creating release refs"
         scripts: { build: "exit 99", test: "exit 99" },
       }),
     );
-    for (const name of PACKAGES) {
-      const directory = join(checkout, "packages", name);
+    for (const { dir, data } of PACKAGES) {
+      const directory = join(checkout, "packages", dir);
       await mkdir(directory, { recursive: true });
       await writeFile(
         join(directory, "package.json"),
         JSON.stringify({
-          name: `@brickkit/${name}`,
+          name: data.name,
           version: "0.7.2",
-          ...(name === "cli"
-            ? { dependencies: { "@brickkit/core": "^0.7.2" } }
-            : {}),
-          ...(name === "crud"
-            ? { peerDependencies: { "@brickkit/core": "^0.7.2" } }
-            : {}),
-          ...(name === "bullmq-world"
-            ? { dependencies: { "@brickkit/redis-world": "0.7.2" } }
-            : {}),
+          ...siblingDeps(data, "0.7.2"),
         }),
       );
     }
+    // A private package is neither checked for lockstep nor bumped.
+    await mkdir(join(checkout, "packages/private-tool"));
+    await writeFile(
+      join(checkout, "packages/private-tool/package.json"),
+      JSON.stringify({ name: "private-tool", version: "9.9.9", private: true }),
+    );
     execFileSync(process.execPath, ["install"], {
       cwd: checkout,
       stdio: "pipe",
@@ -65,18 +82,23 @@ test("prepares candidates and dispatches releases without creating release refs"
       ["scripts/release.ts", "patch", "--prepare"],
       { cwd: checkout, stdio: "pipe" },
     );
-    for (const name of PACKAGES) {
+    for (const { dir, data } of PACKAGES) {
       const manifest = await Bun.file(
-        join(checkout, "packages", name, "package.json"),
+        join(checkout, "packages", dir, "package.json"),
       ).json();
-      expect(manifest.version).toBe("0.7.3");
-      if (name === "cli")
-        expect(manifest.dependencies["@brickkit/core"]).toBe("^0.7.3");
-      if (name === "crud")
-        expect(manifest.peerDependencies["@brickkit/core"]).toBe("^0.7.3");
-      if (name === "bullmq-world")
-        expect(manifest.dependencies["@brickkit/redis-world"]).toBe("0.7.3");
+      expect(manifest).toEqual({
+        name: data.name,
+        version: "0.7.3",
+        ...siblingDeps(data, "0.7.3"),
+      });
     }
+    expect(
+      (
+        await Bun.file(
+          join(checkout, "packages/private-tool/package.json"),
+        ).json()
+      ).version,
+    ).toBe("9.9.9");
     expect(git("rev-parse", "HEAD")).toBe(head);
     expect(git("tag", "--list")).toBe("");
     expect(git("--git-dir", origin, "rev-parse", "main")).toBe(head);
