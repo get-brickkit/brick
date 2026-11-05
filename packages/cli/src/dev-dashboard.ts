@@ -487,13 +487,17 @@ export function startDevDashboard(
     );
   }
 
-  /** Send the request on to `target` and stream its answer back. */
+  /**
+   * Send the request on to `target` and stream its answer back. `body`: the
+   * request's body when the caller already read it; else it is streamed.
+   */
   async function forward(
     request: IncomingMessage,
     response: ServerResponse,
     target: string,
     adjust: (headers: Headers) => void,
     unreachable: string,
+    body?: Uint8Array,
   ): Promise<void> {
     const headers = forwardedHeaders(request);
     adjust(headers);
@@ -507,10 +511,12 @@ export function startDevDashboard(
         signal: abort.signal,
         ...(isBodyless(request)
           ? {}
-          : {
-              body: Readable.toWeb(request) as unknown as BodyInit,
-              duplex: "half",
-            }),
+          : body
+            ? { body: body as BodyInit }
+            : {
+                body: Readable.toWeb(request) as unknown as BodyInit,
+                duplex: "half",
+              }),
       } as RequestInit);
       response.writeHead(upstream.status, returnedHeaders(upstream));
       if (!upstream.body || request.method === "HEAD") {
@@ -560,25 +566,17 @@ export function startDevDashboard(
       send(response, 413, "Payload too large");
       return;
     }
-    const headers = forwardedHeaders(request);
     const cookie = url.searchParams.get("cookie");
-    if (cookie) headers.set("cookie", cookie);
-    try {
-      const upstream = await fetch(target, {
-        method: request.method,
-        headers,
-        body: isBodyless(request) ? undefined : (body as BodyInit),
-        redirect: "manual",
-      });
-      send(
-        response,
-        upstream.status,
-        new Uint8Array(await upstream.arrayBuffer()),
-        returnedHeaders(upstream),
-      );
-    } catch {
-      send(response, 502, "Could not reach the app.");
-    }
+    await forward(
+      request,
+      response,
+      target.href,
+      (headers) => {
+        if (cookie) headers.set("cookie", cookie);
+      },
+      "Could not reach the app.",
+      body,
+    );
   }
 
   function eventStream(request: IncomingMessage, response: ServerResponse) {
