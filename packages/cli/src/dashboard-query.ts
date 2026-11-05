@@ -22,7 +22,6 @@ import {
 export const SERVER_ERROR = 500;
 export const CLIENT_ERROR = 400;
 
-/** How a request ended: a 5xx or crash, a 4xx, or neither. */
 export function outcomeOf(
   row: Pick<TraceSummary, "status" | "httpStatus">,
 ): Outcome {
@@ -32,7 +31,6 @@ export function outcomeOf(
   return "ok";
 }
 
-/** "GET /api/page/:id" when the method and route are known, else the span name. */
 export function endpointOf(
   trace: Pick<TraceSummary, "method" | "route" | "name">,
 ): string {

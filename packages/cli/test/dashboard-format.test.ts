@@ -1,14 +1,15 @@
 import { describe, expect, it } from "bun:test";
 import {
   describeTrace,
+  formatAxis,
   formatDuration,
+  formatPercent,
   formatTimestamp,
   isFailure,
   spanDepths,
   spanKind,
   withAppServer,
 } from "../dashboard/format";
-import { percentile } from "../src/dashboard-query";
 import type { TraceSpan, TraceSummary } from "../src/dashboard-protocol";
 
 function trace(
@@ -54,12 +55,6 @@ describe("dashboard format helpers", () => {
     expect(formatDuration(12.34)).toBe("12.3 ms");
     expect(formatDuration(430)).toBe("430 ms");
     expect(formatDuration(1500)).toBe("1.50 s");
-  });
-
-  it("interpolates percentiles and handles an empty list", () => {
-    expect(percentile([], 0.5)).toBe(0);
-    expect(percentile([10], 0.95)).toBe(10);
-    expect(percentile([10, 20, 30, 40], 0.5)).toBe(25);
   });
 
   it("formats a timestamp to the hundredth, with the date when asked", () => {
@@ -185,5 +180,19 @@ describe("withAppServer", () => {
   it("leaves the document alone when the app's address is not known", () => {
     const document = { servers: [{ url: "/api" }] };
     expect(withAppServer(document, undefined)).toBe(document);
+  });
+});
+
+describe("history formatting", () => {
+  it("shows a rate as a percentage without a trailing zero", () => {
+    expect(formatPercent(0)).toBe("0%");
+    expect(formatPercent(0.025)).toBe("2.5%");
+    expect(formatPercent(0.5)).toBe("50%");
+  });
+
+  it("labels a chart axis with the time for a day and the date beyond", () => {
+    const at = new Date(2026, 2, 4, 14, 5).getTime();
+    expect(formatAxis(at, 24 * 3_600_000)).toMatch(/14:05|2:05/);
+    expect(formatAxis(at, 7 * 24 * 3_600_000)).toMatch(/Mar.*4|4.*Mar/);
   });
 });

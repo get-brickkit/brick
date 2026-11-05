@@ -1,34 +1,10 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-
-async function waitFor(check: () => boolean | Promise<boolean>) {
-  const deadline = Date.now() + 4000;
-  while (Date.now() < deadline) {
-    if (await check()) return;
-    await Bun.sleep(25);
-  }
-  throw new Error("Timed out waiting for supervisor behavior");
-}
+import { capture, freePort, settle, tempProject, waitFor } from "./helpers";
 
 async function fixture() {
-  const directory = await mkdtemp(
-    join(resolve(import.meta.dir, "../../.."), ".dev-supervisor-"),
-  );
-  const listener = Bun.serve({ port: 0, fetch: () => new Response() });
-  const port = listener.port;
-  listener.stop(true);
-  return { directory, port };
-}
-
-function capture(child: ReturnType<typeof Bun.spawn>) {
-  let output = "";
-  const collect = async (stream: typeof child.stdout) => {
-    if (typeof stream === "number" || !stream) return;
-    for await (const chunk of stream) output += new TextDecoder().decode(chunk);
-  };
-  const finished = Promise.all([collect(child.stdout), collect(child.stderr)]);
-  return { read: () => output, finished };
+  return { directory: await tempProject("dev-supervisor"), port: freePort() };
 }
 
 test("exported app prefix takes precedence with a warning", async () => {
@@ -108,11 +84,8 @@ test("worker exits are reported and edits recover without intentional-exit warni
 }, 15000);
 
 test("dev generates before frontend startup, watches imported files, and recovers without contract loops", async () => {
-  const { stat } = await import("node:fs/promises");
   const { directory, port } = await fixture();
-  const external = await mkdtemp(
-    join(resolve(import.meta.dir, "../../.."), ".dev-dependency-"),
-  );
+  const external = await tempProject("dev-dependency");
   const entry = join(directory, "main.ts");
   const dependency = join(external, "actions.ts");
   const output = join(directory, "_brick/contract.ts");
@@ -160,7 +133,7 @@ setInterval(() => {}, 1000);`,
     const timestamp = (await stat(output)).mtimeMs;
     await writeFile(dependency, actionSource("implementation only"));
     await waitFor(() => logs.read().includes("Changes detected"));
-    await Bun.sleep(300);
+    await settle();
     expect(await Bun.file(output).text()).toBe(first);
     expect((await stat(output)).mtimeMs).toBe(timestamp);
     await writeFile(dependency, "export default { broken syntax");
@@ -173,7 +146,7 @@ setInterval(() => {}, 1000);`,
       (await Bun.file(output).text()).includes('"locale": string'),
     );
     const restarts = logs.read().match(/Changes detected/g)?.length;
-    await Bun.sleep(400);
+    await settle(400);
     expect(logs.read().match(/Changes detected/g)?.length).toBe(restarts);
     expect(await Bun.file(join(directory, "frontend-starts.txt")).text()).toBe(
       "started\n",
@@ -256,9 +229,7 @@ process.on("message", () => { server.stop(); process.exit(0); });`,
 
 test("recovers when an external dependency has invalid syntax on initial startup", async () => {
   const { directory, port } = await fixture();
-  const external = await mkdtemp(
-    join(resolve(import.meta.dir, "../../.."), ".dev-dependency-"),
-  );
+  const external = await tempProject("dev-dependency");
   const entry = join(directory, "app.ts");
   const dependency = join(external, "service.ts");
   const output = join(directory, "contract.ts");

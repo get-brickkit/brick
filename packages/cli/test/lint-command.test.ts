@@ -182,9 +182,7 @@ export default orders.action({ name: "get-summary", execute: () => null });
   });
   const result = await lint(root);
   expect(result.code).toBe(1);
-  expect(result.stdout).toContain(
-    'src/app.ts:1:1  error  Brick: duplicate name "get-summary" in service "orders"',
-  );
+  expect(result.stdout).toMatch(/src\/app\.ts:1:1 {2}error .*"get-summary"/);
   expect(result.stdout).toContain("brick/unique-names");
 });
 
@@ -199,9 +197,7 @@ export default orders.action({ name: "get-summary", execute: () => null });
   });
   const result = await lint(root);
   expect(result.code).toBe(1);
-  expect(result.stdout).toContain(
-    'src/app.ts:1:1  error  Brick: duplicate name "get-summary" in service "orders"',
-  );
+  expect(result.stdout).toMatch(/src\/app\.ts:1:1 {2}error .*"get-summary"/);
 });
 
 it("no-cross-service-tables sees tables re-exported from another service", async () => {

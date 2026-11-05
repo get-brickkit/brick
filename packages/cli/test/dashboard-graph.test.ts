@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { ATTR, SPAN } from "@brickkit/core";
 import {
   buildServiceGraph,
   layoutGraph,
@@ -45,22 +46,22 @@ function trace(
 
 const action = (spanId: string, service: string, options = {}) =>
   span(spanId, {
-    name: `action ${service}.run`,
-    attributes: { "brick.service": service },
+    name: `${SPAN.actionPrefix}${service}.run`,
+    attributes: { [ATTR.service]: service },
     ...options,
   });
 
 const rpc = (spanId: string, service: string, options = {}) =>
   span(spanId, {
-    name: `rpc ${service}.run`,
-    attributes: { "brick.service": service },
+    name: `${SPAN.rpcPrefix}${service}.run`,
+    attributes: { [ATTR.service]: service },
     ...options,
   });
 
 const sql = (spanId: string, options = {}) =>
   span(spanId, {
     name: "SELECT",
-    attributes: { "db.statement": "select 1", "db.system": "sqlite" },
+    attributes: { [ATTR.dbStatement]: "select 1", [ATTR.dbSystem]: "sqlite" },
     ...options,
   });
 

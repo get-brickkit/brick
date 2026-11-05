@@ -7,7 +7,7 @@ import {
   brick,
 } from "@brickkit/core";
 
-describe("@brickkit/cli OpenAPI & Interactive Documentation Server", () => {
+describe("OpenAPI & documentation pages", () => {
   beforeEach(() => {
     resetGlobalRegistry();
   });
@@ -40,7 +40,6 @@ describe("@brickkit/cli OpenAPI & Interactive Documentation Server", () => {
       services: [pagesService],
     });
 
-    // 1. Test /openapi.json
     const specResponse = await app.handle(
       new Request("http://localhost/openapi.json"),
     );
@@ -57,7 +56,6 @@ describe("@brickkit/cli OpenAPI & Interactive Documentation Server", () => {
     );
     expect(spec.paths["/api/pages/create-page"].post.requestBody).toBeDefined();
 
-    // 2. Test /docs (Scalar UI)
     const docsResponse = await app.handle(new Request("http://localhost/docs"));
     expect(docsResponse.status).toBe(200);
     expect(docsResponse.headers.get("content-type")).toContain("text/html");
@@ -66,7 +64,6 @@ describe("@brickkit/cli OpenAPI & Interactive Documentation Server", () => {
     expect(docsHtml).toContain('data-url="/openapi.json"');
     expect(docsHtml).toContain("Pages Platform API — API Reference");
 
-    // 3. Test /swagger (Swagger UI)
     const swaggerResponse = await app.handle(
       new Request("http://localhost/swagger"),
     );

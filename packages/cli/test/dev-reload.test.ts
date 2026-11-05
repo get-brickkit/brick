@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { freePort, tempProject, waitFor } from "./helpers";
 
 async function waitForValue(url: string, value: string) {
-  const deadline = Date.now() + 8000;
   let last = "no response";
-  while (Date.now() < deadline) {
+  await waitFor(async () => {
     try {
       const response = await fetch(url, {
         method: "POST",
@@ -13,11 +13,11 @@ async function waitForValue(url: string, value: string) {
         headers: { "content-type": "application/json" },
       });
       last = `${response.status} ${await response.text()}`;
-      if (last === `200 {"v":"${value}"}`) return;
     } catch {}
-    await Bun.sleep(50);
-  }
-  throw new Error(`Expected ${value}; last response: ${last}`);
+    return last === `200 {"v":"${value}"}`;
+  }, 8000).catch(() => {
+    throw new Error(`Expected ${value}; last response: ${last}`);
+  });
 }
 
 test.each([
@@ -26,14 +26,10 @@ test.each([
   [false, "dist"],
   [true, "dist"],
 ])(
-  "brick dev reloads dependency services (default app: %s, CLI: %s)",
+  "brick dev reloads dependency services (default app: %s, CLI from %s; dist needs a build)",
   async (exportApp, cliDirectory) => {
-    const directory = await mkdtemp(
-      join(resolve(import.meta.dir, "../../.."), ".dev-reload-"),
-    );
-    const listener = Bun.serve({ port: 0, fetch: () => new Response() });
-    const port = listener.port;
-    listener.stop(true);
+    const directory = await tempProject("dev-reload");
+    const port = freePort();
     const service = (
       value: string,
     ) => `import { defineService } from "@brickkit/core";

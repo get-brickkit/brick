@@ -182,7 +182,6 @@ export const historyUrl = (
 ): string =>
   `${ROUTES.history.path}${endpoint ? `/${endpoint}` : ""}${params ? `?${params}` : ""}`;
 
-/** One stored request with its spans. */
 export const historyTraceUrl = (traceId: string): string =>
   `${historyUrl("traces")}/${encodeURIComponent(traceId)}`;
 

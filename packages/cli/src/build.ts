@@ -47,7 +47,7 @@ const productionDashboardAtRunTime: BunPlugin = {
 /** The files `brick build` writes to the output folder, `server.js` last. */
 const OUTPUTS = ["routes.js", "brick-ir.json", "server.js.map", "server.js"];
 
-/** Bundle an exported BrickApp with generated handlers and its original configuration. */
+/** Bundle an exported BrickApp with its compiled IR and its original configuration. */
 export async function buildApplication(options: BuildApplicationOptions) {
   const entry = resolve(options.entry);
   if (!(await Bun.file(entry).exists()))
@@ -147,7 +147,6 @@ if (import.meta.main) {
       outdir,
       entry: join(outdir, "server.js"),
       ir: compilation.ir,
-      /** The built dashboard extension's folder, when there is one. */
       dashboard,
     };
   } finally {

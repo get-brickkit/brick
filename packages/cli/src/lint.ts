@@ -108,7 +108,6 @@ const APP_CHECKS: Record<(typeof APP_RULES)[number], AppRule> = {
   "test-colocated": testColocated,
 };
 
-/** The app rules: they need the loaded app, so only brick lint runs them. */
 async function checkApp(check: AppCheck): Promise<LintMessage[]> {
   const messages: LintMessage[] = [];
   const message = (

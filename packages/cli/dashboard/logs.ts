@@ -175,7 +175,6 @@ export function queryLogs(
   );
 }
 
-/** How many lines there are at each level. */
 export function countLevels(entries: LogEntry[]): Record<LogLevel, number> {
   const counts: Record<LogLevel, number> = {
     debug: 0,

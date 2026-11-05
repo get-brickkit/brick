@@ -9,7 +9,7 @@ import {
   brick,
 } from "@brickkit/core";
 
-describe("@brickkit/cli app.endpoint()", () => {
+describe("app.endpoint()", () => {
   beforeEach(() => {
     resetGlobalRegistry();
   });
@@ -43,7 +43,6 @@ describe("@brickkit/cli app.endpoint()", () => {
       new Request("http://localhost/_brick/services"),
     );
     expect(architecture.status).toBe(200);
-    expect(await architecture.json()).toBeDefined();
   });
 
   it("serves a raw HTML endpoint with status and headers", async () => {
@@ -67,8 +66,8 @@ describe("@brickkit/cli app.endpoint()", () => {
     expect(ok.status).toBe(200);
     expect(ok.headers.get("content-type")).toContain("text/html");
     expect(await ok.text()).toBe("<h1>hello</h1>");
-    expect(ok.headers.get("x-trace-id")).toBeDefined();
-    expect(ok.headers.get("x-request-id")).toBeDefined();
+    expect(ok.headers.get("x-trace-id")).toMatch(/.+/);
+    expect(ok.headers.get("x-request-id")).toMatch(/.+/);
 
     const missing = await app.handle(new Request("http://localhost/p/nope"));
     expect(missing.status).toBe(404);

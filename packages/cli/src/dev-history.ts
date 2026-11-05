@@ -275,7 +275,6 @@ export class DevHistory {
     this.#flushTimer.unref?.();
   }
 
-  /** Write queued requests now. */
   flush(): void {
     if (this.#flushTimer) {
       clearTimeout(this.#flushTimer);
@@ -460,7 +459,6 @@ export class DevHistory {
     return tracesToCsv(rows.map(toHistoryTrace));
   }
 
-  /** One request with all its spans. */
   trace(traceId: string): TraceSummary | undefined {
     this.flush();
     const row = this.#database

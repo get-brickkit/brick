@@ -77,12 +77,11 @@ function projectOf(command: Command): Promise<LoadedConfig> {
   return resolveProject(command.optsWithGlobals<{ config?: string }>().config);
 }
 
-/** The entry argument, else the config's entry. */
 function entryOf(entry: string | undefined, project: LoadedConfig) {
   return entry ?? (project.file ? project.entry : undefined);
 }
 
-/** The entry argument, else the config's entry; without either, commander's usual error. */
+/** Without an entry argument or config entry, commander's usual error. */
 function requireEntry(
   command: Command,
   entry: string | undefined,
@@ -103,7 +102,6 @@ async function loadProjectApp(entry: string, project: LoadedConfig) {
   return loadBrickApp(entry);
 }
 
-/** A config path, made absolute from the config file's folder. */
 function fromRoot(
   project: LoadedConfig,
   path: string | undefined,
@@ -508,7 +506,6 @@ ${PORT_RESOLUTION_HELP}`,
 
 async function main() {
   const program = createProgram();
-  // Bare `brick` is `brick dev`.
   await program.parseAsync(
     process.argv.length > 2 ? process.argv : [...process.argv, "dev"],
   );

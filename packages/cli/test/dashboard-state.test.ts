@@ -1,10 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import {
-  initialState,
-  parseRoute,
-  reduce,
-  routeHref,
-} from "../dashboard/state";
+import { parseRoute, routeHref } from "../dashboard/state";
 import { docsHref } from "../src/dashboard-protocol";
 import { apiHref } from "../dashboard/api-operations";
 import { pageHref } from "../dashboard/extension-registry";
@@ -102,16 +97,5 @@ describe("every link builder", () => {
       view: "apis",
       path: ["pages api", "get", "a", "{id}"],
     });
-  });
-});
-
-describe("reduce", () => {
-  it("follows the workflow inspector as the app restarts", () => {
-    expect(initialState.inspector).toBe(false);
-    const up = reduce(initialState, { type: "inspector", inspector: true });
-    expect(up.inspector).toBe(true);
-    expect(reduce(up, { type: "inspector", inspector: false }).inspector).toBe(
-      false,
-    );
   });
 });

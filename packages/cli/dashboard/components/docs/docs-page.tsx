@@ -36,9 +36,7 @@ export function onContentClick(event: MouseEvent): void {
   let id = href.slice(1);
   try {
     id = decodeURIComponent(id);
-  } catch {
-    // Use it as written.
-  }
+  } catch {}
   scrollToHeading(id);
 }
 

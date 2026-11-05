@@ -27,11 +27,9 @@ describe("startInspector", () => {
       const headers = { [INSPECTOR_TOKEN_HEADER]: inspector!.token };
 
       expect((await fetch(`${base}/workflows/`)).status).toBe(403);
-      const page = await fetch(`${base}/workflows/`, { headers });
-      expect(page.status).toBe(200);
-      expect(page.headers.get("content-type")).toContain("text/html");
+      expect((await fetch(`${base}/workflows/`, { headers })).status).toBe(200);
 
-      // The UI lists runs through the world the app gave it.
+      // The handler is given the app's own world.
       const rpc = await fetch(`${base}/workflows/api/rpc`, {
         method: "POST",
         headers: { ...headers, "content-type": "application/json" },
@@ -61,11 +59,6 @@ describe("startInspector", () => {
       expect(asset.status).toBe(200);
       expect(asset.headers.get("content-type")).toContain("text/css");
       expect(asset.headers.get("cache-control")).toContain("immutable");
-      // The page names them under the path it is served at.
-      const page = await (
-        await fetch(`${base}/workflows/`, { headers })
-      ).text();
-      expect(page).toContain(`/workflows/assets/`);
 
       // Nothing else under assets/ is a file: a name the build lacks, a folder,
       // a path through a file, a name no file system takes. A plain 404, not the

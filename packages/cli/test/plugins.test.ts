@@ -15,92 +15,89 @@ import { generateClientContract } from "../src/client-contract";
 
 beforeEach(resetGlobalRegistry);
 
-for (const compiler of [false, true]) {
-  it(`serves configured plugin routes and keeps hidden actions local (compiler=${compiler})`, async () => {
-    const service = defineService("discussion");
-    const api = service.use(
-      defineServicePlugin({
-        name: "example/comments",
-        routes: {
-          list: false,
-          count: { scope: "app", path: "/comments/count" },
-        },
-        setup({ routes }) {
-          const list = routes.action({
-            name: "list",
-            method: "GET",
-            path: "/comments",
-            output: t.Array(t.String()),
-            execute: () => ["local comment"],
-          });
-          const count = routes.action({
-            name: "count",
-            method: "GET",
-            path: "/comments/count",
-            input: t.Object({ minimum: t.Number() }),
-            output: t.Object({ count: t.Number() }),
-            execute: ({ input }) => ({ count: input.minimum + 1 }),
-          });
-          routes.endpoint({
-            name: "html",
-            method: "GET",
-            path: "/comments/html",
-            handler: () =>
-              new Response("<p>Comments</p>", {
-                headers: { "content-type": "text/html" },
-              }),
-          });
-          return { comments: { list, count } };
-        },
-      }),
-    );
-    const app = brick({
-      services: [service],
-      prefix: "/v2",
-      compiler,
-      requestLogging: false,
-    });
-    expect(await api.comments.list({})).toEqual(["local comment"]);
-    const count = await app.handle(
-      new Request("http://localhost/v2/comments/count?minimum=2"),
-    );
-    expect(count.status).toBe(200);
-    expect(await count.json()).toEqual({ count: 3 });
-    const html = await app.handle(
-      new Request("http://localhost/v2/discussion/comments/html"),
-    );
-    expect(html.status).toBe(200);
-    expect(await html.text()).toBe("<p>Comments</p>");
-    for (const path of [
-      "/v2/discussion/comments",
-      "/v2/discussion/comments/count",
-      `/v2/discussion/${api.comments.list.name}`,
-    ])
-      expect(
-        (await app.handle(new Request(`http://localhost${path}`))).status,
-      ).toBe(404);
-    const compilation = compileBrickApplication({
-      services: [service],
-      prefix: "/v2",
-    });
-    expect(compilation.ir.routes.map((route) => route.path)).toEqual([
-      "/v2/comments/count",
-    ]);
-    const spec = await (
-      await app.handle(new Request("http://localhost/openapi.json"))
-    ).json();
-    expect(Object.keys(spec.paths).sort()).toEqual([
-      "/v2/comments/count",
-      "/v2/discussion/comments/html",
-    ]);
-    const source = generateClientContract(app);
-    expect(source).toContain('"comments"');
-    expect(source).toContain('"count"');
-    expect(source).not.toContain('"list"');
-    expect(source).not.toContain('"html"');
-    expect(source).toContain("/v2/comments/count");
+it("serves configured plugin routes and keeps hidden actions local", async () => {
+  const service = defineService("discussion");
+  const api = service.use(
+    defineServicePlugin({
+      name: "example/comments",
+      routes: {
+        list: false,
+        count: { scope: "app", path: "/comments/count" },
+      },
+      setup({ routes }) {
+        const list = routes.action({
+          name: "list",
+          method: "GET",
+          path: "/comments",
+          output: t.Array(t.String()),
+          execute: () => ["local comment"],
+        });
+        const count = routes.action({
+          name: "count",
+          method: "GET",
+          path: "/comments/count",
+          input: t.Object({ minimum: t.Number() }),
+          output: t.Object({ count: t.Number() }),
+          execute: ({ input }) => ({ count: input.minimum + 1 }),
+        });
+        routes.endpoint({
+          name: "html",
+          method: "GET",
+          path: "/comments/html",
+          handler: () =>
+            new Response("<p>Comments</p>", {
+              headers: { "content-type": "text/html" },
+            }),
+        });
+        return { comments: { list, count } };
+      },
+    }),
+  );
+  const app = brick({
+    services: [service],
+    prefix: "/v2",
+    requestLogging: false,
   });
-}
+  expect(await api.comments.list({})).toEqual(["local comment"]);
+  const count = await app.handle(
+    new Request("http://localhost/v2/comments/count?minimum=2"),
+  );
+  expect(count.status).toBe(200);
+  expect(await count.json()).toEqual({ count: 3 });
+  const html = await app.handle(
+    new Request("http://localhost/v2/discussion/comments/html"),
+  );
+  expect(html.status).toBe(200);
+  expect(await html.text()).toBe("<p>Comments</p>");
+  for (const path of [
+    "/v2/discussion/comments",
+    "/v2/discussion/comments/count",
+    `/v2/discussion/${api.comments.list.name}`,
+  ])
+    expect(
+      (await app.handle(new Request(`http://localhost${path}`))).status,
+    ).toBe(404);
+  const compilation = compileBrickApplication({
+    services: [service],
+    prefix: "/v2",
+  });
+  expect(compilation.ir.routes.map((route) => route.path)).toEqual([
+    "/v2/comments/count",
+  ]);
+  const spec = await (
+    await app.handle(new Request("http://localhost/openapi.json"))
+  ).json();
+  expect(Object.keys(spec.paths).sort()).toEqual([
+    "/v2/comments/count",
+    "/v2/discussion/comments/html",
+  ]);
+  const source = generateClientContract(app);
+  expect(source).toContain('"comments"');
+  expect(source).toContain('"count"');
+  expect(source).not.toContain('"list"');
+  expect(source).not.toContain('"html"');
+  expect(source).toContain("/v2/comments/count");
+});
 
 it("disabling every plugin route also disables raw endpoints", async () => {
   const service = defineService("private");

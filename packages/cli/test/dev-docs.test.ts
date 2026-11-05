@@ -1,11 +1,18 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bundleComponents } from "../src/dashboard-extension";
 import { DevDocs, DocsHost, openDocs } from "../src/dev-docs";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
+import {
+  PNG,
+  nodeVersion,
+  runsIf,
+  settle,
+  tempProject,
+  waitFor,
+} from "./helpers";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -23,11 +30,6 @@ async function project(files: Record<string, string>): Promise<string> {
   }
   return root;
 }
-
-const PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
-  "base64",
-);
 
 const FILES = {
   "docs/index.mdx": `---
@@ -278,7 +280,7 @@ describe("DevDocs", () => {
     docs.onChange(() => changes++);
     docs.close();
     await writeFile(join(root, "docs/late.mdx"), "# Late\n");
-    await Bun.sleep(400);
+    await settle(400);
     expect(changes).toBe(0);
   });
 });
@@ -398,8 +400,11 @@ describe("DocsHost", () => {
       expect(host.current).toBe(first);
       expect(events).toEqual(["ready"]);
 
-      // Edits reach the store as a new revision.
+      // A change to the docs reaches the store as a new revision. Refreshing
+      // directly: right after a watch starts, macOS can drop the first file event,
+      // and "notices edits" above covers the watching.
       await writeFile(join(root, "docs/extra.mdx"), "# Extra\n");
+      await host.current!.refresh();
       await waitFor(() => store.snapshot().docs?.revision === 2);
 
       // An app that drops `documentation` closes them.
@@ -433,40 +438,31 @@ describe("DocsHost", () => {
   });
 });
 
-async function waitFor(
-  check: () => boolean | Promise<boolean>,
-  timeoutMs = 5000,
-) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await check()) return;
-    await Bun.sleep(40);
-  }
-  throw new Error("Timed out waiting for the docs to change");
-}
-
 describe("under Node", () => {
   // The Vite dev server runs under Node, where there is no Bun.build and the
   // project's components are bundled by Vite instead.
-  it("opens the docs, compiles a page, and bundles components", async () => {
-    const root = await project({
-      "docs/index.mdx":
-        "---\ntitle: Home\n---\n\n## Part\n\nHello <Thing />.\n",
-      "docs/components.tsx":
-        "export const Thing = () => <i>thing</i>;\nexport const components = { Thing };\n",
-    });
-    // Bundled inside the package, so Node finds fumadocs-core and Vite there.
-    const out = await mkdtemp(resolve(import.meta.dir, "../.brick-node-docs-"));
-    roots.push(out);
-    const built = await Bun.build({
-      entrypoints: [join(import.meta.dir, "../src/dev-docs.ts")],
-      outdir: out,
-      target: "node",
-      format: "esm",
-      packages: "external",
-    });
-    expect(built.success).toBe(true);
-    const script = `
+  const hasNode = runsIf(Boolean(nodeVersion()), "Node is not installed");
+  it.if(hasNode)(
+    "opens the docs, compiles a page, and bundles components",
+    async () => {
+      const root = await project({
+        "docs/index.mdx":
+          "---\ntitle: Home\n---\n\n## Part\n\nHello <Thing />.\n",
+        "docs/components.tsx":
+          "export const Thing = () => <i>thing</i>;\nexport const components = { Thing };\n",
+      });
+      // Bundled inside the package, so Node finds fumadocs-core and Vite there.
+      const out = await tempProject("node-docs");
+      roots.push(out);
+      const built = await Bun.build({
+        entrypoints: [join(import.meta.dir, "../src/dev-docs.ts")],
+        outdir: out,
+        target: "node",
+        format: "esm",
+        packages: "external",
+      });
+      expect(built.success).toBe(true);
+      const script = `
       import { openDocs } from ${JSON.stringify(join(out, "dev-docs.js"))};
       const opened = await openDocs({ base: ${JSON.stringify(root)},
         documentation: { dir: "./docs", components: "./docs/components.tsx" }, warn: console.warn });
@@ -482,20 +478,22 @@ describe("under Node", () => {
         bundleImportsReact: /from\\s*["']react\\/jsx-(dev-)?runtime["']/.test(bundle),
         hits: hits.length > 0 }));
     `;
-    const result = Bun.spawnSync(
-      ["node", "--input-type=module", "-e", script],
-      {
-        stderr: "pipe",
-      },
-    );
-    expect(result.stderr.toString()).not.toContain("Error");
-    expect(JSON.parse(result.stdout.toString())).toEqual({
-      runtime: "node",
-      toc: [{ title: "Part", url: "#part", depth: 2 }],
-      shiki: true,
-      bundleHasThing: true,
-      bundleImportsReact: true,
-      hits: true,
-    });
-  }, 60000);
+      const result = Bun.spawnSync(
+        ["node", "--input-type=module", "-e", script],
+        {
+          stderr: "pipe",
+        },
+      );
+      expect(result.stderr.toString()).not.toContain("Error");
+      expect(JSON.parse(result.stdout.toString())).toEqual({
+        runtime: "node",
+        toc: [{ title: "Part", url: "#part", depth: 2 }],
+        shiki: true,
+        bundleHasThing: true,
+        bundleImportsReact: true,
+        hits: true,
+      });
+    },
+    60000,
+  );
 });

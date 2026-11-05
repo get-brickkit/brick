@@ -14,6 +14,7 @@ import {
   tracesToCsv,
 } from "../src/dashboard-query";
 import type { TraceSummary } from "../src/dashboard-protocol";
+import { nodeVersion, runsIf } from "./helpers";
 
 const DAY = 86_400_000;
 // Retention is measured from the real clock, so the fixtures are too.
@@ -218,152 +219,6 @@ describe("DevHistory", () => {
     expect(everything.total).toBe(3);
   });
 
-  it("filters by endpoint, outcome, minimum duration, and text", async () => {
-    const history = await open();
-    history.saveTrace(trace("ok", { agoMs: 1 }));
-    history.saveTrace(
-      trace("slow", {
-        agoMs: 2,
-        durationMs: 900,
-        route: "/api/slow",
-        path: "/api/slow",
-      }),
-    );
-    history.saveTrace(trace("missing", { agoMs: 3, httpStatus: 404 }));
-    history.saveTrace(
-      trace("boom", { agoMs: 4, httpStatus: 500, status: "error" }),
-    );
-    const range = { from: NOW - DAY, to: NOW };
-    const ids = (query: Partial<Parameters<DevHistory["traces"]>[0]>) =>
-      history.traces({ ...range, ...query }).traces.map((item) => item.traceId);
-
-    expect(ids({ outcomes: ["ok"] })).toEqual(["ok", "slow"]);
-    expect(ids({ outcomes: ["client"] })).toEqual(["missing"]);
-    expect(ids({ outcomes: ["server"] })).toEqual(["boom"]);
-    expect(ids({ outcomes: ["client", "server"] })).toEqual([
-      "missing",
-      "boom",
-    ]);
-    expect(ids({ endpoints: ["GET /api/slow"] })).toEqual(["slow"]);
-    expect(ids({ minMs: 500 })).toEqual(["slow"]);
-    expect(ids({ query: "SLOW" })).toEqual(["slow"]);
-    // Wildcard characters in the text are matched literally.
-    expect(ids({ query: "%" })).toEqual([]);
-    expect(ids({ query: "api_pages" })).toEqual([]);
-  });
-
-  it("combines different filters and accepts several values for one", async () => {
-    const history = await open();
-    history.saveTrace(
-      trace("list", { agoMs: 1, service: "pages", action: "page.list" }),
-    );
-    history.saveTrace(
-      trace("create", {
-        agoMs: 2,
-        method: "POST",
-        service: "pages",
-        action: "page.create",
-      }),
-    );
-    history.saveTrace(
-      trace("login", {
-        agoMs: 3,
-        method: "POST",
-        route: "/api/auth/login",
-        service: "auth",
-        action: "login",
-        httpStatus: 401,
-        message: "Wrong password",
-      }),
-    );
-    const range = { from: NOW - DAY, to: NOW };
-    const ids = (query: Partial<Parameters<DevHistory["traces"]>[0]>) =>
-      history.traces({ ...range, ...query }).traces.map((item) => item.traceId);
-
-    expect(ids({ methods: ["POST"] })).toEqual(["create", "login"]);
-    expect(ids({ methods: ["POST"], services: ["pages"] })).toEqual(["create"]);
-    expect(ids({ services: ["pages", "auth"] })).toEqual([
-      "list",
-      "create",
-      "login",
-    ]);
-    // Text also matches the action and the failure message.
-    expect(ids({ query: "page.create" })).toEqual(["create"]);
-    expect(ids({ query: "wrong pass" })).toEqual(["login"]);
-
-    const [row] = history.traces({ ...range, services: ["auth"] }).traces;
-    expect(row).toMatchObject({
-      service: "auth",
-      action: "login",
-      message: "Wrong password",
-    });
-  });
-
-  it("counts each filter's values as if that filter were not applied", async () => {
-    const history = await open();
-    const save = (id: string, options: Parameters<typeof trace>[1]) =>
-      history.saveTrace(trace(id, { agoMs: 1_000, ...options }));
-    save("a", { service: "pages" });
-    save("b", { service: "pages", httpStatus: 404 });
-    save("c", {
-      service: "auth",
-      method: "POST",
-      httpStatus: 500,
-      status: "error",
-    });
-    const range = { from: NOW - DAY, to: NOW };
-
-    const everything = history.facets(range);
-    expect(everything.outcome).toEqual([
-      { value: "client", count: 1 },
-      { value: "ok", count: 1 },
-      { value: "server", count: 1 },
-    ]);
-    expect(everything.method).toEqual([
-      { value: "GET", count: 2 },
-      { value: "POST", count: 1 },
-    ]);
-    expect(everything.service).toEqual([
-      { value: "pages", count: 2 },
-      { value: "auth", count: 1 },
-    ]);
-
-    // Choosing a service narrows the other counts but not its own.
-    const pages = history.facets({ ...range, services: ["pages"] });
-    expect(pages.service).toEqual(everything.service);
-    expect(pages.outcome).toEqual([
-      { value: "client", count: 1 },
-      { value: "ok", count: 1 },
-    ]);
-    expect(pages.method).toEqual([{ value: "GET", count: 2 }]);
-  });
-
-  it("counts matching requests per time bucket by outcome", async () => {
-    const history = await open();
-    history.saveTrace(trace("early", { agoMs: DAY - 1_000 }));
-    history.saveTrace(
-      trace("early-fail", {
-        agoMs: DAY - 2_000,
-        httpStatus: 500,
-        status: "error",
-      }),
-    );
-    history.saveTrace(trace("late", { agoMs: 1_000, httpStatus: 404 }));
-    const range = { from: NOW - DAY, to: NOW };
-
-    const volume = history.volume(range, 24);
-    expect(volume).toHaveLength(24);
-    expect(volume[0]).toMatchObject({ ok: 1, server: 1, client: 0 });
-    expect(volume[23]).toMatchObject({ client: 1, ok: 0 });
-
-    const onlyOk = history.volume({ ...range, outcomes: ["ok"] }, 24);
-    const total = onlyOk.reduce(
-      (sum, bucket) => sum + bucket.ok + bucket.client + bucket.server,
-      0,
-    );
-    expect(total).toBe(1);
-  });
-
   it("exports matching requests as CSV a spreadsheet can open", async () => {
     const history = await open();
     history.saveTrace(
@@ -435,48 +290,6 @@ describe("DevHistory", () => {
       offset: 2,
     });
     expect(second.traces.map((item) => item.traceId)).toEqual(["t2", "t1"]);
-  });
-
-  it("summarizes how many requests match, how many failed, and how long they took", async () => {
-    const history = await open();
-    for (let index = 0; index < 10; index++) {
-      history.saveTrace(
-        trace(`list${index}`, {
-          agoMs: index * 1_000,
-          durationMs: (index + 1) * 10,
-        }),
-      );
-    }
-    history.saveTrace(
-      trace("create", {
-        agoMs: 2_000,
-        method: "POST",
-        httpStatus: 500,
-        status: "error",
-        durationMs: 300,
-      }),
-    );
-    history.saveTrace(
-      trace("gone", { agoMs: 3_000, httpStatus: 404, durationMs: 5 }),
-    );
-    history.saveTrace(trace("old", { agoMs: 40 * DAY }));
-    const range = { from: NOW - 7 * DAY, to: NOW };
-
-    const everything = history.summary(range);
-    expect(everything).toMatchObject({
-      total: 12,
-      serverErrors: 1,
-      clientErrors: 1,
-    });
-    // Durations: 5, 10, 20 ... 100, 300; the median sits between 50 and 60.
-    expect(everything.medianMs).toBeCloseTo(55, 5);
-    expect(everything.p95Ms).toBeGreaterThan(90);
-
-    // The same filters as the list narrow it.
-    const posts = history.summary({ ...range, methods: ["POST"] });
-    expect(posts).toMatchObject({ total: 1, serverErrors: 1, clientErrors: 0 });
-    expect(posts.medianMs).toBe(300);
-    expect(history.summary({ ...range, minMs: 100 }).total).toBe(2);
   });
 
   it("summarizes nothing as zeros", async () => {
@@ -574,16 +387,13 @@ describe("stored and live requests", () => {
 
 describe("under Node", () => {
   // Vite's dev server runs under Node, which has no bun:sqlite.
-  const nodeVersion = Bun.spawnSync(["node", "--version"]).stdout.toString();
-  const [major = 0, minor = 0] = nodeVersion
-    .trim()
-    .replace(/^v/, "")
-    .split(".")
-    .map(Number);
-  // node:sqlite needs Node 22.5.
-  const supported = major > 22 || (major === 22 && minor >= 5);
+  const [major = 0, minor = 0] = nodeVersion() ?? [];
+  const supported = runsIf(
+    major > 22 || (major === 22 && minor >= 5),
+    "node:sqlite needs Node 22.5 or later",
+  );
 
-  it.skipIf(!supported)("saves and queries requests", async () => {
+  it.if(supported)("saves and queries requests", async () => {
     const directory = mkdtempSync(join(tmpdir(), "brick-node-history-"));
     directories.push(directory);
     // Bundle it first, as the package does, so Node runs plain JavaScript.

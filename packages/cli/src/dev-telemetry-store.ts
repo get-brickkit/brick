@@ -71,7 +71,7 @@ export class DevTelemetryStore {
   #sequence = 0;
   #generation = 0;
 
-  /** Finished requests and failures are also kept in `history`, when given. */
+  /** Finished requests are also kept in `history`, when given. */
   constructor(
     options: { history?: { saveTrace(trace: TraceSummary): void } } = {},
   ) {

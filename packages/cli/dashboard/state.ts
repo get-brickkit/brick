@@ -166,7 +166,7 @@ export function parseRoute(hash: string): Route {
       ...(anchor ? { anchor } : {}),
     };
   return {
-    // History became part of Requests; old links still land there.
+    // An unknown view (such as the old History) lands on Requests.
     view: VIEW_NAMES.includes(view as ViewName)
       ? (view as ViewName)
       : "requests",

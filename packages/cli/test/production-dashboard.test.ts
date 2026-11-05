@@ -1,6 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { connect } from "node:net";
-import { context, propagation, trace } from "@opentelemetry/api";
 import {
   defineAction,
   defineService,
@@ -9,42 +7,17 @@ import {
   brick,
 } from "@brickkit/core";
 import { startDevDashboard } from "../src/dev-dashboard";
-import { captureConsole } from "../src/dev-telemetry";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
 import { startProductionDashboard } from "../src/production-dashboard";
+import { freePort, raw, resetTracing, waitFor } from "./helpers";
 
 const token = "0123456789abcdef-secret";
 const bearer = { authorization: `Bearer ${token}` };
-const CAPTURE = Symbol.for("brickkit.logs.capture");
-
-/** Start with no tracing and an untouched console, and end the same way. */
-function reset() {
-  captureConsole()();
-  (globalThis as Record<symbol, unknown>)[CAPTURE] = undefined;
-  trace.disable();
-  context.disable();
-  propagation.disable();
-}
 beforeEach(() => {
-  reset();
+  resetTracing();
   resetGlobalRegistry();
 });
-afterEach(reset);
-
-/** One raw request, so the Host header can be anything. */
-function raw(port: number, host: string, extra = ""): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const socket = connect(port, "127.0.0.1", () => {
-      socket.write(
-        `GET /api/state HTTP/1.1\r\nHost: ${host}\r\n${extra}Connection: close\r\n\r\n`,
-      );
-    });
-    let data = "";
-    socket.on("data", (chunk) => (data += chunk.toString()));
-    socket.on("end", () => resolve(data.split("\r\n")[0] ?? ""));
-    socket.on("error", reject);
-  });
-}
+afterEach(resetTracing);
 
 async function production(
   options: Partial<Parameters<typeof startDevDashboard>[0]> = {},
@@ -232,14 +205,6 @@ describe("the production dashboard server", () => {
   });
 });
 
-/** A port nothing is listening on, for an app that asks for it by number. */
-async function freePort(): Promise<number> {
-  const server = Bun.serve({ port: 0, fetch: () => new Response() });
-  const { port } = server;
-  await server.stop(true);
-  return port!;
-}
-
 describe("startProductionDashboard", () => {
   function appWith(dashboard: object) {
     const service = defineService("pages", {});
@@ -285,12 +250,15 @@ describe("startProductionDashboard", () => {
         }),
       );
       expect(response.status).toBe(200);
-      // Records are batched, and sent a moment after the spans end.
-      await new Promise((resolve) => setTimeout(resolve, 120));
-
-      const state = await (
-        await fetch(`http://127.0.0.1:${port}/api/state`, { headers: bearer })
-      ).json();
+      let state: any;
+      await waitFor(
+        async () =>
+          (state = await (
+            await fetch(`http://127.0.0.1:${port}/api/state`, {
+              headers: bearer,
+            })
+          ).json()).traces.length > 0,
+      );
       expect(state.mode).toBe("production");
       expect(state.reloads[0]).toMatchObject({
         kind: "started",

@@ -1,5 +1,6 @@
 import { basename, dirname, relative, resolve, sep } from "node:path";
 import { kebabCase } from "@brickkit/core/client";
+import { PROJECT_DEFAULTS } from "../config";
 import {
   DEFINITION_FILE,
   TEST_FILE,
@@ -80,9 +81,9 @@ export function brickSettings(context: RuleContext): BrickSettings {
   const from = (path: string) => posix(relative(root, resolve(root, path)));
   return {
     root,
-    services: from(given.services ?? "src/services"),
-    entry: from(given.entry ?? "src/app.ts"),
-    generated: from(given.generated ?? "_brick"),
+    services: from(given.services ?? PROJECT_DEFAULTS.services),
+    entry: from(given.entry ?? PROJECT_DEFAULTS.entry),
+    generated: from(given.generated ?? PROJECT_DEFAULTS.generated),
   };
 }
 
@@ -91,7 +92,6 @@ export const serviceFolders = (name: string) => [kebabCase(name), name];
 
 export interface FileInfo {
   settings: BrickSettings;
-  /** Path from the project root, with forward slashes. */
   rel: string;
   base: string;
   inServices: boolean;
@@ -348,7 +348,7 @@ export function resolveImport(
   );
 }
 
-/** `name.method(...)` with a non-computed property. */
+/** `name.method(...)` with a non-computed property, or a bare `fn(...)` (no `object`). */
 export function memberCall(
   node: Node,
 ): { object?: string; property: string } | undefined {

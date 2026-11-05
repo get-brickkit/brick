@@ -359,7 +359,6 @@ export function startDevDashboard(
     send(response, 204, "");
   }
 
-  /** The Docs tab's data: tree, compiled pages, search, images, components. */
   async function docsRoute(
     response: ServerResponse,
     pathname: string,
@@ -797,7 +796,6 @@ function fromOwnPage(request: IncomingMessage): boolean {
   );
 }
 
-/** Framed by the dashboard's own pages, and by nothing else. */
 function frameOnlyHere(response: ServerResponse): void {
   response.setHeader("content-security-policy", "frame-ancestors 'self'");
   response.setHeader("x-frame-options", "SAMEORIGIN");
@@ -814,7 +812,6 @@ function forwardedHeaders(request: IncomingMessage): Headers {
   return headers;
 }
 
-/** The upstream answer's headers to pass back. */
 function returnedHeaders(upstream: Response): Record<string, string> {
   const returned: Record<string, string> = {};
   upstream.headers.forEach((value, name) => {

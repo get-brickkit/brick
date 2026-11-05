@@ -8,7 +8,6 @@ import {
   type TSchema,
 } from "@sinclair/typebox";
 import { Value, ValueErrorType } from "@sinclair/typebox/value";
-import type { PresetName, Severity } from "./lint/presets";
 
 import type {
   DashboardExtensionOptions,
@@ -17,8 +16,10 @@ import type {
 
 export type { DashboardExtensionOptions, DashboardTheme };
 
-export type LintSeverity = Severity;
-export type LintPreset = PresetName;
+const PRESET_NAMES = ["recommended", "layout", "strict", "plugin"] as const;
+const SEVERITIES = ["error", "warn", "off"] as const;
+export type LintPreset = (typeof PRESET_NAMES)[number];
+export type LintSeverity = (typeof SEVERITIES)[number];
 
 export const DEFAULT_PORT = 4000;
 export const DEFAULT_DASHBOARD_PORT = 9400;
@@ -50,12 +51,6 @@ const optional = <T extends Record<string, TSchema>>(properties: T) =>
 const tokens = t.Record(t.String(), t.String(), {
   message: "must map token names to values",
 });
-const PRESET_NAMES = [
-  "recommended",
-  "layout",
-  "strict",
-  "plugin",
-] as const satisfies readonly PresetName[];
 
 /**
  * Project and tooling settings read by the `brick` CLI and its lint rules.
@@ -128,7 +123,7 @@ const BrickConfigSchema = t.Object(
         }),
         rules: t.Record(
           t.String(),
-          t.Union([t.Literal("error"), t.Literal("warn"), t.Literal("off")]),
+          t.Union(SEVERITIES.map((severity) => t.Literal(severity))),
           { message: 'must map rule names to "error", "warn" or "off"' },
         ),
         ignore: t.Array(t.String({ minLength: 1 }), {
