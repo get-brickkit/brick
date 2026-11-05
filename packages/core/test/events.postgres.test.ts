@@ -7,10 +7,10 @@ import {
   defineListener,
   defineService,
   Dispatcher,
-  EventsHub,
   outboxTable,
   type EventDelivery,
 } from "../src";
+import { EventsHub } from "../src/events/hub";
 
 const url = process.env.TEST_DATABASE_URL;
 const suite = url ? describe : describe.skip;

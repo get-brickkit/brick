@@ -19,10 +19,7 @@ export type {
   InstalledPlugin,
 } from "./plugin-types";
 export { definePlugin } from "./define-plugin";
-export { satisfiesRange, brickVersion } from "./version";
-export { isPluginInstance } from "./plugin-app";
 export {
-  HOST_HOOKS,
   getHostHooks,
   type HostHooks,
   type PluginHooks,
@@ -95,7 +92,7 @@ export {
 export { compilerRuntime, deny } from "./compiler/runtime";
 
 // Core Primitives
-export { defineService, ServiceImpl } from "./service";
+export { defineService } from "./service";
 export type {
   BrickSocketConfig,
   BrickSocketHandle,
@@ -114,8 +111,7 @@ export { serializeSocketSchema } from "./socket-schema";
 export { redisBroker, type RedisBrokerOptions } from "./socket-redis";
 export { getActionAccess, setActionAccess } from "./access";
 export type { ActionAccessInfo } from "./access";
-export { ACTION_META, actionMeta, type ActionMeta } from "./action-meta";
-export { HTTP_METHODS, type HttpMethod } from "./http";
+export type { HttpMethod } from "./http";
 export {
   defineAction,
   defineError,
@@ -127,8 +123,6 @@ export {
   getActionRoute,
   getPluginActionRoute,
   actionOwners,
-  claimedSegments,
-  routeKey,
   kebabCase,
   type ActionRoute,
   type ResourceActionInfo,
@@ -145,31 +139,28 @@ export { stepErrors, stepFailure, type StepErrorBuilder } from "./workflow";
 export { defineListener } from "./events/listener";
 export { emitEvent } from "./events/emit";
 export {
-  CRUD_EVENT_OPERATIONS,
   crudEventName,
   crudEventSource,
   isCrudEvent,
   type CrudEventOperation,
-  isEventRef,
   type EventCatalog,
   type EventRef,
   type EventRefs,
 } from "./events/catalog";
 export {
   outboxTable,
-  isOutboxTable,
   type OutboxStatus,
   type OutboxTable,
   type PostgresOutboxTable,
   type SQLiteOutboxTable,
 } from "./events/outbox";
 export { runInTransaction, onTransactionCommit } from "./events/transaction";
+export { resolveWorkflowPaths, WORKFLOW_BUNDLE } from "./events/workflows";
 export {
-  resolveWorkflowPaths,
-  WORKFLOW_BUNDLE,
-  WORKFLOW_QUEUE,
-} from "./events/workflows";
-export { EventsHub, stopAllEvents, type EventsDefinition } from "./events/hub";
+  stopAllEvents,
+  type EventsHub,
+  type EventsDefinition,
+} from "./events/hub";
 export { Dispatcher, type OutboxCounts } from "./events/dispatcher";
 export type {
   CrudEventPayload,
@@ -209,17 +200,17 @@ export type {
   InferActionFailure,
 } from "./client";
 export {
-  ServiceRegistry,
+  type ServiceRegistry,
   getGlobalRegistry,
   resetGlobalRegistry,
 } from "./registry";
 
 // TypeBox Schema Builders & Validators
-export { Type, t, getCompiledCheck, validateWithSchema } from "./typebox";
+export { Type, t, validateWithSchema } from "./typebox";
 export type { TSchema, Static } from "./typebox";
 
 // OpenAPI 3.1 Specification Generation
-export { generateOpenApiSpec, hoistAnchoredSchemas } from "./openapi";
+export { generateOpenApiSpec } from "./openapi";
 export type { OpenApiGeneratorOptions } from "./openapi";
 
 // Database Integration
@@ -236,7 +227,6 @@ export {
   resolveSecrets,
   listSecrets,
   overrideSecret,
-  overrideSecrets,
   resetSecrets,
 } from "./secrets";
 export type { SecretSource, SecretOptions } from "./secrets";
@@ -250,5 +240,4 @@ export type {
   McpHandlerOptions,
 } from "./mcp";
 
-export { toErrorResponse } from "./error-response";
 export type { ErrorEnvelope } from "./error-response";

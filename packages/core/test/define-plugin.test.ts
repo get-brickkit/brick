@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { getTableConfig as pgTableConfig } from "drizzle-orm/pg-core";
 import {
   brick,
-  brickVersion,
   defineAction,
   defineDatabase,
   defineListener,
@@ -14,12 +13,12 @@ import {
   generateOpenApiSpec,
   getTableName,
   resetGlobalRegistry,
-  satisfiesRange,
   sqliteTable,
   syncSchema,
   t,
   text,
 } from "../src";
+import { brickVersion, satisfiesRange } from "../src/version";
 
 beforeEach(resetGlobalRegistry);
 

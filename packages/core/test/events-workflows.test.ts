@@ -9,14 +9,14 @@ import {
   defineListener,
   definePlugin,
   defineService,
-  EventsHub,
   outboxTable,
   port,
   syncSchema,
   useDeps,
-  WORKFLOW_QUEUE,
   type EventsWorld,
 } from "../src";
+import { WORKFLOW_QUEUE } from "../src/events/workflows";
+import { EventsHub } from "../src/events/hub";
 
 const items = sqliteTable("wf_items", {
   id: integer("id").primaryKey({ autoIncrement: true }),

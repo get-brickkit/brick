@@ -11,8 +11,6 @@ import {
   DuplicateNameError,
   emitEvent,
   getGlobalRegistry,
-  EventsHub,
-  isOutboxTable,
   outboxTable,
   onTransactionCommit,
   runInTransaction,
@@ -21,9 +19,9 @@ import {
   type EventDelivery,
 } from "../src";
 import { backoffMs, Dispatcher } from "../src/events/dispatcher";
-import { matchesEvent } from "../src/events/hub";
+import { EventsHub, matchesEvent } from "../src/events/hub";
 import { newEventId } from "../src/events/id";
-import { outboxEngine } from "../src/events/outbox";
+import { isOutboxTable, outboxEngine } from "../src/events/outbox";
 
 const items = sqliteTable("items", {
   id: integer("id").primaryKey({ autoIncrement: true }),
