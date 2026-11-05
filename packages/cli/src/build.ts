@@ -103,8 +103,8 @@ export async function buildApplication(options: BuildApplicationOptions) {
 import { loadCompiledBrickApp } from "@brickkit/core";
 import { resolvePort } from ${JSON.stringify(own("config"))};
 import { serveApp, shutdownOnSignal } from ${JSON.stringify(own("serve"))};
-import { ir, bind } from "./routes.js";
-export const app = await loadCompiledBrickApp(() => import(${JSON.stringify(entry)}), ir, bind);
+import { ir } from "./routes.js";
+export const app = await loadCompiledBrickApp(() => import(${JSON.stringify(entry)}), ir);
 if (import.meta.main) {
   await serveApp(app, {
     port: resolvePort(undefined, ${port}),

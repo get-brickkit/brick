@@ -8,6 +8,7 @@ import {
   t,
   compileBrickApplication,
   brick,
+  loadCompiledBrickApp,
 } from "@brickkit/core";
 import { emitCompiledApplication } from "../src/compiler";
 
@@ -368,4 +369,20 @@ it("rejects over-nested input with the generic handler's 400 in both modes", asy
       { path: "", message: "Input exceeds maximum nesting depth" },
     ]);
   }
+});
+
+it("loads a built app without a binder, and refuses one whose definitions changed since the build", async () => {
+  const service = defineService("built");
+  service.action({ name: "ready", execute: () => ({ ok: true }) });
+  const app = brick({
+    services: [service],
+    requestLogging: false,
+    docs: false,
+  });
+  const { ir } = compileBrickApplication({ services: [service] });
+  const load = async () => ({ default: app });
+  expect(await loadCompiledBrickApp(load, ir)).toBe(app);
+  await expect(
+    loadCompiledBrickApp(load, { ...ir, routes: [] }),
+  ).rejects.toThrow("rebuild the application");
 });

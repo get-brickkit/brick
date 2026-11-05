@@ -14,36 +14,26 @@ import {
 import { requireBrickApp } from "./app-entry";
 import { portOf } from "./service-port";
 
-type ApplicationBinder = (services: Service<any, any>[]) => CompiledApplication;
-const buildBindings = new Map<string, ApplicationBinder>();
-
-function applicationKey(
-  services: readonly Service<any, any>[],
-  prefix = "/api",
-) {
-  return JSON.stringify([prefix, services.map((service) => service.name)]);
-}
-
-/** Build artifact bootstrap: bind generated handlers while evaluating the original app. */
+/**
+ * Build artifact bootstrap: import the app and check that its definitions
+ * still match the IR `brick build` compiled.
+ *
+ * @throws When the app's definitions differ from `ir`.
+ */
 export async function loadCompiledBrickApp(
   load: () => Promise<{ default: unknown }>,
   ir: BrickIR,
-  bind: ApplicationBinder,
 ) {
-  const key = JSON.stringify([ir.prefix, ir.services]);
-  if (buildBindings.has(key))
-    throw new Error("Brick compiler: overlapping compiled app imports");
-  buildBindings.set(key, bind);
-  try {
-    const app = requireBrickApp((await load()).default);
-    if (applicationKey(app.definition.services, app.definition.prefix) !== key)
-      throw new Error(
-        "Brick compiler: app services/prefix changed; rebuild the application",
-      );
-    return app;
-  } finally {
-    buildBindings.delete(key);
-  }
+  const app = requireBrickApp((await load()).default);
+  const { ir: current } = analyzeApplication(
+    [...app.definition.services],
+    app.definition.prefix,
+  );
+  if (JSON.stringify(current) !== JSON.stringify(ir))
+    throw new Error(
+      "Brick compiler: application definitions differ from the compiled IR; rebuild the application",
+    );
+  return app;
 }
 
 export type { BrickIR, RouteIR, RouteMethod } from "./compiler/ir";
@@ -83,10 +73,6 @@ export function compileBrickApplication(options: {
   prefix?: string;
   mode?: "specialized" | "generic";
 }): CompiledApplication {
-  const bind = buildBindings.get(
-    applicationKey(options.services, options.prefix),
-  );
-  if (bind && options.mode !== "generic") return bind(options.services);
   const { ir, bindings } = analyzeApplication(options.services, options.prefix);
   // Both modes bind the one pipeline; only the specialized one runs preparations.
   if (options.mode !== "generic")
