@@ -166,7 +166,6 @@ const VIEWS: View[] = [
   "reloads",
 ];
 
-
 export function parseRoute(hash: string): Route {
   const body = hash.replace(/^#\/?/, "");
   // A second `#` names a heading inside a docs page: #/docs/guide/setup#install
@@ -194,7 +193,6 @@ export function parseRoute(hash: string): Route {
 export function routeHref(view: View, traceId?: string): string {
   return traceId ? `#/${view}/${encodeURIComponent(traceId)}` : `#/${view}`;
 }
-
 
 /** The view and selected request, kept in the URL hash so links can be shared. */
 export function useRoute(): Route {

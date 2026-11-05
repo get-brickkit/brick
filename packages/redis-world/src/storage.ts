@@ -842,9 +842,7 @@ export function createRunsStorage(config: RedisStorageConfig): Storage["runs"] {
         continue;
       }
 
-      const run: WorkflowRun = parse<WorkflowRun>(
-        result[1] as string,
-      );
+      const run: WorkflowRun = parse<WorkflowRun>(result[1] as string);
       run.attributes =
         (results![i + 1]?.[1] as Record<string, string> | undefined) ?? {};
 
@@ -1021,9 +1019,7 @@ export function createEventsStorage(
       );
       for (const value of values) {
         if (value) {
-          events.push(
-            EventSchema.parse(compact(parse<Event>(value))),
-          );
+          events.push(EventSchema.parse(compact(parse<Event>(value))));
         }
       }
     }
@@ -2508,9 +2504,7 @@ export function createEventsStorage(
           status: 404,
         });
       }
-      const event = EventSchema.parse(
-        compact(parse<Event>(data)),
-      );
+      const event = EventSchema.parse(compact(parse<Event>(data)));
       return stripEventDataRefs(event, params?.resolveData ?? "all");
     },
 

@@ -1,7 +1,10 @@
 import { beforeAll, describe, expect, it } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SPEC_VERSION_SUPPORTS_SLOT_IDENTITY, type World } from "@workflow/world";
+import {
+  SPEC_VERSION_SUPPORTS_SLOT_IDENTITY,
+  type World,
+} from "@workflow/world";
 import { WorkflowRunNotFoundError } from "@workflow/errors";
 import { decode } from "cbor-x";
 import { BASE_PATH } from "../base-path";
@@ -88,7 +91,9 @@ describe("createFetchHandler", () => {
   let handle: (request: Request) => Promise<Response>;
   beforeAll(() => {
     // A stub: only the parts the tests reach.
-    handle = createFetchHandler(BASE_PATH, { world: world as unknown as World });
+    handle = createFetchHandler(BASE_PATH, {
+      world: world as unknown as World,
+    });
   });
 
   it("serves the page under its base path, without a header of its own", async () => {
