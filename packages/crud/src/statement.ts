@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 
 /** Prepared statements kept per database, the oldest dropped past this many. */
-export const CACHE_LIMIT = 128;
+const CACHE_LIMIT = 128;
 
 /**
  * Builds one call's statement. When it can be cached, bound values become

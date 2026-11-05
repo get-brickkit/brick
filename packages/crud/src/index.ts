@@ -9,7 +9,6 @@ import { getTableColumns, type Column } from "drizzle-orm";
 
 import { SORTABLE_TYPES, checkJsonSchema, columnSchema, object } from "./codec";
 import { bulkOperations, operations } from "./perform";
-import { CACHE_LIMIT } from "./statement";
 import type {
   BulkOperation,
   CrudOptions,
