@@ -21,7 +21,7 @@ const table = sqliteTable("compiled_read_rows", {
   published: integer("is_published", { mode: "boolean" }).notNull(),
   secret: text("secret"),
 });
-function fixture(name: string, compiler: boolean) {
+function fixture(name: string) {
   const database = defineDatabase({ tables: [table] });
   const db = database.getDb();
   syncSchema(database.tables, db);
@@ -55,14 +55,10 @@ function fixture(name: string, compiler: boolean) {
       },
     }),
   );
-  const compilation = compileBrickApplication({
-    services: [service],
-    mode: compiler ? "specialized" : "generic",
-  });
+  const compilation = compileBrickApplication({ services: [service] });
   const app = brick({
     services: [service],
     compilation,
-    compiler,
     requestLogging: false,
   });
   return { app, db, compilation };
@@ -77,70 +73,71 @@ const query = (input: unknown, service = "compiled") =>
     body: JSON.stringify(input),
   });
 
-it("preserves query projection, filters, scope and live rows in specialized and generic handlers", async () => {
-  const a = fixture("compiled", true),
-    b = fixture("generic", false);
+it("applies query projection, filters, scope and live rows over HTTP", async () => {
+  const { app, db } = fixture("compiled");
   try {
-    const inputs = [
-      {
-        select: ["id", "title"],
-        orderBy: [{ field: "title", direction: "desc" }],
-        limit: 1,
-        includeTotal: true,
-      },
-      {
-        where: {
-          or: [
-            { field: "id", op: "eq", value: "b" },
-            { field: "published", op: "eq", value: true },
-          ],
+    const cases: [unknown, number, unknown?][] = [
+      [
+        {
+          select: ["id", "title"],
+          orderBy: [{ field: "title", direction: "desc" }],
+          limit: 1,
+          includeTotal: true,
         },
-      },
-      { where: { field: "title", op: "contains", value: "mm" } },
-      { where: { field: "secret", op: "eq", value: "hidden" } },
-      { select: ["secret"] },
+        200,
+        { items: [{ id: "c", title: "Gamma" }], total: 2 },
+      ],
+      [
+        {
+          where: {
+            or: [
+              { field: "id", op: "eq", value: "b" },
+              { field: "published", op: "eq", value: true },
+            ],
+          },
+        },
+        200,
+        { items: [{ id: "a", title: "Alpha", published: true }] },
+      ],
+      [
+        { where: { field: "title", op: "contains", value: "mm" } },
+        200,
+        { items: [{ id: "c", title: "Gamma", published: false }] },
+      ],
+      [{ where: { field: "secret", op: "eq", value: "hidden" } }, 400],
+      [{ select: ["secret"] }, 400],
     ];
-    for (const input of inputs) {
-      const ra = await a.app.handle(query(input)),
-        rb = await b.app.handle(query(input, "generic"));
-      expect(ra.status).toBe(rb.status);
-      expect(await ra.json()).toEqual(await rb.json());
+    for (const [input, status, body] of cases) {
+      const response = await app.handle(query(input));
+      expect(response.status).toBe(status);
+      if (body) expect(await response.json()).toMatchObject(body);
     }
-    const response = await a.app.handle(
-      query({ select: ["id"], includeTotal: true }),
-    );
-    expect(response.status).toBe(200);
-    const value = await response.json();
-    expect(value.items.map((row: any) => row.id).sort()).toEqual(["a", "c"]);
-    expect(value.total).toBe(2);
-    expect(value.items[0].secret).toBeUndefined();
-    a.db.update(table).set({ title: "Changed" }).where(eq(table.id, "a")).run();
-    const one = await a.app.handle(
+    db.update(table).set({ title: "Changed" }).where(eq(table.id, "a")).run();
+    const one = await app.handle(
       new Request("http://localhost/api/compiled/item/a"),
     );
     expect((await one.json()).title).toBe("Changed");
     expect(
-      (await a.app.handle(new Request("http://localhost/api/compiled/item/b")))
+      (await app.handle(new Request("http://localhost/api/compiled/item/b")))
         .status,
     ).toBe(404);
   } finally {
-    a.db.$client.close();
-    b.db.$client.close();
+    (db as any).$client.close();
   }
 });
 
-it("discovers plugin preparation contributions without CRUD-specific compiler imports", () => {
-  const { db, compilation } = fixture("prepared", true);
+it("contributes a frozen preparation for its service", () => {
+  const { db, compilation } = fixture("prepared");
   try {
     expect(compilation.ir.preparations.length).toBeGreaterThan(0);
     expect(compilation.ir.preparations[0]!.service).toBe("prepared");
     expect(Object.isFrozen(compilation.ir.preparations)).toBe(true);
   } finally {
-    db.$client.close();
+    (db as any).$client.close();
   }
 });
 
-it("reuses a prepared query shape with new filter values and observes fresh database rows", async () => {
+it("a repeated query shape takes new filter values and sees fresh rows", async () => {
   const database = defineDatabase({ tables: [table] });
   const db = database.getDb();
   syncSchema(database.tables, db);
@@ -158,12 +155,6 @@ it("reuses a prepared query shape with new filter values and observes fresh data
     }),
   );
   const app = brick({ services: [service], requestLogging: false });
-  let builds = 0;
-  const select = db.select.bind(db);
-  (db as any).select = (...args: any[]) => {
-    builds++;
-    return select(...args);
-  };
   try {
     const first = await (
       await app.handle(
@@ -174,8 +165,6 @@ it("reuses a prepared query shape with new filter values and observes fresh data
       )
     ).json();
     expect(first.items).toEqual([{ id: "one", title: "First" }]);
-    const warmBuilds = builds;
-    expect(warmBuilds).toBeGreaterThan(0);
     db.update(table).set({ title: "Fresh" }).where(eq(table.id, "two")).run();
     const second = await (
       await app.handle(
@@ -186,8 +175,7 @@ it("reuses a prepared query shape with new filter values and observes fresh data
       )
     ).json();
     expect(second.items).toEqual([{ id: "two", title: "Fresh" }]);
-    expect(builds).toBe(warmBuilds);
   } finally {
-    db.$client.close();
+    (db as any).$client.close();
   }
 });

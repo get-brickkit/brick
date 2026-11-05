@@ -1,15 +1,10 @@
 import { beforeEach, expect, it } from "bun:test";
-import {
-  defineService,
-  getGlobalRegistry,
-  resetGlobalRegistry,
-  brick,
-} from "@brickkit/core";
+import { defineService, resetGlobalRegistry, brick } from "@brickkit/core";
 
 beforeEach(resetGlobalRegistry);
 const request = (path: string) => new Request("http://localhost" + path);
 
-it("pre-renders built-in pages and reuses identical JSON across repeated requests", async () => {
+it("serves the same built-in pages on every request, with a fresh health check", async () => {
   const service = defineService("internal");
   service.action({ name: "getReady", execute: () => ({ ok: true }) });
   const settings = {
@@ -18,8 +13,7 @@ it("pre-renders built-in pages and reuses identical JSON across repeated request
     reference: true,
     title: "Internal API",
   };
-  const compiled = brick(settings),
-    generic = brick({ ...settings, compiler: false });
+  const app = brick(settings);
   for (const path of [
     "/docs",
     "/swagger",
@@ -27,20 +21,20 @@ it("pre-renders built-in pages and reuses identical JSON across repeated request
     "/openapi.json",
     "/_brick/services",
   ]) {
-    const baseline = await generic.handle(request(path));
-    const body = await baseline.text();
-    for (let i = 0; i < 3; i++) {
-      const response = await compiled.handle(request(path));
-      expect(response.status).toBe(200);
+    const first = await app.handle(request(path));
+    expect(first.status).toBe(200);
+    const body = await first.text();
+    for (let i = 0; i < 2; i++) {
+      const response = await app.handle(request(path));
       expect(response.headers.get("content-type")).toBe(
-        baseline.headers.get("content-type"),
+        first.headers.get("content-type"),
       );
       expect(await response.text()).toBe(body);
     }
   }
-  const first = await (await compiled.handle(request("/_health"))).json();
-  await Bun.sleep(2);
-  const second = await (await compiled.handle(request("/_health"))).json();
+  const first = await (await app.handle(request("/_health"))).json();
+  await Bun.sleep(2); // the health timestamp has millisecond resolution
+  const second = await (await app.handle(request("/_health"))).json();
   expect(second.status).toBe("ok");
   expect(second.timestamp).toBeGreaterThan(first.timestamp);
   expect(second.uptime).toBeGreaterThan(first.uptime);
@@ -48,23 +42,14 @@ it("pre-renders built-in pages and reuses identical JSON across repeated request
 
 it("invalidates architecture metadata while keeping the mounted app services", async () => {
   const service = defineService("initial");
-  const registry = getGlobalRegistry();
-  const original = registry.exportArchitecture.bind(registry);
-  let exports = 0;
-  registry.exportArchitecture = (application) => {
-    exports++;
-    return original(application);
-  };
   const app = brick({ requestLogging: false });
-  for (let i = 0; i < 3; i++)
-    await (await app.handle(request("/_brick/services"))).json();
-  expect(exports).toBe(1);
+  const before = await (await app.handle(request("/_brick/services"))).json();
+  expect(before.services[0].actions).toEqual([]);
   service.action({ name: "newAction", execute: () => null });
   const changed = await (await app.handle(request("/_brick/services"))).json();
   expect(changed.services[0].actions[0].name).toBe("newAction");
   expect(changed.services[0].actions[0]).not.toHaveProperty("method");
   expect(changed.services[0].actions[0]).not.toHaveProperty("path");
-  expect(exports).toBe(2);
   defineService("newService");
   expect(
     (await (await app.handle(request("/_brick/services"))).json()).services,

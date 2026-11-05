@@ -31,7 +31,7 @@ function makeService() {
   return svc;
 }
 
-describe("@brickkit/cli request logging & reference docs", () => {
+describe("request logging & reference docs", () => {
   beforeEach(() => {
     resetGlobalRegistry();
   });
@@ -121,7 +121,7 @@ describe("@brickkit/cli request logging & reference docs", () => {
 
   it("serves a reference page only for true or options with a path", async () => {
     const status = async (
-      reference: Parameters<typeof brick>[0]["reference"],
+      reference: NonNullable<Parameters<typeof brick>[0]>["reference"],
     ) =>
       (
         await brick({ services: [], requestLogging: false, reference }).handle(

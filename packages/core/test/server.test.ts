@@ -7,7 +7,7 @@ import {
   brick,
 } from "@brickkit/core";
 
-describe("@brickkit/cli Server Engine", () => {
+describe("server", () => {
   beforeEach(() => {
     resetGlobalRegistry();
   });
@@ -61,7 +61,6 @@ describe("@brickkit/cli Server Engine", () => {
 
     const app = brick({ services: [dealsService] });
 
-    // 1. Health check
     const healthRes = await app.handle(
       new Request("http://localhost:4000/_health"),
     );
@@ -69,7 +68,6 @@ describe("@brickkit/cli Server Engine", () => {
     const healthJson = await healthRes.json();
     expect(healthJson.status).toBe("ok");
 
-    // 2. Introspection check
     const infoRes = await app.handle(
       new Request("http://localhost:4000/_brick/services"),
     );
@@ -78,7 +76,6 @@ describe("@brickkit/cli Server Engine", () => {
     expect(infoJson.services.length).toBe(1);
     expect(infoJson.services[0].name).toBe("deals");
 
-    // 3. POST /api/deals/create-deal with valid body
     const createRes = await app.handle(
       new Request("http://localhost:4000/api/deals/create-deal", {
         method: "POST",
@@ -90,9 +87,8 @@ describe("@brickkit/cli Server Engine", () => {
     const createData = await createRes.json();
     expect(createData.id).toBe("deal_1");
     expect(createData.title).toBe("Enterprise License");
-    expect(createRes.headers.get("x-trace-id")).toBeDefined();
+    expect(createRes.headers.get("x-trace-id")).toMatch(/.+/);
 
-    // 4. POST /api/deals/create-deal with invalid body (amount < 0)
     const invalidRes = await app.handle(
       new Request("http://localhost:4000/api/deals/create-deal", {
         method: "POST",
@@ -105,7 +101,6 @@ describe("@brickkit/cli Server Engine", () => {
     expect(invalidData.name).toBe("ValidationError");
     expect(invalidData.errors.length).toBeGreaterThan(0);
 
-    // 5. GET /api/deals/list-deals
     const listRes = await app.handle(
       new Request("http://localhost:4000/api/deals/list-deals"),
     );

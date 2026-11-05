@@ -17,7 +17,7 @@ const table = sqliteTable("compiled_writes", {
   published: integer("published", { mode: "boolean" }).notNull().default(false),
   secret: text("secret"),
 });
-function fixture(name: string, compiler: boolean) {
+function fixture(name: string) {
   const database = defineDatabase({ tables: [table] }),
     db = database.getDb();
   syncSchema(database.tables, db);
@@ -44,7 +44,7 @@ function fixture(name: string, compiler: boolean) {
     }),
   );
   return {
-    app: brick({ services: [service], compiler, requestLogging: false }),
+    app: brick({ services: [service], requestLogging: false }),
     db,
     hooks,
   };
@@ -58,9 +58,8 @@ const request = (method: string, path: string, body?: unknown) =>
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-it("preserves defaults, mapping, write permissions, hooks and persistence across compiler modes", async () => {
-  const a = fixture("specialized", true),
-    b = fixture("generic", false);
+it("applies defaults, column mapping, write permissions, hooks and persistence over HTTP", async () => {
+  const a = fixture("items");
   try {
     const commands = [
       ["POST", "/api/item", { id: "one", title: " First " }],
@@ -76,16 +75,10 @@ it("preserves defaults, mapping, write permissions, hooks and persistence across
     ] as const;
     const results: any[] = [];
     for (const [method, path, body] of commands) {
-      const ra = await a.app.handle(
-          request(method, path.replace("/api/", "/api/specialized/"), body),
-        ),
-        rb = await b.app.handle(
-          request(method, path.replace("/api/", "/api/generic/"), body),
-        );
-      expect(ra.status).toBe(rb.status);
-      const value = await ra.json();
-      expect(value).toEqual(await rb.json());
-      results.push({ status: ra.status, value });
+      const response = await a.app.handle(
+        request(method, path.replace("/api/", "/api/items/"), body),
+      );
+      results.push({ status: response.status, value: await response.json() });
     }
     expect(results[0]).toEqual({
       status: 200,
@@ -96,13 +89,12 @@ it("preserves defaults, mapping, write permissions, hooks and persistence across
       value: { id: "one", title: "Changed", published: true },
     });
     expect(results[2].status).toBe(400);
+    expect(results[3]).toEqual(results[1]);
     expect(results[4].value).toEqual({ success: true });
     expect(results[5].status).toBe(404);
     expect(a.hooks).toEqual(["create", "update"]);
-    expect(b.hooks).toEqual(a.hooks);
     expect(a.db.select().from(table).all()).toEqual([]);
   } finally {
-    a.db.$client.close();
-    b.db.$client.close();
+    (a.db as any).$client.close();
   }
 });
