@@ -154,7 +154,8 @@ func jsNumber(f float64) string {
 		s := strconv.FormatFloat(f, 'e', -1, 64)
 		return strings.Replace(strings.Replace(s, "e-0", "e-", 1), "e+0", "e+", 1)
 	}
-	if f == float64(int64(f)) && f < 1e21 && f > -1e21 {
+	// Beyond 2^53 JavaScript prints the shortest digits padded with zeros, as 'f' does.
+	if f == math.Trunc(f) && math.Abs(f) <= 1<<53 {
 		return strconv.FormatInt(int64(f), 10)
 	}
 	return strconv.FormatFloat(f, 'f', -1, 64)

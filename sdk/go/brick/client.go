@@ -14,10 +14,22 @@ import (
 
 var (
 	serviceName string
-	client      = &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 64}}
-	urlsOnce    sync.Once
-	urls        map[string]string
+	client      = &http.Client{
+		Transport: &http.Transport{MaxIdleConnsPerHost: 64},
+		// A redirect would carry the internal token to wherever it points.
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			if req.Header.Get("x-brick-internal") != "" {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
+	}
+	urlsOnce sync.Once
+	urls     map[string]string
 )
+
+// maxReply caps how much of a callee's reply Call reads.
+const maxReply = 16 << 20
 
 func serviceURL(service string) (string, error) {
 	urlsOnce.Do(func() {
@@ -69,12 +81,18 @@ func Call(ctx context.Context, service, action string, in, out any) error {
 	}
 	res, err := client.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err() // cancelled or past its deadline, not an outage
+		}
 		return &Error{Name: "ActionExecutionError", Code: "SERVICE_UNAVAILABLE", Message: fmt.Sprintf("Service '%s' is not reachable", service), Status: 503}
 	}
 	defer res.Body.Close()
-	data, err := io.ReadAll(res.Body)
+	data, err := io.ReadAll(io.LimitReader(res.Body, maxReply+1))
 	if err != nil {
 		return err
+	}
+	if len(data) > maxReply {
+		return &Error{Name: "ActionExecutionError", Code: "INTERNAL_SERVER_ERROR", Message: fmt.Sprintf("Reply from '%s' is over %d bytes", service, maxReply), Status: 502}
 	}
 	if res.StatusCode >= 300 {
 		e := &Error{}
@@ -83,7 +101,7 @@ func Call(ctx context.Context, service, action string, in, out any) error {
 		}
 		return e
 	}
-	if out == nil {
+	if out == nil || len(data) == 0 {
 		return nil
 	}
 	return json.Unmarshal(data, out)

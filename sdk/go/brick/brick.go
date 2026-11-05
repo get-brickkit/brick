@@ -21,6 +21,7 @@
 package brick
 
 import (
+	"bytes"
 	"cmp"
 	"crypto/subtle"
 	"encoding/json"
@@ -95,6 +96,11 @@ func Action[I, O any](s *Service, name string, fn func(ctx *Ctx, in I) (O, error
 			writeError(w, ctx, &Error{Name: "ActionExecutionError", Code: "UNAUTHORIZED", Message: "Invalid internal token", Status: 401})
 			return
 		}
+		if ctx.badUser {
+			// As the TS internal call handler answers it.
+			writeError(w, ctx, &Error{Name: "ActionExecutionError", Code: "BAD_REQUEST", Message: "Invalid x-brick-user header", Status: 400})
+			return
+		}
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
 		if tooLarge := (*http.MaxBytesError)(nil); errors.As(err, &tooLarge) {
 			writeError(w, ctx, &Error{Name: "ActionExecutionError", Code: "PAYLOAD_TOO_LARGE", Message: "Request body too large", Status: 413})
@@ -117,6 +123,13 @@ func Action[I, O any](s *Service, name string, fn func(ctx *Ctx, in I) (O, error
 			return
 		}
 		var in I
+		if json.Unmarshal(body, &in) != nil {
+			// JSON integers may be written 30.0 or 3e1, which pass validation as
+			// in TS but which Go won't decode into an int: retry with them as 30.
+			var normalized bytes.Buffer
+			writeJSON(&normalized, value)
+			body = normalized.Bytes()
+		}
 		if err := json.Unmarshal(body, &in); err != nil {
 			writeError(w, ctx, validationError(name, []Issue{{Path: "", Message: err.Error()}}))
 			return
@@ -125,7 +138,7 @@ func Action[I, O any](s *Service, name string, fn func(ctx *Ctx, in I) (O, error
 		if err != nil {
 			e, ok := asError(err)
 			if !ok {
-				log.Printf("[%s:%s] unexpected error (requestId %s): %v", s.name, name, ctx.requestID, err)
+				log.Printf("[%s:%s] unexpected error (requestId %q): %v", s.name, name, ctx.requestID, err)
 				e = internalError()
 			}
 			writeError(w, ctx, e)

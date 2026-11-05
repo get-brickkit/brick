@@ -107,13 +107,20 @@ func TestOversizedBody(t *testing.T) {
 
 func TestMalformedForwardedUser(t *testing.T) {
 	rec := call(testService(t), `{"name":"alice","age":1,"role":"user"}`, map[string]string{"x-brick-user": "eyJpZCI6"})
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"user":null`) {
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), `"code":"BAD_REQUEST"`) {
+		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestIntegerWrittenAsFloat(t *testing.T) {
+	rec := call(testService(t), `{"name":"alice","age":30.0,"role":"user"}`, nil)
+	if rec.Code != 200 {
 		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
 	}
 }
 
 func TestJSNumber(t *testing.T) {
-	for in, want := range map[float64]string{3: "3", 0.5: "0.5", 1e-7: "1e-7", 1.5e-10: "1.5e-10", 1e21: "1e+21", -2.5e22: "-2.5e+22", 0.000001: "0.000001", 0: "0"} {
+	for in, want := range map[float64]string{3: "3", 0.5: "0.5", 1e-7: "1e-7", 1.5e-10: "1.5e-10", 1e21: "1e+21", -2.5e22: "-2.5e+22", 0.000001: "0.000001", 0: "0", 1 << 60: "1152921504606847000", 1 << 63: "9223372036854776000"} {
 		if got := jsNumber(in); got != want {
 			t.Fatalf("jsNumber(%v) = %s, want %s", in, got, want)
 		}

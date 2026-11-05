@@ -224,3 +224,43 @@ func TestJWKSOutageBacksOff(t *testing.T) {
 		t.Fatalf("%d JWKS fetches during the outage, want 1", calls)
 	}
 }
+
+func TestCachedKeysServeDuringAFetch(t *testing.T) {
+	old := minRefresh
+	minRefresh = 0
+	t.Cleanup(func() { minRefresh = old })
+	k1, p1 := keyPair(t, "k1")
+	k2, _ := keyPair(t, "k2")
+	gate := make(chan struct{})
+	var calls sync.WaitGroup
+	calls.Add(1)
+	first := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if !first {
+			calls.Done()
+			<-gate // a slow refetch
+		}
+		first = false
+		set := jwk.NewSet()
+		_ = set.AddKey(p1)
+		_ = json.NewEncoder(w).Encode(set)
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(gate) })
+	svc := authService(t, srv.URL)
+	if rec := me(svc, sign(t, k1, nil)); rec.Code != 200 {
+		t.Fatalf("k1: %d", rec.Code)
+	}
+	go me(svc, sign(t, k2, nil)) // unknown kid: refetches, and hangs
+	calls.Wait()
+	done := make(chan int)
+	go func() { done <- me(svc, sign(t, k1, nil)).Code }()
+	select {
+	case code := <-done:
+		if code != 200 {
+			t.Fatalf("cached k1 during the fetch: %d", code)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("a cached key waited for the JWKS fetch")
+	}
+}

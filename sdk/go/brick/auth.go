@@ -33,6 +33,7 @@ type verifier struct {
 	mu             sync.Mutex
 	keys           jwk.Set
 	fetched, tried time.Time
+	done           chan struct{} // closed when the fetch in flight ends
 }
 
 // verifierFromEnv is the verifier BRICK_JWT_ISSUER configures, or nil (no JWT
@@ -53,35 +54,57 @@ func verifierFromEnv() *verifier {
 
 func (v *verifier) keySet(ctx context.Context, kid string) (jwk.Set, error) {
 	v.mu.Lock()
-	defer v.mu.Unlock()
+	keys, done := v.keys, v.done
 	age := time.Since(v.fetched)
-	stale := v.keys == nil || age > maxKeyAge
+	stale := keys == nil || age > maxKeyAge
 	if !stale {
-		if _, ok := v.keys.LookupKeyID(kid); !ok && age > minRefresh {
+		if _, ok := keys.LookupKeyID(kid); !ok && age > minRefresh {
 			stale = true
 		}
 	}
-	// A failed fetch is retried after minRefresh, so an outage or unknown key
+	// One fetch at a time, outside the lock, so cached keys keep serving; a
+	// failed one is retried only after minRefresh, so an outage or unknown key
 	// ids can't make every request fetch.
-	if stale && time.Since(v.tried) >= minRefresh {
-		v.tried = time.Now()
-		ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
-		defer cancel()
-		set, err := jwk.Fetch(ctx, v.url, jwk.WithHTTPClient(client))
-		if err != nil {
-			if v.keys == nil {
-				return nil, err
+	fetch := stale && done == nil && time.Since(v.tried) >= minRefresh
+	if fetch {
+		v.tried, v.done = time.Now(), make(chan struct{})
+		done = v.done
+	}
+	v.mu.Unlock()
+	if !fetch {
+		if keys == nil && done != nil {
+			// The first fetch is in flight: wait for it rather than fail.
+			select {
+			case <-done:
+			case <-ctx.Done():
 			}
-			// Keep the keys we have.
-			log.Printf("[brick] JWKS fetch from %s failed: %v", v.url, err)
-			return v.keys, nil
+			v.mu.Lock()
+			keys = v.keys
+			v.mu.Unlock()
 		}
-		v.keys, v.fetched = set, time.Now()
+		if keys == nil {
+			return nil, errNoKeys
+		}
+		return keys, nil
 	}
-	if v.keys == nil {
-		return nil, errNoKeys
+	// Not cancelled with the request that happened to start it.
+	fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fetchTimeout)
+	defer cancel()
+	set, err := jwk.Fetch(fetchCtx, v.url, jwk.WithHTTPClient(client))
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	close(done)
+	v.done = nil
+	if err != nil {
+		// Keep the keys we have.
+		log.Printf("[brick] JWKS fetch from %s failed: %v", v.url, err)
+		if v.keys == nil {
+			return nil, errNoKeys
+		}
+		return v.keys, nil
 	}
-	return v.keys, nil
+	v.keys, v.fetched = set, time.Now()
+	return set, nil
 }
 
 var errNoKeys = errors.New("no JWKS yet (the last fetch failed)")
@@ -99,9 +122,9 @@ func (v *verifier) user(r *http.Request) json.RawMessage {
 	if err != nil || len(msg.Signatures()) != 1 {
 		return nil
 	}
+	// keySet logs the fetches that fail.
 	keys, err := v.keySet(r.Context(), msg.Signatures()[0].ProtectedHeaders().KeyID())
 	if err != nil {
-		log.Printf("[brick] JWKS fetch from %s failed: %v", v.url, err)
 		return nil
 	}
 	token, err := jwt.Parse(raw,

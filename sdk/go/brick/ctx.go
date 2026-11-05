@@ -22,6 +22,7 @@ type Ctx struct {
 	caller      string
 	tenantID    string
 	user        json.RawMessage
+	badUser     bool // a trusted x-brick-user that isn't base64 JSON
 }
 
 func newCtx(r *http.Request, action string, trusted bool, auth *verifier) *Ctx {
@@ -37,6 +38,8 @@ func newCtx(r *http.Request, action string, trusted bool, auth *verifier) *Ctx {
 		if user := r.Header.Get("x-brick-user"); user != "" {
 			if raw, err := base64.StdEncoding.DecodeString(user); err == nil && json.Valid(raw) {
 				c.user = raw
+			} else {
+				c.badUser = true
 			}
 		}
 	} else if auth != nil {
