@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import {
   brick,
   defineService,
@@ -164,6 +164,37 @@ it("waits out the backoff instead of dialing Redis on every get()", async () => 
     expect(dials).toBe(1);
     redis.close();
   } finally {
+    bun.RedisClient = original;
+  }
+});
+
+it("logs a failed publish once, and keeps going", async () => {
+  const bun = Bun as any;
+  const original = bun.RedisClient;
+  bun.RedisClient = class {
+    connected = false;
+    onclose?: () => void;
+    async connect() {
+      this.connected = true;
+    }
+    async publish() {
+      throw new Error("READONLY");
+    }
+    close() {}
+  };
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const broker = redisBroker({ url: "redis://fake" });
+    await broker.head();
+    for (let i = 0; i < 2; i++) {
+      broker.publish({ type: "kick", topic: "room" } as any);
+      await Bun.sleep(0);
+    }
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toContain("PUBLISH failed");
+    broker.close();
+  } finally {
+    warn.mockRestore();
     bun.RedisClient = original;
   }
 });

@@ -14,6 +14,7 @@ import {
   eq,
   sql,
   ensureResourceIndexes,
+  ensureSQLiteFts,
 } from "../src";
 import { pgTable, text as pgText } from "drizzle-orm/pg-core";
 
@@ -333,6 +334,20 @@ it("creates Postgres indexes one after another, the extension first, and warns o
     expect(ran[0]).toBe("CREATE EXTENSION IF NOT EXISTS pg_trgm;");
     expect(ran.at(-1)).toContain("gin_trgm_ops");
     expect(warn).toHaveBeenCalledTimes(1);
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+it("warns when full-text search can't be set up, instead of failing silently", () => {
+  const db = createSQLiteDatabase();
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    // The table was never created, so its triggers can't be.
+    ensureSQLiteFts(db, itemsTable, ["title"]);
+    expect(String(warn.mock.calls[0]?.[0])).toContain(
+      "Skipped full-text search for items",
+    );
   } finally {
     warn.mockRestore();
   }

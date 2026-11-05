@@ -104,6 +104,16 @@ export function redisBroker(options: RedisBrokerOptions = {}): SocketBroker {
   >();
   const pending = new Map<string, Promise<unknown>>();
   const stream = (topic: string) => `brick:socket:stream:${topic}`;
+  // Failures stay non-fatal (an emit is best effort) but leave a trace, once per kind.
+  const warned = new Set<string>();
+  const warn = (what: string) => (error: unknown) => {
+    if (warned.has(what)) return;
+    warned.add(what);
+    console.warn(
+      `[Brick-TS] Redis socket broker: ${what} failed; later failures of it are not logged.`,
+      error,
+    );
+  };
   const queue: ((redis: RedisClient) => void)[] = [];
   const send = (work: (redis: RedisClient) => void) => {
     const redis = publisher.get();
@@ -121,7 +131,7 @@ export function redisBroker(options: RedisBrokerOptions = {}): SocketBroker {
     for (const deliver of listeners.get(name) ?? []) deliver(message);
   };
   const subscribe = (redis: RedisClient, name: string) => {
-    const done = redis.subscribe(name, receive).catch(() => {});
+    const done = redis.subscribe(name, receive).catch(warn("SUBSCRIBE"));
     pending.set(name, done);
     void done.then(() => {
       if (pending.get(name) === done) pending.delete(name);
@@ -139,7 +149,9 @@ export function redisBroker(options: RedisBrokerOptions = {}): SocketBroker {
       if (message.type !== "emit" || !replay)
         return send(
           (redis) =>
-            void redis.publish(name, JSON.stringify(message)).catch(() => {}),
+            void redis
+              .publish(name, JSON.stringify(message))
+              .catch(warn("PUBLISH")),
         );
       const key = stream(message.topic);
       send((redis) => {
@@ -157,10 +169,10 @@ export function redisBroker(options: RedisBrokerOptions = {}): SocketBroker {
           .then((seq: string) => {
             void redis
               .send("PEXPIRE", [key, String(replay.maxAgeMs)])
-              .catch(() => {});
+              .catch(warn("PEXPIRE"));
             return redis.publish(name, JSON.stringify({ ...message, seq }));
           })
-          .catch(() => {});
+          .catch(warn("XADD/PUBLISH"));
       });
     },
     async head() {
@@ -214,10 +226,7 @@ export function redisBroker(options: RedisBrokerOptions = {}): SocketBroker {
         if (local.size || listeners.get(name) !== local) return;
         listeners.delete(name);
         pending.delete(name);
-        void subscriber
-          .get()
-          ?.unsubscribe(name)
-          .catch(() => {});
+        void subscriber.get()?.unsubscribe(name).catch(warn("UNSUBSCRIBE"));
       };
     },
     async ready(topic) {

@@ -31,8 +31,15 @@ export type OutboxCounts = Record<OutboxStatus, number>;
 
 const PURGE_INTERVAL_MS = 60_000;
 
-/** Asks the listener's `retry` what to do with a failure. A `retry` that throws counts as "retry". */
-function decideRetry(listener: Deliverable, error: unknown): "retry" | "dead" {
+/** Listeners whose `retry` threw, logged once each. */
+const brokenRetry = new WeakSet<Deliverable>();
+
+/** Asks the listener's `retry` what to do with a failure. A `retry` that throws counts as "retry", and is logged once. */
+function decideRetry(
+  name: string,
+  listener: Deliverable,
+  error: unknown,
+): "retry" | "dead" {
   if (!listener.retry) return "retry";
   try {
     return listener.retry(
@@ -44,7 +51,14 @@ function decideRetry(listener: Deliverable, error: unknown): "retry" | "dead" {
             cause: error,
           },
     );
-  } catch {
+  } catch (thrown) {
+    if (!brokenRetry.has(listener)) {
+      brokenRetry.add(listener);
+      console.error(
+        `[Brick-TS events] Listener '${name}': its retry() threw, so the failure is retried. Later throws are not logged.`,
+        thrown,
+      );
+    }
     return "retry";
   }
 }
@@ -239,7 +253,7 @@ export class Dispatcher {
         row,
         error,
         listener.maxAttempts ?? this.options.maxAttempts,
-        decideRetry(listener, error),
+        decideRetry(row.listener, listener, error),
       );
       return;
     }

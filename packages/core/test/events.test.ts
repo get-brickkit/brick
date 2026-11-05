@@ -943,4 +943,25 @@ describe("typed listener errors", () => {
     expect(seen[0]).toMatchObject({ code: "UNKNOWN", message: "boom" });
     expect((await ctx.hub.counts()).pending).toBe(1);
   });
+
+  it("retries, and logs, when retry itself throws", async () => {
+    const log = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { ctx } = await runWith(
+        () => {
+          throw new Error("boom");
+        },
+        () => {
+          throw new Error("bad policy");
+        },
+      );
+      expect((await ctx.hub.counts()).pending).toBe(1);
+      const logged = log.mock.calls.find((call) =>
+        String(call[0]).includes("its retry() threw"),
+      );
+      expect(logged?.[1]).toMatchObject({ message: "bad policy" });
+    } finally {
+      log.mockRestore();
+    }
+  });
 });

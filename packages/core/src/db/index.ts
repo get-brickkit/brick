@@ -293,8 +293,11 @@ export function ensureSQLiteFts(
     run(
       `INSERT INTO ${quoteIdent(fts)}("id", ${colList}) SELECT ${quoteIdent(idCol)}, ${colList} FROM ${quoteIdent(tableName)} WHERE ${quoteIdent(idCol)} NOT IN (SELECT "id" FROM ${quoteIdent(fts)});`,
     );
-  } catch {
-    // best-effort: LIKE fallback in the list path covers FTS absence.
+  } catch (error) {
+    // Best effort, as for indexes: search without FTS still works, but say why it is missing.
+    console.warn(
+      `[Brick-TS DB] Skipped full-text search for ${getTableName(table)}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
