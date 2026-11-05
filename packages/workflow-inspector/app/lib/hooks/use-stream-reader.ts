@@ -313,7 +313,6 @@ export function useStreamReader(
         setChunks(initialChunks);
         setIsInitialLoading(false);
 
-        // If the stream itself is done, no need to poll regardless of run status
         if (result.done) {
           setIsLive(false);
           return;
@@ -376,7 +375,6 @@ export function useStreamReader(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streamId, runId, encryptionKey, processFrame]);
 
-  // When run finishes, stop polling
   useEffect(() => {
     if (!isRunActive(runStatus) && pollTimerRef.current) {
       clearTimeout(pollTimerRef.current);

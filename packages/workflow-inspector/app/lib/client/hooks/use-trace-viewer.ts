@@ -195,7 +195,6 @@ export function useWorkflowTraceViewerData(
     return true;
   }, [runId, run?.completedAt]);
 
-  // Poll for new events
   const pollEvents = useCallback(
     () =>
       pollResource<Event>({
@@ -218,7 +217,6 @@ export function useWorkflowTraceViewerData(
     [runId, eventsCursor],
   );
 
-  // Update function for live polling
   const update = useCallback(async (): Promise<{ foundNewItems: boolean }> => {
     if (isFetchingRef.current || !initialLoadCompleted) {
       return { foundNewItems: false };
@@ -236,7 +234,6 @@ export function useWorkflowTraceViewerData(
     return { foundNewItems };
   }, [pollEvents, initialLoadCompleted, pollRun]);
 
-  // Initial load
   useEffect(() => {
     fetchAllData();
   }, [fetchAllData]);
@@ -249,7 +246,6 @@ export function useWorkflowTraceViewerData(
     };
   }, []);
 
-  // Live polling
   useEffect(() => {
     if (!live || !initialLoadCompleted || run?.completedAt) {
       return;

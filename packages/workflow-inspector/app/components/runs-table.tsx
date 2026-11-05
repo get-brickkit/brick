@@ -175,7 +175,6 @@ const statusMap: Record<WorkflowRunStatus, { label: string; color: string }> = {
   cancelled: { label: "Cancelled", color: STATUS_COLORS.cancelled },
 };
 
-// Helper: Handle workflow filter changes
 function useWorkflowFilter() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -196,7 +195,6 @@ function useWorkflowFilter() {
   );
 }
 
-// Helper: Handle status filter changes
 function useStatusFilter() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -216,7 +214,6 @@ function useStatusFilter() {
   );
 }
 
-// Filter controls component
 interface FilterControlsProps {
   workflowNameFilter: string | "all";
   status: WorkflowRunStatus | "all" | undefined;
@@ -346,17 +343,12 @@ function FilterControls({
   );
 }
 
-/**
- * RunsTable - Displays workflow runs with server-side pagination.
- * Uses the PaginatingTable pattern: fetches data for each page as needed from the server.
- * The table and fetching behavior are intertwined - pagination controls trigger new API calls.
- */
+/** Workflow runs, loading further pages from the server as the list scrolls. */
 export function RunsTable({ onRunClick }: RunsTableProps) {
   const [searchParams] = useSearchParams();
   const handleWorkflowFilter = useWorkflowFilter();
   const handleStatusFilter = useStatusFilter();
 
-  // Validate status parameter - only allow known valid statuses or 'all'
   const rawStatus = searchParams.get("status");
   const validStatuses = Object.keys(statusMap) as WorkflowRunStatus[];
   const status: WorkflowRunStatus | "all" | undefined =
@@ -371,8 +363,7 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
   );
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
 
-  // TODO: This is a workaround. We should be getting a list of valid workflow names
-  // from the manifest.
+  // The world has no list of workflow names, so the filter offers the ones seen so far.
   const [seenWorkflowNames, setSeenWorkflowNames] = useState<Set<string>>(
     new Set(),
   );
@@ -400,16 +391,13 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
     root: scrollRoot,
   });
 
-  // Multi-select functionality
   const selection = useTableSelection<WorkflowRun>({
     getItemId: (run) => run.runId,
   });
 
-  // Bulk action states
   const [isBulkCancelling, setIsBulkCancelling] = useState(false);
   const [isBulkReenqueuing, setIsBulkReenqueuing] = useState(false);
 
-  // Track seen workflow names from loaded data
   useEffect(() => {
     if (runs.length > 0) {
       const newNames = new Set(runs.map((run) => run.workflowName));
@@ -425,14 +413,12 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
 
   const loading = isLoading;
 
-  // Track when we've completed the initial load
   useEffect(() => {
     if (!loading && !hasLoadedOnce) {
       setHasLoadedOnce(true);
     }
   }, [loading, hasLoadedOnce]);
 
-  // Reset hasLoadedOnce when filters change
   // biome-ignore lint/correctness/useExhaustiveDependencies: Want to reset on any filter change
   useEffect(() => {
     setHasLoadedOnce(false);
@@ -444,7 +430,6 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
     reload();
   }, [reload]);
 
-  // Get selected runs that are cancellable (pending or running)
   const selectedRuns = useMemo(() => {
     return runs.filter((run) => selection.selectedIds.has(run.runId));
   }, [runs, selection.selectedIds]);
@@ -559,9 +544,6 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
   };
 
   // Refresh when tab regains focus after a delay, to prevent stale UI.
-  // TODO: We should generally move to using SWR or similar for _all_ API calls here.
-  // TODO: Further future, remove the refresh button entirely, and do live in-place refreshing
-  // once all world backends support live pagination of existing views.
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible" && lastRefreshTime) {

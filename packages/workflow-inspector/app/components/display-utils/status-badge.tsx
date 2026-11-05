@@ -58,7 +58,6 @@ export function StatusBadge({
     </span>
   );
 
-  // Show error code tooltip if status is failed and error has a code
   const errorCode =
     status === "failed" ? getErrorCode(context?.error) : undefined;
   if (errorCode) {

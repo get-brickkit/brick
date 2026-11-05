@@ -91,8 +91,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
-// --- Deep-link navigation helpers (migrated from layout-client.tsx) ---
-
 function computeDirectRunUrl(params: {
   runId: string;
   stepId: string | null;
@@ -147,7 +145,6 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
 
   const deepLinkReadRef = useRef(false);
 
-  // Sync theme from URL param to next-themes
   useEffect(() => {
     if (
       themeParam &&
@@ -186,7 +183,6 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen flex flex-col">
       <TooltipProvider delayDuration={0}>
         {/* Brick change: no header of its own. The Brick dashboard around this page has the navigation and the theme switch. */}
-        {/* Scrollable Content */}
         <div className="flex-1 px-6 pt-6">{children}</div>
       </TooltipProvider>
       <Toaster />

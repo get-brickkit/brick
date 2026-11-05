@@ -8,9 +8,7 @@ import { ServerRouter } from "react-router";
 
 const streamTimeout = 5_000;
 
-/**
- * This custom base request handler is based on the default react-router template, modified so that the `@react-router/dev` build plugin no longer requires `@react-router/node` and `isbot` in the dependencies field of `package.json`, allowing us to extract them as peer dependencies.
- */
+/** react-router's default server entry. */
 export default function handleRequest(
   request: Request,
   responseStatusCode: number,
@@ -51,7 +49,6 @@ export default function handleRequest(
           shellRendered = true;
           const body = new PassThrough({
             final(callback) {
-              // Clear the timeout to prevent retaining the closure and memory leak
               clearTimeout(timeoutId);
               timeoutId = undefined;
               callback();

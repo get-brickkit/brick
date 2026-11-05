@@ -2,7 +2,6 @@
  * Resource route for streaming data.
  * GET /api/stream/:streamId?runId=...&cursor=...
  *
- * Uses getStreamChunks (paginated batch API) to fetch chunks.
  * Returns concatenated binary data — deserialization and decryption happen
  * client-side. When `cursor` is provided, only chunks after that position
  * are returned (used for incremental polling).
