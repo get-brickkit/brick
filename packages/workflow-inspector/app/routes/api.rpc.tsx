@@ -21,7 +21,6 @@ import {
   fetchStep,
   fetchStreams,
   getEncryptionKeyForRun,
-  getPublicServerConfig,
   recreateRun,
   reenqueueRun,
   resumeHook,
@@ -60,7 +59,6 @@ const handlers = {
   fetchStreams: (p: any) => fetchStreams(p.worldEnv ?? {}, p.runId),
   getEncryptionKeyForRun: (p: any) =>
     getEncryptionKeyForRun(p.worldEnv ?? {}, p.runId),
-  getPublicServerConfig: () => getPublicServerConfig(),
 } as const;
 
 function cborResponse(data: unknown, status = 200): Response {
@@ -114,17 +112,4 @@ export async function action({ request }: Route.ActionArgs) {
       500,
     );
   }
-}
-
-// Also support GET for read operations (JSON — no binary data needed)
-export async function loader({ request }: Route.LoaderArgs) {
-  const url = new URL(request.url);
-  const method = url.searchParams.get("method");
-
-  if (method === "getPublicServerConfig") {
-    const result = await getPublicServerConfig();
-    return Response.json(result);
-  }
-
-  return Response.json({ error: "Use POST for RPC calls" }, { status: 405 });
 }

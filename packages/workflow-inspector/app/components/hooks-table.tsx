@@ -38,7 +38,6 @@ import type { EnvMap, HookListItem } from "~/lib/types";
 import {
   fetchHookToken,
   getErrorMessage,
-  getErrorTitle,
   resumeHook,
   useWorkflowHooks,
 } from "~/lib/workflow-api-client";
@@ -276,7 +275,7 @@ export function HooksTable({
       {error ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>{getErrorTitle(error, "Error loading hooks")}</AlertTitle>
+          <AlertTitle>Error loading hooks</AlertTitle>
           <AlertDescription>{getErrorMessage(error)}</AlertDescription>
         </Alert>
       ) : !loading && (!hooks || hooks.length === 0) ? (

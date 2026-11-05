@@ -32,58 +32,10 @@ import { getInspectorHost } from "./inspector-host.server";
  */
 export type EnvMap = Record<string, string | undefined>;
 
-/**
- * Public configuration info that is safe to send to the client.
- *
- * IMPORTANT:
- * - The web UI must not be able to read arbitrary server env vars.
- * - The only env-derived data we expose is from a strict per-world allowlist.
- */
-export interface PublicServerConfig {
-  /** Human-readable backend name for display (e.g., "PostgreSQL", "Local", "Vercel") */
-  backendDisplayName: string;
-  /** The raw backend identifier (e.g., "@workflow/world-postgres", "local", "vercel") */
-  backendId: string;
-  /**
-   * Safe, whitelisted, env-derived values.
-   *
-   * Keys MUST match the canonical environment variable names (e.g. "WORKFLOW_VERCEL_PROJECT").
-   * This keeps configuration naming consistent across CLI + web + docs.
-   */
-  publicEnv: Record<string, string>;
-  /**
-   * Keys for env vars that are allowed/known but considered sensitive.
-   * The server will NOT return their values; UIs should display `*****`.
-   */
-  sensitiveEnvKeys: string[];
-  /**
-   * Additional safe, derived info for display (never contains secrets).
-   * These keys are not env var names; they are UI-friendly derived fields.
-   */
-  displayInfo?: Record<string, string>;
-}
-
-/**
- * Public configuration info that is safe to send to the client.
- *
- * Brick change: upstream derives this from `WORKFLOW_*` environment variables.
- * The inspector here always reads the world of the app that hosts it, so the
- * config is fixed and exposes nothing from the environment.
- */
-export async function getPublicServerConfig(): Promise<PublicServerConfig> {
-  return {
-    backendDisplayName: "Brick",
-    backendId: "brick",
-    publicEnv: {},
-    sensitiveEnvKeys: [],
-  };
-}
-
 export interface PaginatedResult<T> {
   data: T[];
   cursor?: string;
   hasMore: boolean;
-  pageInfo?: AnalyticsPageInfo;
 }
 
 /**
@@ -109,29 +61,6 @@ export interface ServerActionError {
 export type ServerActionResult<T> =
   | { success: true; data: T }
   | { success: false; error: ServerActionError };
-
-interface AnalyticsPageInfo {
-  currentLookbackDays: number;
-  maxLookbackDays: number;
-  currentWindowStart: Date;
-  maxWindowStart: Date;
-  upgradeAvailable: boolean;
-}
-
-const OBSERVABILITY_UPGRADE_REQUIRED_CODE = "observability-upgrade-required";
-const OBSERVABILITY_UPGRADE_REQUIRED_MESSAGE =
-  "This workflow observability data is outside your current plan window. Upgrade Observability Plus to view up to 30 days of workflow data.";
-
-function getPageInfo(result: unknown): AnalyticsPageInfo | undefined {
-  if (
-    typeof result !== "object" ||
-    result === null ||
-    !("pageInfo" in result)
-  ) {
-    return undefined;
-  }
-  return (result as { pageInfo?: AnalyticsPageInfo }).pageInfo;
-}
 
 /**
  * The world the host process runs on. Brick change: upstream builds one from the
@@ -163,7 +92,7 @@ function createServerActionError<T>(
       console.error(`[web-api] ${operation} error:`, err);
     }
     errorResponse = {
-      message: getUserFacingErrorMessage(err, error.status, error.code),
+      message: getUserFacingErrorMessage(err, error.status),
       layer: "API",
       cause: err.stack || err.message,
       request: {
@@ -202,17 +131,9 @@ function createServerActionError<T>(
 /**
  * Converts an error into a user-facing message
  */
-function getUserFacingErrorMessage(
-  error: Error,
-  status?: number,
-  code?: string,
-): string {
+function getUserFacingErrorMessage(error: Error, status?: number): string {
   if (!status) {
     return `Error creating response: ${error.message}`;
-  }
-
-  if (status === 402 && code === OBSERVABILITY_UPGRADE_REQUIRED_CODE) {
-    return OBSERVABILITY_UPGRADE_REQUIRED_MESSAGE;
   }
 
   // Check for common error patterns
@@ -259,15 +180,6 @@ export async function fetchRuns(
     limit?: number;
     workflowName?: string;
     status?: WorkflowRunStatus;
-    /**
-     * Optional listing window (ISO timestamps, both required together).
-     * Honored by the analytics read path, where it bounds the backend scan;
-     * the runtime storage APIs have no time filter, so the fallback path
-     * ignores it. Windows outside the plan's observability lookback surface
-     * as a 402 `observability-upgrade-required` error.
-     */
-    startTime?: string;
-    endTime?: string;
   },
 ): Promise<ServerActionResult<PaginatedResult<WorkflowRun>>> {
   const {
@@ -276,31 +188,19 @@ export async function fetchRuns(
     limit = 10,
     workflowName,
     status,
-    startTime,
-    endTime,
   } = params;
   try {
     const world = await getWorldFromEnv(worldEnv);
-    // Prefer the metadata-only analytics read path when the backend provides
-    // one; fall back to the runtime storage API otherwise.
-    const result = world.analytics
-      ? await world.analytics.runs.list({
-          ...(workflowName ? { workflowName } : {}),
-          ...(status ? { status } : {}),
-          ...(startTime && endTime ? { startTime, endTime } : {}),
-          pagination: { cursor, limit, sortOrder },
-        })
-      : await world.runs.list({
-          ...(workflowName ? { workflowName } : {}),
-          ...(status ? { status } : {}),
-          pagination: { cursor, limit, sortOrder },
-          resolveData: "none",
-        });
+    const result = await world.runs.list({
+      ...(workflowName ? { workflowName } : {}),
+      ...(status ? { status } : {}),
+      pagination: { cursor, limit, sortOrder },
+      resolveData: "none",
+    });
     return createResponse({
       data: result.data as unknown as WorkflowRun[],
       cursor: result.cursor ?? undefined,
       hasMore: result.hasMore,
-      pageInfo: getPageInfo(result),
     });
   } catch (error) {
     return createServerActionError<PaginatedResult<WorkflowRun>>(
@@ -369,11 +269,6 @@ export async function fetchEvents(
   const { cursor, sortOrder = "asc", limit = 1000, withData = false } = params;
   try {
     const world = await getWorldFromEnv(worldEnv);
-    // Run-scoped, so it reads storage rather than analytics. The analytics
-    // namespace is a metadata mirror with a shorter retention window and
-    // asynchronous ingestion, so it returned an empty list for a run older
-    // than that window and could trail a run still executing. This listing
-    // backs both the trace viewer and the events tab.
     const result = await world.events.list({
       runId,
       pagination: { cursor, limit, sortOrder },
@@ -383,7 +278,6 @@ export async function fetchEvents(
       data: result.data as unknown as Event[],
       cursor: result.cursor ?? undefined,
       hasMore: result.hasMore,
-      pageInfo: getPageInfo(result),
     });
   } catch (error) {
     return createServerActionError<PaginatedResult<Event>>(
@@ -447,10 +341,8 @@ export async function fetchEventsByCorrelationId(
   } = params;
   try {
     const world = await getWorldFromEnv(worldEnv);
-    // Run-scoped, so it reads storage — see `fetchEvents` for why the
-    // analytics path was withdrawn. `runId` is required, which keeps the
-    // answer scoped to one run: a correlation id is unique within its run,
-    // not across runs.
+    // `runId` is required: a correlation id is unique within its run, not
+    // across runs.
     const result = await world.events.listByCorrelationId({
       correlationId,
       runId,
@@ -461,7 +353,6 @@ export async function fetchEventsByCorrelationId(
       data: result.data as unknown as Event[],
       cursor: result.cursor ?? undefined,
       hasMore: result.hasMore,
-      pageInfo: getPageInfo(result),
     });
   } catch (error) {
     return createServerActionError<PaginatedResult<Event>>(
@@ -495,23 +386,8 @@ export async function fetchHooks(
   const { runId, cursor, sortOrder = "desc", limit = 10 } = params;
   try {
     const world = await getWorldFromEnv(worldEnv);
-    // Prefer the metadata-only analytics read path when the backend provides
-    // one and the run scope required by analytics is present. The hook list is
-    // metadata only — the secret `token` is fetched on demand per hook via
-    // `fetchHookToken` for the copy-token and resume affordances — so the list
-    // never carries it.
-    if (world.analytics && runId) {
-      const result = await world.analytics.hooks.list({
-        runId,
-        pagination: { cursor, limit, sortOrder },
-      });
-      return createResponse({
-        data: result.data as unknown as HookListItem[],
-        cursor: result.cursor ?? undefined,
-        hasMore: result.hasMore,
-        pageInfo: getPageInfo(result),
-      });
-    }
+    // The hook list is metadata only: the secret `token` is fetched on demand
+    // per hook via `fetchHookToken`, so the list never carries it.
     const result = await world.hooks.list({
       ...(runId ? { runId } : {}),
       pagination: { cursor, limit, sortOrder },
@@ -521,7 +397,6 @@ export async function fetchHooks(
       data: result.data.map(hookToListItem),
       cursor: result.cursor ?? undefined,
       hasMore: result.hasMore,
-      pageInfo: getPageInfo(result),
     });
   } catch (error) {
     return createServerActionError<PaginatedResult<HookListItem>>(

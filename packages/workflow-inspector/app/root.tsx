@@ -14,18 +14,14 @@ import {
   useSearchParams,
 } from "react-router";
 import { Toaster } from "~/components/ui/sonner";
-import { ServerConfigProvider } from "~/lib/world-config-context";
-import { getPublicServerConfig } from "~/server/workflow-server-actions.server";
 
 import type { Route } from "./+types/root";
 import "./globals.css";
 
-// Server-side loader: provides config data on initial render and navigation.
-// `basename` is the embed mount path (e.g. "/_workflow"), threaded through the
-// load context by the embedded handler; "" when served standalone at the root.
+// `basename` is the embed mount path, threaded through the load context by
+// the fetch handler.
 export async function loader({ context }: Route.LoaderArgs) {
-  const serverConfig = await getPublicServerConfig();
-  return { serverConfig, basename: context?.basename ?? "" };
+  return { basename: context?.basename ?? "" };
 }
 
 // Catch-all action: handles stray POST requests (e.g. from Radix UI dialogs
@@ -226,12 +222,10 @@ export default function App({ loaderData }: Route.ComponentProps) {
       disableTransitionOnChange
       storageKey="workflow-theme"
     >
-      <ServerConfigProvider serverConfig={loaderData.serverConfig}>
-        <FollowParentTheme />
-        <LayoutContent>
-          <Outlet />
-        </LayoutContent>
-      </ServerConfigProvider>
+      <FollowParentTheme />
+      <LayoutContent>
+        <Outlet />
+      </LayoutContent>
     </ThemeProvider>
   );
 }

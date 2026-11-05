@@ -38,7 +38,6 @@ export {
 } from "./client/workflow-actions";
 export {
   getErrorMessage,
-  getErrorTitle,
   unwrapServerActionResult,
   WorkflowWebAPIError,
 } from "./client/workflow-errors";

@@ -104,36 +104,6 @@ describe("createFetchHandler", () => {
     expect(world.listed).toBe(before + 1);
   });
 
-  it("exposes nothing from the environment", async () => {
-    // What upstream read to pick and describe its world.
-    const env: Record<string, string> = {
-      WORKFLOW_TARGET_WORLD: "@workflow/world-postgres",
-      WORKFLOW_VERCEL_AUTH_TOKEN: "secret-vercel-token",
-      WORKFLOW_REDIS_URI: "redis://secret-redis@example:6379",
-      WORKFLOW_MANIFEST_PATH: "/secret/manifest.json",
-      WORKFLOW_LOCAL_DATA_DIR: "/secret/data-dir",
-    };
-    const saved = Object.fromEntries(
-      Object.keys(env).map((name) => [name, process.env[name]]),
-    );
-    Object.assign(process.env, env);
-    try {
-      const answer = await rpc(handle, "getPublicServerConfig");
-      expect(answer as unknown).toEqual({
-        backendDisplayName: "Brick",
-        backendId: "brick",
-        publicEnv: {},
-        sensitiveEnvKeys: [],
-      });
-      const text = JSON.stringify(answer);
-      for (const value of Object.values(env)) expect(text).not.toContain(value);
-    } finally {
-      for (const [name, value] of Object.entries(saved))
-        if (value === undefined) delete process.env[name];
-        else process.env[name] = value;
-    }
-  });
-
   it("gives the SDK the host's world, which Resume hook reads", async () => {
     // An app that only records events may never set the SDK's world, so it may
     // hold another one, or none.

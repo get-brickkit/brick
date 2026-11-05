@@ -4,19 +4,13 @@ import {
   WorkflowWebAPIError,
 } from "~/lib/client/workflow-errors";
 import { fetchHooks } from "~/lib/rpc-client";
-import type {
-  AnalyticsPageInfo,
-  EnvMap,
-  HookListItem,
-  PaginatedResult,
-} from "~/lib/types";
+import type { EnvMap, HookListItem, PaginatedResult } from "~/lib/types";
 import { getPaginationDisplay } from "~/lib/utils";
 
 export interface PageResult<T> {
   data: T[] | null;
   isLoading: boolean;
   error: Error | null;
-  pageInfo?: AnalyticsPageInfo;
 }
 
 export interface PaginatedList<T> {
@@ -33,7 +27,6 @@ export interface PaginatedList<T> {
   reload: () => void;
   refresh: () => void;
   pageInfo: string;
-  analyticsPageInfo?: AnalyticsPageInfo;
 }
 
 /**
@@ -66,7 +59,6 @@ export function usePaginatedList<T>(
         data: T[];
         cursor?: string;
         hasMore: boolean;
-        pageInfo?: AnalyticsPageInfo;
       }
     >
   >(new Map());
@@ -96,7 +88,6 @@ export function usePaginatedList<T>(
               data: cached.data,
               isLoading: false,
               error: null,
-              pageInfo: cached.pageInfo,
             });
             return newMap;
           });
@@ -114,7 +105,6 @@ export function usePaginatedList<T>(
           data: result.data,
           cursor: result.cursor,
           hasMore: result.hasMore,
-          pageInfo: result.pageInfo,
         });
 
         setAllPageResults((prev) => {
@@ -123,7 +113,6 @@ export function usePaginatedList<T>(
             data: result.data,
             isLoading: false,
             error: null,
-            pageInfo: result.pageInfo,
           });
           return newMap;
         });
@@ -250,7 +239,6 @@ export function usePaginatedList<T>(
     reload,
     refresh,
     pageInfo,
-    analyticsPageInfo: currentPageResult.pageInfo,
   };
 }
 

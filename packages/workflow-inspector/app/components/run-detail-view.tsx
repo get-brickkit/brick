@@ -47,7 +47,6 @@ import {
   cancelRun,
   fetchSpanDetailResource,
   getErrorMessage,
-  getErrorTitle,
   recreateRun,
   resumeHook,
   unwrapServerActionResult,
@@ -355,9 +354,7 @@ export function RunDetailView({
     return (
       <Alert variant="destructive" className="m-4">
         <AlertCircle className="h-4 w-4" />
-        <AlertTitle>
-          {getErrorTitle(error, "Error loading workflow run")}
-        </AlertTitle>
+        <AlertTitle>Error loading workflow run</AlertTitle>
         <AlertDescription>{getErrorMessage(error)}</AlertDescription>
       </Alert>
     );
