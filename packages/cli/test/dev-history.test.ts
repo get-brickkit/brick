@@ -2,16 +2,17 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DevHistory, openHistory, parseHistoryQuery } from "../src/dev-history";
+import { DevHistory, openHistory } from "../src/dev-history";
 import {
   applyFilters,
   bucketRows,
+  decodeHistoryQuery,
+  type HistoryQuery,
   computeFacets,
   summarizeRows,
   toRow,
   tracesToCsv,
 } from "../src/dashboard-query";
-import type { HistoryQuery } from "../src/dev-history";
 import type { TraceSummary } from "../src/dashboard-protocol";
 
 const DAY = 86_400_000;
@@ -622,9 +623,9 @@ describe("under Node", () => {
   });
 });
 
-describe("parseHistoryQuery", () => {
+describe("decodeHistoryQuery", () => {
   it("reads filters from a query string and ignores values it does not understand", () => {
-    const query = parseHistoryQuery(
+    const query = decodeHistoryQuery(
       new URLSearchParams(
         "from=100&to=200&endpoint=GET%20%2Fx&endpoint=POST%20%2Fy&method=GET" +
           "&service=pages&outcome=server&outcome=client&outcome=weird" +
@@ -645,7 +646,7 @@ describe("parseHistoryQuery", () => {
       offset: 40,
     });
 
-    const defaults = parseHistoryQuery(
+    const defaults = decodeHistoryQuery(
       new URLSearchParams({ outcome: "weird", from: "nope", minMs: "" }),
       NOW,
     );

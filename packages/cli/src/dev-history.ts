@@ -17,13 +17,12 @@ import {
   CLIENT_ERROR,
   endpointOf,
   MAX_FACET_VALUES,
-  OUTCOMES,
   percentile,
   SEARCHED,
   SERVER_ERROR,
   tracesToCsv,
   type Facet,
-  type RowFilters,
+  type HistoryQuery,
 } from "./dashboard-query";
 
 const DAY_MS = 86_400_000;
@@ -33,14 +32,6 @@ const PRUNE_MS = 30 * 60_000;
 const VOLUME_BUCKETS = 48;
 const MAX_LIMIT = 500;
 const MAX_EXPORT_ROWS = 100_000;
-
-/** The filters of the request log, over a window, a page at a time. */
-export interface HistoryQuery extends RowFilters {
-  from: number;
-  to: number;
-  limit?: number;
-  offset?: number;
-}
 
 interface Statement {
   run(...params: unknown[]): unknown;
@@ -527,37 +518,4 @@ export class DevHistory {
       // Already closed.
     }
   }
-}
-
-/** Query-string values the dashboard sends, parsed defensively. */
-export function parseHistoryQuery(
-  params: URLSearchParams,
-  now = Date.now(),
-): HistoryQuery {
-  const integer = (name: string): number | undefined => {
-    const raw = params.get(name);
-    if (raw === null || raw.trim() === "") return undefined;
-    const value = Number(raw);
-    return Number.isFinite(value) ? value : undefined;
-  };
-  const all = (name: string): string[] | undefined => {
-    const values = params.getAll(name).filter((value) => value !== "");
-    return values.length > 0 ? values : undefined;
-  };
-  const to = integer("to") ?? now;
-  return {
-    to,
-    from: integer("from") ?? to - 7 * DAY_MS,
-    endpoints: all("endpoint"),
-    methods: all("method"),
-    services: all("service"),
-    outcomes: all("outcome")?.filter((value): value is Outcome =>
-      OUTCOMES.includes(value as Outcome),
-    ),
-    minMs: integer("minMs"),
-    query: params.get("q") || undefined,
-    sort: params.get("sort") === "slowest" ? "slowest" : "recent",
-    limit: integer("limit"),
-    offset: integer("offset"),
-  };
 }

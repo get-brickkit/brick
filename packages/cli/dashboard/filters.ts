@@ -4,7 +4,7 @@ import {
   type Outcome,
   type VolumeBucket,
 } from "../src/dashboard-protocol";
-import type { RowFilters } from "../src/dashboard-query";
+import { encodeHistoryQuery, type RowFilters } from "../src/dashboard-query";
 
 /** One line in the request log: a request without its spans. */
 export type LogRow = HistoryTrace;
@@ -45,22 +45,12 @@ export function historyParams(
   filters: LogFilters,
   page?: { offset: number },
 ): URLSearchParams {
-  const params = new URLSearchParams({
-    from: String(window.from),
-    to: String(window.to),
+  return encodeHistoryQuery({
+    ...filters,
+    ...window,
+    query: filters.query.trim(),
+    ...(page && { limit: HISTORY_PAGE_SIZE, offset: page.offset }),
   });
-  for (const endpoint of filters.endpoints) params.append("endpoint", endpoint);
-  for (const method of filters.methods) params.append("method", method);
-  for (const service of filters.services) params.append("service", service);
-  for (const outcome of filters.outcomes) params.append("outcome", outcome);
-  if (filters.minMs !== undefined) params.set("minMs", String(filters.minMs));
-  if (filters.query.trim()) params.set("q", filters.query.trim());
-  if (filters.sort !== "recent") params.set("sort", filters.sort);
-  if (page) {
-    params.set("limit", String(HISTORY_PAGE_SIZE));
-    params.set("offset", String(page.offset));
-  }
-  return params;
 }
 
 /** Volume folded into a few columns for a card's miniature chart, oldest first. */

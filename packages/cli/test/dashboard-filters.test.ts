@@ -11,9 +11,12 @@ import {
   applyFilters,
   bucketRows,
   computeFacets,
+  decodeHistoryQuery,
+  encodeHistoryQuery,
   outcomeOf,
   summarizeRows,
   toRow,
+  type HistoryQuery,
 } from "../src/dashboard-query";
 import type { TraceSummary } from "../src/dashboard-protocol";
 
@@ -229,6 +232,23 @@ describe("history query strings", () => {
       limit: "100",
       offset: "200",
     });
+  });
+
+  it("is what the server reads back", () => {
+    const query: HistoryQuery = {
+      from: 1_000,
+      to: 2_000,
+      endpoints: ["GET /a", "POST /b"],
+      methods: ["GET"],
+      services: ["pages"],
+      outcomes: ["server", "client"],
+      minMs: 500,
+      query: "pages",
+      sort: "slowest",
+      limit: 100,
+      offset: 200,
+    };
+    expect(decodeHistoryQuery(encodeHistoryQuery(query))).toEqual(query);
   });
 
   it("leaves out blank text and the default order", () => {

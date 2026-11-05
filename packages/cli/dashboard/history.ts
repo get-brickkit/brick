@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { historyParams, type LogFilters, type LogRow } from "@/filters";
 import {
+  HISTORY_PAGE_SIZE,
   historyTraceUrl,
   historyUrl,
   type HistoryFacets,
@@ -98,8 +99,6 @@ export interface RequestLog {
   refresh: () => void;
 }
 
-const PAGE = 100;
-
 /**
  * The stored requests in a window that match the filters: a page of rows with
  * a total, the counts for each filter, and volume over time. It follows the
@@ -168,7 +167,7 @@ export function useRequestLog(
 
   const more = useCallback(() => {
     const { window, filters, key } = latest.current;
-    const next = offset.current + PAGE;
+    const next = offset.current + HISTORY_PAGE_SIZE;
     offset.current = next;
     void getJson<{ traces: LogRow[] }>(
       historyUrl("traces", historyParams(window, filters, { offset: next })),

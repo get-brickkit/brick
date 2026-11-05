@@ -19,7 +19,13 @@ import {
   type TraceSummary,
   type WorkerErrorPhase,
 } from "./dashboard-protocol";
-import { actionSpan, findException, stringAttribute } from "./dashboard-query";
+import {
+  actionSpan,
+  CLIENT_ERROR,
+  findException,
+  outcomeOf,
+  stringAttribute,
+} from "./dashboard-query";
 
 const LIMITS = { ...LIVE_LIMITS, spansPerTrace: 500 };
 
@@ -318,14 +324,16 @@ export class DevTelemetryStore {
     // Server faults make the trace an error. Client errors still show in the
     // Errors tab, so a raw route's 401 is visible without a coded failure.
     const status = entry.httpStatus ?? 0;
-    const serverFault = status >= 500;
-    const failed = record.status === "error" || serverFault;
-    entry.status = failed ? "error" : "ok";
-    if ((failed || status >= 400) && !entry.failureRecorded) {
+    const outcome = outcomeOf({
+      status: record.status === "error" ? "error" : "ok",
+      httpStatus: entry.httpStatus,
+    });
+    entry.status = outcome === "server" ? "error" : "ok";
+    if (outcome !== "ok" && !entry.failureRecorded) {
       const exception = findException(record.events);
       this.#pushFailure({
         phase: "request",
-        code: status >= 400 ? `HTTP_${status}` : "UNHANDLED_ERROR",
+        code: status >= CLIENT_ERROR ? `HTTP_${status}` : "UNHANDLED_ERROR",
         message:
           stringAttribute(exception, ATTR.exceptionMessage) ??
           record.statusMessage ??
@@ -363,8 +371,12 @@ export class DevTelemetryStore {
     for (const listener of this.#listeners) {
       try {
         listener(event);
-      } catch {
+      } catch (error) {
         this.#listeners.delete(listener);
+        console.warn(
+          "[Brick-TS] A dashboard client stopped receiving updates:",
+          error,
+        );
       }
     }
   }

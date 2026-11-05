@@ -9,7 +9,8 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { ConfigError } from "./config";
 import type { DevDocs } from "./dev-docs";
-import { parseHistoryQuery, type DevHistory } from "./dev-history";
+import type { DevHistory } from "./dev-history";
+import { decodeHistoryQuery } from "./dashboard-query";
 import type { DevTelemetryStore } from "./dev-telemetry-store";
 import { dashboardShell } from "./dev-dashboard-shell";
 import type { DashboardAuth } from "@brickkit/core";
@@ -689,7 +690,7 @@ function history(
 ): void {
   const queries: Record<
     Exclude<HistoryEndpoint, "export">,
-    (query: ReturnType<typeof parseHistoryQuery>) => unknown
+    (query: ReturnType<typeof decodeHistoryQuery>) => unknown
   > = {
     summary: (query) => store.summary(query),
     traces: (query) => store.traces(query),
@@ -700,7 +701,7 @@ function history(
     const endpoint = pathname.slice(ROUTES.history.path.length + 1);
     if (endpoint === "") return json(response, store.info());
     if (endpoint === "export") {
-      return send(response, 200, store.exportCsv(parseHistoryQuery(params)), {
+      return send(response, 200, store.exportCsv(decodeHistoryQuery(params)), {
         "content-type": "text/csv; charset=utf-8",
         "content-disposition": 'attachment; filename="brick-requests.csv"',
         "cache-control": "no-store",
@@ -709,7 +710,7 @@ function history(
     if (Object.hasOwn(queries, endpoint))
       return json(
         response,
-        queries[endpoint as keyof typeof queries](parseHistoryQuery(params)),
+        queries[endpoint as keyof typeof queries](decodeHistoryQuery(params)),
       );
     const prefix = "traces/";
     if (endpoint.startsWith(prefix)) {
