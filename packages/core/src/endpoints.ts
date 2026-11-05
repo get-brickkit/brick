@@ -7,6 +7,7 @@ import type { ApiDocument, DocumentationOptions } from "./docs";
 import type { DashboardOptions } from "./dashboard";
 import type { EventsDefinition, EventsHub } from "./events/hub";
 import { toErrorResponse } from "./error-response";
+import { pathParamNames, toOpenApiPath } from "./routes";
 import { createLogger } from "./logger";
 import { ActionExecutionError, ValidationError } from "./types";
 import type { BrickSocketSchema } from "./socket-types";
@@ -137,16 +138,6 @@ export function createEndpointHandler(
       return response;
     }
   };
-}
-
-/** `/p/:slug` → `/p/{slug}` for OpenAPI. */
-export function toOpenApiPath(elysiaPath: string): string {
-  return elysiaPath.replace(/:([A-Za-z0-9_]+)/g, "{$1}");
-}
-
-/** Parameter names (`:slug`) extracted for the OpenAPI path item. */
-function pathParamNames(elysiaPath: string): string[] {
-  return [...elysiaPath.matchAll(/:([A-Za-z0-9_]+)/g)].map((m) => m[1]);
 }
 
 /** OpenAPI `paths` fragment for declared endpoints (raw HTML included). */

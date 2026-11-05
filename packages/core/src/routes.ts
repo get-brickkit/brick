@@ -5,6 +5,21 @@ import { kebabCase } from "./kebab";
 
 export type { ResourceActionInfo } from "./action-meta";
 
+/** The route prefix of actions when the app sets none. */
+export const DEFAULT_PREFIX = "/api";
+
+const PATH_PARAM = /:([^/]+)/g;
+
+/** `/p/:slug` → `/p/{slug}` for OpenAPI. */
+export function toOpenApiPath(path: string): string {
+  return path.replace(PATH_PARAM, "{$1}");
+}
+
+/** The parameter names of a route path: `/p/:slug` → `["slug"]`. */
+export function pathParamNames(path: string): string[] {
+  return [...path.matchAll(PATH_PARAM)].map((match) => match[1]!);
+}
+
 /**
  * The route every name of an owner mounts under: `${prefix}`,
  * `${prefix}/${service}`, or `${prefix}/${service}/${resource}`, in kebab-case.
@@ -60,7 +75,7 @@ export function pluginRoutePath(
  */
 export function getPluginActionRoute(
   action: Action<any, any, any, any>,
-  prefix = "/api",
+  prefix = DEFAULT_PREFIX,
 ) {
   const binding = actionMeta(action).route;
   if (!binding) return undefined;
@@ -85,7 +100,7 @@ export function getPluginActionRoute(
  */
 export function getActionRoute(
   action: Action<any, any, any, any>,
-  prefix = "/api",
+  prefix = DEFAULT_PREFIX,
 ): ActionRoute | false {
   return actionRoute(action, action.serviceName ?? "", prefix);
 }

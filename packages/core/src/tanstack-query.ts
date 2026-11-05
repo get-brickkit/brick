@@ -9,6 +9,7 @@ import {
   type InferActionOutput,
 } from "./client";
 import type { Action } from "./types";
+import { DEFAULT_PREFIX } from "./routes";
 
 type ActionKey = readonly [
   "brick",
@@ -65,7 +66,7 @@ export function createBrickQueryClient<T extends Record<string, unknown>>(
 ): BrickQueryClient<T> {
   const client = createBrickClient(options);
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
-  const prefix = options.prefix ?? "/api";
+  const prefix = options.prefix ?? DEFAULT_PREFIX;
   function stringProperty(value: unknown, property: string): string | null {
     const result: unknown = Reflect.get(Object(value), property);
     return typeof result === "string" ? result : null;

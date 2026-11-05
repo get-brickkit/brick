@@ -21,7 +21,7 @@ import {
 import { defineAction } from "./action";
 import { actionMeta, type PluginRouteBinding } from "./action-meta";
 import { kebabCase } from "./kebab";
-import { pluginRoutePath } from "./routes";
+import { DEFAULT_PREFIX, pathParamNames, pluginRoutePath } from "./routes";
 import { HTTP_METHODS } from "./http";
 import { portOf } from "./service-port";
 
@@ -193,7 +193,7 @@ export function isInstallingPlugin(service: Service<any, any>): boolean {
  */
 export function getPluginEndpoints(
   service: Service<any, any>,
-  prefix = "/api",
+  prefix = DEFAULT_PREFIX,
 ) {
   return stateOf(service)
     .endpoints.filter((binding) => binding.enabled)
@@ -330,13 +330,13 @@ export function installPlugin(
   const routes: PluginRouteRegistrar<any> = {
     action(config: any) {
       const binding = bindingFor(config);
-      for (const match of binding.path.matchAll(/:([A-Za-z0-9_]+)/g)) {
+      for (const name of pathParamNames(binding.path)) {
         if (
           !config.input?.properties ||
-          !Object.hasOwn(config.input.properties, match[1]!)
+          !Object.hasOwn(config.input.properties, name)
         )
           throw new Error(
-            `Plugin action path parameter '${match[1]}' must be declared in its input schema`,
+            `Plugin action path parameter '${name}' must be declared in its input schema`,
           );
       }
       // Public contract name: resource/operation only (e.g. `page.list`).

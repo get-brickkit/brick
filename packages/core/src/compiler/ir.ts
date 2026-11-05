@@ -2,6 +2,7 @@ import type { HttpMethod } from "../http";
 import { DuplicateNameError, type Service, type Action } from "../types";
 import { actionMeta } from "../action-meta";
 import {
+  DEFAULT_PREFIX,
   checkSegments,
   getActionRoute,
   inputSource,
@@ -67,7 +68,7 @@ function schemaSnapshot(schema: unknown): unknown {
 
 export function analyzeApplication(
   services: Service<any, any>[],
-  prefix = "/api",
+  prefix = DEFAULT_PREFIX,
 ) {
   for (const service of services) service.build();
   return analyzeDeclaredApplication(services, prefix);
@@ -76,7 +77,7 @@ export function analyzeApplication(
 /** Inspect current declarations without closing service/plugin setup. */
 export function analyzeDeclaredApplication(
   services: Service<any, any>[],
-  prefix = "/api",
+  prefix = DEFAULT_PREFIX,
 ) {
   if (!prefix.startsWith("/"))
     throw new Error("Brick compiler: prefix must start with '/'");

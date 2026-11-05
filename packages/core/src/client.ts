@@ -5,7 +5,7 @@ import type { ActionExecutionError } from "./types";
 import { decodeError, type StandardErrorCode } from "./protocol";
 import { connectSocket } from "./socket-client";
 import { kebabCase } from "./kebab";
-import { actionRoute } from "./routes";
+import { DEFAULT_PREFIX, actionRoute, inputSource } from "./routes";
 import type {
   BrickClientSocket,
   BrickSocketClient,
@@ -325,7 +325,7 @@ function normalizeBaseUrl(baseUrl: string): string {
 }
 
 function normalizePrefix(prefix: string | undefined): string {
-  if (!prefix) return "/api";
+  if (!prefix) return DEFAULT_PREFIX;
   const withLeading = prefix.startsWith("/") ? prefix : `/${prefix}`;
   return withLeading.length > 1 ? withLeading.replace(/\/+$/, "") : withLeading;
 }
@@ -444,7 +444,7 @@ function planRequest(
     });
     remaining = input === undefined ? undefined : record;
   }
-  const queryOnly = method === "GET" || method === "DELETE";
+  const queryOnly = inputSource(method) === "query";
   return {
     method,
     url: `${baseUrl}${actionPath}${queryOnly ? toQueryString(remaining) : ""}`,

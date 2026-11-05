@@ -1,9 +1,21 @@
 import type { EventRef } from "./events/catalog";
-import { actionOwners } from "./routes";
+import {
+  DEFAULT_PREFIX,
+  actionOwners,
+  pathParamNames,
+  toOpenApiPath,
+} from "./routes";
 import { analyzeDeclaredApplication } from "./compiler/ir";
 import { getActionAccess } from "./access";
 import { getGlobalRegistry } from "./registry";
 import type { Service, ActionErrorDefinition } from "./types";
+
+/** The OpenAPI document's defaults, shared by `brick()` and `generateOpenApiSpec`. */
+export const OPENAPI_DEFAULTS = Object.freeze({
+  title: "Brick-TS API Mesh",
+  version: "1.0.0",
+  path: "/openapi.json",
+});
 
 export interface OpenApiGeneratorOptions {
   title?: string;
@@ -106,12 +118,12 @@ function hoistAnchoredSchemas(spec: Record<string, any>): void {
 export function generateOpenApiSpec(
   options: OpenApiGeneratorOptions = {},
 ): Record<string, any> {
-  const title = options.title ?? "Brick-TS API Mesh";
-  const version = options.version ?? "1.0.0";
+  const title = options.title ?? OPENAPI_DEFAULTS.title;
+  const version = options.version ?? OPENAPI_DEFAULTS.version;
   const description =
     options.description ??
     "Automated OpenAPI 3.1.0 specification for Brick-TS modular service mesh.";
-  const prefix = options.prefix ?? "/api";
+  const prefix = options.prefix ?? DEFAULT_PREFIX;
 
   const services = options.services ?? getGlobalRegistry().list();
 
@@ -129,10 +141,8 @@ export function generateOpenApiSpec(
       const { action } = bindings[index]!;
       const routePath = route.path;
       const method = route.method.toLowerCase();
-      const pathParams = [...routePath.matchAll(/:([^/]+)/g)].map(
-        (match) => match[1]!,
-      );
-      const actionPath = routePath.replace(/:([^/]+)/g, "{$1}");
+      const pathParams = pathParamNames(routePath);
+      const actionPath = toOpenApiPath(routePath);
       if (!paths[actionPath]) paths[actionPath] = {};
 
       const { plugin, resource } = actionOwners(action);
