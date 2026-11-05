@@ -115,5 +115,9 @@ func Call(ctx context.Context, service, action string, in, out any) error {
 	if out == nil || len(data) == 0 {
 		return nil
 	}
-	return json.Unmarshal(data, out)
+	if json.Unmarshal(data, out) != nil {
+		// As the TS client reports it.
+		return &Error{Name: "ActionExecutionError", Code: "INTERNAL_SERVER_ERROR", Message: fmt.Sprintf("Service '%s' answered %d without JSON", service, res.StatusCode), Status: 502}
+	}
+	return nil
 }

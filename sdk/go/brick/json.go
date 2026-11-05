@@ -42,7 +42,7 @@ func (o *object) MarshalJSON() ([]byte, error) {
 func decodeOrdered(data []byte) (any, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
-	v, err := readValue(dec)
+	v, err := readValue(dec, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +52,10 @@ func decodeOrdered(data []byte) (any, error) {
 	return v, nil
 }
 
-func readValue(dec *json.Decoder) (any, error) {
+// maxDepth bounds nesting, so a body of brackets can't grow the stack without limit.
+const maxDepth = 128
+
+func readValue(dec *json.Decoder, depth int) (any, error) {
 	tok, err := dec.Token()
 	if err != nil {
 		return nil, err
@@ -60,6 +63,9 @@ func readValue(dec *json.Decoder) (any, error) {
 	delim, ok := tok.(json.Delim)
 	if !ok {
 		return tok, nil
+	}
+	if depth >= maxDepth {
+		return nil, errors.New("JSON nested too deeply")
 	}
 	switch delim {
 	case '{':
@@ -69,7 +75,7 @@ func readValue(dec *json.Decoder) (any, error) {
 			if err != nil {
 				return nil, err
 			}
-			v, err := readValue(dec)
+			v, err := readValue(dec, depth+1)
 			if err != nil {
 				return nil, err
 			}
@@ -80,7 +86,7 @@ func readValue(dec *json.Decoder) (any, error) {
 	case '[':
 		arr := []any{}
 		for dec.More() {
-			v, err := readValue(dec)
+			v, err := readValue(dec, depth+1)
 			if err != nil {
 				return nil, err
 			}

@@ -161,3 +161,22 @@ func TestDecodeIssueAndIntegerPassthrough(t *testing.T) {
 		t.Fatalf("got %s", b.String())
 	}
 }
+
+func TestDeeplyNestedBody(t *testing.T) {
+	deep := strings.Repeat("[", maxDepth+1) + strings.Repeat("]", maxDepth+1)
+	rec := call(testService(t), deep, nil)
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "Invalid JSON body") {
+		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := decodeOrdered([]byte(strings.Repeat("[", maxDepth) + strings.Repeat("]", maxDepth))); err != nil {
+		t.Fatalf("at the limit: %v", err)
+	}
+}
+
+func TestTypedNilError(t *testing.T) {
+	var e *Error
+	var err error = e
+	if _, ok := asError(err); ok {
+		t.Fatal("a typed nil *Error is not an envelope")
+	}
+}

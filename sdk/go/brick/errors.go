@@ -52,6 +52,7 @@ func internalError() *Error {
 
 func asError(err error) (*Error, bool) {
 	var e *Error
-	ok := errors.As(err, &e)
+	// A typed nil *Error in a non-nil error is no envelope.
+	ok := errors.As(err, &e) && e != nil
 	return e, ok
 }
