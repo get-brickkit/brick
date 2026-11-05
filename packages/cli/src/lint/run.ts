@@ -73,8 +73,6 @@ export function runFileRules(options: {
   rules: Record<string, Severity>;
   settings: BrickSettings;
   ignore?: string[];
-  /** Files or folders to lint, from `root` (default: all of it). */
-  paths?: string[];
   fix?: boolean;
 }): LintMessage[] {
   const rules = Object.fromEntries(
@@ -108,7 +106,7 @@ export function runFileRules(options: {
           "--ignore-pattern",
           pattern,
         ]),
-        ...(options.paths ?? ["."]),
+        ".",
       ],
       { cwd: options.root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
     );

@@ -13,7 +13,7 @@ export type Access =
     };
 
 /** How long the app's `authorize` may take before the request is refused. */
-export const AUTHORIZE_TIMEOUT_MS = 5000;
+const AUTHORIZE_TIMEOUT_MS = 5000;
 
 /** Whether `host` can only be reached from the machine it runs on. */
 export function isLoopbackHost(host: string): boolean {

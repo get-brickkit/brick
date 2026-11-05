@@ -220,6 +220,11 @@ class SchemaTypes {
     };
     count(contract, 1);
     for (const body of this.aliases.values()) count(body, 1);
+    // Whether naming a type saves more text than its declaration costs.
+    const worthSharing = (id: number, size: number, name: string) =>
+      uses[id]! > 1 &&
+      (uses[id]! - 1) * size >
+        uses[id]! * name.length + `export type ${name} = ;\n\n`.length;
     const shared = new Map<number, string>();
     // Parents are interned after their children. Once a parent is shared, its
     // children occur only once in its declaration, avoiding overlapping savings.
@@ -229,11 +234,7 @@ class SchemaTypes {
       let name = nameBase;
       let suffix = 2;
       while (this.names.has(name)) name = `${nameBase}_${suffix++}`;
-      const declarationCost = `export type ${name} = ;\n\n`.length;
-      if (
-        uses[id]! > 1 &&
-        (uses[id]! - 1) * size > uses[id]! * name.length + declarationCost
-      ) {
+      if (worthSharing(id, size, name)) {
         this.names.add(name);
         shared.set(id, name);
       }
@@ -248,11 +249,7 @@ class SchemaTypes {
       );
       const name = shared.get(id);
       // Child aliases can make a parent too small to justify sharing it.
-      if (
-        name &&
-        (uses[id]! - 1) * body.length >
-          uses[id]! * name.length + `export type ${name} = ;\n\n`.length
-      ) {
+      if (name && worthSharing(id, body.length, name)) {
         declarations.push(`export type ${name} = ${body};\n\n`);
         rendered.push(name);
       } else rendered.push(body);

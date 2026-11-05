@@ -17,9 +17,9 @@ import {
   type DashboardExtensionOptions,
   type DashboardTheme,
 } from "./dashboard-extension";
+import { ModuleRunner } from "vite/module-runner";
 
 export type { DashboardTheme };
-import { ModuleRunner } from "vite/module-runner";
 
 export interface BrickClientPluginOptions {
   /** Any module whose default export is a BrickApp; do not call listen() there. */

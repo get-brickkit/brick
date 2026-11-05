@@ -8,8 +8,6 @@ import {
   MANIFEST_FILE,
 } from "./definitions";
 
-export { MANIFEST_FILE };
-
 function rank(file: string) {
   if (/\.service\.[^.]+$/.test(file)) return 0;
   if (/\.resource\.[^.]+$/.test(file)) return 1;

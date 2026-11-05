@@ -1,4 +1,3 @@
-import type { Rule } from "./ast";
 import {
   fileRules,
   PRESETS,
@@ -23,7 +22,7 @@ interface FlatConfig {
 /** The ESLint flat-config plugin; oxlint loads the same object through `jsPlugins`. */
 export const brick = {
   meta: { name: "brick" },
-  rules: rules as Record<string, Rule>,
+  rules,
   configs: {} as Record<PresetName, FlatConfig> & {
     /** Presets, rule settings, ignores and paths from brick.config.ts, as an ESLint flat-config array. */
     fromProject: typeof fromProject;
