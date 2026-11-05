@@ -271,6 +271,17 @@ test("resource action names can't take a CRUD route or a CRUD action name", () =
   }
 });
 
+test("crud refuses to install over a resource action that took one of its segments", () => {
+  const service = defineService("shop", {
+    database: defineDatabase({ tables: { orders } }),
+  });
+  const order = service.resource({ name: "order", table: orders });
+  order.action({ name: "count", execute: () => null });
+  expect(() =>
+    order.use(crud({ access: "public", fields: { id: { read: true } } })),
+  ).toThrow(/duplicate name "order.count".*"count" is a @brickkit\/crud route/);
+});
+
 test("OpenAPI groups resource routes under service · resource; the client nests them", () => {
   const { sqlite, service } = fixture();
   try {

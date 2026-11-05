@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { DuplicateNameError } from "./types";
 
 // The package root (src/ or dist/ is beneath it), so Brick's own frames are skipped.
 const brickRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -44,7 +45,7 @@ export function claimName(
 ): void {
   const file = (at: string | undefined) => at?.replace(/:\d+$/, "");
   if (sites.has(name) && file(sites.get(name)) !== file(site))
-    throw new Error(
+    throw new DuplicateNameError(
       `Brick: duplicate ${label}\n  ${sites.get(name) ?? "unknown"}\n  ${site ?? "unknown"}`,
     );
   sites.set(name, site);

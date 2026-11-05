@@ -62,7 +62,7 @@ The typed client nests a resource plugin's API under the service: `api.<service>
 Names that would share a URL segment fail at startup:
 
 - A service action, a resource and a socket can't share a segment within a service.
-- A resource action can't be named after a CRUD route segment (`query`, `count`, `exists`, `find-one`, `bulk-create`, `bulk-update`, `bulk-delete`) or after a CRUD action on its resource, such as `list`. Names are compared in kebab-case, so `findOne` is refused too.
+- On a resource with `crud()`, a resource action can't be named after a CRUD route segment (`query`, `count`, `exists`, `find-one`, `bulk-create`, `bulk-update`, `bulk-delete`, reserved even when the operation is off) or after a CRUD action, such as `list`. Names are compared in kebab-case, so `findOne` is refused too. A resource plugin reserves its segments with `routes.claim(segment)`.
 
 The error reads `Brick: duplicate name "<name>" in service "<service>"…`.
 

@@ -1,7 +1,7 @@
 import { and, eq, getTableColumns, inArray, type Column } from "drizzle-orm";
 import type { TObject, TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { installPlugin } from "./plugin";
+import { installPlugin, segmentClaimant } from "./plugin";
 import type { ResourcePlugin } from "./plugin-types";
 import { buildErrorHelpers, defineAction } from "./action";
 import { kebabCase } from "./routes";
@@ -12,6 +12,7 @@ import { runInTransaction } from "./events/transaction";
 import type { EventRef } from "./events/catalog";
 import {
   ActionExecutionError,
+  DuplicateNameError,
   type ActionContext,
   type ActionErrorDefinition,
   type CommandConfig,
@@ -25,18 +26,6 @@ import {
   type ResourceIdentity,
   type Service,
 } from "./types";
-
-// shortcut: crud's segments, reserved even before crud (or its bulk operations) is installed;
-// remove once crud declares the segments it claims.
-const CRUD_SEGMENTS = new Set([
-  "query",
-  "count",
-  "exists",
-  "find-one",
-  "bulk-create",
-  "bulk-update",
-  "bulk-delete",
-]);
 
 /**
  * Load the row a record action (or command) works on, through its `access`.
@@ -115,25 +104,14 @@ function defineResourceAction(
   const name = `${resource.name}.${config.name}`;
   const segment = kebabCase(config.name);
   // A plugin route on this resource (crud's `/count`) owns its first segment.
-  if (CRUD_SEGMENTS.has(segment))
-    throw new Error(
-      `Brick: duplicate name "${name}" in service "${service.name}": "${segment}" is a CRUD route`,
-    );
-  const owner = service.listActions().find((action) => {
-    const route = actionMeta(action).route;
-    return (
-      route?.scope === "resource" &&
-      route.resource === resource.name &&
-      route.path.split("/")[1] === segment
-    );
-  });
-  if (owner)
-    throw new Error(
-      `Brick: duplicate name "${name}" in service "${service.name}": "${segment}" is a ${actionMeta(owner).route!.plugin} route`,
+  const claimant = segmentClaimant(service, resource, segment);
+  if (claimant)
+    throw new DuplicateNameError(
+      `Brick: duplicate name "${name}" in service "${service.name}": "${segment}" is a ${claimant} route`,
     );
   const existing = service.getAction(name);
   if (existing && actionMeta(existing).route)
-    throw new Error(
+    throw new DuplicateNameError(
       `Brick: duplicate name "${name}" in service "${service.name}"`,
     );
   if (!record && access !== undefined)

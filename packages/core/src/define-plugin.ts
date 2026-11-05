@@ -459,6 +459,7 @@ export function definePlugin<
             handler: (args) =>
               config.handler({ ...args, ctx: { ...args.ctx, deps } }),
           }),
+        claim: (segment) => context.routes.claim(segment),
       };
       const before = new Set<unknown>([
         ...service.listActions(),

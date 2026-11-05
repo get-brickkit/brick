@@ -97,6 +97,9 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
     routes: options.routes,
     setup({ resource, service, routes }) {
       if (options.operations === false) return {};
+      // Every operation's segment, switched off or not, so turning one on can't clash with a resource action.
+      for (const { path } of Object.values(methods))
+        if (/^\/[a-z-]+$/.test(path)) routes.claim(path.slice(1));
       const columns: Record<string, Column> = getTableColumns(resource.table);
       const fields: Fields = options.fields;
       const schemas: Record<string, TSchema> = {};

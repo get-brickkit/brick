@@ -1,4 +1,4 @@
-import type { Action, Service } from "./types";
+import { DuplicateNameError, type Action, type Service } from "./types";
 import type { HttpMethod } from "./http";
 import { actionMeta, type PluginRouteBinding } from "./action-meta";
 import { kebabCase } from "./kebab";
@@ -201,7 +201,7 @@ export function checkSegments(service: Service<any, any>): void {
   for (const { segment, owner } of claimedSegments(service)) {
     const previous = owners.get(segment);
     if (previous)
-      throw new Error(
+      throw new DuplicateNameError(
         `Brick: duplicate name "${segment}" in service "${service.name}": ${previous} and ${owner} share the URL segment`,
       );
     owners.set(segment, owner);

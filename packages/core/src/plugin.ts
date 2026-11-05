@@ -1,4 +1,4 @@
-import type { Action, Resource, Service } from "./types";
+import { DuplicateNameError, type Action, type Resource, type Service } from "./types";
 import {
   PLUGIN_KIND,
   PLUGIN_COMMIT,
@@ -15,7 +15,7 @@ import {
 } from "./plugin-types";
 import { defineAction } from "./action";
 import { actionMeta, type PluginRouteBinding } from "./action-meta";
-import { pluginRoutePath } from "./routes";
+import { kebabCase, pluginRoutePath } from "./routes";
 import { HTTP_METHODS } from "./http";
 import { portOf } from "./service-port";
 
@@ -152,12 +152,19 @@ interface PluginState {
   hosts: Map<object, Map<string, Installation>>;
   actions: Map<Action<any, any, any, any>, Binding>;
   endpoints: RawBinding[];
+  /** The URL segments under each resource that its plugins claim, and which plugin. */
+  claims: Map<object, Map<string, string>>;
 }
 const states = new WeakMap<object, PluginState>();
 function stateOf(service: Service<any, any>): PluginState {
   let state = states.get(service);
   if (!state) {
-    state = { hosts: new Map(), actions: new Map(), endpoints: [] };
+    state = {
+      hosts: new Map(),
+      actions: new Map(),
+      endpoints: [],
+      claims: new Map(),
+    };
     states.set(service, state);
   }
   return state;
@@ -198,6 +205,15 @@ export function getPluginEndpoints(
           ctx: await service.resolveContext({ request: context.request }),
         }),
     }));
+}
+
+/** The plugin that claimed `segment` under `resource`, if one did. */
+export function segmentClaimant(
+  service: Service<any, any>,
+  resource: object,
+  segment: string,
+): string | undefined {
+  return states.get(service)?.claims.get(resource)?.get(segment);
 }
 
 /** Descriptor identity is scoped to the service or resource installation host. */
@@ -244,6 +260,25 @@ export function installPlugin(
   const commits: (() => void)[] = [];
   const ownedActions = new Set<Action<any, any, any, any>>();
   let active = true;
+  const claimed: string[] = [];
+  const claim = (segment: string) => {
+    if (!resource) throw new Error("Only resource plugins claim URL segments");
+    const claims = state.claims.get(resource) ?? new Map<string, string>();
+    state.claims.set(resource, claims);
+    if (claims.has(segment)) return;
+    const taken = service.listActions().find((action) => {
+      const info = actionMeta(action).resourceAction;
+      return (
+        info?.resource === resource.name && kebabCase(info.name) === segment
+      );
+    });
+    if (taken)
+      throw new DuplicateNameError(
+        `Brick: duplicate name "${taken.name}" in service "${service.name}": "${segment}" is a ${descriptor.name} route`,
+      );
+    claims.set(segment, descriptor.name);
+    claimed.push(segment);
+  };
   const bindingFor = (config: {
     name: string;
     path: string;
@@ -255,7 +290,9 @@ export function installPlugin(
     validateName(config.name);
     validatePath(config.path);
     if (names.has(config.name))
-      throw new Error(`Duplicate plugin route name '${config.name}'`);
+      throw new DuplicateNameError(
+        `Duplicate plugin route name '${config.name}'`,
+      );
     names.add(config.name);
     const control =
       descriptor.routes === false ? false : descriptor.routes?.[config.name];
@@ -271,6 +308,9 @@ export function installPlugin(
       throw new Error(`Invalid plugin route method '${config.method}'`);
     const path = (control && control.path) || config.path;
     validatePath(path);
+    const segment = path.split("/")[1]!;
+    if (scope === "resource" && segment && !segment.startsWith(":"))
+      claim(segment);
     return {
       service: service.name,
       resource: resource?.name,
@@ -299,7 +339,7 @@ export function installPlugin(
       // OpenAPI, or client contracts.
       const name = `${resource ? `${resource.name}.` : ""}${config.name}`;
       if (service.getAction(name))
-        throw new Error(
+        throw new DuplicateNameError(
           `Duplicate plugin action '${name}' (from plugin '${descriptor.name}')`,
         );
       const { scope: _scope, ...actionConfig } = config;
@@ -320,6 +360,7 @@ export function installPlugin(
         tags: config.tags,
       });
     },
+    claim,
   };
   try {
     const context = {
@@ -387,6 +428,7 @@ export function installPlugin(
     state.hosts = snapshots.hosts;
     state.actions = snapshots.bindings;
     state.endpoints = snapshots.endpoints;
+    for (const segment of claimed) state.claims.get(resource!)?.delete(segment);
     throw error;
   } finally {
     active = false;

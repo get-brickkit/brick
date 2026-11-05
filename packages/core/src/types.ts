@@ -163,6 +163,18 @@ export class ActionExecutionError extends Error {
   }
 }
 
+/**
+ * Two declarations claim one name or URL segment. Startup throws it; `brick lint`
+ * reports it as `unique-names`. Compare `name`, since a second copy of core
+ * throws its own class.
+ */
+export class DuplicateNameError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DuplicateNameError";
+  }
+}
+
 export interface StandardErrorMap {
   BAD_REQUEST: (
     overrideMessage?: string,

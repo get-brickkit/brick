@@ -75,6 +75,12 @@ export interface PluginRouteRegistrar<
     description?: string;
     tags?: string[];
   }): void;
+  /**
+   * Reserve a URL segment under the resource, so no resource action takes it,
+   * for a route the plugin may add later. Resource-scoped routes claim their
+   * first segment themselves.
+   */
+  claim(segment: string): void;
 }
 
 export interface ServicePluginContext<

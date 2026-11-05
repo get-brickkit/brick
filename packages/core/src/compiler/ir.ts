@@ -1,5 +1,5 @@
 import type { HttpMethod } from "../http";
-import { type Service, type Action } from "../types";
+import { DuplicateNameError, type Service, type Action } from "../types";
 import { actionMeta } from "../action-meta";
 import {
   checkSegments,
@@ -83,7 +83,7 @@ export function analyzeDeclaredApplication(
   const names = new Set<string>();
   for (const service of services) {
     if (names.has(service.name))
-      throw new Error(`Brick compiler: duplicate service '${service.name}'`);
+      throw new DuplicateNameError(`Brick compiler: duplicate service '${service.name}'`);
     names.add(service.name);
   }
   const routes: RouteIR[] = [];
@@ -103,7 +103,7 @@ export function analyzeDeclaredApplication(
     const previous = registered.get(key);
     if (previous) {
       if (route.plugin || previous.plugin)
-        throw new Error(
+        throw new DuplicateNameError(
           `Brick compiler: duplicate plugin route '${method} ${path}'`,
         );
       diagnostics.push(
