@@ -100,14 +100,17 @@ describe("brick build --deploy", () => {
 
   it("notes that polyglot services are experimental, only for an app with some", () => {
     const warn = spyOn(console, "warn").mockImplementation(() => {});
-    noticeExperimental(tsOnly.definition.remote ?? []);
-    expect(warn).not.toHaveBeenCalled();
-    noticeExperimental(app.definition.remote!);
-    expect(warn.mock.calls).toEqual([
-      [
-        "[Brick] Polyglot services (billing, fxRates) are experimental and may change in any release.",
-      ],
-    ]);
-    warn.mockRestore();
+    try {
+      noticeExperimental(tsOnly.definition.remote ?? []);
+      expect(warn).not.toHaveBeenCalled();
+      noticeExperimental(app.definition.remote!);
+      expect(warn.mock.calls).toEqual([
+        [
+          "[Brick] Polyglot services (billing, fxRates) are experimental and may change in any release.",
+        ],
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

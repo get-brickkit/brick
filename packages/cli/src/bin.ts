@@ -276,6 +276,7 @@ ${PORT_RESOLUTION_HELP}`,
           entry: entry ?? project?.entry,
           port,
           dashboard: configDashboard(project, opts.dashboardExtension),
+          root: project?.root,
         });
       },
     );
@@ -374,7 +375,9 @@ ${PORT_RESOLUTION_HELP}`,
           dashboard: configDashboard(project, opts.dashboardExtension),
         });
         const app = await loadBrickApp(entry);
-        buildRemoteServices(app, project?.root);
+        // Set in the app's deploy image, where each remote has its own image.
+        if (process.env.BRICK_SKIP_REMOTE_BUILD !== "1")
+          buildRemoteServices(app, project?.root);
         const deploy = project?.config.deploy;
         const targets = opts.deploy ?? deploy?.targets;
         if (targets?.length) {
@@ -411,14 +414,17 @@ ${PORT_RESOLUTION_HELP}`,
   const gen = program
     .command("gen")
     .description("Generate artifacts from a BrickApp entry")
-    .argument("[subcommand]", "Generator to run (openapi, client, manifest)")
+    .argument(
+      "[subcommand]",
+      "Generator to run (openapi, client, manifest, contract)",
+    )
     .option("--config <path>", CONFIG_HELP)
     .action(async (subcommand: string | undefined, opts: ConfigOpts) => {
       const project =
         subcommand === undefined ? await loadConfig(opts.config) : undefined;
       if (!project) {
         console.error(
-          `Unknown generator: ${subcommand ?? "(none)"}. Available: openapi, client, manifest`,
+          `Unknown generator: ${subcommand ?? "(none)"}. Available: openapi, client, manifest, contract`,
         );
         process.exit(1);
       }

@@ -215,6 +215,7 @@ export async function startProdServer(options: DevServerOptions = {}) {
         appUrl: `http://127.0.0.1:${port}`,
         services: services.map((service) => service.name),
         env: remoteEnv(app.definition),
+        cwd: options.root,
       })
     : undefined;
   let dashboard: Awaited<ReturnType<typeof startProductionDashboard>>;
@@ -434,6 +435,8 @@ export async function startDevServer(options: DevServerOptions = {}) {
     message: RemoteMessage,
     worker: ReturnType<typeof Bun.spawn>,
   ) => {
+    // A message in flight when stop ran: stop already took children.
+    if (stopped) return;
     // shortcut: remote services added after the first start need a `brick dev` restart.
     children ??= startDevRemotes(
       message.remote.map((options) => ({

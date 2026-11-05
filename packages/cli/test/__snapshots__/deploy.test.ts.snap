@@ -482,6 +482,7 @@ exports[`brick build --deploy writes every target: compose/app.Dockerfile 1`] = 
 FROM oven/bun:1
 WORKDIR /app
 COPY . .
+ENV BRICK_SKIP_REMOTE_BUILD=1
 RUN bun install --frozen-lockfile && bun x brick build
 ENV NODE_ENV=production PORT=3000
 EXPOSE 3000

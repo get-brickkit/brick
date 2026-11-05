@@ -42,6 +42,9 @@ export interface BrickClientPluginOptions {
 }
 
 /** Load a BrickApp through Vite's server module graph, including dependency HMR. */
+// Module scope: a Vite restart builds a new plugin, and its children wait for these.
+let remotesStopped: Promise<unknown> = Promise.resolve();
+
 export function brickClient(options: BrickClientPluginOptions): Plugin {
   const virtualId = "virtual:brick-app";
   const resolvedId = "\0" + virtualId;
@@ -164,25 +167,27 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
           const origin = server.config.server.https
             ? `https://localhost:${port}`
             : `http://127.0.0.1:${port}`;
-          const children = startDevRemotes(remote, {
-            appUrl: origin,
-            cwd: server.config.root,
-            services: services.map((service) => service.name),
-            env,
-          });
+          // After the previous server's children stopped: a restart must not
+          // race them for their ports.
+          const children = remotesStopped.then(() =>
+            startDevRemotes(remote, {
+              appUrl: origin,
+              cwd: server.config.root,
+              services: services.map((service) => service.name),
+              env,
+            }),
+          );
           children.catch((error) =>
             server.config.logger.error(
               `Brick: remote services failed to start: ${error instanceof Error ? error.message : error}`,
             ),
           );
-          httpServer.once(
-            "close",
-            () =>
-              void children.then(
-                (started) => started.stop(),
-                () => {},
-              ),
-          );
+          httpServer.once("close", () => {
+            remotesStopped = children.then(
+              (started) => started.stop(),
+              () => {},
+            );
+          });
         });
       }
       dependencies.clear();

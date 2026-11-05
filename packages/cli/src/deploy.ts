@@ -437,12 +437,15 @@ const TOOLCHAIN = { go: "golang:1.26-trixie", rust: "rust:1-trixie" };
  * @experimental Polyglot (Go and Rust) services are experimental in Brick 0.13 and may change in any release.
  */
 export function dockerfile(table: RoutingTable, u: Upstream): string {
+  // Go and Rust build in their own images: the Bun one has no toolchain for them.
+  const skip =
+    table.upstreams.length > 1 ? "ENV BRICK_SKIP_REMOTE_BUILD=1\n" : "";
   if (u.language === "ts")
     return `# ${HEADER}
 FROM oven/bun:1
 WORKDIR /app
 COPY . .
-RUN bun install --frozen-lockfile && ${table.app.build}
+${skip}RUN bun install --frozen-lockfile && ${table.app.build}
 ENV NODE_ENV=production PORT=${u.port}
 EXPOSE ${u.port}
 CMD ["/bin/sh", "-c", ${JSON.stringify(table.app.start)}]
@@ -507,7 +510,9 @@ export function composeYaml(table: RoutingTable, proxy: ProxyTarget): string {
 ${yamlEnv(u.env, "      ").join("\n")}`,
   );
   const { image, volumes } = PROXY_IMAGES[proxy];
-  const ports = table.domain ? ['"80:80"', '"443:443"'] : ['"80:80"'];
+  // nginx gets no TLS server block: it serves port 80 only.
+  const ports =
+    table.domain && proxy !== "nginx" ? ['"80:80"', '"443:443"'] : ['"80:80"'];
   // A TS-only app reads neither variable.
   const secrets = table.upstreams.some((u) => "BRICK_INTERNAL_TOKEN" in u.env)
     ? "# Set BRICK_INTERNAL_TOKEN (and BRICK_JWT_ISSUER, your public URL) in deploy/compose/.env.\n"

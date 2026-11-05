@@ -307,7 +307,8 @@ ${imports}${[...decls, ...funcs].join("\n\n")}
 }
 
 const RUST_KEYWORDS = new Set(
-  "as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self static struct super trait true type unsafe use where while".split(
+  // Strict and reserved keywords (2024 edition).
+  "abstract as async await become box break const continue crate do dyn else enum extern false final fn for gen if impl in let loop macro match mod move mut override priv pub ref return self static struct super trait true try type typeof unsafe unsized use virtual where while yield".split(
     " ",
   ),
 );
