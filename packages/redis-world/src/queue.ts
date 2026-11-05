@@ -2,11 +2,16 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { MessageId, ValidQueueName } from "@workflow/world";
 import type { Redis } from "ioredis";
-import type { RedisWorldConfig } from "./config.js";
+import {
+  checkInteger,
+  type RedisWorldConfig,
+  type ResolvedConfig,
+} from "./config.js";
 import { keys } from "./keys.js";
 import { debug } from "./util.js";
 import {
   createWorldQueue,
+  retryDelayMs,
   type Deliver,
   type Delivery,
   type QueueBackend,
@@ -91,10 +96,11 @@ const REGISTER = `
   redis.call('SET', KEYS[1], '1', 'PX', ARGV[2])
   redis.call('SADD', KEYS[2], ARGV[1])
 `;
+// ARGV[1] .. owner is the owner's processing list: `keys().queue.processing("")`.
 const STATS = `
   local active = 0
   for _, owner in ipairs(redis.call('SMEMBERS', KEYS[3])) do
-    active = active + redis.call('LLEN', ARGV[1] .. ':processing:' .. owner)
+    active = active + redis.call('LLEN', ARGV[1] .. owner)
   end
   return {redis.call('LLEN', KEYS[1]), active, redis.call('ZCARD', KEYS[2])}
 `;
@@ -143,44 +149,14 @@ function parseEnvelope(raw: string): Envelope {
 
 export function createQueue(
   redis: Redis,
-  config: RedisWorldConfig,
+  config: ResolvedConfig<RedisWorldConfig>,
   options: WorldQueueOptions = {},
 ): WorldQueue {
-  const root = keys(config.keyPrefix || "workflow:").queueKey;
-  const ready = root;
-  const delayed = `${root}:delayed`;
-  const owners = `${root}:workers`;
-  const processing = (owner: string) => `${root}:processing:${owner}`;
-  const heartbeat = (owner: string) => `${root}:heartbeat:${owner}`;
+  const queueKeys = keys(config.keyPrefix).queue;
+  const { ready, delayed, workers: owners, processing, heartbeat } = queueKeys;
   const heartbeatTtlMs = config.heartbeatTtlMs ?? 90_000;
-  const concurrency = config.queueConcurrency ?? 10;
-  const maxAttempts = config.maxAttempts ?? 73;
-  const maxBackoffMs = config.maxBackoffMs ?? 30_000;
-  const backoffDelayMs = config.backoffDelayMs ?? 1000;
-  const httpTimeoutMs = config.httpTimeoutMs ?? 300_000;
-  for (const [name, value, minimum] of [
-    ["heartbeatTtlMs", heartbeatTtlMs, 300],
-    ["queueConcurrency", concurrency, 1],
-    ["maxAttempts", maxAttempts, 49],
-    ["maxBackoffMs", maxBackoffMs, 1],
-    ["backoffDelayMs", backoffDelayMs, 0],
-    ["httpTimeoutMs", httpTimeoutMs, 1],
-    ...(config.idempotencyTtlMs === undefined
-      ? []
-      : [["idempotencyTtlMs", config.idempotencyTtlMs, 1]]),
-  ] as const) {
-    if (
-      typeof value !== "number" ||
-      typeof minimum !== "number" ||
-      !Number.isSafeInteger(value) ||
-      value < minimum ||
-      value > 2_147_483_647
-    ) {
-      throw new RangeError(
-        `${name} must be an integer between ${minimum} and 2147483647`,
-      );
-    }
-  }
+  checkInteger("heartbeatTtlMs", heartbeatTtlMs, 300);
+  const { queueConcurrency: concurrency, maxAttempts, maxBackoffMs } = config;
   let closed = false;
   let startPromise: Promise<void> | undefined;
   let loop: Promise<void> | undefined;
@@ -196,7 +172,7 @@ export function createQueue(
     opts: Parameters<QueueBackend["enqueue"]>[1],
   ): Promise<MessageId> {
     const dedupKey = opts.idempotencyKey
-      ? `${root}:idempotent:${opts.idempotencyKey}`
+      ? queueKeys.idempotent(opts.idempotencyKey)
       : "";
     const envelope: Envelope = {
       messageId: message.messageId,
@@ -246,14 +222,10 @@ export function createQueue(
           `Delivery ${job.messageId} attempt ${job.attempt} failed:`,
           error,
         );
-        const curve =
-          config.backoffType === "fixed"
-            ? backoffDelayMs
-            : backoffDelayMs * 2 ** Math.min(30, job.attempt - 1);
         seconds =
           (job.attempt >= maxAttempts
             ? maxBackoffMs
-            : Math.min(maxBackoffMs, curve)) / 1000;
+            : retryDelayMs(job.attempt, config)) / 1000;
         if (job.attempt === maxAttempts)
           console.error(
             `Queue message ${job.messageId} exhausted maxAttempts; retaining it for capped retries`,
@@ -372,7 +344,14 @@ export function createQueue(
   const backend: QueueBackend = {
     enqueue,
     async getQueueStats() {
-      const counts = await redis.eval(STATS, 3, ready, delayed, owners, root);
+      const counts = await redis.eval(
+        STATS,
+        3,
+        ready,
+        delayed,
+        owners,
+        processing(""),
+      );
       if (
         !Array.isArray(counts) ||
         counts.length !== 3 ||

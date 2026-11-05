@@ -24,7 +24,12 @@ vi.mock("bullmq", async (importOriginal) => ({
   Worker,
 }));
 
-const { createQueue } = await import("../src/queue.js");
+const { createQueue: create } = await import("../src/queue.js");
+const { resolveConfig } = await import("@brickkit/redis-world/internal");
+const createQueue = (
+  redis: Redis,
+  config: Parameters<typeof resolveConfig>[0] & Record<string, unknown>,
+) => create(redis, resolveConfig(config));
 
 const redis = { options: {} } as unknown as Redis;
 
@@ -83,4 +88,18 @@ describe("createQueue workers", () => {
       ).toThrow(RangeError);
     },
   );
+});
+
+describe("createWorld options", () => {
+  // The runtime fails a run on delivery 49; a job retired earlier strands it.
+  test.each([
+    { maxAttempts: 10 },
+    { queueConcurrency: 0 },
+    { backoffDelayMs: -1 },
+  ])("rejects %o", async (option) => {
+    const { createWorld } = await import("../src/index.js");
+    expect(() =>
+      createWorld({ redis: { lazyConnect: true }, ...option }),
+    ).toThrow(RangeError);
+  });
 });

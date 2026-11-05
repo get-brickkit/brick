@@ -4,6 +4,7 @@
  * also go in `ownedByRun`, or the reaper leaks it.
  */
 export function keys(prefix: string) {
+  const queue = `${prefix}queue:flows`;
   const k = {
     runKey: (id: string) => `${prefix}run:${id}`,
     runAttributesKey: (id: string) => `${prefix}run:attrs:${id}`,
@@ -40,8 +41,17 @@ export function keys(prefix: string) {
     streamChannel: `${prefix}stream_notify`,
 
     reaperLockKey: `${prefix}reaper:lock`,
-    /** The list queue's ready list; its other keys extend this name. */
-    queueKey: `${prefix}queue:flows`,
+    /** The list queue's keys. */
+    queue: {
+      ready: queue,
+      delayed: `${queue}:delayed`,
+      workers: `${queue}:workers`,
+      processing: (owner: string) => `${queue}:processing:${owner}`,
+      heartbeat: (owner: string) => `${queue}:heartbeat:${owner}`,
+      idempotent: (key: string) => `${queue}:idempotent:${key}`,
+      /** Every queue key, for SCAN/KEYS. */
+      pattern: `${prefix}queue:*`,
+    },
 
     /**
      * Every key a run owns except its run, meta and index entries, which the

@@ -1,9 +1,8 @@
 import {
-  configFromEnv,
   createRedisBackedWorld,
   type RedisBackedWorld,
 } from "@brickkit/redis-world/internal";
-import type { RedisWorldConfig } from "./config.js";
+import { configFromEnv, type RedisWorldConfig } from "./config.js";
 import { createQueue } from "./queue.js";
 import { debug } from "./util.js";
 
@@ -13,10 +12,7 @@ export function createWorld(
   config: Partial<RedisWorldConfig> = {},
 ): RedisBackedWorld {
   return createRedisBackedWorld(config, {
-    env: {
-      ...configFromEnv(),
-      jobPrefix: process.env.WORKFLOW_REDIS_JOB_PREFIX,
-    },
+    env: configFromEnv(),
     createQueue,
     label: "world-redis-bullmq",
     debug,

@@ -1,5 +1,5 @@
 import { Redis } from "ioredis";
-import { configFromEnv } from "./config.js";
+import { configFromEnv, resolveConfig } from "./config.js";
 import { loadOptionalEnvFile } from "./internal/env.js";
 import { keys } from "./keys.js";
 
@@ -16,13 +16,13 @@ export interface SetupQueue {
 async function setupRedis(
   queue: (keyPrefix: string) => SetupQueue = (keyPrefix) => ({
     binName: "brickkit-redis-world-setup",
-    description: `Redis queue: ${keys(keyPrefix).queueKey}, processing lists and delayed set`,
+    description: `Redis queue: ${keys(keyPrefix).queue.ready}, processing lists and delayed set`,
   }),
 ) {
   // Load .env file if it exists.
   loadOptionalEnvFile();
 
-  const { redis: connectionString, keyPrefix } = configFromEnv();
+  const { redis: connectionString, keyPrefix } = resolveConfig(configFromEnv());
   const { binName, description, keyPattern } = queue(keyPrefix);
 
   console.log("Setting up Redis for Workflow...");

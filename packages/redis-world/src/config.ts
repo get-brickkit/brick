@@ -88,20 +88,11 @@ export interface RedisBackedWorldConfig {
    * }
    */
   retention?: RunRetention;
-}
-
-export interface RedisWorldConfig extends RedisBackedWorldConfig {
-  /** Worker liveness TTL in milliseconds. Default 90000; minimum 300.
-   * Set above the longest event-loop pause. Renewed every TTL / 3. */
-  heartbeatTtlMs?: number;
 
   /**
-   * Delivery budget before retries continue at maxBackoffMs. Messages are never silently retired.
-   *
-   * Keep it above the runtime's own delivery ceiling (48). The runtime records a
-   * run as failed (`MAX_DELIVERIES_EXCEEDED`) on delivery 49; a job retired
-   * earlier strands its run in `running`, with nothing to redeliver it until a
-   * process calls `start()` again.
+   * Delivery budget per message (see each world for what happens past it).
+   * At least 49: the runtime records a run as failed (`MAX_DELIVERIES_EXCEEDED`)
+   * on delivery 49, and a message retired earlier strands its run in `running`.
    * Default: 73
    */
   maxAttempts?: number;
@@ -120,6 +111,18 @@ export interface RedisWorldConfig extends RedisBackedWorldConfig {
   idempotencyTtlMs?: number;
 }
 
+export interface RedisWorldConfig extends RedisBackedWorldConfig {
+  /** Worker liveness TTL in milliseconds. Default 90000; minimum 300.
+   * Set above the longest event-loop pause. Renewed every TTL / 3. */
+  heartbeatTtlMs?: number;
+
+  /**
+   * Delivery budget before retries continue at maxBackoffMs. Messages are never
+   * silently retired. At least 49. Default: 73
+   */
+  maxAttempts?: number;
+}
+
 /**
  * The config the `WORKFLOW_REDIS_*` variables give. `createWorld` lays the
  * config it is passed over this, so an option left out still comes from env.
@@ -132,9 +135,61 @@ export function configFromEnv() {
       "redis://localhost:6379",
     queueConcurrency:
       Number.parseInt(
-        process.env.WORKFLOW_REDIS_WORKER_CONCURRENCY || "10",
+        process.env.WORKFLOW_REDIS_WORKER_CONCURRENCY ?? "",
         10,
-      ) || 10,
-    keyPrefix: process.env.WORKFLOW_REDIS_KEY_PREFIX || "workflow:",
+      ) || undefined,
+    keyPrefix: process.env.WORKFLOW_REDIS_KEY_PREFIX || undefined,
   };
+}
+
+const DEFAULTS = {
+  queueConcurrency: 10,
+  keyPrefix: "workflow:",
+  backoffType: "exponential",
+  backoffDelayMs: 1000,
+  maxBackoffMs: 30_000,
+  httpTimeoutMs: 300_000,
+  maxAttempts: 73,
+  enableAutoPipelining: true,
+} as const;
+
+/** A world config with every shared default filled in. */
+export type ResolvedConfig<C extends RedisBackedWorldConfig> = C & {
+  -readonly [K in keyof typeof DEFAULTS]-?: NonNullable<
+    RedisBackedWorldConfig[K]
+  >;
+};
+
+/** Fills the shared defaults and checks the shared limits, for every queue. */
+export function resolveConfig<C extends RedisBackedWorldConfig>(
+  config: C,
+): ResolvedConfig<C> {
+  const resolved: Record<string, unknown> = { ...(config as object) };
+  for (const [key, value] of Object.entries(DEFAULTS))
+    if (resolved[key] === undefined || resolved[key] === "")
+      resolved[key] = value;
+  for (const [name, minimum] of [
+    ["queueConcurrency", 1],
+    ["maxAttempts", 49],
+    ["maxBackoffMs", 1],
+    ["backoffDelayMs", 0],
+    ["httpTimeoutMs", 1],
+    ["idempotencyTtlMs", 1],
+  ] as const)
+    checkInteger(name, resolved[name], minimum);
+  return resolved as unknown as ResolvedConfig<C>;
+}
+
+/** Throws unless `value` is an integer from `minimum` to Node's timer limit; `undefined` passes. */
+export function checkInteger(name: string, value: unknown, minimum: number) {
+  if (
+    value !== undefined &&
+    (typeof value !== "number" ||
+      !Number.isSafeInteger(value) ||
+      value < minimum ||
+      value > 2_147_483_647)
+  )
+    throw new RangeError(
+      `${name} must be an integer between ${minimum} and 2147483647`,
+    );
 }

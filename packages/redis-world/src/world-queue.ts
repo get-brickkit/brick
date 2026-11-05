@@ -12,7 +12,7 @@ import {
   createWorkflowUrl,
 } from "@workflow/utils";
 import { monotonicFactory } from "ulid";
-import type { RedisBackedWorldConfig } from "./config.js";
+import type { RedisBackedWorldConfig, ResolvedConfig } from "./config.js";
 import { parseQueueMessage, stringify } from "./internal/serialization.js";
 import { initialMessageKey } from "./run-id.js";
 
@@ -102,12 +102,15 @@ function parseReschedule(text: string): number | undefined {
  */
 export function createWorldQueue(
   backend: QueueBackend,
-  config: Pick<RedisBackedWorldConfig, "baseUrl" | "httpTimeoutMs">,
+  config: Pick<
+    ResolvedConfig<RedisBackedWorldConfig>,
+    "baseUrl" | "httpTimeoutMs"
+  >,
   options: WorldQueueOptions & { debug: (...args: unknown[]) => void },
 ): WorldQueue {
   const { debug } = options;
   const generateMessageId = monotonicFactory();
-  const httpTimeoutMs = config.httpTimeoutMs ?? 300_000;
+  const { httpTimeoutMs } = config;
   const directHandlers = new Map<
     QueuePrefix,
     (req: Request) => Promise<Response>
@@ -272,4 +275,19 @@ export function createWorldQueue(
       await backend.close();
     },
   };
+}
+
+/** The delay before retrying a failed delivery: the configured curve, capped. */
+export function retryDelayMs(
+  attempt: number,
+  config: Pick<
+    ResolvedConfig<RedisBackedWorldConfig>,
+    "backoffType" | "backoffDelayMs" | "maxBackoffMs"
+  >,
+): number {
+  const delay =
+    config.backoffType === "fixed"
+      ? config.backoffDelayMs
+      : config.backoffDelayMs * 2 ** Math.min(30, Math.max(0, attempt - 1));
+  return Math.min(config.maxBackoffMs, delay);
 }
