@@ -212,7 +212,7 @@ func main() {
 }
 ```
 
-`*brick.Ctx` is a `context.Context`. Pass it to `pgx` and to the generated client. It has `RequestID()`, `TraceID()`, `Caller()` (the calling service, or `""` for a call from outside), `TenantID()`, `User(&v)`, which reports whether there is a user, and `RequireUser(&v)`.
+`*brick.Ctx` is a `context.Context`. Pass it to `pgx` and to the generated client. It has `RequestID()`, `TraceID()`, `Caller()` (the calling service, or `""` for a call from outside), `TenantID()`, `HasUser()`, `User(&v)`, which returns whether there is a user and a decode error, and `RequireUser(&v)`.
 
 ## Write it in Rust
 

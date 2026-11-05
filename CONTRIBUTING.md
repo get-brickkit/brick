@@ -60,7 +60,7 @@ For the Go and Rust SDKs (`sdk/go`, `sdk/rust`) and their conformance test, whic
 
 ```sh
 (cd sdk/go && go vet ./... && go test ./...)
-(cd sdk/rust && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test)
+(cd sdk/rust && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
 bun test sdk
 ```
 
