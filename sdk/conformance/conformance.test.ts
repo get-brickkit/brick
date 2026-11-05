@@ -2,7 +2,7 @@
 // Bun gateway must answer identically. Needs `go` and `cargo`; skipped without
 // them, except under CI.
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   ActionExecutionError,
@@ -31,9 +31,10 @@ beforeAll(async () => {
   const committed = generated.map((file) => readFileSync(file, "utf8"));
   await writePolyglotContract(join(dir, "app.ts"), undefined, dir);
   // The generated clients are committed: regenerating must not change them.
-  expect(generated.map((file) => readFileSync(file, "utf8"))).toEqual(
-    committed,
-  );
+  const regenerated = generated.map((file) => readFileSync(file, "utf8"));
+  // Put the committed ones back, so a second run still sees the drift.
+  generated.forEach((file, i) => writeFileSync(file, committed[i]!));
+  expect(regenerated).toEqual(committed);
   buildRemoteServices(app, dir);
   app.listen({ port: 0, hostname: "127.0.0.1" });
   base = `http://127.0.0.1:${app.server!.port}`;

@@ -44,17 +44,30 @@ export async function readRemoteManifest(
   remote: RemoteService,
   cwd = process.cwd(),
 ): Promise<ServiceManifest> {
-  const { stdout } = await run("/bin/sh", ["-c", remote.options.dev], {
+  const options = {
     cwd: resolve(cwd, remote.options.dir),
     env: { ...process.env, BRICK_MANIFEST: "1" },
     maxBuffer: 64 * 1024 * 1024,
-    // A service whose SDK ignores BRICK_MANIFEST would serve forever.
-    timeout: 120_000,
-  }).catch((error: Error & { stderr?: string }) => {
-    throw new Error(
-      `Brick: could not read the manifest of "${remote.name}" (${remote.options.dev} in ${remote.options.dir}): ${error.stderr || error.message}`,
-    );
-  });
+    // Its own process group, so a timeout stops `go run` and the server it
+    // started. execFile passes it to spawn; its types leave it out.
+    detached: true,
+  };
+  const pending = run("/bin/sh", ["-c", remote.options.dev], options);
+  // A service whose SDK ignores BRICK_MANIFEST would serve forever.
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try {
+      process.kill(-pending.child.pid!, "SIGKILL");
+    } catch {}
+  }, 120_000);
+  const { stdout } = await pending
+    .catch((error: Error & { stderr?: string }) => {
+      throw new Error(
+        `Brick: could not read the manifest of "${remote.name}" (${remote.options.dev} in ${remote.options.dir}): ${timedOut ? "no manifest within 120s" : error.stderr || error.message}`,
+      );
+    })
+    .finally(() => clearTimeout(timer));
   const line = stdout.trim().split("\n").at(-1) ?? "";
   let manifest: ServiceManifest;
   try {

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { remoteService } from "@brickkit/core";
 import {
   goClient,
+  readRemoteManifest,
   rustClient,
   writePolyglotContract,
   type PolyglotContract,
@@ -54,5 +56,14 @@ describe("polyglot clients", () => {
     await expect(
       writePolyglotContract("src/app.ts", "src/app.ts"),
     ).rejects.toThrow("must not overwrite the app entry");
+  });
+
+  it("reads a manifest, and names the service when it isn't JSON", async () => {
+    const manifest = `{"name":"x","language":"go","actions":[],"errors":{}}`;
+    const x = (dev: string) => remoteService({ name: "x", dir: ".", dev });
+    expect((await readRemoteManifest(x(`echo '${manifest}'`))).name).toBe("x");
+    await expect(readRemoteManifest(x("echo listening"))).rejects.toThrow(
+      'the manifest of "x"',
+    );
   });
 });

@@ -101,7 +101,7 @@ function buildContext(root: string, dir: string, language: "go" | "rust") {
       context = dirname(context);
   return {
     context: relative(root, context) || ".",
-    sources: folders.map((folder) => relative(context, folder)),
+    sources: folders.map((folder) => relative(context, folder) || "."),
     project: relative(context, root) || ".",
   };
 }
@@ -135,6 +135,11 @@ export function routingTable(
     urls[service.name] = `${appUrl}/_brick/call/${kebabCase(service.name)}`;
   const remotes = remote.map((service, i) => {
     const name = kebabCase(service.name);
+    // The Bun app and the compose proxy have these upstream names.
+    if (name === "app" || name === "proxy")
+      throw new Error(
+        `Brick: a remote service can't be named "${service.name}" for --deploy: "${name}" is taken.`,
+      );
     const port = service.options.port ?? 4001 + i;
     urls[service.name] = `http://${name}:${port}`;
     return { service, name, port };
@@ -252,6 +257,12 @@ export function nginxConf(table: RoutingTable): string {
 events {}
 
 http {
+    # WebSocket upgrades pass through; plain requests keep the upstream keep-alive.
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        "" "";
+    }
+
 ${upstreams.join("\n\n")}
 
     server {
@@ -259,7 +270,8 @@ ${upstreams.join("\n\n")}
         server_name ${table.domain ?? "_"};
 
         proxy_http_version 1.1;
-        proxy_set_header Connection "";
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;

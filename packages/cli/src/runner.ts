@@ -226,6 +226,8 @@ export async function startProdServer(options: DevServerOptions = {}) {
       dashboard: options.dashboard || undefined,
     });
     await app.start?.();
+    // Serve once the Go and Rust services answer, not while they start.
+    await children?.ready();
     app.listen(port);
     app.events?.start();
   } catch (error) {

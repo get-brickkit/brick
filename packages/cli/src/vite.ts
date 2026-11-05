@@ -41,10 +41,10 @@ export interface BrickClientPluginOptions {
     | false;
 }
 
-/** Load a BrickApp through Vite's server module graph, including dependency HMR. */
 // Module scope: a Vite restart builds a new plugin, and its children wait for these.
 let remotesStopped: Promise<unknown> = Promise.resolve();
 
+/** Load a BrickApp through Vite's server module graph, including dependency HMR. */
 export function brickClient(options: BrickClientPluginOptions): Plugin {
   const virtualId = "virtual:brick-app";
   const resolvedId = "\0" + virtualId;
