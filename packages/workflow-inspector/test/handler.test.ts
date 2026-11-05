@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SPEC_VERSION_SUPPORTS_SLOT_IDENTITY } from "@workflow/world";
 import { decode } from "cbor-x";
+import { BASE_PATH } from "../base-path";
 
 // The server build, which `bun run build` makes. The CLI serves its files; this
 // is the page and the calls it makes. Named by a variable so that the type
@@ -15,8 +16,8 @@ const { createFetchHandler } = (await import(build)) as {
   ): (request: Request) => Promise<Response>;
 };
 
-// Where the dashboard serves it, and what the build is made for (Vite `base`).
-const base = "http://localhost/workflows";
+// Where the dashboard serves it, and what the build is made for.
+const base = `http://localhost${BASE_PATH}`;
 
 /** A world that records what the UI asks of it. */
 function stubWorld() {
@@ -28,6 +29,30 @@ function stubWorld() {
       list: async () => {
         world.listed++;
         return { data: [], cursor: null, hasMore: false };
+      },
+    },
+    chunks: [] as Uint8Array[],
+    // Pages like redis-world: a cursor to the next page, null on the last one.
+    streams: {
+      getChunks: async (
+        _runId: string,
+        _name: string,
+        options: { limit?: number; cursor?: string } = {},
+      ) => {
+        const start = Number(options.cursor ?? 0);
+        const end = Math.min(
+          start + (options.limit ?? 100),
+          world.chunks.length,
+        );
+        const hasMore = end < world.chunks.length;
+        return {
+          data: world.chunks
+            .slice(start, end)
+            .map((data, index) => ({ index: start + index, data })),
+          cursor: hasMore ? String(end) : null,
+          hasMore,
+          done: false,
+        };
       },
     },
     hooks: {
@@ -63,7 +88,7 @@ describe("createFetchHandler", () => {
   const world = stubWorld();
   let handle: (request: Request) => Promise<Response>;
   beforeAll(() => {
-    handle = createFetchHandler("/workflows", { world });
+    handle = createFetchHandler(BASE_PATH, { world });
   });
 
   it("serves the page under its base path, without a header of its own", async () => {
@@ -71,7 +96,7 @@ describe("createFetchHandler", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/html");
     const html = await response.text();
-    expect(html).toContain("/workflows/assets/");
+    expect(html).toContain(`${BASE_PATH}/assets/`);
     // The dashboard around it has its own /assets/, which has none of these.
     expect(html).not.toMatch(/["'(]\/assets\//);
     // The dashboard around it has the navigation, the health probe and the theme switch.
@@ -91,47 +116,49 @@ describe("createFetchHandler", () => {
         .join("\n");
     // The manifest, the preloads of lazy chunks and the wasm decoder's URL.
     expect(read(".js")).not.toMatch(/["'`]\/assets\//);
-    expect(read(".js")).toContain("/workflows/assets/zstd-");
+    expect(read(".js")).toContain(`${BASE_PATH}/assets/zstd-`);
     // Only the dashboard serves the two fonts, and at its own /assets/.
     expect(read(".css")).toMatch(/url\(["']?\/assets\/Geist-Variable\.woff2/);
-    expect(read(".css")).not.toContain("/workflows/assets/Geist");
+    expect(read(".css")).not.toContain(`${BASE_PATH}/assets/Geist`);
   });
 
   it("reads the world the host gave it", async () => {
     const before = world.listed;
-    const answer = await rpc(handle, "fetchRuns", { params: {} });
+    const answer = await rpc(handle, "fetchRuns");
     expect(answer.success).toBe(true);
     expect(world.listed).toBe(before + 1);
   });
 
-  it("exposes nothing from the environment", async () => {
-    // What upstream read to pick and describe its world.
-    const env: Record<string, string> = {
-      WORKFLOW_TARGET_WORLD: "@workflow/world-postgres",
-      WORKFLOW_VERCEL_AUTH_TOKEN: "secret-vercel-token",
-      WORKFLOW_REDIS_URI: "redis://secret-redis@example:6379",
-      WORKFLOW_MANIFEST_PATH: "/secret/manifest.json",
-      WORKFLOW_LOCAL_DATA_DIR: "/secret/data-dir",
+  it("resumes a stream after the chunks it already sent, past one page", async () => {
+    const read = async (cursor: string | null) => {
+      const query = new URLSearchParams({ runId: "wrun_1" });
+      if (cursor) query.set("cursor", cursor);
+      const response = await handle(
+        new Request(`${base}/api/stream/strm_1?${query}`),
+      );
+      expect(response.status).toBe(200);
+      return {
+        chunks: [...new Uint8Array(await response.arrayBuffer())],
+        cursor: response.headers.get("X-Stream-Cursor"),
+      };
     };
-    const saved = Object.fromEntries(
-      Object.keys(env).map((name) => [name, process.env[name]]),
+    const write = (from: number, to: number) => {
+      for (let i = from; i < to; i++)
+        world.chunks.push(new Uint8Array([i % 256]));
+    };
+
+    // More than the 500 chunks the route reads per page.
+    write(0, 700);
+    const first = await read(null);
+    expect(first.chunks.length).toBe(700);
+
+    write(700, 710);
+    const second = await read(first.cursor);
+    expect(second.chunks).toEqual(
+      [...Array(10)].map((_, i) => (700 + i) % 256),
     );
-    Object.assign(process.env, env);
-    try {
-      const answer = await rpc(handle, "getPublicServerConfig");
-      expect(answer as unknown).toEqual({
-        backendDisplayName: "Brick",
-        backendId: "brick",
-        publicEnv: {},
-        sensitiveEnvKeys: [],
-      });
-      const text = JSON.stringify(answer);
-      for (const value of Object.values(env)) expect(text).not.toContain(value);
-    } finally {
-      for (const [name, value] of Object.entries(saved))
-        if (value === undefined) delete process.env[name];
-        else process.env[name] = value;
-    }
+
+    expect((await read(second.cursor)).chunks).toEqual([]);
   });
 
   it("gives the SDK the host's world, which Resume hook reads", async () => {

@@ -1,7 +1,8 @@
 import type { HttpMethod } from "./http";
 import type { Static, TSchema } from "@sinclair/typebox";
 import type { Action, ActionErrorDefinition } from "./types";
-import { ActionExecutionError, ValidationError } from "./types";
+import type { ActionExecutionError } from "./types";
+import { decodeError, type StandardErrorCode } from "./protocol";
 import { connectSocket } from "./socket-client";
 import { kebabCase } from "./kebab";
 import { actionRoute } from "./routes";
@@ -12,6 +13,8 @@ import type {
 } from "./socket-types";
 export { BrickSocketError } from "./socket-types";
 export { kebabCase };
+// For the dev dashboard page, which reads traces in the browser.
+export { SPAN, ATTR } from "./telemetry-names";
 export type {
   BrickClientSocket,
   BrickSocketClient,
@@ -270,15 +273,7 @@ export type InferActionErrorCodes<A> =
  * (Standard framework codes are always possible alongside declared ones.)
  */
 export type InferActionFailure<A> = ActionExecutionError & {
-  code:
-    | InferActionErrorCodes<A>
-    | "BAD_REQUEST"
-    | "UNAUTHORIZED"
-    | "FORBIDDEN"
-    | "NOT_FOUND"
-    | "CONFLICT"
-    | "INTERNAL_SERVER_ERROR"
-    | "VALIDATION_FAILED";
+  code: InferActionErrorCodes<A> | StandardErrorCode | "VALIDATION_FAILED";
 };
 
 /**
@@ -458,26 +453,8 @@ function planRequest(
 }
 
 function toActionError(status: number, body: unknown, url: string): Error {
-  if (body !== null && typeof body === "object") {
-    const record = body as Record<string, unknown>;
-    if (record.name === "ValidationError") {
-      return new ValidationError(
-        typeof record.message === "string"
-          ? record.message
-          : "Validation failed",
-        Array.isArray(record.errors) ? (record.errors as any) : [],
-        typeof record.status === "number" ? record.status : status,
-      );
-    }
-    if (typeof record.code === "string") {
-      return new ActionExecutionError(
-        record.code,
-        typeof record.message === "string" ? record.message : record.code,
-        typeof record.status === "number" ? record.status : status,
-        (record.details ?? undefined) as unknown,
-      );
-    }
-  }
+  const decoded = decodeError(body, status);
+  if (decoded) return decoded;
   if (status >= 500) {
     return new BrickServerError(
       `Unexpected server error (status ${status}) for ${url}.`,

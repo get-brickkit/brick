@@ -1,23 +1,16 @@
-import type { WorkflowRun, WorkflowRunStatus } from "@workflow/world";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   unwrapOrThrow,
   WorkflowWebAPIError,
 } from "~/lib/client/workflow-errors";
-import { fetchHooks, fetchRuns } from "~/lib/rpc-client";
-import type {
-  AnalyticsPageInfo,
-  EnvMap,
-  HookListItem,
-  PaginatedResult,
-} from "~/lib/types";
+import type { HookListItem, PaginatedResult } from "~/lib/types";
 import { getPaginationDisplay } from "~/lib/utils";
+import { rpc } from "~/lib/rpc-client";
 
 export interface PageResult<T> {
   data: T[] | null;
   isLoading: boolean;
   error: Error | null;
-  pageInfo?: AnalyticsPageInfo;
 }
 
 export interface PaginatedList<T> {
@@ -34,7 +27,6 @@ export interface PaginatedList<T> {
   reload: () => void;
   refresh: () => void;
   pageInfo: string;
-  analyticsPageInfo?: AnalyticsPageInfo;
 }
 
 /**
@@ -67,7 +59,6 @@ export function usePaginatedList<T>(
         data: T[];
         cursor?: string;
         hasMore: boolean;
-        pageInfo?: AnalyticsPageInfo;
       }
     >
   >(new Map());
@@ -97,7 +88,6 @@ export function usePaginatedList<T>(
               data: cached.data,
               isLoading: false,
               error: null,
-              pageInfo: cached.pageInfo,
             });
             return newMap;
           });
@@ -115,7 +105,6 @@ export function usePaginatedList<T>(
           data: result.data,
           cursor: result.cursor,
           hasMore: result.hasMore,
-          pageInfo: result.pageInfo,
         });
 
         setAllPageResults((prev) => {
@@ -124,7 +113,6 @@ export function usePaginatedList<T>(
             data: result.data,
             isLoading: false,
             error: null,
-            pageInfo: result.pageInfo,
           });
           return newMap;
         });
@@ -251,52 +239,23 @@ export function usePaginatedList<T>(
     reload,
     refresh,
     pageInfo,
-    analyticsPageInfo: currentPageResult.pageInfo,
   };
-}
-
-/**
- * Returns a list of runs with pagination control
- */
-export function useWorkflowRuns(
-  env: EnvMap,
-  params: {
-    workflowName?: string;
-    status?: WorkflowRunStatus;
-    limit?: number;
-    sortOrder?: "asc" | "desc";
-  },
-): PaginatedList<WorkflowRun> {
-  const { workflowName, status, limit = 10, sortOrder = "desc" } = params;
-
-  const fetchFn = useCallback(
-    (cursor?: string) =>
-      unwrapOrThrow(
-        fetchRuns(env, { cursor, sortOrder, limit, workflowName, status }),
-      ),
-    [env, workflowName, limit, sortOrder, status],
-  );
-
-  return usePaginatedList(fetchFn);
 }
 
 /**
  * Returns a list of hooks with pagination control
  */
-export function useWorkflowHooks(
-  env: EnvMap,
-  params: {
-    runId?: string;
-    limit?: number;
-    sortOrder?: "asc" | "desc";
-  },
-): PaginatedList<HookListItem> {
+export function useWorkflowHooks(params: {
+  runId?: string;
+  limit?: number;
+  sortOrder?: "asc" | "desc";
+}): PaginatedList<HookListItem> {
   const { runId, limit = 10, sortOrder = "desc" } = params;
 
   const fetchFn = useCallback(
     (cursor?: string) =>
-      unwrapOrThrow(fetchHooks(env, { runId, cursor, sortOrder, limit })),
-    [env, runId, limit, sortOrder],
+      unwrapOrThrow(rpc("fetchHooks", { runId, cursor, sortOrder, limit })),
+    [runId, limit, sortOrder],
   );
 
   return usePaginatedList(fetchFn);

@@ -1,5 +1,6 @@
 import { isEventRef, type EventRef } from "./catalog";
 import { buildErrorHelpers } from "../action";
+import { PLUGIN_DEPS } from "../deps";
 import type { ActionErrorDefinition, ErrorBuilder } from "../types";
 import type {
   EventDelivery,
@@ -111,46 +112,10 @@ export function defineListener<
 export function defineListener(
   config: ListenerConfig<any, unknown, any>,
 ): EventListener {
-  if (typeof config.name !== "string" || !config.name)
-    throw new Error("An event listener needs a name");
-  if (config.name.includes(":"))
-    throw new Error(
-      `Event listener name '${config.name}' must not contain ':'`,
-    );
   const on = (Array.isArray(config.on) ? config.on : [config.on]).map(
     (item: unknown) => (isEventRef(item) ? item.name : item),
   ) as string[];
-  if (
-    !on.length ||
-    on.some((pattern) => !pattern || typeof pattern !== "string")
-  )
-    throw new Error(`Event listener '${config.name}' listens for nothing`);
-  if (
-    config.maxAttempts !== undefined &&
-    (!Number.isInteger(config.maxAttempts) || config.maxAttempts < 1)
-  )
-    throw new Error(
-      `Event listener '${config.name}': maxAttempts must be a positive integer`,
-    );
-  const { name, run, workflow } = config as {
-    name: string;
-    run?: unknown;
-    workflow?: unknown;
-  };
-  if (run !== undefined && workflow !== undefined)
-    throw new Error(
-      `Event listener '${name}' has both run and workflow; give it one`,
-    );
-  if (run === undefined && workflow === undefined)
-    throw new Error(
-      `Event listener '${name}' needs a run handler or a workflow`,
-    );
-  if (run !== undefined && typeof run !== "function")
-    throw new Error(`Event listener '${name}': run must be a function`);
-  if (workflow !== undefined && typeof workflow !== "function")
-    throw new Error(
-      `Event listener '${name}': workflow must be a function marked "use workflow"`,
-    );
+  validateListener({ ...config, on } as EventListener);
   const helpers = buildErrorHelpers(config.errors);
   return Object.freeze({
     name: config.name,
@@ -169,3 +134,48 @@ export function defineListener(
       : {}),
   });
 }
+
+/**
+ * @throws When the name is empty or contains `:`, `on` is empty, `maxAttempts`
+ * is not a positive integer, or the listener has both or neither of `run` and
+ * `workflow`.
+ */
+export function validateListener(listener: EventListener): void {
+  const { name, on, maxAttempts, run, workflow } = listener;
+  if (typeof name !== "string" || !name)
+    throw new Error("An event listener needs a name");
+  // A listener's name ends its delivery ids: see `deliveryId`.
+  if (name.includes(":"))
+    throw new Error(`Event listener name '${name}' must not contain ':'`);
+  if (
+    !Array.isArray(on) ||
+    !on.length ||
+    on.some((pattern) => !pattern || typeof pattern !== "string")
+  )
+    throw new Error(`Event listener '${name}' listens for nothing`);
+  if (
+    maxAttempts !== undefined &&
+    (!Number.isInteger(maxAttempts) || maxAttempts < 1)
+  )
+    throw new Error(
+      `Event listener '${name}': maxAttempts must be a positive integer`,
+    );
+  if (run !== undefined && workflow !== undefined)
+    throw new Error(
+      `Event listener '${name}' has both run and workflow; give it one`,
+    );
+  if (run === undefined && workflow === undefined)
+    throw new Error(
+      `Event listener '${name}' needs a run handler or a workflow`,
+    );
+  if (run !== undefined && typeof run !== "function")
+    throw new Error(`Event listener '${name}': run must be a function`);
+  if (workflow !== undefined && typeof workflow !== "function")
+    throw new Error(
+      `Event listener '${name}': workflow must be a function marked "use workflow"`,
+    );
+}
+
+/** The deps a plugin's listener runs with, set by the plugin install; `undefined` for the app's own. */
+export const listenerDeps = (listener: EventListener) =>
+  (listener as { [PLUGIN_DEPS]?: Record<string, unknown> })[PLUGIN_DEPS];

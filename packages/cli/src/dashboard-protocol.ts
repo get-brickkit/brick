@@ -207,33 +207,7 @@ export const THEME_STORAGE_KEY = "brick-dashboard-theme";
 // ---------------------------------------------------------------------------
 // Span names and attribute keys core sets, read here and on the page
 
-export const SPAN = {
-  /** `action <service>.<action>` */
-  actionPrefix: "action ",
-  /** `rpc <service>.<action>` */
-  rpcPrefix: "rpc ",
-  exceptionEvent: "exception",
-  logEvent: "log",
-} as const;
-
-export const ATTR = {
-  httpMethod: "http.request.method",
-  httpRoute: "http.route",
-  httpStatus: "http.response.status_code",
-  urlPath: "url.path",
-  service: "brick.service",
-  action: "brick.action",
-  errorCode: "brick.error.code",
-  errorMessage: "brick.error.message",
-  errorStatus: "brick.error.status",
-  logsDropped: "brick.logs.dropped",
-  dbStatement: "db.statement",
-  dbSystem: "db.system",
-  exceptionMessage: "exception.message",
-  exceptionStack: "exception.stacktrace",
-  logLevel: "log.level",
-  logMessage: "log.message",
-} as const;
+export { SPAN, ATTR } from "@brickkit/core/client";
 
 // ---------------------------------------------------------------------------
 // Live data

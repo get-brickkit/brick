@@ -1,4 +1,4 @@
-import { PLUGIN_DEPS, runWithDeps } from "./deps";
+import { PLUGIN_DEPS } from "./deps";
 import type { EventListener } from "./events/types";
 import type {
   PluginInstallOptions,
@@ -128,18 +128,9 @@ export function setupAppPlugins(
         middleware.push(handler);
       },
       listeners(...items) {
-        // `useDeps()` in a plugin's listener returns the plugin's deps, not the app's.
+        // `useDeps()` in a plugin's listener, and its workflow's steps, return the plugin's deps.
         listeners.push(
-          ...items.map((listener) => {
-            const run = listener.run;
-            // The workflow runtime runs this workflow's steps with these deps.
-            if (!run) return { ...listener, [PLUGIN_DEPS]: deps };
-            return {
-              ...listener,
-              run: (delivery: Parameters<typeof run>[0]) =>
-                runWithDeps(deps, () => run(delivery)),
-            };
-          }),
+          ...items.map((listener) => ({ ...listener, [PLUGIN_DEPS]: deps })),
         );
       },
     });

@@ -3,7 +3,11 @@ import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { resolveWorkflowPaths, type BrickApp } from "@brickkit/core";
+import {
+  resolveWorkflowPaths,
+  WORKFLOW_BUNDLE,
+  type BrickApp,
+} from "@brickkit/core";
 
 interface Builders {
   StandaloneBuilder: new (config: Record<string, unknown>) => {
@@ -35,7 +39,7 @@ const DIRECTIVE = /["']use (?:step|workflow)["']/;
  * either: Bun drops `module.exports` from a file a plugin loads.
  */
 const TRANSFORMED = new RegExp(
-  String.raw`^(?!.*(?:node_modules|\.well-known/workflow/)).*\.(?:m?[jt]s|[jt]sx)$`,
+  String.raw`^(?!.*(?:node_modules|${WORKFLOW_BUNDLE.dir.replaceAll(".", "\\.")}/)).*\.(?:m?[jt]s|[jt]sx)$`,
 );
 
 /** Bun's own loader for each extension: JSX is allowed in `.js` but not in `.mjs`. */
@@ -356,21 +360,21 @@ export async function buildWorkflows(
     buildTarget: "standalone",
     dirs: ["."],
     workingDir: root,
-    stepsBundlePath: output("__step_registrations.mjs"),
-    workflowsBundlePath: output("flow.mjs"),
-    webhookBundlePath: output("webhook.mjs"),
+    stepsBundlePath: output(WORKFLOW_BUNDLE.steps),
+    workflowsBundlePath: output(WORKFLOW_BUNDLE.flow),
+    webhookBundlePath: output(WORKFLOW_BUNDLE.webhook),
     suppressCreateWorkflowsBundleLogs: true,
     suppressCreateWebhookBundleLogs: true,
     suppressCreateManifestLogs: true,
   });
   const statePath = join(dir, STATE_FILE);
-  const bundles = ["flow.mjs", "__step_registrations.mjs"].map((name) =>
+  const bundles = [WORKFLOW_BUNDLE.flow, WORKFLOW_BUNDLE.steps].map((name) =>
     join(dir, name),
   );
   const outputs = [
     ...bundles,
-    join(dir, "manifest.json"),
-    join(dir, "webhook.mjs"),
+    join(dir, WORKFLOW_BUNDLE.manifest),
+    join(dir, WORKFLOW_BUNDLE.webhook),
   ];
   const configs = await tsconfigInputs(await builder.findTsConfigPath());
   const key = JSON.stringify([

@@ -63,6 +63,17 @@ export function eventRefs(
   return Object.freeze(refs);
 }
 
+/** @throws When the payload does not match the event's schema. */
+export function checkPayload(ref: EventRef, payload: unknown): void {
+  const result = validateWithSchema(ref.schema, payload);
+  if (!result.success)
+    throw new Error(
+      `Event "${ref.name}" payload does not match its schema: ${result.errors
+        .map((error) => `${error.path || "/"} ${error.message}`)
+        .join("; ")}`,
+    );
+}
+
 /** The writes a resource's CRUD events report. Payloads are `CrudEventPayload`. */
 export const CRUD_EVENT_OPERATIONS = ["create", "update", "delete"] as const;
 export type CrudEventOperation = (typeof CRUD_EVENT_OPERATIONS)[number];
@@ -109,16 +120,7 @@ export function checkEvent(
   const ref = name.startsWith(prefix)
     ? service.events[name.slice(prefix.length)]
     : undefined;
-  if (ref) {
-    const result = validateWithSchema(ref.schema, payload);
-    if (!result.success)
-      throw new Error(
-        `Event "${name}" payload does not match its schema: ${result.errors
-          .map((error) => `${error.path || "/"} ${error.message}`)
-          .join("; ")}`,
-      );
-    return;
-  }
+  if (ref) return checkPayload(ref, payload);
   if (!service.hasCatalog) return;
   if (
     isCrudEvent(

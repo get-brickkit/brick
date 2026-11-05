@@ -37,18 +37,20 @@ export function uint8ArrayReplacer(_key: string, value: unknown): unknown {
   return value;
 }
 
-/**
- * JSON reviver that decodes tagged Uint8Array objects
- * (`{ __type: 'Uint8Array', data: '<base64>' }`) and ISO date strings.
- */
-export function uint8ArrayReviver(key: string, value: unknown): unknown {
+/** The Uint8Array a tagged object (`{ __type: 'Uint8Array', data: '<base64>' }`) encodes. */
+function taggedBinary(value: unknown): Uint8Array | undefined {
   if (value && typeof value === "object") {
     const obj = value as Record<string, unknown>;
     if (obj.__type === "Uint8Array" && typeof obj.data === "string") {
-      return new Uint8Array(Buffer.from(obj.data as string, "base64"));
+      return new Uint8Array(Buffer.from(obj.data, "base64"));
     }
   }
-  return dateReviver(key, value);
+  return undefined;
+}
+
+/** JSON reviver that decodes tagged Uint8Array objects and ISO date strings. */
+export function uint8ArrayReviver(key: string, value: unknown): unknown {
+  return taggedBinary(value) ?? dateReviver(key, value);
 }
 
 // Handing JSON a reviver/replacer forces V8 off its fast path and calls into
@@ -130,4 +132,14 @@ export function parse<T>(text: string): T {
     return JSON.parse(text, uint8ArrayReviver) as T;
   }
   return reviveDatesDeep(JSON.parse(text)) as T;
+}
+
+/**
+ * Parse a queue message: tagged Uint8Arrays only. Queue payloads are the
+ * runtime's own, so a field that happens to be named like a date stays a string.
+ */
+export function parseQueueMessage(text: string): unknown {
+  return text.includes(BINARY_TAG)
+    ? JSON.parse(text, (_key, value) => taggedBinary(value) ?? value)
+    : JSON.parse(text);
 }

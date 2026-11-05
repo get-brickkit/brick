@@ -1,3 +1,4 @@
+import { ATTR, SPAN } from "./telemetry-names";
 import type { Action, ActionContext, ProxyOptions, Service } from "./types";
 import type {
   BrickClientAction,
@@ -143,8 +144,8 @@ async function callAction(
   }
   const envelopeCtx = createRpcEnvelope(options.from, options.context, callCtx);
   return withCallSpan(
-    `rpc ${serviceName}.${actionName}`,
-    { "brick.service": serviceName, "brick.action": actionName },
+    `${SPAN.rpcPrefix}${serviceName}.${actionName}`,
+    { [ATTR.service]: serviceName, [ATTR.action]: actionName },
     () => action.execute({ input: payload, ctx: envelopeCtx }),
   );
 }

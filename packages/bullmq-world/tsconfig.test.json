@@ -3,8 +3,8 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "rootDir": "."
+    "rootDir": ".."
   },
-  "include": ["src", "test", "vitest.config.ts", "vitest.e2e.config.ts"],
+  "include": ["src", "test", "vitest.config.ts"],
   "exclude": ["node_modules", "dist"]
 }

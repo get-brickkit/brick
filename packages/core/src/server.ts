@@ -1,3 +1,4 @@
+import { ATTR, SPAN } from "./telemetry-names";
 import type { HttpMethod } from "./http";
 import { Elysia } from "elysia";
 import {
@@ -424,10 +425,10 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     const invoke = (context: any) => {
       const result = telemetry
         ? withSpan(
-            `action ${route.ir.service}.${route.ir.action}`,
+            `${SPAN.actionPrefix}${route.ir.service}.${route.ir.action}`,
             {
-              "brick.service": route.ir.service,
-              "brick.action": route.ir.action,
+              [ATTR.service]: route.ir.service,
+              [ATTR.action]: route.ir.action,
             },
             () => route.handler(context),
           )

@@ -45,7 +45,7 @@
     "clean": "rm -rf dist",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
-    "test:e2e": "bun run build && vitest run --config vitest.e2e.config.ts"
+    "test:e2e": "bun run build && E2E_WORLD=bullmq-world vitest run --root ../redis-world --config ../redis-world/vitest.e2e.config.ts"
   },
   "dependencies": {
     "@brickkit/redis-world": "0.12.0",

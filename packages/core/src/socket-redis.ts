@@ -1,4 +1,4 @@
-import { compareSocketSeq } from "./socket-schema";
+import { compareSocketSeq } from "./protocol";
 import type { SocketBroker, SocketBrokerMessage } from "./socket-types";
 
 // From the global, as @types/bun doesn't export RedisClient from "bun" for the .d.ts build.

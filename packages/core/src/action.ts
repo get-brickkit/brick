@@ -9,22 +9,11 @@ import {
   ActionExecutionError,
 } from "./types";
 import { normalizeActionError } from "./error-response";
+import { STANDARD_ERRORS } from "./protocol";
 import { validateWithSchema } from "./typebox";
 import { actionMeta } from "./action-meta";
 import { baseContext } from "./context";
 import { authorizeCall, invalid } from "./compiler/runtime";
-
-const standardErrorDefaults: Record<
-  string,
-  { status: number; message: string }
-> = {
-  BAD_REQUEST: { status: 400, message: "Bad Request" },
-  UNAUTHORIZED: { status: 401, message: "Unauthorized" },
-  FORBIDDEN: { status: 403, message: "Forbidden" },
-  NOT_FOUND: { status: 404, message: "Not Found" },
-  CONFLICT: { status: 409, message: "Conflict" },
-  INTERNAL_SERVER_ERROR: { status: 500, message: "Internal Server Error" },
-};
 
 /**
  * The `error` helpers an action receives: one function per error code that
@@ -44,7 +33,7 @@ export function buildErrorHelpers<
   const helpers: Record<string, any> = {};
 
   // 1. Populate standard HTTP error helpers
-  for (const [code, def] of Object.entries(standardErrorDefaults)) {
+  for (const [code, def] of Object.entries(STANDARD_ERRORS)) {
     helpers[code] = (
       overrideMessage?: string,
       details?: unknown,

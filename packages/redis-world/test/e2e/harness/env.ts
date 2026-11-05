@@ -12,13 +12,18 @@ import {
 } from "@workflow/world";
 import { Redis } from "ioredis";
 import { expect, onTestFinished } from "vitest";
+import { pathToFileURL } from "node:url";
 import type * as WorldModule from "../../../src/index.js";
-const distPath = "../../../dist/index.js";
-const { createWorld }: typeof WorldModule = await import(distPath);
-import { SCRATCH_REDIS_URL } from "./paths.js";
+import { DIST_ENTRY, SCRATCH_REDIS_URL } from "./paths.js";
 import { RedisServer } from "./redis-server.js";
 import type { WorkflowRef } from "./workflows.js";
-import { WorkerProc, type WorldTuning } from "./worker.js";
+import { WorkerProc } from "./worker.js";
+import { world as worldUnderTest, type WorldTuning } from "./world.js";
+
+// The built world under test; both worlds' createWorld take the shared config.
+const { createWorld }: typeof WorldModule = await import(
+  pathToFileURL(DIST_ENTRY).href
+);
 
 type RunStatus = WorkflowRun["status"];
 
@@ -52,6 +57,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export class Env {
   readonly id = randomBytes(5).toString("hex");
   readonly keyPrefix = `e2e:${this.id}:`;
+  readonly jobPrefix = worldUnderTest.jobPrefix(this.id);
   readonly workers: WorkerProc[] = [];
   readonly world: ReturnType<typeof createWorld>;
   /** Direct Redis access for evidence (counters) and for chaos (deleting queue keys). */
@@ -68,6 +74,7 @@ export class Env {
     this.world = createWorld({
       redis: opts.redisUrl,
       keyPrefix: this.keyPrefix,
+      ...(this.jobPrefix && { jobPrefix: this.jobPrefix }),
     });
     this.redis = new Redis(opts.redisUrl, { maxRetriesPerRequest: null });
     this.redis.on("error", () => {});
@@ -115,7 +122,7 @@ export class Env {
       name,
       redisUrl: this.opts.redisUrl,
       keyPrefix: this.keyPrefix,
-
+      jobPrefix: this.jobPrefix,
       tuning: this.opts.tuning,
       concurrency: this.opts.concurrency,
     });
@@ -358,9 +365,9 @@ export class Env {
     );
   }
 
-  /** All Redis keys of the Redis queue queue this env's workers share. */
+  /** All Redis keys of the queue this env's workers share. */
   queueKeyPattern(): string {
-    return `${this.keyPrefix}queue:*`;
+    return worldUnderTest.queueKeyPattern(this.keyPrefix, this.jobPrefix);
   }
 
   async scan(pattern: string): Promise<string[]> {
@@ -445,7 +452,7 @@ export class Env {
   }
 
   /**
-   * For tests where nothing is supposed to go wrong: no Redis queue job failed, no
+   * For tests where nothing is supposed to go wrong: no queue job failed, no
    * worker-level error, no SDK warning/error line in any worker's output.
    */
   expectCleanWorkerLogs(): void {
@@ -544,7 +551,7 @@ export class Env {
   }
 
   /**
-   * Wait until the Redis queue queue has no waiting or active job, i.e. every
+   * Wait until the queue has no waiting or active job, i.e. every
    * delivery that was due has been consumed. Delayed jobs are deliberately not
    * waited for: after a duplicate delivery the SDK parks a "backstop wake"
    * (idempotency key `step_...:backstop:<epoch>`, ~860s delay) for steps it saw

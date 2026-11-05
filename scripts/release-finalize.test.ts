@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { publishedPackages } from "./published-packages.ts";
 
 const workflow: {
   jobs: { commit: { steps: { name?: string; run?: string }[] } };
@@ -12,7 +13,7 @@ const workflow: {
   ).text(),
 );
 
-const PACKAGES = ["core", "crud", "cli", "bullmq-world", "redis-world"];
+const PACKAGES = publishedPackages().map((p) => p.dir);
 
 test("post-publication commit preserves branch updates and tags the validated source", async () => {
   const root = await mkdtemp(join(tmpdir(), "brick-release-finalize-"));
