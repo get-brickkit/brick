@@ -1,6 +1,7 @@
 import {
   Component,
   createContext,
+  createElement,
   useCallback,
   useContext,
   useEffect,
@@ -14,11 +15,16 @@ import {
   type BrickClient,
   type BrickClientOptions,
 } from "@brickkit/core/client";
-import type { TraceSummary } from "../src/dev-telemetry-store";
-import type {
-  DashboardExtension,
-  DashboardSlots,
-  SlotContext,
+import {
+  ROUTES,
+  type ExtensionPart,
+  type TraceSummary,
+} from "../src/dashboard-protocol";
+import {
+  mergeExtensions,
+  type DashboardExtension,
+  type DashboardSlots,
+  type SlotContext,
 } from "@/extension-registry";
 import { initialState, type DashboardState } from "@/state";
 
@@ -37,6 +43,7 @@ export interface LoadedExtension {
 /**
  * Import the module the page names (see the shell's `brick-extension` meta).
  * React and the UI kit it imports are the dashboard's own, by the import map.
+ * With plugins it lists several parts instead, which are loaded and merged.
  */
 export async function loadExtension(): Promise<LoadedExtension> {
   const src = document
@@ -44,9 +51,13 @@ export async function loadExtension(): Promise<LoadedExtension> {
     ?.getAttribute("data-src");
   if (!src) return {};
   try {
-    const module = (await import(/* @vite-ignore */ src)) as {
+    const url = new URL(src, location.href).href;
+    const module = (await import(/* @vite-ignore */ url)) as {
       default?: unknown;
+      parts?: ExtensionPart[];
     };
+    if (Array.isArray(module.parts))
+      return { extension: await loadParts(module.parts, url) };
     if (!module.default || typeof module.default !== "object")
       throw new Error(
         "The module must default-export defineDashboard({ ... }).",
@@ -55,6 +66,49 @@ export async function loadExtension(): Promise<LoadedExtension> {
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/**
+ * Import each part apart, so one that throws leaves the others, and merge
+ * them; their roots nest in order.
+ */
+export async function loadParts(
+  parts: readonly ExtensionPart[],
+  base: string,
+): Promise<DashboardExtension> {
+  const loaded = await Promise.allSettled(
+    parts.map(
+      (part) =>
+        import(/* @vite-ignore */ new URL(part.src, base).href) as Promise<{
+          default?: unknown;
+        }>,
+    ),
+  );
+  const extensions = parts.flatMap((part, index) => {
+    const result = loaded[index]!;
+    const extension =
+      result.status === "fulfilled" ? result.value.default : undefined;
+    if (extension && typeof extension === "object")
+      return [{ ...part, extension: extension as DashboardExtension }];
+    console.error(
+      `[Brick dashboard] Extension ${part.name} failed to load:`,
+      result.status === "rejected"
+        ? result.reason
+        : "it must default-export defineDashboard({ ... })",
+    );
+    return [];
+  });
+  const merged = mergeExtensions(extensions);
+  const roots = extensions.flatMap(({ extension }) =>
+    extension.root ? [extension.root] : [],
+  );
+  if (roots.length)
+    merged.root = ({ children }) =>
+      roots.reduceRight<ReactNode>(
+        (inner, Root) => createElement(Root, null, inner),
+        children,
+      );
+  return merged;
 }
 
 export const ExtensionContext = createContext<{
@@ -164,7 +218,10 @@ export function useArchitecture(): ArchitectureSchema | null {
  * origin. `path` is the app's: `appFetch("/api/admin/queues")`.
  */
 export function appFetch(path: string, init?: RequestInit): Promise<Response> {
-  return fetch(`/app${path.startsWith("/") ? path : `/${path}`}`, init);
+  return fetch(
+    `${ROUTES.app.path}${path.startsWith("/") ? path : `/${path}`}`,
+    init,
+  );
 }
 
 export interface AppFetchResult<T> {
@@ -186,7 +243,7 @@ export function createAppClient<TApp extends Record<string, any>>(
 ): BrickClient<TApp> {
   return createBrickClient<TApp>({
     ...options,
-    baseUrl: `${location.origin}/app`,
+    baseUrl: `${location.origin}${ROUTES.app.path}`,
   });
 }
 

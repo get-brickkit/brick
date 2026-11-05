@@ -3,14 +3,13 @@ import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { formatCount } from "@/format";
-import {
-  hasFilters,
-  NO_FILTERS,
-  type LogFilters,
-  type Outcome,
-} from "@/filters";
+import { hasFilters, NO_FILTERS, type LogFilters } from "@/filters";
 import { cn } from "@/lib/utils";
-import type { FacetValue, HistoryFacets } from "../../src/dev-history";
+import type {
+  FacetValue,
+  HistoryFacets,
+  Outcome,
+} from "../../src/dashboard-protocol";
 
 const OUTCOMES: { value: Outcome; label: string }[] = [
   { value: "ok", label: "Succeeded" },

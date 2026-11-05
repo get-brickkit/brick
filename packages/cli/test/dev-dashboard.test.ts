@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { startDevDashboard } from "../src/dev-dashboard";
 import { openHistory } from "../src/dev-history";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
-import type { TraceSummary } from "../src/dev-telemetry-store";
+import type { TraceSummary } from "../src/dashboard-protocol";
 
 async function setup(restart?: () => void) {
   const store = new DevTelemetryStore();
@@ -641,6 +641,20 @@ describe("startDevDashboard", () => {
           method: "POST",
           body: '{"method":"cancelRun"}',
         });
+      });
+    });
+
+    it("takes the page's own changes behind a proxy that terminates TLS", async () => {
+      await withInspector(async ({ base }) => {
+        const post = (headers: Record<string, string>) =>
+          fetch(`${base}/workflows/api/rpc`, {
+            method: "POST",
+            body: '{"method":"cancelRun"}',
+            headers: { origin: base.replace(/^http:/, "https:"), ...headers },
+          });
+        expect((await post({ "x-forwarded-proto": "https" })).status).toBe(201);
+        // Without the proxy's word, an https page is another origin.
+        expect((await post({})).status).toBe(403);
       });
     });
 

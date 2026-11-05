@@ -9,6 +9,7 @@ import {
   startDevDashboard,
   type DevDashboard,
 } from "./dev-dashboard";
+import { ROUTES } from "./dashboard-protocol";
 import { DocsHost } from "./dev-docs";
 import type { DashboardExtensionOptions } from "./dashboard-extension";
 import { DEFAULT_HISTORY_DAYS, openHistory } from "./dev-history";
@@ -84,7 +85,7 @@ export async function startViteDashboard(options: {
     if (documents) store.setApiDocuments(documents, origin);
   };
   return {
-    ingestUrl: `http://127.0.0.1:${dashboard.port}/api/ingest`,
+    ingestUrl: `http://127.0.0.1:${dashboard.port}${ROUTES.ingest.path}`,
     architecture(app) {
       store.setArchitecture(
         getGlobalRegistry().exportArchitecture(app.definition),

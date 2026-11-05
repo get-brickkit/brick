@@ -4,6 +4,7 @@ import { build } from "vite";
 import * as React from "react";
 import * as ReactDOM from "react-dom";
 import * as ReactDOMClient from "react-dom/client";
+import { SHARED_MODULES } from "../src/dashboard-protocol";
 
 // Bundles the React dashboard (dashboard/) into dashboard-dist/, which the
 // package ships and `brick dev` serves. kit.js, the UI kit extensions import
@@ -29,20 +30,20 @@ export default module;
 export const { ${names.join(", ")} } = module;
 `;
 };
-await writeFile(out("react.js"), shim(React, "React"));
-await writeFile(out("react-dom.js"), shim(ReactDOM, "ReactDOM"));
-await writeFile(
-  out("react-dom-client.js"),
-  shim(ReactDOMClient, "ReactDOMClient"),
-);
-await writeFile(
-  out("react-jsx-runtime.js"),
-  `const runtime = globalThis.__brickDashboard.jsxRuntime;
+const modules = { React, ReactDOM, ReactDOMClient };
+for (const module of SHARED_MODULES) {
+  if (!("global" in module)) continue;
+  await writeFile(
+    out(module.file),
+    module.global === "jsxRuntime"
+      ? `const runtime = globalThis.__brickDashboard.jsxRuntime;
 export const { Fragment, jsx, jsxs } = runtime;
 // Components built in development mode call jsxDEV, which production React lacks.
 export const jsxDEV = (type, props, key) => runtime.jsx(type, props, key);
-`,
-);
+`
+      : shim(modules[module.global], module.global),
+  );
+}
 // The CLI compiles an extension's Tailwind classes against the same tokens.
 await copyFile(
   fileURLToPath(new URL("../dashboard/theme.css", import.meta.url)),

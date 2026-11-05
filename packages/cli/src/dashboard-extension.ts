@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import type { ExtensionPart } from "./dashboard-protocol";
 import { bundleComponents } from "./dev-docs";
 
 /*
@@ -138,7 +139,7 @@ export interface BuiltExtension {
   js: string;
   /** The extension's own Tailwind classes; empty when it uses none. */
   css: string;
-  /** A `brick build` folder's `extension-N.js` files, which its loader imports. */
+  /** The `extension-N.js` files `js` lists, by name. */
   parts?: Record<string, string>;
 }
 
@@ -257,29 +258,50 @@ export async function writeDashboardExtension(
       }),
     ),
   );
+  const layout = layoutParts(
+    parts.map((part, index) => ({ ...part, built: built[index] })),
+  )!;
   await mkdir(outdir, { recursive: true });
-  if (parts.length === 1 && entry) {
-    await writeFile(join(outdir, "extension.js"), built[0]!.js);
-    await writeFile(join(outdir, "extension.css"), built[0]!.css);
-    return true;
-  }
-  for (const [index, part] of built.entries())
-    await writeFile(join(outdir, `extension-${index}.js`), part.js);
-  await writeFile(
-    join(outdir, "extension.js"),
-    extensionLoader(
-      parts.map((part, index) => ({
+  await writeFile(join(outdir, "extension.js"), layout.js);
+  await writeFile(join(outdir, "extension.css"), layout.css);
+  for (const [name, js] of Object.entries(layout.parts ?? {}))
+    await writeFile(join(outdir, name), js);
+  return true;
+}
+
+/**
+ * How the extensions are served, by `brick dev` and from a `brick build`
+ * folder alike. The app's alone is served as it is. Otherwise each that built
+ * is `extension-<index>.js`, `extension.js` lists them for the page to load
+ * and merge, and their styles are served together. `version` is added to each
+ * part's address, so a rebuilt one is fetched again.
+ */
+function layoutParts(
+  parts: readonly {
+    name: string;
+    plugin: boolean;
+    built: BuiltExtension | undefined;
+  }[],
+  version = "",
+): BuiltExtension | undefined {
+  if (parts.length === 1 && !parts[0]!.plugin) return parts[0]!.built;
+  const built = parts.flatMap((part, index) =>
+    part.built
+      ? [{ ...part, built: part.built, file: `extension-${index}.js` }]
+      : [],
+  );
+  if (!built.length) return undefined;
+  return {
+    js: extensionManifest(
+      built.map((part) => ({
         name: part.name,
-        src: `./extension-${index}.js`,
+        src: `./${part.file}${version}`,
         plugin: part.plugin,
       })),
     ),
-  );
-  await writeFile(
-    join(outdir, "extension.css"),
-    built.map((part) => part.css).join(""),
-  );
-  return true;
+    css: built.map((part) => part.built.css).join(""),
+    parts: Object.fromEntries(built.map((part) => [part.file, part.built.js])),
+  };
 }
 
 /**
@@ -391,46 +413,11 @@ function pluginDashboards(
 }
 
 /**
- * The module the page loads when several extensions take part: it imports
- * each one apart, so one that throws leaves the others, and merges them. The
- * app's own comes first and keeps its slots; pages whose id is taken are
- * skipped; roots nest in order; a plugin's pages without a place go under a
- * section named after it.
+ * The module the page loads when several extensions take part: it lists them,
+ * and the page imports each apart and merges them (`mergeExtensions` there).
  */
-export function extensionLoader(
-  parts: readonly { name: string; src: string; plugin: boolean }[],
-): string {
-  return `const parts = ${JSON.stringify(parts)};
-const loaded = await Promise.allSettled(parts.map((part) => import(part.src)));
-const merged = { pages: [], sidebar: [], slots: {} };
-const roots = [];
-loaded.forEach((result, index) => {
-  const { name, plugin } = parts[index];
-  const extension = result.status === "fulfilled" ? result.value.default : undefined;
-  if (!extension || typeof extension !== "object") {
-    console.error("[Brick dashboard] Extension " + name + " failed to load:", result.status === "rejected" ? result.reason : "it must default-export defineDashboard({ ... })");
-    return;
-  }
-  for (const page of extension.pages ?? []) {
-    if (merged.pages.some((item) => item.id === page.id)) {
-      console.error("[Brick dashboard] Extension " + name + ": page id " + page.id + " is taken; skipped.");
-      continue;
-    }
-    merged.pages.push(plugin && !page.after && !page.section ? { ...page, section: name } : page);
-  }
-  merged.sidebar.push(...(extension.sidebar ?? []));
-  for (const [slot, value] of Object.entries(extension.slots ?? {})) {
-    if (slot === "request.drawer.tabs") merged.slots[slot] = [...(merged.slots[slot] ?? []), ...value];
-    else if (!(slot in merged.slots)) merged.slots[slot] = value;
-  }
-  if (extension.root) roots.push(extension.root);
-});
-if (roots.length) {
-  const { createElement } = await import("react");
-  merged.root = ({ children }) => roots.reduceRight((inner, Root) => createElement(Root, null, inner), children);
-}
-export default merged;
-`;
+export function extensionManifest(parts: readonly ExtensionPart[]): string {
+  return `export const parts = ${JSON.stringify(parts)};\n`;
 }
 
 /**
@@ -473,25 +460,14 @@ export class DashboardExtensions {
   }
 
   get built(): BuiltExtension | undefined {
-    const built = this.#parts.filter((part) => part.host.built);
-    if (!built.length) return undefined;
-    if (this.#own && this.#parts.length === 1) return built[0]!.host.built;
-    return {
-      js: extensionLoader(
-        this.#parts.flatMap((part, index) =>
-          part.host.built
-            ? [
-                {
-                  name: part.name,
-                  src: `./extension-${index}.js?v=${this.revision}`,
-                  plugin: !(this.#own && index === 0),
-                },
-              ]
-            : [],
-        ),
-      ),
-      css: built.map((part) => part.host.built!.css).join(""),
-    };
+    return layoutParts(
+      this.#parts.map((part, index) => ({
+        name: part.name,
+        plugin: !(this.#own && index === 0),
+        built: part.host.built,
+      })),
+      `?v=${this.revision}`,
+    );
   }
 
   get error(): string | undefined {
@@ -511,12 +487,8 @@ export class DashboardExtensions {
   asset(name: string): string | undefined {
     if (name === "extension.js") return this.built?.js;
     if (name === "extension.css") return this.built?.css;
-    const match = /^extension-(\d+)\.js$/.exec(name);
-    if (!match) return undefined;
-    // The app's alone: a `brick build` folder, whose loader imports its own parts.
-    if (this.#own && this.#parts.length === 1)
-      return this.#parts[0]!.host.built?.parts?.[name];
-    return this.#parts[Number(match[1])]?.host.built?.js;
+    // From the layout, or the `brick build` folder the app's names.
+    return this.built?.parts?.[name];
   }
 
   /** Follow the app's plugins: build the extensions they ship, drop the rest. */

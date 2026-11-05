@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { historyParams, type LogFilters, type LogRow } from "@/filters";
-import type {
-  HistoryFacets,
-  HistorySummary,
-  VolumeBucket,
-} from "../src/dev-history";
-import type { TraceSummary } from "../src/dev-telemetry-store";
+import {
+  historyTraceUrl,
+  historyUrl,
+  type HistoryFacets,
+  type HistorySummary,
+  type TraceSummary,
+  type VolumeBucket,
+} from "../src/dashboard-protocol";
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -132,7 +134,7 @@ export function useRequestLog(
     offset.current = 0;
     const query = historyParams(window, filters);
     getJson<{ traces: LogRow[]; total: number }>(
-      `/api/history/traces?${historyParams(window, filters, { offset: 0 })}`,
+      historyUrl("traces", historyParams(window, filters, { offset: 0 })),
       signal,
     ).then(
       (next) => {
@@ -148,15 +150,15 @@ export function useRequestLog(
       },
     );
     // Counts and volume are secondary; a miss leaves the last ones showing.
-    getJson<HistoryFacets>(`/api/history/facets?${query}`, signal).then(
+    getJson<HistoryFacets>(historyUrl("facets", query), signal).then(
       setFacets,
       () => {},
     );
-    getJson<VolumeBucket[]>(`/api/history/volume?${query}`, signal).then(
+    getJson<VolumeBucket[]>(historyUrl("volume", query), signal).then(
       setVolume,
       () => {},
     );
-    getJson<HistorySummary>(`/api/history/summary?${query}`, signal).then(
+    getJson<HistorySummary>(historyUrl("summary", query), signal).then(
       setSummary,
       () => {},
     );
@@ -169,7 +171,7 @@ export function useRequestLog(
     const next = offset.current + PAGE;
     offset.current = next;
     void getJson<{ traces: LogRow[] }>(
-      `/api/history/traces?${historyParams(window, filters, { offset: next })}`,
+      historyUrl("traces", historyParams(window, filters, { offset: next })),
       new AbortController().signal,
     ).then(
       // Drop a page that arrives after the filters or window have changed.
@@ -211,10 +213,7 @@ export function useHistoryTrace(
   useEffect(() => {
     if (!traceId || !enabled) return;
     const controller = new AbortController();
-    getJson<TraceSummary>(
-      `/api/history/traces/${encodeURIComponent(traceId)}`,
-      controller.signal,
-    ).then(
+    getJson<TraceSummary>(historyTraceUrl(traceId), controller.signal).then(
       (trace) => setState({ id: traceId, trace, missing: false }),
       () => {
         if (!controller.signal.aborted)

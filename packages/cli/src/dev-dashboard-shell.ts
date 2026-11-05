@@ -1,3 +1,14 @@
+import { SHARED_MODULES, THEME_STORAGE_KEY } from "./dashboard-protocol";
+
+const IMPORT_MAP = JSON.stringify({
+  imports: Object.fromEntries(
+    SHARED_MODULES.map((module) => [
+      module.specifier,
+      `/assets/${module.file}`,
+    ]),
+  ),
+});
+
 /**
  * The page the dashboard serves at `/`. The React app and its styles load from
  * `/assets/`; the inline script applies the saved theme before first paint. The
@@ -27,7 +38,7 @@ export function dashboardShell(
 <script>
 (function () {
   try {
-    var theme = localStorage.getItem("brick-dashboard-theme");
+    var theme = localStorage.getItem(${JSON.stringify(THEME_STORAGE_KEY)});
     var dark = theme === "dark" || (theme !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
     if (dark) document.documentElement.classList.add("dark");
   } catch (error) {}
@@ -35,7 +46,7 @@ export function dashboardShell(
 </script>
 <link rel="stylesheet" href="/assets/app.css">
 ${extension?.css ? `<link rel="stylesheet" href="/assets/extension.css${version}">\n` : ""}${theme ? `<link rel="stylesheet" href="/assets/brick-theme.css" data-brick-theme>\n` : ""}${extension ? `<meta name="brick-extension" data-revision="${extension.revision}"${extension.js ? ` data-src="/assets/extension.js${version}"` : ""}>\n` : ""}<script type="importmap">
-{"imports":{"react":"/assets/react.js","react/jsx-runtime":"/assets/react-jsx-runtime.js","react/jsx-dev-runtime":"/assets/react-jsx-runtime.js","react-dom":"/assets/react-dom.js","react-dom/client":"/assets/react-dom-client.js","@brickkit/cli/dashboard":"/assets/kit.js"}}
+${IMPORT_MAP}
 </script>
 </head>
 <body>

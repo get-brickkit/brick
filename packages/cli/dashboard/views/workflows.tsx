@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Empty } from "@/components/page-header";
 import { cn } from "@/lib/utils";
+import { ROUTES } from "../../src/dashboard-protocol";
 
 /**
  * The Workflow SDK's own inspector, served by the dev server at `/workflows`
@@ -36,7 +37,7 @@ export function WorkflowsView({
       )}
       <iframe
         title="Workflow inspector"
-        src="/workflows/"
+        src={`${ROUTES.workflows.path}/`}
         className="h-[calc(100svh-3.5rem)] w-full border-0"
         onLoad={(event) => {
           // The project's theme applies to the inspector too: it uses the same tokens.

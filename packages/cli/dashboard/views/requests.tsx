@@ -26,16 +26,10 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
-  applyFilters,
-  bucketRows,
-  computeFacets,
   hasFilters,
   historyParams,
   NO_FILTERS,
-  outcomeOf,
   sparkGroups,
-  summarizeRows,
-  toRow,
   type LogFilters,
   type LogRow,
 } from "@/filters";
@@ -56,8 +50,16 @@ import {
 } from "@/history";
 import { cn } from "@/lib/utils";
 import { routeHref, useNow } from "@/state";
-import { tracesToCsv } from "../../src/dev-history-csv";
-import type { TraceSummary } from "../../src/dev-telemetry-store";
+import {
+  applyFilters,
+  bucketRows,
+  computeFacets,
+  outcomeOf,
+  summarizeRows,
+  toRow,
+  tracesToCsv,
+} from "../../src/dashboard-query";
+import { historyUrl, type TraceSummary } from "../../src/dashboard-protocol";
 
 type RangeChoice = "live" | RangeValue;
 const CHOICES: readonly RangeChoice[] = ["live", ...RANGES.map((r) => r.value)];
@@ -307,7 +309,7 @@ export function RequestsView({
         ) : (
           <a
             download
-            href={`/api/history/export?${historyParams(frame, applied)}`}
+            href={historyUrl("export", historyParams(frame, applied))}
             className={buttonVariants({ variant: "outline" })}
           >
             <Download />

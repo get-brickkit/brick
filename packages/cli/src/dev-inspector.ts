@@ -3,11 +3,10 @@ import { existsSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { BrickApp } from "@brickkit/core";
+import { INSPECTOR_TOKEN_HEADER, ROUTES } from "./dashboard-protocol";
 
 /** Where the dashboard serves the inspector. */
-export const INSPECTOR_PATH = "/workflows";
-/** The header that proves a request comes from the dashboard. */
-export const INSPECTOR_TOKEN_HEADER = "x-brick-inspector";
+const INSPECTOR_PATH = ROUTES.workflows.path;
 
 export interface Inspector {
   readonly port: number;

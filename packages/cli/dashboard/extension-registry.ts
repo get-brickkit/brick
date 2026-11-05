@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
-import type { TraceSummary } from "../src/dev-telemetry-store";
+import type { TraceSummary } from "../src/dashboard-protocol";
 import type { Route, View } from "./state";
 
 /*
@@ -94,6 +94,49 @@ export interface DashboardExtension {
 /** Declare the dashboard extension; the module's default export. */
 export function defineDashboard<T extends DashboardExtension>(extension: T): T {
   return extension;
+}
+
+/**
+ * The app's extension and its plugins' as one, in order: the app's comes
+ * first and keeps its slots (drawer tabs add up), a page whose id is taken is
+ * skipped, and a plugin's pages without a place go under a section named after
+ * it. Roots are left to the caller, which nests them.
+ */
+export function mergeExtensions(
+  parts: readonly {
+    name: string;
+    plugin: boolean;
+    extension: DashboardExtension;
+  }[],
+): DashboardExtension {
+  const pages: ExtensionPage[] = [];
+  const sidebar: SidebarLink[] = [];
+  const slots: Record<string, unknown> = {};
+  for (const { name, plugin, extension } of parts) {
+    for (const page of extension.pages ?? []) {
+      if (pages.some((item) => item.id === page.id)) {
+        console.error(
+          `[Brick dashboard] Extension ${name}: page id ${page.id} is taken; skipped.`,
+        );
+        continue;
+      }
+      pages.push(
+        plugin && !page.after && !page.section
+          ? { ...page, section: name }
+          : page,
+      );
+    }
+    sidebar.push(...(extension.sidebar ?? []));
+    for (const [slot, value] of Object.entries(extension.slots ?? {})) {
+      if (slot === "request.drawer.tabs")
+        slots[slot] = [
+          ...((slots[slot] as DrawerTab[]) ?? []),
+          ...(value as DrawerTab[]),
+        ];
+      else if (!(slot in slots)) slots[slot] = value;
+    }
+  }
+  return { pages, sidebar, slots: slots as DashboardSlots };
 }
 
 /** One entry of the sidebar. */

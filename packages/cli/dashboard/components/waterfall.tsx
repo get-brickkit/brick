@@ -3,7 +3,12 @@ import { Badge } from "@/components/ui/badge";
 import { SPAN_BG, SPAN_LABEL } from "@/components/span-style";
 import { formatDuration, spanDepths, spanKind } from "@/format";
 import { cn } from "@/lib/utils";
-import type { TraceSpan, TraceSummary } from "../../src/dev-telemetry-store";
+import {
+  ATTR,
+  SPAN,
+  type TraceSpan,
+  type TraceSummary,
+} from "../../src/dashboard-protocol";
 
 const RUNNING =
   "bg-[image:repeating-linear-gradient(135deg,transparent_0_4px,color-mix(in_oklab,var(--background)_45%,transparent)_4px_8px)]";
@@ -16,7 +21,9 @@ function SpanDetails({ span }: { span: TraceSpan }) {
   const attributes = Object.entries(span.attributes).filter(
     ([, value]) => value !== undefined,
   );
-  const exceptions = span.events.filter((event) => event.name === "exception");
+  const exceptions = span.events.filter(
+    (event) => event.name === SPAN.exceptionEvent,
+  );
   return (
     <div className="mb-2 flex flex-col gap-2">
       <dl className="m-0 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-0.5 border bg-muted/50 p-3 font-mono text-xs leading-[18px]">
@@ -32,9 +39,9 @@ function SpanDetails({ span }: { span: TraceSpan }) {
           key={index}
           className="m-0 overflow-auto border bg-muted/50 p-3 font-mono text-xs leading-[18px] [overflow-wrap:anywhere] whitespace-pre-wrap"
         >
-          {String(event.attributes["exception.message"] ?? "")}
-          {event.attributes["exception.stacktrace"]
-            ? `\n\n${String(event.attributes["exception.stacktrace"])}`
+          {String(event.attributes[ATTR.exceptionMessage] ?? "")}
+          {event.attributes[ATTR.exceptionStack]
+            ? `\n\n${String(event.attributes[ATTR.exceptionStack])}`
             : ""}
         </pre>
       ))}
@@ -99,7 +106,7 @@ export function Waterfall({
               <span
                 className="flex min-w-0 items-center truncate text-[13px] text-muted-foreground group-hover:text-foreground"
                 style={{ paddingLeft: (depths.get(span.spanId) ?? 0) * 14 }}
-                title={String(span.attributes["db.statement"] ?? span.name)}
+                title={String(span.attributes[ATTR.dbStatement] ?? span.name)}
               >
                 <i
                   className={cn(

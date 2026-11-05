@@ -1,4 +1,9 @@
-import type { TraceSpan, TraceSummary } from "../src/dev-telemetry-store";
+import {
+  ATTR,
+  SPAN,
+  type TraceSpan,
+  type TraceSummary,
+} from "../src/dashboard-protocol";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 export const LOG_LEVELS: readonly LogLevel[] = [
@@ -27,7 +32,7 @@ export interface LogEntry {
  * `ctx.logger` in @brickkit/core writes. A span that kept only part of them
  * says how many it left out in `brick.logs.dropped`.
  */
-const EVENT = "log";
+const EVENT = SPAN.logEvent;
 
 /**
  * Terminal colors and styles, which a line logged before capture removed them
@@ -53,8 +58,11 @@ function entriesOf(
     entries.push({
       id: `${trace.traceId}:${span.spanId}:${index}`,
       timeMs: event.timeMs,
-      level: levelOf(event.attributes["log.level"]),
-      message: String(event.attributes["log.message"] ?? "").replace(ANSI, ""),
+      level: levelOf(event.attributes[ATTR.logLevel]),
+      message: String(event.attributes[ATTR.logMessage] ?? "").replace(
+        ANSI,
+        "",
+      ),
       traceId: trace.traceId,
       span: span.name,
       route,
@@ -79,7 +87,7 @@ export function logsOfTrace(trace: TraceSummary): {
   let dropped = 0;
   for (const span of trace.spans) {
     entries.push(...entriesOf(trace, span, route));
-    const left = span.attributes["brick.logs.dropped"];
+    const left = span.attributes[ATTR.logsDropped];
     if (typeof left === "number") dropped += left;
   }
   entries.sort((a, b) => a.timeMs - b.timeMs);

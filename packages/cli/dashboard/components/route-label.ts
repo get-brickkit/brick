@@ -1,4 +1,4 @@
-import type { TraceSummary } from "../../src/dev-telemetry-store";
+import type { TraceSummary } from "../../src/dashboard-protocol";
 
 /** Show the request's own path where the route is a wildcard such as /api/auth/*. */
 export function routeLabel(

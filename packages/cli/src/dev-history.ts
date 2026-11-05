@@ -1,9 +1,30 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tracesToCsv } from "./dev-history-csv";
-import type { SpanOutcome, TraceSummary } from "./dev-telemetry-store";
-
-export { tracesToCsv };
+import {
+  HISTORY_PAGE_SIZE,
+  type FacetValue,
+  type HistoryFacets,
+  type HistoryInfo,
+  type HistorySummary,
+  type HistoryTrace,
+  type Outcome,
+  type SpanOutcome,
+  type TraceSummary,
+  type VolumeBucket,
+} from "./dashboard-protocol";
+import {
+  bucketSize,
+  CLIENT_ERROR,
+  endpointOf,
+  MAX_FACET_VALUES,
+  OUTCOMES,
+  percentile,
+  SEARCHED,
+  SERVER_ERROR,
+  tracesToCsv,
+  type Facet,
+  type RowFilters,
+} from "./dashboard-query";
 
 export const DEFAULT_HISTORY_DAYS = 90;
 
@@ -12,88 +33,15 @@ const MAX_TRACES = 100_000;
 const FLUSH_MS = 250;
 const PRUNE_MS = 30 * 60_000;
 const VOLUME_BUCKETS = 48;
-const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
-const MAX_FACET_VALUES = 30;
 const MAX_EXPORT_ROWS = 100_000;
 
-/** A finished request without its spans; fetch the full trace by id. */
-export interface HistoryTrace {
-  traceId: string;
-  name: string;
-  /** "GET /api/page/:id" when the method and route are known, else the span name. */
-  endpoint: string;
-  method?: string;
-  route?: string;
-  path?: string;
-  httpStatus?: number;
-  generation: number;
-  startMs: number;
-  endMs?: number;
-  durationMs?: number;
-  status: SpanOutcome;
-  truncated: boolean;
-  /** The service and action that handled the request, when it ran one. */
-  service?: string;
-  action?: string;
-  /** Why it failed, when it did. */
-  message?: string;
-}
-
-/** How a request ended: a 5xx or crash, a 4xx, or neither. */
-export type Outcome = "ok" | "client" | "server";
-const OUTCOMES = new Set<string>(["ok", "client", "server"]);
-
-/** A filter groups values with OR; separate filters combine with AND. */
-export interface HistoryQuery {
+/** The filters of the request log, over a window, a page at a time. */
+export interface HistoryQuery extends RowFilters {
   from: number;
   to: number;
-  endpoints?: string[];
-  methods?: string[];
-  services?: string[];
-  outcomes?: Outcome[];
-  /** Only requests at least this slow. */
-  minMs?: number;
-  /** Matches the endpoint or the request path. */
-  query?: string;
-  sort?: "recent" | "slowest";
   limit?: number;
   offset?: number;
-}
-
-export interface VolumeBucket {
-  start: number;
-  ok: number;
-  client: number;
-  server: number;
-}
-
-/** The numbers behind the cards at the top of the log, for what matches. */
-export interface HistorySummary {
-  total: number;
-  clientErrors: number;
-  serverErrors: number;
-  medianMs: number;
-  p95Ms: number;
-}
-
-export interface FacetValue {
-  value: string;
-  count: number;
-}
-
-/** What is in the range, counted for each filter as if it were not applied. */
-export interface HistoryFacets {
-  outcome: FacetValue[];
-  method: FacetValue[];
-  service: FacetValue[];
-  endpoint: FacetValue[];
-}
-
-export interface HistoryInfo {
-  days: number;
-  count: number;
-  oldestMs?: number;
 }
 
 interface Statement {
@@ -182,27 +130,11 @@ const text = (value: unknown): string | undefined =>
 const number = (value: unknown): number | undefined =>
   value === null || value === undefined ? undefined : Number(value);
 
-function percentile(sorted: number[], fraction: number): number {
-  if (sorted.length === 0) return 0;
-  const position = (sorted.length - 1) * fraction;
-  const lower = Math.floor(position);
-  const upper = Math.ceil(position);
-  return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower);
-}
-
-const OUTCOME_SQL: Record<Outcome, string> = {
-  server: "(status = 'error' OR http_status >= 500)",
-  client: "(status != 'error' AND http_status >= 400 AND http_status < 500)",
-  ok: "(status != 'error' AND (http_status IS NULL OR http_status < 400))",
-};
-
-/** The outcome of each row, for counting; agrees with OUTCOME_SQL. */
+/** Each row's outcome, by the rules of `outcomeOf`. */
 const OUTCOME_CASE = `CASE
-  WHEN status = 'error' OR http_status >= 500 THEN 'server'
-  WHEN http_status >= 400 AND http_status < 500 THEN 'client'
+  WHEN status = 'error' OR http_status >= ${SERVER_ERROR} THEN 'server'
+  WHEN http_status >= ${CLIENT_ERROR} THEN 'client'
   ELSE 'ok' END`;
-
-type Facet = "outcome" | "method" | "service" | "endpoint";
 
 const FACET_COLUMNS: Record<Facet, string> = {
   outcome: OUTCOME_CASE,
@@ -226,11 +158,7 @@ function filterSql(
   if (skip !== "endpoint") anyOf("endpoint", query.endpoints);
   if (skip !== "method") anyOf("method", query.methods);
   if (skip !== "service") anyOf("service", query.services);
-  if (skip !== "outcome" && query.outcomes && query.outcomes.length > 0) {
-    clauses.push(
-      `(${query.outcomes.map((outcome) => OUTCOME_SQL[outcome]).join(" OR ")})`,
-    );
-  }
+  if (skip !== "outcome") anyOf(OUTCOME_CASE, query.outcomes);
   if (query.minMs !== undefined && query.minMs > 0) {
     clauses.push("duration_ms >= ?");
     params.push(query.minMs);
@@ -239,12 +167,15 @@ function filterSql(
   if (needle) {
     const pattern = `%${needle.replace(/[\\%_]/g, "\\$&")}%`;
     clauses.push(
-      "(endpoint LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\' OR action LIKE ? ESCAPE '\\' OR message LIKE ? ESCAPE '\\')",
+      `(${SEARCHED.map((column) => `${column} LIKE ? ESCAPE '\\'`).join(" OR ")})`,
     );
-    params.push(pattern, pattern, pattern, pattern, pattern);
+    params.push(...SEARCHED.map(() => pattern));
   }
   return { sql: clauses.join(" AND "), params };
 }
+
+const orderSql = (sort: HistoryQuery["sort"]) =>
+  sort === "slowest" ? "duration_ms DESC, start_ms DESC" : "start_ms DESC";
 
 const LIST_COLUMNS = `trace_id, name, endpoint, method, route, path, http_status, generation,
   start_ms, end_ms, duration_ms, status, truncated, service, action, message`;
@@ -368,9 +299,7 @@ export class DevHistory {
         saveTrace.run(
           trace.traceId,
           trace.name,
-          trace.method && trace.route
-            ? `${trace.method} ${trace.route}`
-            : trace.name,
+          endpointOf(trace),
           trace.method ?? null,
           trace.route ?? null,
           trace.path ?? null,
@@ -444,18 +373,14 @@ export class DevHistory {
         .get(...params)?.n ?? 0,
     );
     const limit = Math.min(
-      Math.max(query.limit ?? DEFAULT_LIMIT, 1),
+      Math.max(query.limit ?? HISTORY_PAGE_SIZE, 1),
       MAX_LIMIT,
     );
     const offset = Math.max(query.offset ?? 0, 0);
-    const order =
-      query.sort === "slowest"
-        ? "duration_ms DESC, start_ms DESC"
-        : "start_ms DESC";
     const rows = this.#database
       .prepare(
         `SELECT ${LIST_COLUMNS}
-         FROM traces WHERE ${sql} ORDER BY ${order} LIMIT ? OFFSET ?`,
+         FROM traces WHERE ${sql} ORDER BY ${orderSql(query.sort)} LIMIT ? OFFSET ?`,
       )
       .all(...params, limit, offset);
     return { total, traces: rows.map(toHistoryTrace) };
@@ -488,7 +413,7 @@ export class DevHistory {
   volume(query: HistoryQuery, buckets = VOLUME_BUCKETS): VolumeBucket[] {
     this.flush();
     const { sql, params } = filterSql(query);
-    const bucketMs = Math.max(Math.ceil((query.to - query.from) / buckets), 1);
+    const bucketMs = bucketSize(query.from, query.to, buckets);
     const result: VolumeBucket[] = Array.from(
       { length: buckets },
       (_, index) => ({
@@ -518,14 +443,10 @@ export class DevHistory {
   exportCsv(query: HistoryQuery): string {
     this.flush();
     const { sql, params } = filterSql(query);
-    const order =
-      query.sort === "slowest"
-        ? "duration_ms DESC, start_ms DESC"
-        : "start_ms DESC";
     const rows = this.#database
       .prepare(
         `SELECT ${LIST_COLUMNS}
-         FROM traces WHERE ${sql} ORDER BY ${order} LIMIT ?`,
+         FROM traces WHERE ${sql} ORDER BY ${orderSql(query.sort)} LIMIT ?`,
       )
       .all(...params, MAX_EXPORT_ROWS);
     return tracesToCsv(rows.map(toHistoryTrace));
@@ -614,7 +535,7 @@ export function parseHistoryQuery(
     methods: all("method"),
     services: all("service"),
     outcomes: all("outcome")?.filter((value): value is Outcome =>
-      OUTCOMES.has(value),
+      OUTCOMES.includes(value as Outcome),
     ),
     minMs: integer("minMs"),
     query: params.get("q") || undefined,

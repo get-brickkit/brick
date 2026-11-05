@@ -12,16 +12,22 @@ a browser reload shows the new UI without restarting `brick dev`.
 
 ## Layout
 
+- `../src/dashboard-protocol.ts`: what the server and this page agree on: the
+  route table (`ROUTES`, which the server dispatches from and this page builds
+  URLs from), the CSRF header, server-sent event names, the shared-module table
+  and the data types. `../src/dashboard-query.ts`: the request log's rules
+  (outcome, filters, counts, volume, summary, CSV), which this page runs over
+  live requests and the server's SQL matches (a parity test in
+  `../test/dev-history.test.ts`). Neither imports server code.
 - `main.tsx`, `app.tsx`: entry and the app root (routing, shortcuts, theme).
 - `state.ts`: the event-stream reducer, hash routing (`#/requests/<traceId>`),
   and the theme, clock, and sidebar hooks.
-- `format.ts`: pure helpers for stats, bucketing, and span nesting. They have
+- `format.ts`: pure helpers for formatting and span nesting. They have
   unit tests in `../test/dashboard-format.test.ts`.
 - `graph.ts`: builds the service graph from the architecture and recent
   traces, and lays it out in columns (`../test/dashboard-graph.test.ts`).
-- `filters.ts`: the request log's filters, counts, and link and query-string
-  handling, used for live requests and matching the server's history queries
-  (`../test/dashboard-filters.test.ts`).
+- `filters.ts`: the request log's filters as the page holds them, and the
+  history query string (`../test/dashboard-filters.test.ts`).
 - `history.ts`: the hooks that read `/api/history/*` for the stored requests,
   their counts, volume, and summary (`../test/dashboard-history.test.ts`).
 - `shell.tsx`: the sidebar and top bar. `BUILT_IN_NAV` is the dashboard's own
@@ -29,16 +35,17 @@ a browser reload shows the new UI without restarting `brick dev`.
 - `kit.ts`: `@brickkit/cli/dashboard`, what a project's dashboard extension
   imports (`defineDashboard`, the UI kit, the data hooks). It is a second
   entry of the Vite build (`kit.js`), sharing chunks with `app.js`, and the
-  page's import map names it, with `react.js`, `react-dom.js`,
-  `react-dom-client.js` and `react-jsx-runtime.js` (shims that
+  page's import map names it, with the React shims that
   `scripts/build-dashboard.ts` writes over `globalThis.__brickDashboard`, set
-  in `main.tsx`). Its types are `dist/dashboard.d.ts`
+  in `main.tsx`; `SHARED_MODULES` lists them all. Its types are `dist/dashboard.d.ts`
   (`tsdown.dashboard.config.ts`).
-- `extension-registry.ts`: the extension's types and `mergeNav`, which places
+- `extension-registry.ts`: the extension's types, `mergeExtensions` (the app's
+  and its plugins' as one), and `mergeNav`, which places
   its pages (`#/x/<id>`) and links in the sidebar and refuses duplicate,
   built-in or malformed ids (`../test/dashboard-extension.test.ts`).
 - `extension.tsx`: loading the extension (the shell's `brick-extension` meta
-  names it) before the first render, the error boundary around every page,
+  names it; with plugins it lists parts, loaded apart and merged) before the
+  first render, the error boundary around every page,
   slot, drawer tab and the root, `Slot`, and the data hooks (`useAppFetch`
   over the server's `/app` proxy, `useRequests`, `useArchitecture`).
 - `views/`: Requests, Overview, APIs, Docs, Workflows (a frame around the inspector the dev server proxies at `/workflows`), Errors, Reloads, and an extension's page (`extension-page.tsx`).
@@ -93,11 +100,12 @@ Follows Efferd's Dashboard 9. Tokens live in `styles.css` for both themes.
   include exceptions) and counts the rest in `brick.logs.dropped`.
 - **Production mode:** the same app, served by `startDevDashboard` with
   `mode: "production"` for `brick start` (`src/production-dashboard.ts`, from the
-  app's `dashboard` option). The server then answers only what
-  `isMonitoringRoute` lists (the shell and assets, `/api/state`, `/api/events`,
-  `/api/history*`), adds security headers, and puts `mode` in the snapshot, which
-  hides the APIs and Docs tabs and the restart button and shows a Production
-  badge. `src/dashboard-access.ts` checks each request against `auth` (tokens
+  app's `dashboard` option). The server then answers only the routes
+  marked `production` in `ROUTES` (`src/dashboard-protocol.ts`: the shell and
+  assets, `/api/state`, `/api/events`, `/api/history*`), adds security headers,
+  and puts `mode` in the snapshot. The page then hides the views whose routes
+  production lacks (APIs, Docs, Workflows) and the restart button, and shows a
+  Production badge. `src/dashboard-access.ts` checks each request against `auth` (tokens
   compared in constant time, and the app's `authorize` with a five-second limit)
   before anything but `/_health`. Spans reach the store in-process, with no
   worker or ingest endpoint.

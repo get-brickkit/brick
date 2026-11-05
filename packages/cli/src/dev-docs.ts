@@ -11,7 +11,17 @@ import {
   sep,
 } from "node:path";
 import type { DocumentationOptions } from "@brickkit/core";
-import type { DevTelemetryStore, DocsSnapshot } from "./dev-telemetry-store";
+import {
+  docsFileUrl,
+  SHARED_MODULES,
+  type DocsInfo,
+  type DocsNode,
+  type DocsPage,
+  type DocsSearchHit,
+  type DocsSnapshot,
+  type DocsTree,
+} from "./dashboard-protocol";
+import type { DevTelemetryStore } from "./dev-telemetry-store";
 
 /*
  * Developer documentation for the dashboard's Docs tab. The folder follows
@@ -22,58 +32,6 @@ import type { DevTelemetryStore, DocsSnapshot } from "./dev-telemetry-store";
  * fumadocs-core and @mdx-js/mdx are optional peers, loaded only when an app
  * sets `documentation`, so projects without docs do not install them.
  */
-
-/** One entry of the docs sidebar. */
-export type DocsNode =
-  | { type: "page"; name: string; url: string; description?: string }
-  | {
-      type: "folder";
-      name: string;
-      index?: { name: string; url: string };
-      children: DocsNode[];
-      defaultOpen?: boolean;
-    }
-  | { type: "separator"; name?: string };
-
-export interface DocsTree {
-  name: string;
-  children: DocsNode[];
-}
-
-export interface DocsHeading {
-  title: string;
-  url: string;
-  depth: number;
-}
-
-/** A page ready to run in the browser. */
-export interface DocsPage {
-  title: string;
-  description?: string;
-  /** The file, relative to the docs folder. */
-  path: string;
-  slugs: string[];
-  toc: DocsHeading[];
-  /** MDX compiled to a function body; see `runMdx` in the dashboard. */
-  code: string;
-  /** Set instead of `code` when the page does not compile. */
-  error?: string;
-}
-
-export interface DocsSearchHit {
-  id: string;
-  type: "page" | "heading" | "text";
-  content: string;
-  /** Route within the docs, with a `#heading` when the hit is inside a page. */
-  url: string;
-}
-
-export interface DocsInfo {
-  tree: DocsTree;
-  /** Whether the project supplied components of its own. */
-  components: boolean;
-  revision: number;
-}
 
 export type OpenedDocs =
   | { status: "ready"; docs: DevDocs }
@@ -476,14 +434,12 @@ export class DevDocs {
    * This covers markdown links and the `href` of components such as `<Card>`.
    */
   #rewriteLinks(tree: MdastNode, from: string): void {
-    const file = (resolved: string) =>
-      `/api/docs/files/${resolved.split("/").map(encodeURIComponent).join("/")}`;
     walk(tree, (node) => {
       if (node.type === "link" && node.url !== undefined) {
         node.url = this.#route(from, node.url) ?? node.url;
       } else if (node.type === "image" && node.url !== undefined) {
         const resolved = resolveInside(from, node.url);
-        if (resolved !== undefined) node.url = file(resolved);
+        if (resolved !== undefined) node.url = docsFileUrl(resolved);
       } else if (
         node.type === "mdxJsxFlowElement" ||
         node.type === "mdxJsxTextElement"
@@ -496,7 +452,7 @@ export class DevDocs {
               this.#route(from, attribute.value) ?? attribute.value;
           else if (attribute.name === "src" && node.name === "img") {
             const resolved = resolveInside(from, attribute.value);
-            if (resolved !== undefined) attribute.value = file(resolved);
+            if (resolved !== undefined) attribute.value = docsFileUrl(resolved);
           }
         }
       }
@@ -594,17 +550,7 @@ export class DevDocs {
   }
 }
 
-// What the dashboard supplies to the project's components and its extension
-// itself, so there is one copy of React and of the UI kit on the page. See the
-// import map in the page shell.
-const SHARED = [
-  "react",
-  "react/jsx-runtime",
-  "react/jsx-dev-runtime",
-  "react-dom",
-  "react-dom/client",
-  "@brickkit/cli/dashboard",
-];
+const SHARED = SHARED_MODULES.map((module) => module.specifier);
 
 /** Bundle a module of React components for the dashboard to import. */
 export async function bundleComponents(entry: string): Promise<string> {

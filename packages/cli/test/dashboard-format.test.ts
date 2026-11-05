@@ -1,16 +1,15 @@
 import { describe, expect, it } from "bun:test";
 import {
-  bucketize,
   describeTrace,
   formatDuration,
   formatTimestamp,
   isFailure,
-  percentile,
   spanDepths,
   spanKind,
   withAppServer,
 } from "../dashboard/format";
-import type { TraceSpan, TraceSummary } from "../src/dev-telemetry-store";
+import { percentile } from "../src/dashboard-query";
+import type { TraceSpan, TraceSummary } from "../src/dashboard-protocol";
 
 function trace(
   startMs: number,
@@ -61,23 +60,6 @@ describe("dashboard format helpers", () => {
     expect(percentile([], 0.5)).toBe(0);
     expect(percentile([10], 0.95)).toBe(10);
     expect(percentile([10, 20, 30, 40], 0.5)).toBe(25);
-  });
-
-  it("counts traces into equal time buckets by outcome", () => {
-    const buckets = bucketize(
-      [
-        trace(1_000),
-        trace(1_500, { httpStatus: 404 }),
-        trace(6_000, { status: "error" }),
-        trace(99_000),
-      ],
-      10_000,
-      2,
-      10_000,
-    );
-    expect(buckets).toHaveLength(2);
-    expect(buckets[0]).toMatchObject({ ok: 1, client: 1, server: 0 });
-    expect(buckets[1]).toMatchObject({ ok: 0, client: 0, server: 1 });
   });
 
   it("formats a timestamp to the hundredth, with the date when asked", () => {

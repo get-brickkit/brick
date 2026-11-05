@@ -18,7 +18,7 @@ import {
   runMdx,
 } from "@/components/docs/mdx-components";
 import { cn } from "@/lib/utils";
-import type { DocsHeading, DocsPage } from "../../../src/dev-docs";
+import type { DocsHeading, DocsPage } from "../../../src/dashboard-protocol";
 
 function scrollToHeading(id: string): void {
   document.getElementById(id)?.scrollIntoView({ block: "start" });
