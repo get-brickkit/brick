@@ -3,7 +3,6 @@ import type { HttpMethod } from "./http";
 import { actionMeta, type PluginRouteBinding } from "./action-meta";
 import { kebabCase } from "./kebab";
 
-export { kebabCase };
 export type { ResourceActionInfo } from "./action-meta";
 
 /**

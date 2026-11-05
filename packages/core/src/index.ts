@@ -112,21 +112,16 @@ export { redisBroker, type RedisBrokerOptions } from "./socket-redis";
 export { getActionAccess, setActionAccess } from "./access";
 export type { ActionAccessInfo } from "./access";
 export type { HttpMethod } from "./http";
-export {
-  defineAction,
-  defineError,
-  errorsOf,
-  buildErrorHelpers,
-} from "./action";
+export { defineAction, errorsOf, buildErrorHelpers } from "./action";
 export { defineResource, loadRecord } from "./resource";
 export {
   getActionRoute,
   getPluginActionRoute,
   actionOwners,
-  kebabCase,
   type ActionRoute,
   type ResourceActionInfo,
 } from "./routes";
+export { kebabCase } from "./kebab";
 export {
   useService,
   type ServiceClient,
@@ -134,7 +129,12 @@ export {
   type UntypedServiceClient,
 } from "./rpc";
 export { port, useDeps, type Port, type Ports, type DepsOf } from "./deps";
-export { stepErrors, stepFailure, type StepErrorBuilder } from "./workflow";
+export {
+  defineError,
+  stepErrors,
+  stepFailure,
+  type StepErrorBuilder,
+} from "./workflow";
 
 export { defineListener } from "./events/listener";
 export { emitEvent } from "./events/emit";

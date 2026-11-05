@@ -20,7 +20,8 @@ import {
 } from "./plugin-types";
 import { defineAction } from "./action";
 import { actionMeta, type PluginRouteBinding } from "./action-meta";
-import { kebabCase, pluginRoutePath } from "./routes";
+import { kebabCase } from "./kebab";
+import { pluginRoutePath } from "./routes";
 import { HTTP_METHODS } from "./http";
 import { portOf } from "./service-port";
 

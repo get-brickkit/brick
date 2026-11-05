@@ -1,15 +1,5 @@
 import type { Service } from "../types";
 import type { DatabaseHandle } from "./define";
-import {
-  createSQLiteDatabase,
-  type SQLiteDatabaseConfig,
-  type BunSQLiteDatabase,
-} from "./sqlite";
-import {
-  createPostgresDatabase,
-  type PostgresDatabaseConfig,
-  type PostgresDatabase,
-} from "./postgres";
 import { getTableColumns, getTableName, sql, type Table } from "drizzle-orm";
 import { getTableConfig, isPgEnum, pgSchema } from "drizzle-orm/pg-core";
 import { migrate as migratePostgres } from "drizzle-orm/postgres-js/migrator";
@@ -46,52 +36,6 @@ export {
   Table,
   is,
 } from "drizzle-orm";
-
-export interface DatabaseConfig<
-  TSchema extends Record<string, unknown> = Record<string, unknown>,
->
-  extends
-    Omit<SQLiteDatabaseConfig<TSchema>, "client">,
-    Omit<PostgresDatabaseConfig<TSchema>, "client"> {
-  client?:
-    | SQLiteDatabaseConfig<TSchema>["client"]
-    | PostgresDatabaseConfig<TSchema>["client"];
-  /** Database engine. Default: 'sqlite' */
-  engine?: "sqlite" | "postgres" | "clickhouse";
-  /** Optional service name associated with this database */
-  name?: string;
-}
-
-export type BrickDatabase<
-  TSchema extends Record<string, unknown> = Record<string, unknown>,
-> = BunSQLiteDatabase<TSchema> | PostgresDatabase<TSchema>;
-
-/**
- * Creates a database instance based on the provided configuration.
- * Zero-config: calling `createDatabase()` returns an ultra-fast Bun-native SQLite
- * database in `:memory:` mode wrapped with Drizzle ORM.
- */
-export function createDatabase<
-  TSchema extends Record<string, unknown> = Record<string, unknown>,
->(
-  config: DatabaseConfig<TSchema> = {},
-): BunSQLiteDatabase<TSchema> | PostgresDatabase<TSchema> {
-  const engine = config.engine ?? "sqlite";
-
-  if (engine === "sqlite") {
-    return createSQLiteDatabase<TSchema>(
-      config as SQLiteDatabaseConfig<TSchema>,
-    );
-  }
-
-  if (engine === "postgres") {
-    return createPostgresDatabase<TSchema>(
-      config as PostgresDatabaseConfig<TSchema>,
-    );
-  }
-
-  throw new Error(`[Brick-TS DB] Unsupported database engine: '${engine}'`);
-}
 
 /**
  * Apply the migrations in a folder that have not run yet, in order, and record

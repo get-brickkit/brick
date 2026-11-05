@@ -1,7 +1,7 @@
 import type { HttpMethod } from "./http";
 import type { RouteIR } from "./compiler/ir";
 import type { Elysia } from "elysia";
-import type { Service } from "./types";
+import type { Logger, Service } from "./types";
 import type { DatabaseHandle } from "./db/define";
 import type { ApiDocument, DocumentationOptions } from "./docs";
 import type { DashboardOptions } from "./dashboard";
@@ -15,12 +15,7 @@ import type { InstalledPlugin } from "./plugin-types";
 export type EndpointMethod = HttpMethod;
 
 /** Logger subset handed to endpoint handlers (mirrors action context loggers). */
-export interface EndpointLogger {
-  info: (...args: any[]) => void;
-  warn: (...args: any[]) => void;
-  error: (...args: any[]) => void;
-  debug: (...args: any[]) => void;
-}
+export type EndpointLogger = Logger;
 
 /** Context for raw endpoint handlers: Elysia route fields + Brick extras. */
 export interface EndpointContext {
@@ -64,7 +59,7 @@ export function resolveEndpointDb(
       typeof service === "string"
         ? services.find((s) => s.name === service)
         : (service as Service<any, any>);
-    return svc?.getDb() ?? undefined;
+    return svc?.getDb();
   }
   for (const svc of services) {
     const db = svc.getDb();

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { SQLiteSyncDialect } from "drizzle-orm/sqlite-core";
-import { createDatabase, sql } from "../src";
+import { createSQLiteDatabase, sql } from "../src";
 
 describe("CVE-2026-39356 identifier escaping", () => {
   const dialects = [
@@ -21,7 +21,7 @@ describe("CVE-2026-39356 identifier escaping", () => {
   }
 
   it("executes a quoted SQLite alias as a single literal result key", () => {
-    const db = createDatabase();
+    const db = createSQLiteDatabase();
     const alias = 'value", (SELECT secret FROM users) --"';
     try {
       const query = db

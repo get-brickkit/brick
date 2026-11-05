@@ -69,10 +69,6 @@ it("invalidates architecture metadata while keeping the mounted app services", a
   expect(
     (await (await app.handle(request("/_brick/services"))).json()).services,
   ).toHaveLength(1);
-  registry.clear();
-  expect(
-    (await (await app.handle(request("/_brick/services"))).json()).services,
-  ).toHaveLength(1);
   resetGlobalRegistry();
   defineService("replacement");
   expect(

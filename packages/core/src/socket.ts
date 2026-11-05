@@ -2,7 +2,8 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Elysia } from "elysia";
 import { websocket } from "elysia/websocket";
 import { createLogger } from "./logger";
-import { joinRoute, kebabCase, ownerPath } from "./routes";
+import { kebabCase } from "./kebab";
+import { joinRoute, ownerPath } from "./routes";
 import { buildErrorHelpers } from "./action";
 import {
   ActionExecutionError,

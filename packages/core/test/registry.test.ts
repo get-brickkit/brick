@@ -120,8 +120,8 @@ it("exports only an app's mounted HTTP routes", async () => {
   expect(await response.json()).toEqual(
     JSON.parse(JSON.stringify(architecture)),
   );
-  registry.clear();
-  expect(registry.exportArchitecture().services).toEqual([]);
+  resetGlobalRegistry();
+  expect(getGlobalRegistry().exportArchitecture().services).toEqual([]);
 });
 
 it("keeps declarations open when exporting before app construction", () => {

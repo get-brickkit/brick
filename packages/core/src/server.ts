@@ -123,12 +123,6 @@ export interface CreateServerOptions {
   cors?: false | CorsOptions;
 }
 
-export {
-  compileRoutePlan,
-  executeCompiledRoute,
-  createActionHandler,
-} from "./action-handler";
-
 /**
  * Create the HTTP application: an Elysia app that serves every service's
  * actions (and the tools that opt in with `http: true`) as routes, with
@@ -249,12 +243,8 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     for (const service of services) instrumentDatabase(service.getDb());
   }
 
-  // Precompute plans and freeze immutable plans across all services
-  for (const service of services) {
-    if (typeof (service as any).build === "function") {
-      (service as any).build();
-    }
-  }
+  // Close declarations before anything reads them.
+  for (const service of services) service.build();
 
   // Raw endpoints declared via options or app.endpoint() (declaration order).
   const endpointDefs: EndpointDefinition[] = [];

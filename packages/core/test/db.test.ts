@@ -3,7 +3,7 @@ import {
   defineService,
   defineDatabase,
   defineAction,
-  createDatabase,
+  createSQLiteDatabase,
   attachDatabase,
   resetGlobalRegistry,
   useService,
@@ -38,7 +38,7 @@ describe("@brickkit/core Database & Drizzle Integration", () => {
 
   it("should create a table with Drizzle ORM and perform queries", async () => {
     // 1. Zero-config SQLite database helper
-    const db = createDatabase();
+    const db = createSQLiteDatabase();
     expect(db).toBeDefined();
     expect(typeof db.select).toBe("function");
 

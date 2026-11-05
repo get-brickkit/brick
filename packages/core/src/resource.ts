@@ -5,7 +5,7 @@ import { installPlugin, segmentClaimant } from "./plugin";
 import { columnValue } from "./db/column";
 import type { ResourcePlugin } from "./plugin-types";
 import { buildErrorHelpers, defineAction } from "./action";
-import { kebabCase } from "./routes";
+import { kebabCase } from "./kebab";
 import { actionMeta, type ResourceActionInfo } from "./action-meta";
 import { portOf } from "./service-port";
 import { Type } from "./typebox";
@@ -369,11 +369,7 @@ export function defineResource<
   const columns = getTableColumns(
     config.table as Parameters<typeof getTableColumns>[0],
   );
-  const primary = Object.entries(columns).filter(
-    ([, column]) => column.primary,
-  );
-  const id: Column | undefined =
-    config.id ?? (primary.length === 1 ? primary[0]?.[1] : undefined);
+  const id: Column | undefined = config.id ?? primaryColumn(config.table)?.[1];
   const entry = Object.entries(columns).find(([, column]) => column === id);
   if (!entry || !id)
     throw new Error(

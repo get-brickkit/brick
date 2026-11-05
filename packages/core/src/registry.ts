@@ -46,12 +46,6 @@ export class ServiceRegistry {
     return Array.from(this.services.values());
   }
 
-  clear(): void {
-    this.services.clear();
-    this.sites.clear();
-    this.touch();
-  }
-
   /**
    * The architecture of an app (`app.definition`): its mounted routes. Without
    * one, every registered service with its default routes under `/api`.

@@ -2,7 +2,6 @@ import type { EventRef } from "./events/catalog";
 import { actionOwners } from "./routes";
 import { analyzeDeclaredApplication } from "./compiler/ir";
 import { getActionAccess } from "./access";
-import type { ServiceRegistry } from "./registry";
 import { getGlobalRegistry } from "./registry";
 import type { Service, ActionErrorDefinition } from "./types";
 
@@ -12,7 +11,6 @@ export interface OpenApiGeneratorOptions {
   description?: string;
   prefix?: string;
   services?: Service<any, any>[];
-  registry?: ServiceRegistry;
 }
 
 function isAnchor(
@@ -46,9 +44,8 @@ function toComponentKey(id: string): string {
  * `#/components/schemas/` and rewrite the refs to local pointers.
  * First definition wins when one `$id` is declared twice.
  */
-export function hoistAnchoredSchemas(spec: Record<string, any>): string[] {
+function hoistAnchoredSchemas(spec: Record<string, any>): void {
   const anchored = new Map<string, any>();
-  const conflicts: string[] = [];
 
   const collect = (node: any): any => {
     if (Array.isArray(node)) return node.map(collect);
@@ -57,13 +54,7 @@ export function hoistAnchoredSchemas(spec: Record<string, any>): string[] {
       const id = node.$id;
       const { $id: _dropped, ...rest } = node;
       const collected = collect(rest);
-      if (anchored.has(id)) {
-        if (JSON.stringify(anchored.get(id)) !== JSON.stringify(collected)) {
-          conflicts.push(id);
-        }
-      } else {
-        anchored.set(id, collected);
-      }
+      if (!anchored.has(id)) anchored.set(id, collected);
       return { $ref: `#/components/schemas/${toComponentKey(id)}` };
     }
     for (const key of Object.keys(node)) {
@@ -95,8 +86,6 @@ export function hoistAnchoredSchemas(spec: Record<string, any>): string[] {
   // Second pass covers refs inside the hoisted copies themselves
   // (e.g. the self-recursive JSON-value schema).
   rewrite(spec);
-
-  return [...anchored.keys()];
 }
 
 /**
@@ -110,8 +99,8 @@ export function hoistAnchoredSchemas(spec: Record<string, any>): string[] {
  * document to a file or feed another tool.
  *
  * @param options - `title`, `version`, and `description` for the `info` block,
- * `prefix` (default `/api`), and the `services` or `registry` to describe
- * (the global registry by default).
+ * `prefix` (default `/api`), and the `services` to describe (the global
+ * registry's by default).
  * @returns The document as a plain object.
  */
 export function generateOpenApiSpec(
@@ -124,9 +113,7 @@ export function generateOpenApiSpec(
     "Automated OpenAPI 3.1.0 specification for Brick-TS modular service mesh.";
   const prefix = options.prefix ?? "/api";
 
-  const services =
-    options.services ??
-    (options.registry ? options.registry.list() : getGlobalRegistry().list());
+  const services = options.services ?? getGlobalRegistry().list();
 
   const paths: Record<string, any> = {};
   const tags = new Map<string, string>();

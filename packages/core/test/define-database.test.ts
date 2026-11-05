@@ -11,7 +11,6 @@ import {
   syncSchema,
   type BunSQLiteDatabase,
   createPostgresDatabase,
-  createDatabase,
 } from "../src";
 
 const items = sqliteTable("defined_items", { id: text("id").primaryKey() });
@@ -133,9 +132,6 @@ describe("defineDatabase", () => {
       expect(database.schema.pgItems).toBe(pgItems);
       expect(db.query.pgItems).toBeDefined();
       expect(createPostgresDatabase({ client }).$client).toBe(client);
-      expect(createDatabase({ engine: "postgres", client }).$client).toBe(
-        client,
-      );
     } finally {
       await client.end();
     }

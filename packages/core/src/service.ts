@@ -197,14 +197,7 @@ export class ServiceImpl<
   }
 
   registerTable(table: any): this {
-    try {
-      const tableName = getTableName(table);
-      this.tables.set(tableName, table);
-    } catch {
-      const fallbackName =
-        (table as any)._?.name ?? `table_${this.tables.size + 1}`;
-      this.tables.set(fallbackName, table);
-    }
+    this.tables.set(getTableName(table), table);
     this.touch();
     return this;
   }

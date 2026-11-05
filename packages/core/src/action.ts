@@ -31,40 +31,27 @@ export function buildErrorHelpers<
   TErrors extends Record<string, ActionErrorDefinition>,
 >(errorsDef?: TErrors): ErrorBuilder<TErrors> {
   const helpers: Record<string, any> = {};
-
-  // 1. Populate standard HTTP error helpers
-  for (const [code, def] of Object.entries(STANDARD_ERRORS)) {
+  // An action's own errors override the standard ones of the same code.
+  for (const [code, def] of Object.entries({
+    ...STANDARD_ERRORS,
+    ...errorsDef,
+  }) as [string, ActionErrorDefinition][])
     helpers[code] = (
       overrideMessage?: string,
       details?: unknown,
       options?: ErrorOptions,
     ) => {
-      const message = overrideMessage || def.message;
-      const status = def.status;
-      throw new ActionExecutionError(code, message, status, details, options);
+      throw new ActionExecutionError(
+        code,
+        overrideMessage || def.message,
+        def.status || 400,
+        details,
+        options,
+      );
     };
-  }
-
-  // 2. Populate or override with user-defined action errors
-  if (errorsDef) {
-    for (const [code, def] of Object.entries(errorsDef)) {
-      helpers[code] = (
-        overrideMessage?: string,
-        details?: unknown,
-        options?: ErrorOptions,
-      ) => {
-        const message = overrideMessage || def.message;
-        const status = def.status || 400;
-        throw new ActionExecutionError(code, message, status, details, options);
-      };
-    }
-  }
 
   return helpers as ErrorBuilder<TErrors>;
 }
-
-// Lives with the step helpers, which workflow code imports without the server.
-export { defineError } from "./workflow";
 
 /** The `errors` map of an action, to re-declare in another action or listener: `errors: { ...errorsOf(charge) }`. */
 export function errorsOf<
