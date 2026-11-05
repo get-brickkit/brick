@@ -227,6 +227,8 @@ export type BrickApp = Elysia<any, any, any, any, any, any, any> & {
    * unless `docs` is false, then those from `reference.documents`.
    */
   referenceDocuments(): Promise<ApiDocument[]>;
+  /** This app's OpenAPI document, as `/openapi.json` serves it (also when `docs` is false). */
+  openApiDocument(): Record<string, any>;
   /** All endpoints registered via `endpoint()` (declaration order). */
   listEndpoints(): EndpointDefinition[];
 };

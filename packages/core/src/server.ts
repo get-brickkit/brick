@@ -383,6 +383,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     mountEndpoint(def);
   };
   brickApp.listEndpoints = () => [...endpointDefs];
+  brickApp.openApiDocument = buildSpec;
   brickApp.referenceDocuments = async () => {
     const documents: ApiDocument[] = enableDocs
       ? [{ title, document: buildSpec() as unknown as OpenApiDocument }]
