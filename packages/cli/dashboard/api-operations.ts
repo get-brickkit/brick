@@ -1,5 +1,6 @@
 import type { ApiDocument } from "@brickkit/core";
 import { withAppServer } from "./format";
+import { hashHref } from "../src/dashboard-protocol";
 
 const METHODS = [
   "get",
@@ -156,8 +157,12 @@ export function apiHref(
   method: ApiMethod,
   path: string,
 ): string {
-  const segments = path.split("/").filter(Boolean).map(encodeURIComponent);
-  return `#/apis/${[encodeURIComponent(document), method, ...segments].join("/")}`;
+  return hashHref([
+    "apis",
+    document,
+    method,
+    ...path.split("/").filter(Boolean),
+  ]);
 }
 
 export interface ApiSelection {

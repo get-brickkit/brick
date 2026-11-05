@@ -11,7 +11,10 @@ import {
   SHELL,
   TELEMETRY_EVENTS,
   THEME_STORAGE_KEY,
+  VIEW_NAMES,
   decode,
+  hashHref,
+  type ViewName,
   type DashboardEvents,
   type DashboardSnapshot,
   type DevTelemetryEvent,
@@ -133,14 +136,7 @@ export function useDashboard(): DashboardState {
 }
 
 export type View =
-  | "requests"
-  | "logs"
-  | "overview"
-  | "apis"
-  | "docs"
-  | "workflows"
-  | "errors"
-  | "reloads"
+  | ViewName
   /** An extension's page, at `#/x/<id>/…`, so it never clashes with a built-in one. */
   | "x";
 export interface Route {
@@ -153,17 +149,6 @@ export interface Route {
   /** The extension page's id, for `x`. */
   page?: string;
 }
-
-const VIEWS: View[] = [
-  "requests",
-  "logs",
-  "overview",
-  "apis",
-  "docs",
-  "workflows",
-  "errors",
-  "reloads",
-];
 
 export function parseRoute(hash: string): Route {
   const body = hash.replace(/^#\/?/, "");
@@ -182,7 +167,9 @@ export function parseRoute(hash: string): Route {
     };
   return {
     // History became part of Requests; old links still land there.
-    view: VIEWS.includes(view as View) ? (view as View) : "requests",
+    view: VIEW_NAMES.includes(view as ViewName)
+      ? (view as ViewName)
+      : "requests",
     traceId: path[0],
     path,
     ...(anchor ? { anchor } : {}),
@@ -190,7 +177,7 @@ export function parseRoute(hash: string): Route {
 }
 
 export function routeHref(view: View, traceId?: string): string {
-  return traceId ? `#/${view}/${encodeURIComponent(traceId)}` : `#/${view}`;
+  return hashHref(traceId ? [view, traceId] : [view]);
 }
 
 /** The view and selected request, kept in the URL hash so links can be shared. */

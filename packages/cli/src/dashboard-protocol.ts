@@ -51,6 +51,19 @@ export interface SerializedError {
 // ---------------------------------------------------------------------------
 // Routes
 
+/** The dashboard's built-in views; `#/<view>/…` opens one. */
+export const VIEW_NAMES = [
+  "requests",
+  "logs",
+  "overview",
+  "apis",
+  "docs",
+  "workflows",
+  "errors",
+  "reloads",
+] as const;
+export type ViewName = (typeof VIEW_NAMES)[number];
+
 interface RouteSpec {
   path: string;
   /** Also answers every path below `path`. */
@@ -60,7 +73,7 @@ interface RouteSpec {
   /** Served by the production dashboard; `"extension"`: only when it has one. */
   production: boolean | "extension";
   /** The page's view that needs it; a view whose routes production lacks is hidden there. */
-  view?: string;
+  view?: ViewName;
   /** It changes something, so the request must carry `CSRF_HEADER`. */
   csrf?: true;
 }
@@ -145,7 +158,7 @@ export function matchRoute(
 }
 
 /** Views the production dashboard hides: they need a route it does not serve. */
-export const PRODUCTION_HIDDEN_VIEWS: ReadonlySet<string> = new Set(
+export const PRODUCTION_HIDDEN_VIEWS: ReadonlySet<string> = new Set<ViewName>(
   Object.values(ROUTES as Record<RouteName, RouteSpec>).flatMap((route) =>
     route.view && route.production === false ? [route.view] : [],
   ),
@@ -191,11 +204,16 @@ export function decode(value: string): string {
   }
 }
 
+/**
+ * A page address, `#/<segments>#<anchor>`, each part encoded. Every view's
+ * links are built with it, and the page's `parseRoute` reads them back.
+ */
+export const hashHref = (segments: string[], anchor?: string): string =>
+  `#/${encodePath(segments)}${anchor ? `#${encodeURIComponent(anchor)}` : ""}`;
+
 /** The page's address of a docs page, optionally at one of its headings. */
-export function docsHref(path: string[], anchor?: string): string {
-  const pages = encodePath(path);
-  return `#/docs${pages ? `/${pages}` : ""}${anchor ? `#${encodeURIComponent(anchor)}` : ""}`;
-}
+export const docsHref = (path: string[], anchor?: string): string =>
+  hashHref(["docs", ...path], anchor);
 
 const encodePath = (path: string[]): string =>
   path.map(encodeURIComponent).join("/");
