@@ -9,7 +9,8 @@ import postgres from "postgres";
  * tests and the benchmark on their own databases; the app never migrates.
  */
 export async function applyMigrations(url: string): Promise<void> {
-  const name = new URL(url).pathname.replace(/^\//, "");
+  // Decoded, as the postgres client reads it (my%20db is "my db").
+  const name = decodeURIComponent(new URL(url).pathname.replace(/^\//, ""));
   const adminUrl = new URL(url);
   adminUrl.pathname = "/postgres";
   const admin = postgres(adminUrl.toString(), { max: 1, onnotice: () => {} });
