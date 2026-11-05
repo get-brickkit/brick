@@ -6,7 +6,6 @@ import type { BrickApp } from "@brickkit/core";
 import type { CreateFetchHandler } from "../../workflow-inspector/server/handler";
 import { INSPECTOR_TOKEN_HEADER, ROUTES } from "./dashboard-protocol";
 
-/** Where the dashboard serves the inspector. */
 const INSPECTOR_PATH = ROUTES.workflows.path;
 
 export interface Inspector {

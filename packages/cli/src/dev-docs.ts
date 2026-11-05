@@ -133,7 +133,6 @@ function firstHeading(
       const match = H1.exec(line);
       if (match) {
         const rest = [...lines.slice(0, index), ...lines.slice(index + 1)];
-        // Drop the blank line that followed it as well.
         if (rest[index]?.trim() === "") rest.splice(index, 1);
         return { text: match[1]!, rest: rest.join("\n"), leading: !seenText };
       }
@@ -239,7 +238,6 @@ function resolveInside(from: string, href: string): string | undefined {
 export class DevDocs {
   readonly #root: string;
   readonly #documentation: DocumentationOptions;
-  /** Relative paths in `documentation` start here: the app entry's folder. */
   readonly #base: string;
   readonly #fumadocs: Fumadocs;
   readonly #warn: (message: string) => void;
@@ -271,7 +269,6 @@ export class DevDocs {
     this.#warn = warn;
   }
 
-  /** Read the folder again and tell listeners. */
   async refresh(): Promise<void> {
     // Refreshes run one at a time, so a slow scan cannot overwrite a newer one.
     this.#refreshing = this.#refreshing.then(() => this.#scan());
@@ -320,7 +317,6 @@ export class DevDocs {
     for (const listener of this.#listeners) listener();
   }
 
-  /** Start watching the folder, and the project's components module. */
   watch(): void {
     const changed = () => {
       clearTimeout(this.#timer);
@@ -627,7 +623,6 @@ function simplify(tree: RawTree | undefined): DocsTree {
 
 /** Open a docs folder; says what is missing when it cannot be shown. */
 export async function openDocs(options: {
-  /** Where relative paths in `documentation` start: the app entry's folder. */
   base: string;
   documentation: DocumentationOptions;
   warn: (message: string) => void;
@@ -662,7 +657,6 @@ export async function openDocs(options: {
  * are, replaced when that changes, and closed when it stops asking for them.
  */
 export class DocsHost {
-  /** Where each new state of the docs goes: the dashboard's store. */
   readonly #publish: (docs: DocsSnapshot | null) => void;
   readonly #warn: (message: string) => void;
   #docs: DevDocs | undefined;

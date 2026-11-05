@@ -229,7 +229,6 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
     },
     load(id) {
       if (id === resolvedReporterId) {
-        // The app imports the reporter only while the dashboard is running.
         if (!dashboard) return "";
         return `import { installDevReporter } from ${JSON.stringify(reporterModule)};
 installDevReporter({ url: ${JSON.stringify(dashboard.ingestUrl)} });

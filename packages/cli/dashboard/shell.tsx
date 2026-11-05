@@ -73,7 +73,7 @@ export function Sidebar({
   hasNewErrors: boolean;
   hasDocs: boolean;
   hasWorkflows: boolean;
-  /** The monitoring dashboard: no APIs, Docs or Workflows, which need a developer's machine. */
+  /** The monitoring dashboard, which hides the views that need a developer's machine. */
   production: boolean;
 }) {
   if (!sidebar.visible) return null;

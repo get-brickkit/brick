@@ -92,7 +92,6 @@ export const serviceFolders = (name: string) => [kebabCase(name), name];
 
 export interface FileInfo {
   settings: BrickSettings;
-  /** Path from the project root, with forward slashes. */
   rel: string;
   base: string;
   inServices: boolean;
@@ -349,7 +348,7 @@ export function resolveImport(
   );
 }
 
-/** `name.method(...)` with a non-computed property. */
+/** `name.method(...)` with a non-computed property, or a bare `fn(...)` (no `object`). */
 export function memberCall(
   node: Node,
 ): { object?: string; property: string } | undefined {

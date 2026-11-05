@@ -62,13 +62,12 @@ export function App({ loaded = {} }: { loaded?: LoadedExtension }) {
   const sidebar = useSidebar();
   const filterRef = useRef<HTMLInputElement>(null);
   const [seenFailure, setSeenFailure] = useState(0);
-  // The API reference loads on first visit, then stays alive in the background.
   const production = state.mode === "production";
-  // The views whose routes the monitoring dashboard does not serve are hidden there.
   const shown = useCallback(
     (view: View) => !(production && PRODUCTION_HIDDEN_VIEWS.has(view)),
     [production],
   );
+  // The API reference loads on first visit, then stays alive in the background.
   const [apisOpened, setApisOpened] = useState(route.view === "apis");
   // The inspector loads on first visit too, then keeps the run you were reading.
   const [workflowsOpened, setWorkflowsOpened] = useState(
@@ -116,7 +115,7 @@ export function App({ loaded = {} }: { loaded?: LoadedExtension }) {
       setWorkflowsOpened(true);
   }, [route.view, shown]);
 
-  // The monitoring dashboard has no APIs, Docs or Workflows; an old link lands on Requests.
+  // A link to a view this dashboard hides lands on Requests.
   useEffect(() => {
     if (!shown(route.view)) location.replace(routeHref("requests"));
   }, [production, route.view, shown]);

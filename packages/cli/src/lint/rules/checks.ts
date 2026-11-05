@@ -46,7 +46,6 @@ const ERROR_KINDS: Definition["kind"][] = [...ENDPOINTS, "crud"];
 const CTX_KINDS: Definition["kind"][] = [...ERROR_KINDS, "listener"];
 const BUILT_IN_ERRORS = new Set(Object.keys(STANDARD_ERRORS));
 
-/** `error.NAME(...)`, the error helper handlers receive. */
 function errorHelper(node: Node): string | undefined {
   const call = memberCall(node);
   return call?.object === "error" ? call.property : undefined;

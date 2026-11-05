@@ -220,9 +220,7 @@ async function extensionCss(
       tailwind = require.resolve("tailwindcss/package.json");
       main = require.resolve("tailwindcss");
       break;
-    } catch {
-      // Not installed there.
-    }
+    } catch {}
   }
   const assets = assetsDirectory();
   const themeFile = assets
@@ -438,7 +436,6 @@ export class DashboardExtensionHost {
     return this.#pending;
   }
 
-  /** Rebuild when a file in the extension's folder changes. */
   watch(): void {
     try {
       this.#watcher = watch(
@@ -532,7 +529,6 @@ export class DashboardExtensions {
     for (const listener of this.#listeners) listener();
   }
 
-  /** Whether any extension takes part. */
   get active(): boolean {
     return this.#parts.length > 0;
   }

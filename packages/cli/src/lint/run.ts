@@ -55,9 +55,7 @@ function oxlintBin(root: string) {
     try {
       const pkg = createRequire(base).resolve("oxlint/package.json");
       return join(dirname(pkg), "bin/oxlint");
-    } catch {
-      // not installed there; try the next place
-    }
+    } catch {}
   }
   throw new ConfigError(
     "Brick: brick lint needs oxlint; add it: bun add -d oxlint",
