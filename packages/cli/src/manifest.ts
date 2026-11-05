@@ -19,8 +19,8 @@ function rank(file: string) {
 /** Definition files under `services`: service files first, then resources, then the rest, each by path. */
 export function scanDefinitionFiles(services: string): string[] {
   if (!existsSync(services)) return [];
-  // Built per call: index.ts re-exports this module, and Node (ESLint loading
-  // brick.config.ts) has no Bun global.
+  // Built per call: index.ts imports this module (through runner) and still
+  // exports defineConfig, so Node may load it (ESLint reading brick.config.ts).
   const glob = new Bun.Glob(
     `**/*.{${DEFINITION_KINDS.join(",")}}.{${DEFINITION_EXTENSIONS.join(",")}}`,
   );
