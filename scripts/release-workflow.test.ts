@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 type Step = {
   name?: string;
@@ -10,26 +14,63 @@ type Job = {
   "runs-on": string;
   needs?: string | string[];
   if?: string;
-  strategy?: { "fail-fast": boolean; matrix: { pkg: string[] } };
+  strategy?: { "fail-fast": boolean; matrix: { pkg: string } };
   steps: Step[];
 };
-const workflow: { jobs: Record<string, Job> } = Bun.YAML.parse(
-  await Bun.file(
-    new URL("../.github/workflows/publish-npm.yml", import.meta.url),
-  ).text(),
-);
+const ROOT = join(import.meta.dir, "..");
+const readWorkflow = async (
+  name: string,
+): Promise<{ jobs: Record<string, Job> }> =>
+  Bun.YAML.parse(
+    await Bun.file(join(ROOT, ".github/workflows", name)).text(),
+  ) as { jobs: Record<string, Job> };
+const workflow = await readWorkflow("publish-npm.yml");
 const { prepare, validate, commit, publish, release } = workflow.jobs;
-const PACKAGES = ["core", "crud", "cli", "bullmq-world", "redis-world"];
+const MATRIX = "${{ fromJSON(needs.prepare.outputs.packages) }}";
+
+// Read independently of scripts/published-packages.ts: every non-private package.
+const PACKAGES: string[] = [];
+for (const dir of (await readdir(join(ROOT, "packages"))).sort()) {
+  const manifest = Bun.file(join(ROOT, "packages", dir, "package.json"));
+  if ((await manifest.exists()) && (await manifest.json()).private !== true)
+    PACKAGES.push(dir);
+}
+
+test("the release matrix is every non-private package, in lockstep", async () => {
+  const resolve = prepare!.steps.find(
+    (step) => step.name === "Resolve candidate",
+  );
+  const dir = await mkdtemp(join(tmpdir(), "brick-release-workflow-"));
+  try {
+    const output = join(dir, "outputs");
+    execFileSync("bash", ["-e", "-c", resolve!.run!], {
+      cwd: ROOT,
+      env: { ...process.env, GITHUB_OUTPUT: output, GITHUB_REF_TYPE: "branch" },
+      stdio: "pipe",
+    });
+    const outputs = Object.fromEntries(
+      (await Bun.file(output).text())
+        .trim()
+        .split("\n")
+        .map((line) => line.split(/=(.*)/s).slice(0, 2)),
+    );
+    expect(JSON.parse(outputs.packages)).toEqual(PACKAGES);
+    expect(PACKAGES).not.toContain("workflow-inspector");
+    const { version } = await Bun.file(
+      join(ROOT, "packages", PACKAGES[0]!, "package.json"),
+    ).json();
+    expect(outputs.tag).toBe(`v${version}`);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test("every package must build, typecheck, test, and pack before publishing, with the release commit last", () => {
-  expect(validate!.strategy?.matrix.pkg).toEqual(PACKAGES);
+  expect(validate!.strategy?.matrix.pkg).toBe(MATRIX);
   expect(validate!.strategy?.["fail-fast"]).toBe(false);
   const commands = validate!.steps.map((step) => step.run ?? "").join("\n");
   expect(commands).toMatch(/^bun run build$/m);
   expect(commands).toContain("bun run build:worlds");
-  expect(commands).toContain(
-    "for pkg in core crud cli bullmq-world redis-world;",
-  );
   expect(commands).toContain(
     "bun run --filter @brickkit/${{ matrix.pkg }} typecheck",
   );
@@ -49,11 +90,13 @@ test("worlds are staged, built, tested with vitest, and committed with the other
     prepare!.steps.find((step) =>
       step.uses?.startsWith("actions/upload-artifact@"),
     )?.with?.path ?? "";
-  const committed = commit!.steps.map((step) => step.run ?? "").join("\n");
-  for (const pkg of PACKAGES) {
-    expect(manifests).toContain(`packages/${pkg}/package.json`);
-    expect(committed).toContain(`packages/${pkg}/package.json`);
-  }
+  const patterns = manifests.split("\n").filter(Boolean);
+  for (const pkg of PACKAGES)
+    expect(
+      patterns.some((pattern) =>
+        new Bun.Glob(pattern).match(`packages/${pkg}/package.json`),
+      ),
+    ).toBe(true);
   const test = validate!.steps.find(
     (step) => step.name === "Test world package",
   );
@@ -89,15 +132,22 @@ test("publishing uses the exact checked tarballs without rerunning tests or buil
   const commands = publish!.steps.map((step) => step.run ?? "").join("\n");
   expect(commands).toContain('npm publish "$RUNNER_TEMP/package/"*.tgz');
   expect(commands).not.toMatch(/bun (test|run build|install)/);
-  expect(publish!.strategy?.matrix.pkg).toEqual(PACKAGES);
+  expect(publish!.strategy?.matrix.pkg).toBe(MATRIX);
 });
 
-test("release jobs use Node 24 actions and an explicit Ubuntu runner", () => {
+test("release jobs use Node 24 actions, CI's pins and Bun, and an explicit Ubuntu runner", async () => {
+  const ci = await readWorkflow("ci.yml");
+  const ciUses = Object.values(ci.jobs).flatMap((job) =>
+    job.steps.flatMap((step) => (step.uses ? [step.uses] : [])),
+  );
   for (const job of Object.values(workflow.jobs)) {
     expect(job["runs-on"]).toBe("ubuntu-24.04");
     for (const step of job.steps) {
-      if (step.uses?.startsWith("actions/checkout@"))
-        expect(step.uses).toBe("actions/checkout@v7");
+      const action = step.uses?.split("@")[0];
+      const ciPin = ciUses.find((uses) => uses.split("@")[0] === action);
+      if (ciPin) expect(step.uses).toBe(ciPin);
+      if (action === "oven-sh/setup-bun")
+        expect(step.with?.["bun-version-file"]).toBe(".bun-version");
       if (step.uses?.startsWith("actions/setup-node@"))
         expect(step.uses).toBe("actions/setup-node@v7");
       if (step.uses?.startsWith("actions/upload-artifact@"))
