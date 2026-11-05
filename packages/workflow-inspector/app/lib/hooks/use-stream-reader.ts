@@ -61,7 +61,6 @@ export function useStreamReader(
   const [error, setError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const chunkIdRef = useRef(0);
-  const frameCountRef = useRef(0);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runStatusRef = useRef(runStatus);
   runStatusRef.current = runStatus;
@@ -132,7 +131,6 @@ export function useStreamReader(
     setIsLive(false);
     setIsInitialLoading(Boolean(streamId && runId));
     chunkIdRef.current = 0;
-    frameCountRef.current = 0;
     serverCursorRef.current = null;
 
     if (pollTimerRef.current) {
@@ -165,19 +163,17 @@ export function useStreamReader(
     /**
      * Fetch stream data and parse frames.
      *
-     * When `cursor` is provided, the server only returns chunks after that
-     * position (incremental fetch). `skipFrames` skips N frames from the
-     * response to handle the overlap from cursor-based pagination.
+     * When `cursor` is provided, the server only returns chunks written after
+     * the response that gave it (incremental fetch).
      */
     const fetchAndParse = async (
       targetBuffer: StreamChunk[],
       cryptoKey: PayloadKey | undefined,
-      options?: { skipFrames?: number; cursor?: string | null },
+      cursor?: string | null,
     ): Promise<
       | { encrypted: true }
       | {
           encrypted: false;
-          frameCount: number;
           cursor: string | null;
           done: boolean;
         }
@@ -186,16 +182,14 @@ export function useStreamReader(
         streamId,
         runId,
         abortController.signal,
-        options?.cursor,
+        cursor,
       );
 
-      const skipFrames = options?.skipFrames ?? 0;
       const reader = streamResponse.body.getReader();
       const decoder = new TextDecoder();
       let buffer = new Uint8Array(0);
       let encoding: StreamEncoding | null = null;
       let textRemainder = "";
-      let frameIndex = 0;
 
       const appendToBuffer = (data: Uint8Array) => {
         const newBuffer = new Uint8Array(buffer.length + data.length);
@@ -210,10 +204,7 @@ export function useStreamReader(
         const { value, done } = await reader.read();
         if (done) {
           if (encoding === "legacy" && textRemainder.trim()) {
-            frameIndex++;
-            if (frameIndex > skipFrames) {
-              targetBuffer.push(parseLegacyLine(textRemainder.trim()));
-            }
+            targetBuffer.push(parseLegacyLine(textRemainder.trim()));
             textRemainder = "";
           }
           break;
@@ -240,10 +231,7 @@ export function useStreamReader(
           for (const line of lines) {
             const trimmed = line.trim();
             if (trimmed) {
-              frameIndex++;
-              if (frameIndex > skipFrames) {
-                targetBuffer.push(parseLegacyLine(trimmed));
-              }
+              targetBuffer.push(parseLegacyLine(trimmed));
             }
           }
           continue;
@@ -274,11 +262,6 @@ export function useStreamReader(
           );
           offset += FRAME_HEADER_SIZE + frameLength;
 
-          frameIndex++;
-          if (frameIndex <= skipFrames) {
-            continue;
-          }
-
           const result = await processFrame(frameData, cryptoKey, revivers);
           if (result.encrypted) {
             reader.cancel().catch(() => {});
@@ -298,7 +281,6 @@ export function useStreamReader(
 
       return {
         encrypted: false,
-        frameCount: frameIndex,
         cursor: streamResponse.cursor,
         done: streamResponse.done,
       };
@@ -324,7 +306,6 @@ export function useStreamReader(
           return;
         }
 
-        frameCountRef.current = result.frameCount;
         serverCursorRef.current = result.cursor;
 
         if (!mounted || abortController.signal.aborted) return;
@@ -344,12 +325,12 @@ export function useStreamReader(
             if (!mounted || abortController.signal.aborted) return;
             try {
               const newChunks: StreamChunk[] = [];
-              const pollResult = await fetchAndParse(newChunks, cryptoKey, {
-                cursor: serverCursorRef.current,
-                skipFrames: frameCountRef.current,
-              });
+              const pollResult = await fetchAndParse(
+                newChunks,
+                cryptoKey,
+                serverCursorRef.current,
+              );
               if (!pollResult.encrypted) {
-                frameCountRef.current = pollResult.frameCount;
                 if (pollResult.cursor) {
                   serverCursorRef.current = pollResult.cursor;
                 }

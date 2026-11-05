@@ -31,6 +31,30 @@ function stubWorld() {
         return { data: [], cursor: null, hasMore: false };
       },
     },
+    chunks: [] as Uint8Array[],
+    // Pages like redis-world: a cursor to the next page, null on the last one.
+    streams: {
+      getChunks: async (
+        _runId: string,
+        _name: string,
+        options: { limit?: number; cursor?: string } = {},
+      ) => {
+        const start = Number(options.cursor ?? 0);
+        const end = Math.min(
+          start + (options.limit ?? 100),
+          world.chunks.length,
+        );
+        const hasMore = end < world.chunks.length;
+        return {
+          data: world.chunks
+            .slice(start, end)
+            .map((data, index) => ({ index: start + index, data })),
+          cursor: hasMore ? String(end) : null,
+          hasMore,
+          done: false,
+        };
+      },
+    },
     hooks: {
       getByToken: async (token: string) => {
         world.tokens.push(token);
@@ -103,6 +127,38 @@ describe("createFetchHandler", () => {
     const answer = await rpc(handle, "fetchRuns");
     expect(answer.success).toBe(true);
     expect(world.listed).toBe(before + 1);
+  });
+
+  it("resumes a stream after the chunks it already sent, past one page", async () => {
+    const read = async (cursor: string | null) => {
+      const query = new URLSearchParams({ runId: "wrun_1" });
+      if (cursor) query.set("cursor", cursor);
+      const response = await handle(
+        new Request(`${base}/api/stream/strm_1?${query}`),
+      );
+      expect(response.status).toBe(200);
+      return {
+        chunks: [...new Uint8Array(await response.arrayBuffer())],
+        cursor: response.headers.get("X-Stream-Cursor"),
+      };
+    };
+    const write = (from: number, to: number) => {
+      for (let i = from; i < to; i++)
+        world.chunks.push(new Uint8Array([i % 256]));
+    };
+
+    // More than the 500 chunks the route reads per page.
+    write(0, 700);
+    const first = await read(null);
+    expect(first.chunks.length).toBe(700);
+
+    write(700, 710);
+    const second = await read(first.cursor);
+    expect(second.chunks).toEqual(
+      [...Array(10)].map((_, i) => (700 + i) % 256),
+    );
+
+    expect((await read(second.cursor)).chunks).toEqual([]);
   });
 
   it("gives the SDK the host's world, which Resume hook reads", async () => {
