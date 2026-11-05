@@ -14,7 +14,9 @@ import type {
 } from "./types";
 
 export type PluginRouteMethod = HttpMethod;
-export type PluginRouteScope = "app" | "service" | "resource";
+/** Where a plugin route mounts: under the app prefix, its service, or its resource. */
+export const PLUGIN_ROUTE_SCOPES = ["app", "service", "resource"] as const;
+export type PluginRouteScope = (typeof PLUGIN_ROUTE_SCOPES)[number];
 export type PluginRoutes<S extends PluginRouteScope = PluginRouteScope> =
   | false
   | Readonly<Record<string, false | { path?: string; scope?: S }>>;

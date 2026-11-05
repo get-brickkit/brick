@@ -76,6 +76,14 @@ export function checkRecordAccess(
     );
 }
 
+function notFound(
+  resource: Resource<any, any, any>,
+  id: unknown,
+  error: { NOT_FOUND(message: string): never },
+): never {
+  error.NOT_FOUND(`${resource.name} '${String(id)}' not found`);
+}
+
 function idSchema(column: Column): TSchema {
   return column.dataType === "number" ? Type.Number() : Type.String();
 }
@@ -128,8 +136,7 @@ function defineResourceAction(
       const row = record
         ? await loadRecord(resource, { id: input.id, ctx, access })
         : undefined;
-      if (record && row === undefined)
-        error.NOT_FOUND(`${resource.name} '${String(input.id)}' not found`);
+      if (record && row === undefined) notFound(resource, input.id, error);
       return execute({ input, ctx, error, row } as any);
     },
   } as any);
@@ -225,7 +232,15 @@ function defineCommand(
     config.decide(row, input, { error } as any);
   const events = service.events as Record<string, EventRef>;
 
-  const run = async ({ input, ctx }: { input: any; ctx: any }) => {
+  const run = async ({
+    input,
+    ctx,
+    error: helpers,
+  }: {
+    input: any;
+    ctx: any;
+    error: any;
+  }) => {
     const db = ctx.db;
     if (!db) throw new Error(`${where} requires a configured database`);
     const recorder = service.recorder;
@@ -239,12 +254,7 @@ function defineCommand(
         db: tx,
         access: config.access,
       });
-      if (row === undefined)
-        throw new ActionExecutionError(
-          "NOT_FOUND",
-          `${resource.name} '${String(input.id)}' not found`,
-          404,
-        );
+      if (row === undefined) notFound(resource, input.id, helpers);
       const id = row[resource.idField];
       for (const child of loaded)
         row[child.name] = await tx

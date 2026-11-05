@@ -8,7 +8,7 @@ import { actionMeta } from "./action-meta";
 import { portOf } from "./service-port";
 import type { EventCatalog, EventRef, EventRefs } from "./events/catalog";
 import type { EventListener } from "./events/types";
-import { hasPlugin } from "./plugin";
+import { hasPlugin, validateName } from "./plugin";
 import {
   PLUGIN_KIND,
   PLUGIN_COMMIT,
@@ -285,10 +285,7 @@ export function definePlugin<
   manifest: PluginManifest<O, S, T, E, RA, SA, P>,
 ): PluginFactory<O, RA, SA, P> {
   const { name } = manifest;
-  if (!name || name.trim() !== name)
-    throw new Error(
-      "Plugin names must be nonempty and have no surrounding whitespace",
-    );
+  validateName(name);
   if (!manifest.resource && !manifest.service && !manifest.app)
     throw new Error(
       `Plugin "${name}" needs a resource, service or app part to install`,
@@ -548,7 +545,8 @@ function bindPluginDeps(
 /** Check the deps passed at install against the ports the plugin declares. */
 function checkDeps(
   plugin: string,
-  factory: string,
+  /** The plugin's factory as the user imports it (its camelCase name), for the hint. */
+  camelName: string,
   ports: Ports | undefined,
   given: unknown = {},
 ): Readonly<Record<string, unknown>> {
@@ -566,7 +564,7 @@ function checkDeps(
   const missing = declared.filter((key) => provided[key] === undefined);
   if (missing.length)
     throw new Error(
-      `${plugin} needs ${missing.map((key) => `deps.${key}`).join(", ")}; pass it when installing: ${factory}(options, { deps: { ${missing.join(", ")} } })`,
+      `${plugin} needs ${missing.map((key) => `deps.${key}`).join(", ")}; pass it when installing: ${camelName}(options, { deps: { ${missing.join(", ")} } })`,
     );
   return Object.freeze(
     Object.fromEntries(declared.map((key) => [key, provided[key]])),

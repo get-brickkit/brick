@@ -12,6 +12,7 @@ import {
   type PluginRouteRegistrar,
   type PluginRoutes,
   type PluginRouteScope,
+  PLUGIN_ROUTE_SCOPES,
   type ContextOf,
   type ResourcePlugin,
   type ResourcePluginContext,
@@ -102,7 +103,7 @@ export function defineResourcePlugin<
   });
 }
 
-function validateName(name: string) {
+export function validateName(name: string) {
   if (!name || name.trim() !== name)
     throw new Error(
       "Plugin and route names must be nonempty and have no surrounding whitespace",
@@ -132,10 +133,7 @@ function copyControls<S extends PluginRouteScope>(
       continue;
     }
     if (value.path !== undefined) validatePath(value.path);
-    if (
-      value.scope !== undefined &&
-      !["app", "service", "resource"].includes(value.scope)
-    )
+    if (value.scope !== undefined && !PLUGIN_ROUTE_SCOPES.includes(value.scope))
       throw new Error(`Invalid plugin route scope '${value.scope}'`);
     result[name] = Object.freeze({ ...value });
   }
@@ -308,7 +306,7 @@ export function installPlugin(
       (resource ? "resource" : "service");
     if (scope === "resource" && !resource)
       throw new Error("Service plugin routes cannot use resource scope");
-    if (!["app", "service", "resource"].includes(scope))
+    if (!PLUGIN_ROUTE_SCOPES.includes(scope))
       throw new Error(`Invalid plugin route scope '${scope}'`);
     if (!HTTP_METHODS.includes(config.method))
       throw new Error(`Invalid plugin route method '${config.method}'`);
