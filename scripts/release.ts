@@ -189,9 +189,13 @@ const crateToml = readFileSync(CRATE_TOML, "utf-8");
 if (CRATE_VERSION.exec(crateToml)?.[1] !== coreJson.version)
   fail(`${CRATE_TOML} version must match the packages (${coreJson.version})`);
 // Checked before anything is written, so a failure leaves no half-bumped checkout.
-const cargoLocks = CARGO_LOCKS.filter((lock) => existsSync(lock)).map(
-  (lock) => ({ lock, text: readFileSync(lock, "utf-8") }),
-);
+// The commit job adds every one of them: a missing one would fail after npm.
+for (const lock of CARGO_LOCKS)
+  if (!existsSync(lock)) fail(`${lock} is missing`);
+const cargoLocks = CARGO_LOCKS.map((lock) => ({
+  lock,
+  text: readFileSync(lock, "utf-8"),
+}));
 for (const { lock, text } of cargoLocks)
   if (!LOCKED_CRATE.test(text)) fail(`${lock} has no brickkit entry to bump`);
 const version = bumpVersion(coreJson.version, bump);

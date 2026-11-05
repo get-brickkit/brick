@@ -52,9 +52,16 @@ test("prepares candidates and dispatches releases without creating release refs"
       join(checkout, "sdk/rust/brick/Cargo.toml"),
       '[package]\nname = "brickkit"\nversion = "0.7.2"\n\n[dependencies]\nserde = { version = "1" }\n',
     );
+    const lock =
+      '[[package]]\nname = "brickkit"\nversion = "0.7.2"\n\n[[package]]\nname = "serde"\nversion = "1.0.0"\n';
+    await writeFile(join(checkout, "sdk/rust/Cargo.lock"), lock);
+    // Every lockfile the commit job adds must exist.
+    await mkdir(join(checkout, "examples/pages/services/bench-rust"), {
+      recursive: true,
+    });
     await writeFile(
-      join(checkout, "sdk/rust/Cargo.lock"),
-      '[[package]]\nname = "brickkit"\nversion = "0.7.2"\n\n[[package]]\nname = "serde"\nversion = "1.0.0"\n',
+      join(checkout, "examples/pages/services/bench-rust/Cargo.lock"),
+      lock,
     );
     execFileSync(process.execPath, ["install"], {
       cwd: checkout,

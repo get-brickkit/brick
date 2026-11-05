@@ -99,11 +99,12 @@ test("release jobs use Node 24 actions and an explicit Ubuntu runner", () => {
     expect(job["runs-on"]).toBe("ubuntu-24.04");
     for (const step of job.steps) {
       if (step.uses?.startsWith("actions/checkout@"))
-        expect([
-          "actions/checkout@v7",
-          // publish-sdks pins it: it holds a write token and the crates.io token.
-          "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-        ]).toContain(step.uses);
+        expect(step.uses).toBe(
+          job === sdks
+            ? // publish-sdks pins it: it holds a write token and the crates.io token.
+              "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+            : "actions/checkout@v7",
+        );
       if (step.uses?.startsWith("actions/setup-node@"))
         expect(step.uses).toBe("actions/setup-node@v7");
       if (step.uses?.startsWith("actions/upload-artifact@"))
