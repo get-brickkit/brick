@@ -730,3 +730,37 @@ test("a value its column can't hold is a bad request, also past a custom schema"
     sqlite.close();
   }
 });
+
+test("create takes columns named like query options as row data", async () => {
+  const notes = sqliteTable("notes", {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    where: text("where"),
+    select: text("select"),
+  });
+  const database = defineDatabase({ tables: [notes] });
+  const db = database.getDb();
+  const sqlite = (db as typeof db & { $client: Database }).$client;
+  sqlite.exec(
+    'CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, "where" TEXT, "select" TEXT)',
+  );
+  const service = defineService(`test_${sequence++}`, { database });
+  const r: any = service.resource({ name: "note", table: notes }).use(
+    crud({
+      access: "public",
+      fields: {
+        id: { read: true },
+        where: { read: true, create: true },
+        select: { read: true, create: true },
+      },
+    }),
+  );
+  try {
+    expect(await r.create.run({ where: "home", select: "all" })).toEqual({
+      id: 1,
+      where: "home",
+      select: "all",
+    });
+  } finally {
+    sqlite.close();
+  }
+});

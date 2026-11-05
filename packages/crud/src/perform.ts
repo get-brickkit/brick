@@ -169,16 +169,18 @@ export function operations(model: CrudModel) {
     scope: SQL | undefined,
     db: any,
   ) => {
-    const derived: string[] = input.include ?? [];
-    const selected: string[] = [...(input.select ?? readable), ...derived];
+    // A create's input is the row, whose columns may be called `where` or `select`.
+    const asked = operation === "create" ? {} : input;
+    const derived: string[] = asked.include ?? [];
+    const selected: string[] = [...(asked.select ?? readable), ...derived];
     const query = statement(cacheable(db, scope), [
       operation,
       selected,
-      input.orderBy,
+      asked.orderBy,
     ]);
     const where = and(
       scope,
-      input.where ? condition(input.where, columns, query) : undefined,
+      asked.where ? condition(asked.where, columns, query) : undefined,
       ["get", "update", "delete"].includes(operation)
         ? eq(idColumn, query.bind(databaseValue(idColumn, input.id)))
         : undefined,
