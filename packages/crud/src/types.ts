@@ -8,21 +8,9 @@ import type {
 import type { TSchema, TUnsafe, Static } from "@sinclair/typebox";
 import type { Table, SQL, Column, GetColumnData } from "drizzle-orm";
 
-export type FilterOperator =
-  | "eq"
-  | "ne"
-  | "in"
-  | "notIn"
-  | "gt"
-  | "gte"
-  | "lt"
-  | "lte"
-  | "between"
-  | "contains"
-  | "startsWith"
-  | "endsWith"
-  | "isNull"
-  | "isNotNull";
+import type { OPERATORS } from "./where";
+
+export type FilterOperator = keyof typeof OPERATORS;
 export interface ColumnFieldPolicy {
   read?: boolean;
   create?: boolean;
@@ -200,13 +188,12 @@ type AllowedOps<F, K extends keyof F> = F[K] extends {
 }
   ? O
   : never;
-type Operand<V, O> = O extends "isNull" | "isNotNull"
-  ? {}
-  : O extends "in" | "notIn"
-    ? { value: readonly NonNullable<V>[] }
-    : O extends "between"
-      ? { value: readonly [NonNullable<V>, NonNullable<V>] }
-      : { value: NonNullable<V> };
+type Operand<V, O extends FilterOperator> = {
+  none: {};
+  one: { value: NonNullable<V> };
+  list: { value: readonly NonNullable<V>[] };
+  pair: { value: readonly [NonNullable<V>, NonNullable<V>] };
+}[(typeof OPERATORS)[O]["operand"]];
 type Leaf<F, V> = {
   [K in Extract<keyof F, keyof V>]: {
     [O in Extract<AllowedOps<F, K>, FilterOperator>]: {
