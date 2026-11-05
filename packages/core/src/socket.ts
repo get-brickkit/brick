@@ -11,14 +11,27 @@ import {
 } from "./types";
 import { getCompiledCheck } from "./typebox";
 import { inTransaction, onTransactionCommit } from "./events/transaction";
+import { serializeSocketSchema } from "./socket-schema";
 import {
-  serializeSocketSchema,
+  byteLength,
+  encodeFrame,
+  isControlEvent,
   isSocketEnvelope,
   isSocketRoom,
   isSocketSeq,
-  SOCKET_MAX_BYTES,
+  replayFrame,
+  signSeq,
+  splitSeq,
   SOCKET_BUFFER_BYTES,
-} from "./socket-schema";
+  SOCKET_CLOSE,
+  SOCKET_CONTROL,
+  SOCKET_MAX_BYTES,
+  SOCKET_PROTOCOL,
+  SOCKET_REPLAY_HEADROOM,
+  SOCKET_SIGNATURE_LENGTH,
+  SOCKET_TOKEN_PROTOCOL,
+} from "./protocol";
+import { publicOrigin } from "./cors";
 import type {
   BrickSocketConfig,
   BrickSocketSender,
@@ -36,8 +49,6 @@ export type { RegisteredSocket };
 
 class SocketDenied extends Error {}
 
-const bytes = (value: string) => new TextEncoder().encode(value).byteLength;
-
 /** Validates and serializes one output message, rechecking what survives JSON. */
 function outputFrame(
   output: SocketSchemas,
@@ -47,8 +58,8 @@ function outputFrame(
   const schema = Object.hasOwn(output, event) ? output[event] : undefined;
   if (!schema || !getCompiledCheck(schema).Check(data))
     throw new Error("Invalid socket output");
-  const frame = JSON.stringify({ event, data });
-  if (bytes(frame) > SOCKET_MAX_BYTES)
+  const frame = encodeFrame(event, data);
+  if (byteLength(frame) > SOCKET_MAX_BYTES)
     throw new Error("Socket output too large");
   if (!getCompiledCheck(schema).Check(JSON.parse(frame).data))
     throw new Error("Socket output is not JSON-compatible");
@@ -163,11 +174,7 @@ export function defineServiceSocket<
     )
   )
     throw new Error("Every socket input event needs exactly one handler");
-  if (
-    [...Object.keys(input), ...Object.keys(output)].some((key) =>
-      key.startsWith("$"),
-    )
-  )
+  if ([...Object.keys(input), ...Object.keys(output)].some(isControlEvent))
     throw new Error("Socket event names starting with $ are reserved");
   const maxRooms = config.maxRooms ?? 100;
   if (!Number.isInteger(maxRooms) || maxRooms < 1)
@@ -245,7 +252,10 @@ export function defineServiceSocket<
         ].map(topic);
         const frame = outputFrame(output, event, payload);
         // Room and sequence are added to each replayed frame on delivery.
-        if (replay && bytes(frame) > SOCKET_MAX_BYTES - 300)
+        if (
+          replay &&
+          byteLength(frame) > SOCKET_MAX_BYTES - SOCKET_REPLAY_HEADROOM
+        )
           throw new Error("Socket output too large");
         publish(
           topics.map((topic) => ({ type: "emit", topic, frame })),
@@ -326,17 +336,6 @@ export function socketPath(
   );
 }
 
-/** The origin a browser saw, so TLS-terminating proxies still pass the same-origin check. */
-export function publicOrigin(request: Request): string {
-  // Browsers cannot set X-Forwarded-* on a WebSocket handshake, so a cross-site page cannot forge a match.
-  const forwarded = (name: string) =>
-    request.headers.get(name)?.split(",")[0]?.trim() || undefined;
-  const url = new URL(request.url);
-  const proto = forwarded("x-forwarded-proto");
-  return `${proto ? `${proto}:` : url.protocol}//${forwarded("x-forwarded-host") ?? url.host}`;
-}
-
-const TOKEN_PROTOCOL = "brick.token.";
 const protocols = (request: Request) =>
   (request.headers.get("sec-websocket-protocol") ?? "")
     .split(",")
@@ -350,13 +349,13 @@ function tokenRequest(request: Request): {
 } {
   const offered = protocols(request);
   const token = offered
-    .find((protocol) => protocol.startsWith(TOKEN_PROTOCOL))
-    ?.slice(TOKEN_PROTOCOL.length);
+    .find((protocol) => protocol.startsWith(SOCKET_TOKEN_PROTOCOL))
+    ?.slice(SOCKET_TOKEN_PROTOCOL.length);
   if (!token) return { token: false, request };
   const headers = new Headers(request.headers);
   headers.set("authorization", `Bearer ${token}`);
   const rest = offered.filter(
-    (protocol) => !protocol.startsWith(TOKEN_PROTOCOL),
+    (protocol) => !protocol.startsWith(SOCKET_TOKEN_PROTOCOL),
   );
   if (rest.length) headers.set("sec-websocket-protocol", rest.join(", "));
   else headers.delete("sec-websocket-protocol");
@@ -380,11 +379,11 @@ export function mountSockets(
     createHmac("sha256", key)
       .update(`${topic}\n${seq}`)
       .digest("base64url")
-      .slice(0, 22);
+      .slice(0, SOCKET_SIGNATURE_LENGTH);
   const sign = (topic: string, seq: string) =>
-    `${seq}.${signature(topic, seq)}`;
+    signSeq(seq, signature(topic, seq));
   const verify = (topic: string, signed: string) => {
-    const [seq, sig] = signed.split(".") as [string, string];
+    const [seq, sig] = splitSeq(signed);
     return timingSafeEqual(Buffer.from(sig), Buffer.from(signature(topic, seq)))
       ? seq
       : undefined;
@@ -442,7 +441,7 @@ export function mountSockets(
       { connections: Set<Connection>; unsubscribe: () => void }
     >();
     const control = (ws: Peer, event: string, data: unknown) => {
-      if (ws.readyState === 1) ws.send(JSON.stringify({ event, data }));
+      if (ws.readyState === 1) ws.send(encodeFrame(event, data));
     };
     /** Joins a room; resolves once the broker delivers its messages here. `live: false` holds the room without receiving yet. */
     const enter = async (
@@ -475,11 +474,14 @@ export function mountSockets(
       holders.delete(topic);
       holder.unsubscribe();
     };
-    /** A replayable emit carries its room and sequence. */
     const frameOf = (message: SocketBrokerMessage & { type: "emit" }) =>
       message.seq === undefined
         ? message.frame
-        : `${message.frame.slice(0, -1)},"room":${JSON.stringify(roomOf(message.topic))},"seq":${JSON.stringify(sign(message.topic, message.seq))}}`;
+        : replayFrame(
+            message.frame,
+            roomOf(message.topic),
+            sign(message.topic, message.seq),
+          );
     const deliver = (message: SocketBrokerMessage) => {
       if (message.type === "emit") {
         app.server?.publish(message.topic, frameOf(message));
@@ -488,7 +490,7 @@ export function mountSockets(
       for (const connection of holders.get(message.topic)?.connections ?? []) {
         if (message.also && !connection.ws.isSubscribed(message.also)) continue;
         exit(connection, message.topic);
-        control(connection.ws, "$left", {
+        control(connection.ws, SOCKET_CONTROL.left, {
           room: roomOf(message.topic),
           ...(message.reason !== undefined ? { reason: message.reason } : {}),
         });
@@ -508,9 +510,9 @@ export function mountSockets(
       if (!isSocketRoom(name) || (since !== undefined && !isSocketSeq(since)))
         throw new SocketDenied();
       const topic = definition.topic(name);
-      if (event === "$leave") {
+      if (event === SOCKET_CONTROL.leave) {
         if (connection.requested.has(topic)) exit(connection, topic);
-        control(connection.ws, "$leave", { room: name });
+        control(connection.ws, SOCKET_CONTROL.leave, { room: name });
         return;
       }
       const isOpen = () => !connection.closed && connection.ws.readyState === 1;
@@ -544,7 +546,7 @@ export function mountSockets(
             for (const message of missed ?? [])
               if (message.type === "emit") connection.ws.send(frameOf(message));
             if (restart !== undefined)
-              control(connection.ws, "$gap", {
+              control(connection.ws, SOCKET_CONTROL.gap, {
                 room: name,
                 seq: sign(topic, restart),
               });
@@ -552,7 +554,7 @@ export function mountSockets(
         }
       }
       // A kick while joining wins.
-      control(connection.ws, "$join", {
+      control(connection.ws, SOCKET_CONTROL.join, {
         room: name,
         ok: ok && connection.rooms.has(topic),
         ...(seq !== undefined ? { seq } : {}),
@@ -565,7 +567,9 @@ export function mountSockets(
         logger.error({ error, service, socket: definition.schema.name });
       if (ws.readyState !== 1) return;
       ws.close(
-        error instanceof SocketDenied ? 1008 : 1011,
+        error instanceof SocketDenied
+          ? SOCKET_CLOSE.policy
+          : SOCKET_CLOSE.serverError,
         error instanceof SocketDenied
           ? "Message refused"
           : "Socket handler failed",
@@ -596,13 +600,13 @@ export function mountSockets(
         }
       },
       upgrade: ({ request }: { request: Request }) =>
-        protocols(request).includes("brick.v1")
-          ? { "Sec-WebSocket-Protocol": "brick.v1" }
+        protocols(request).includes(SOCKET_PROTOCOL)
+          ? { "Sec-WebSocket-Protocol": SOCKET_PROTOCOL }
           : undefined,
       async open(ws) {
         const session = sessions.get(ws.request);
         if (!session) {
-          ws.close(1011, "Missing socket session");
+          ws.close(SOCKET_CLOSE.serverError, "Missing socket session");
           return;
         }
         const sender: SocketSender = {
@@ -610,13 +614,13 @@ export function mountSockets(
             return !state.closed && ws.readyState === 1;
           },
           close() {
-            ws.close(1000, "");
+            ws.close(SOCKET_CLOSE.normal, "");
           },
           send(event, data) {
             if (!sender.isOpen) throw new Error("Socket is closed");
             const result = ws.send(outputFrame(definition.output, event, data));
             if (result === 0) {
-              ws.close(1013, "Socket buffer full");
+              ws.close(SOCKET_CLOSE.tryAgainLater, "Socket buffer full");
               throw new Error("Socket buffer full");
             }
           },
@@ -646,24 +650,24 @@ export function mountSockets(
         const state = connections.get(ws.request);
         if (!state || state.closed || ws.readyState !== 1) return;
         if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
-          ws.close(1003, "Only JSON text is supported");
+          ws.close(SOCKET_CLOSE.unsupportedData, "Only JSON text is supported");
           return;
         }
         if (typeof value === "string") {
-          ws.close(1007, "Expected JSON envelope");
+          ws.close(SOCKET_CLOSE.invalidPayload, "Expected JSON envelope");
           return;
         }
         if (!isSocketEnvelope(value)) {
-          ws.close(1008, "Invalid socket envelope");
+          ws.close(SOCKET_CLOSE.policy, "Invalid socket envelope");
           return;
         }
-        const size = bytes(JSON.stringify(value));
+        const size = byteLength(JSON.stringify(value));
         if (size > SOCKET_MAX_BYTES) {
-          ws.close(1009, "Message too large");
+          ws.close(SOCKET_CLOSE.tooLarge, "Message too large");
           return;
         }
         if (state.pending >= 32 || state.bytes + size > SOCKET_BUFFER_BYTES) {
-          ws.close(1013, "Socket queue full");
+          ws.close(SOCKET_CLOSE.tryAgainLater, "Socket queue full");
           return;
         }
         state.pending++;
@@ -671,7 +675,10 @@ export function mountSockets(
         state.tail = state.tail
           .then(async () => {
             if (state.closed || ws.readyState !== 1) return;
-            if (value.event === "$join" || value.event === "$leave")
+            if (
+              value.event === SOCKET_CONTROL.join ||
+              value.event === SOCKET_CONTROL.leave
+            )
               await room(state, value.event, value.data);
             else
               await state.session.message(
@@ -688,24 +695,16 @@ export function mountSockets(
             if (
               error instanceof ActionExecutionError &&
               !state.closed &&
-              value.event !== "$join" &&
-              value.event !== "$leave" &&
+              value.event !== SOCKET_CONTROL.join &&
+              value.event !== SOCKET_CONTROL.leave &&
               Object.hasOwn(raisable, error.code)
             )
               try {
-                const frame = JSON.stringify({
-                  event: "$error",
-                  data: {
-                    event: value.event,
-                    code: error.code,
-                    message: error.message,
-                    status: error.status,
-                    ...(error.details !== undefined
-                      ? { details: error.details }
-                      : {}),
-                  },
+                const frame = encodeFrame(SOCKET_CONTROL.error, {
+                  event: value.event,
+                  ...error.toJSON(),
                 });
-                if (bytes(frame) > SOCKET_MAX_BYTES)
+                if (byteLength(frame) > SOCKET_MAX_BYTES)
                   throw new Error("Socket error too large", { cause: error });
                 if (ws.readyState === 1) ws.send(frame);
                 return;

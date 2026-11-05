@@ -1,4 +1,5 @@
 import type { Static, TSchema } from "@sinclair/typebox";
+import type { StandardErrorCode } from "./protocol";
 import type {
   ActionErrorDefinition,
   ActionExecutionError,
@@ -171,22 +172,13 @@ export class BrickSocketError extends Error {
   }
 }
 
-/** The framework codes every socket handler can raise, besides its declared ones. */
-type StandardSocketErrorCode =
-  | "BAD_REQUEST"
-  | "UNAUTHORIZED"
-  | "FORBIDDEN"
-  | "NOT_FOUND"
-  | "CONFLICT"
-  | "INTERNAL_SERVER_ERROR";
-
 /** An error a socket handler raised with `error.CODE()`, for the message `event` it was handling. */
 export type BrickSocketHandlerError<
   Input = unknown,
   Errors = {},
 > = ActionExecutionError & {
   event: keyof Input & string;
-  code: Extract<keyof Errors, string> | StandardSocketErrorCode;
+  code: Extract<keyof Errors, string> | StandardErrorCode;
 };
 
 export interface BrickSocketClient<

@@ -17,6 +17,7 @@ import type { BunSQLiteDatabase } from "./db/sqlite";
 import type { DatabaseHandle } from "./db/define";
 import type { Ports } from "./deps";
 import type { HttpMethod } from "./http";
+import type { StandardErrorCode } from "./protocol";
 import type { ServiceEvents } from "./events/types";
 import type { EventCatalog, EventRefs } from "./events/catalog";
 import type { EventsDefinition } from "./events/hub";
@@ -603,14 +604,6 @@ export type CommandErrors<
     details?: unknown,
   ) => ActionExecutionError;
 };
-
-type StandardErrorCode =
-  | "BAD_REQUEST"
-  | "UNAUTHORIZED"
-  | "FORBIDDEN"
-  | "NOT_FOUND"
-  | "CONFLICT"
-  | "INTERNAL_SERVER_ERROR";
 
 /** `resource.command(name, config)`. */
 export interface CommandConfig<
