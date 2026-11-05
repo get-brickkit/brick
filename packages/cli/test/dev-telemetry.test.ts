@@ -1,35 +1,7 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-
-async function waitFor(
-  check: () => boolean | Promise<boolean>,
-  timeoutMs = 15000,
-) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await check()) return;
-    await Bun.sleep(50);
-  }
-  throw new Error("Timed out waiting for dev telemetry");
-}
-
-async function freePort() {
-  const listener = Bun.serve({ port: 0, fetch: () => new Response() });
-  const port = listener.port;
-  listener.stop(true);
-  return port;
-}
-
-function capture(child: ReturnType<typeof Bun.spawn>) {
-  let output = "";
-  const collect = async (stream: typeof child.stdout) => {
-    if (typeof stream === "number" || !stream) return;
-    for await (const chunk of stream) output += new TextDecoder().decode(chunk);
-  };
-  const finished = Promise.all([collect(child.stdout), collect(child.stderr)]);
-  return { read: () => output, finished };
-}
+import { capture, freePort, settle, tempProject, waitFor } from "./helpers";
 
 function appSource(revision: number, telemetry = true, documentation = "") {
   return `// revision ${revision}
@@ -55,9 +27,7 @@ export default brick({ services: [demo]${telemetry ? ", telemetry: true" : ""}${
 const json = { "content-type": "application/json" };
 
 test("brick dev shows requests, failures, history across restarts, and startup crashes", async () => {
-  const directory = await mkdtemp(
-    join(resolve(import.meta.dir, "../../.."), ".dev-telemetry-"),
-  );
+  const directory = await tempProject("dev-telemetry");
   // The app is in src/ and its docs beside src/: "../docs", as it reads in main.ts.
   const entry = join(directory, "src", "main.ts");
   await mkdir(join(directory, "src"), { recursive: true });
@@ -225,9 +195,7 @@ test("brick dev shows requests, failures, history across restarts, and startup c
 }, 60000);
 
 test("brick dev explains an app that does not opt in to telemetry", async () => {
-  const directory = await mkdtemp(
-    join(resolve(import.meta.dir, "../../.."), ".dev-telemetry-"),
-  );
+  const directory = await tempProject("dev-telemetry");
   const entry = join(directory, "main.ts");
   await writeFile(entry, appSource(1, false));
   const apiPort = await freePort();
@@ -259,7 +227,7 @@ test("brick dev explains an app that does not opt in to telemetry", async () => 
       body: JSON.stringify({ text: "hi" }),
     });
     await waitFor(() => logs.read().includes("telemetry: true"));
-    await Bun.sleep(300);
+    await settle();
     const snapshot = await (
       await fetch(`http://127.0.0.1:${dashboardPort}/api/state`)
     ).json();
@@ -273,9 +241,7 @@ test("brick dev explains an app that does not opt in to telemetry", async () => 
 }, 30000);
 
 test("brick dev refuses a dashboard port that equals the API port", async () => {
-  const directory = await mkdtemp(
-    join(resolve(import.meta.dir, "../../.."), ".dev-telemetry-"),
-  );
+  const directory = await tempProject("dev-telemetry");
   const entry = join(directory, "main.ts");
   await writeFile(entry, appSource(1));
   const port = await freePort();

@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { readdir, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { SQL } from "bun";
 import {
   brick as createApp,
@@ -16,11 +16,11 @@ import {
 import { pgSchema, text as pgText } from "@brickkit/core/pg";
 import { appDatabases } from "../src/db";
 import app from "./fixtures/db-app";
+import { runCli, tempProject } from "./helpers";
 
 // Other test files leave services in the shared registry; names here repeat.
 beforeEach(resetGlobalRegistry);
 
-const cli = resolve(import.meta.dir, "../src/bin.ts");
 const entry = join(import.meta.dir, "fixtures/db-app.ts");
 const roots: string[] = [];
 afterAll(() =>
@@ -28,22 +28,15 @@ afterAll(() =>
 );
 
 async function tempRoot() {
-  const root = await mkdtemp(resolve(import.meta.dir, "../.brick-db-test-"));
+  const root = await tempProject("db-test");
   roots.push(root);
   return root;
 }
 
 async function brick(args: string[], env: Record<string, string | undefined>) {
-  const child = Bun.spawn([process.execPath, cli, "db", ...args, entry], {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, BRICK_DB_V2: undefined, ...env },
+  const { code, stdout, stderr } = await runCli(["db", ...args, entry], {
+    env: { BRICK_DB_V2: undefined, ...env },
   });
-  const [code, stdout, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
   return { code, out: stdout + stderr };
 }
 
@@ -131,10 +124,7 @@ describe("brick db: table discovery", () => {
   });
 
   it("lists the db commands in help", async () => {
-    const child = Bun.spawn([process.execPath, cli, "db", "--help"], {
-      stdout: "pipe",
-    });
-    const help = await new Response(child.stdout).text();
+    const help = (await runCli(["db", "--help"])).stdout;
     for (const command of ["generate", "migrate", "push"])
       expect(help).toContain(command);
   });

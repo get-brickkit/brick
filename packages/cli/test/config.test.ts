@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   findConfigFile,
@@ -9,34 +9,20 @@ import {
   resolveProject,
   validateConfig,
 } from "../src/config";
+import { runCli, tempProject } from "./helpers";
 
-const cli = resolve(import.meta.dir, "../src/bin.ts");
 const roots: string[] = [];
 
 async function project(files: Record<string, string>) {
-  const root = await mkdtemp(
-    resolve(import.meta.dir, "../.brick-config-test-"),
-  );
+  const root = await tempProject("config-test");
   roots.push(root);
   for (const [file, source] of Object.entries(files))
     await Bun.write(join(root, file), source);
   return root;
 }
 
-async function run(cwd: string, ...args: string[]) {
-  const child = Bun.spawn([process.execPath, cli, ...args], {
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, PORT: undefined },
-  });
-  const [code, stdout, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
-  return { code, stdout, stderr };
-}
+const run = (cwd: string, ...args: string[]) =>
+  runCli(args, { cwd, env: { PORT: undefined } });
 
 const APP = `import { brick, defineService, t } from "@brickkit/core";
 export const notes = defineService("notes");

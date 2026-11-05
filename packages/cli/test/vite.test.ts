@@ -1,11 +1,12 @@
 import { expect, it } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { createServer, isRunnableDevEnvironment, build } from "vite";
 import { brickClient } from "../src/vite";
+import { tempProject, waitFor } from "./helpers";
 
 it("loads any default-exported BrickApp and reloads edits to its action dependencies", async () => {
-  const root = await mkdtemp(resolve(import.meta.dir, "../.brick-vite-test-"));
+  const root = await tempProject("vite-test");
   const actions = (
     value: string,
   ) => `import { defineService, t } from "@brickkit/core";
@@ -46,19 +47,14 @@ export default brick({ services: [service], requestLogging: false });
       });
     expect(await (await app.fetch(request())).text()).toBe("before");
     await Bun.write(join(root, "actions.ts"), actions("after"));
-    let result = "before";
-    const deadline = Date.now() + 5000;
-    while (
-      (result !== "after" ||
-        !(await Bun.file(contractFile).text()).includes('"locale": string')) &&
-      Date.now() < deadline
-    ) {
-      await Bun.sleep(50);
+    await waitFor(async () => {
       const updated = (await environment.runner.import("virtual:brick-app"))
         .default;
-      result = await (await updated.fetch(request())).text();
-    }
-    expect(result).toBe("after");
+      return (
+        (await (await updated.fetch(request())).text()) === "after" &&
+        (await Bun.file(contractFile).text()).includes('"locale": string')
+      );
+    }, 5000);
     expect(await Bun.file(contractFile).text()).toContain('"locale": string');
   } finally {
     await server.close();
@@ -67,7 +63,7 @@ export default brick({ services: [service], requestLogging: false });
 }, 10000);
 
 it("rejects a non-BrickApp default export and prevents browser imports of the backend", async () => {
-  const root = await mkdtemp(resolve(import.meta.dir, "../.brick-vite-test-"));
+  const root = await tempProject("vite-test");
   await Bun.write(join(root, "bad.ts"), "export default {};\n");
   await Bun.write(
     join(root, "client.ts"),
@@ -106,7 +102,7 @@ export default brick({ services: [], requestLogging: false });`,
 });
 
 it("generates the contract before a cold production build without bundling the backend", async () => {
-  const root = await mkdtemp(resolve(import.meta.dir, "../.brick-vite-test-"));
+  const root = await tempProject("vite-test");
   const entry = resolve(import.meta.dir, "fixtures/client-app.ts");
   await Bun.write(
     join(root, "client.ts"),
@@ -156,7 +152,7 @@ export const options = api.records.search.queryOptions({ input: { term: "typed" 
 
 it("preserves unchanged contracts and recovers from invalid edits with updated schemas and routes", async () => {
   const { stat } = await import("node:fs/promises");
-  const root = await mkdtemp(resolve(import.meta.dir, "../.brick-vite-test-"));
+  const root = await tempProject("vite-test");
   const file = join(root, "actions.ts");
   const output = join(root, "_brick/contract.ts");
   const source = (
@@ -206,14 +202,6 @@ export default service;
     errors.push(args[0]);
     return send(...args);
   }) as typeof hot.send;
-  async function waitFor(check: () => Promise<boolean>) {
-    const deadline = Date.now() + 5000;
-    while (Date.now() < deadline) {
-      if (await check()) return;
-      await Bun.sleep(25);
-    }
-    throw new Error("Timed out waiting for contract update");
-  }
   try {
     const initial = await Bun.file(output).text();
     const timestamp = (await stat(output)).mtimeMs;
@@ -257,7 +245,7 @@ export default service;
 }, 15000);
 
 it("removes actions registered on an imported service singleton after edits", async () => {
-  const root = await mkdtemp(resolve(import.meta.dir, "../.brick-vite-test-"));
+  const root = await tempProject("vite-test");
   const registration = join(root, "actions.ts");
   const contractFile = join(root, "_brick/contract.ts");
   await Bun.write(
@@ -281,12 +269,10 @@ it("removes actions registered on an imported service singleton after edits", as
   try {
     expect(await Bun.file(contractFile).text()).toContain('"removed"');
     await Bun.write(registration, source("added"));
-    const deadline = Date.now() + 5000;
-    while (
-      !(await Bun.file(contractFile).text()).includes('"added"') &&
-      Date.now() < deadline
-    )
-      await Bun.sleep(25);
+    await waitFor(
+      async () => (await Bun.file(contractFile).text()).includes('"added"'),
+      5000,
+    ).catch(() => {});
     const updatedSource = await Bun.file(contractFile).text();
     expect(updatedSource).toContain('"added"');
     expect(updatedSource).not.toContain('"removed"');

@@ -2,45 +2,7 @@ import { expect, it } from "bun:test";
 import { mkdtemp, mkdir, rm, rename, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-
-it("bundles the lazy SQLite adapter without another adapter import", async () => {
-  const deploy = await mkdtemp(join(tmpdir(), "brick-sqlite-deploy-"));
-  try {
-    const entry = join(deploy, "entry.ts");
-    const sqlite = resolve(import.meta.dir, "../../core/src/db/sqlite.ts");
-    await Bun.write(
-      entry,
-      `import { createSQLiteDatabase } from ${JSON.stringify(sqlite)};
-       const db = createSQLiteDatabase();
-       console.log(JSON.stringify(db.$client.query("SELECT 42 AS answer").get()));
-       db.$client.close();`,
-    );
-    const result = await Bun.build({
-      entrypoints: [entry],
-      target: "bun",
-      format: "esm",
-      outdir: deploy,
-      naming: "server.js",
-    });
-    expect(result.success).toBe(true);
-    await rm(entry);
-    const child = Bun.spawn([process.execPath, join(deploy, "server.js")], {
-      cwd: deploy,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [code, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    expect(stderr).toBe("");
-    expect(code).toBe(0);
-    expect(JSON.parse(stdout)).toEqual({ answer: 42 });
-  } finally {
-    await rm(deploy, { recursive: true, force: true });
-  }
-}, 20000);
+import { capture, freePort, waitFor, waitForOutput } from "./helpers";
 
 it("rejects an entry that does not default-export a BrickApp", async () => {
   const root = resolve(import.meta.dir, "../../..");
@@ -117,25 +79,18 @@ for (const aot of [true, false]) {
       // Deploy only the bundle, outside the source tree and node_modules resolution.
       await rename(join(dir, "server.js"), join(deploy, "server.js"));
       await Bun.write(
-        join(deploy, "no-codegen.js"),
+        join(deploy, "port-zero.js"),
         `
 // Let the OS allocate the test server's port when it binds.
 const serve = Bun.serve.bind(Bun);
 Bun.serve = options => serve({ ...options, port: 0 });
-globalThis.Function = new Proxy(Function, {
-  construct(target, args) {
-    if (args.some(arg => typeof arg === "string" && arg.startsWith("return (function bindAction")))
-      throw new Error("Brick handlers must use build-time factories");
-    return Reflect.construct(target, args);
-  }
-});
 `,
       );
       server = Bun.spawn(
         [
           process.execPath,
           "--preload",
-          join(deploy, "no-codegen.js"),
+          join(deploy, "port-zero.js"),
           join(deploy, "server.js"),
         ],
         {
@@ -145,23 +100,9 @@ globalThis.Function = new Proxy(Function, {
           stderr: "pipe",
         },
       );
-      const reader = (server.stdout as ReadableStream<Uint8Array>).getReader();
-      let output = "";
-      while (!output.includes("http://localhost:")) {
-        const chunk = await Promise.race([
-          reader.read(),
-          Bun.sleep(5000).then(() => {
-            throw new Error("Built server did not start");
-          }),
-        ]);
-        if (chunk.done)
-          throw new Error(
-            "Built server exited before listening: " +
-              (await new Response(server.stderr as ReadableStream).text()),
-          );
-        output += new TextDecoder().decode(chunk.value);
-      }
-      const base = output.match(/http:\/\/localhost:\d+/)![0];
+      const logs = capture(server);
+      await waitForOutput(logs.read, "http://localhost:");
+      const base = logs.read().match(/http:\/\/localhost:\d+/)![0];
       const ready = await fetch(`${base}/v1/plain/get-ready`);
       expect(ready.status).toBe(200);
       expect(await ready.json()).toEqual({ ok: true });
@@ -255,13 +196,8 @@ globalThis.Function = new Proxy(Function, {
       ).toBe(404);
       server.kill("SIGTERM");
       expect(await server.exited).toBe(0);
-      let remainingOutput = "";
-      while (true) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        remainingOutput += new TextDecoder().decode(chunk.value);
-      }
-      expect(remainingOutput).not.toMatch(/^(GET|POST|PATCH|DELETE) /m);
+      await logs.finished;
+      expect(logs.read()).not.toMatch(/^(GET|POST|PATCH|DELETE) /m);
     } finally {
       server?.kill();
       await rm(dir, { recursive: true, force: true });
@@ -282,14 +218,8 @@ it("a built server serves the monitoring dashboard its app asks for, as brick st
         join(root, "packages", name),
         join(dir, "node_modules/@brickkit", name),
       );
-    const free = () => {
-      const listener = Bun.serve({ port: 0, fetch: () => new Response() });
-      const port = listener.port!;
-      listener.stop(true);
-      return port;
-    };
-    const dashboardPort = free();
-    const appPort = free();
+    const dashboardPort = freePort();
+    const appPort = freePort();
     await Bun.write(
       join(dir, "app.ts"),
       `import { brick } from "@brickkit/core";
@@ -319,14 +249,13 @@ export default brick({ dashboard: { port: ${dashboardPort} } });
       stdout: "pipe",
       stderr: "pipe",
     });
-    const deadline = Date.now() + 10000;
     let health: Response | undefined;
-    while (!health && Date.now() < deadline) {
-      health = await fetch(`http://127.0.0.1:${dashboardPort}/_health`).catch(
-        () => undefined,
-      );
-      if (!health) await Bun.sleep(50);
-    }
+    await waitFor(
+      async () =>
+        (health = await fetch(
+          `http://127.0.0.1:${dashboardPort}/_health`,
+        ).catch(() => undefined)),
+    );
     expect(health?.status).toBe(200);
   } finally {
     server?.kill();

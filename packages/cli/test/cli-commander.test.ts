@@ -1,33 +1,20 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { runCli, tempProject } from "./helpers";
 
-const cli = resolve(import.meta.dir, "../src/bin.ts");
 const entry = join(import.meta.dir, "fixtures/client-app.ts");
 const pkg = await Bun.file(resolve(import.meta.dir, "../package.json")).json();
 
-async function run(
+const run = (
   cwd: string,
   args: string[],
   env?: Record<string, string | undefined>,
-) {
-  const child = Bun.spawn([process.execPath, cli, ...args], {
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, ...env },
-  });
-  const [code, stdout, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
-  return { code, stdout, stderr };
-}
+) => runCli(args, { cwd, env });
 
 describe("brick CLI (commander)", () => {
   it("shows top-level help with commands, port resolution, and examples", async () => {
-    const root = await mkdtemp(resolve(import.meta.dir, "../.brick-cli-test-"));
+    const root = await tempProject("cli-test");
     try {
       const result = await run(root, ["--help"]);
       expect(result.code).toBe(0);
@@ -43,7 +30,7 @@ describe("brick CLI (commander)", () => {
   });
 
   it("shows version matching package.json", async () => {
-    const root = await mkdtemp(resolve(import.meta.dir, "../.brick-cli-test-"));
+    const root = await tempProject("cli-test");
     try {
       const result = await run(root, ["--version"]);
       expect(result.code).toBe(0);
@@ -54,7 +41,7 @@ describe("brick CLI (commander)", () => {
   });
 
   it("shows per-command help for dev/start/build/gen/info", async () => {
-    const root = await mkdtemp(resolve(import.meta.dir, "../.brick-cli-test-"));
+    const root = await tempProject("cli-test");
     try {
       for (const args of [
         ["dev", "--help"],
@@ -83,7 +70,7 @@ describe("brick CLI (commander)", () => {
   });
 
   it("validates --port: rejects non-integer, out-of-range, and missing values", async () => {
-    const root = await mkdtemp(resolve(import.meta.dir, "../.brick-cli-test-"));
+    const root = await tempProject("cli-test");
     try {
       for (const port of ["abc", "0", "-1", "65536", "99999", "3000.5", ""]) {
         const result = await run(root, ["dev", entry, "--port", port]);
@@ -102,7 +89,7 @@ describe("brick CLI (commander)", () => {
   });
 
   it("validates PORT env: rejects PORT=0 and non-numeric env", async () => {
-    const root = await mkdtemp(resolve(import.meta.dir, "../.brick-cli-test-"));
+    const root = await tempProject("cli-test");
     try {
       // Use info command? No, info doesn't use port. Use dev with invalid env;
       // dev fails fast before listening when PORT is invalid.
@@ -118,7 +105,7 @@ describe("brick CLI (commander)", () => {
   });
 
   it("rejects missing required entry for build/gen/info", async () => {
-    const root = await mkdtemp(resolve(import.meta.dir, "../.brick-cli-test-"));
+    const root = await tempProject("cli-test");
     try {
       for (const args of [
         ["build"],
@@ -136,7 +123,7 @@ describe("brick CLI (commander)", () => {
   });
 
   it("rejects unknown options with clear errors", async () => {
-    const root = await mkdtemp(resolve(import.meta.dir, "../.brick-cli-test-"));
+    const root = await tempProject("cli-test");
     try {
       const result = await run(root, ["gen", "client", entry, "--wat"]);
       expect(result.code).toBe(1);
@@ -150,7 +137,7 @@ describe("brick CLI (commander)", () => {
   });
 
   it("rejects flag-like --output values (e.g. --output --wat)", async () => {
-    const root = await mkdtemp(resolve(import.meta.dir, "../.brick-cli-test-"));
+    const root = await tempProject("cli-test");
     try {
       const result = await run(root, [
         "gen",
@@ -176,7 +163,7 @@ describe("brick CLI (commander)", () => {
   });
 
   it("reports unknown generators with available list", async () => {
-    const root = await mkdtemp(resolve(import.meta.dir, "../.brick-cli-test-"));
+    const root = await tempProject("cli-test");
     try {
       for (const args of [["gen"], ["gen", "foo"]]) {
         const result = await run(root, args);
@@ -191,7 +178,7 @@ describe("brick CLI (commander)", () => {
   });
 
   it("rejects deprecated build flags and conflicting flags with one line", async () => {
-    const root = await mkdtemp(resolve(import.meta.dir, "../.brick-cli-test-"));
+    const root = await tempProject("cli-test");
     try {
       const prefix = await run(root, ["build", entry, "--prefix", "/api"]);
       expect(prefix.code).toBe(1);
@@ -218,7 +205,7 @@ describe("brick CLI (commander)", () => {
   });
 
   it("keeps services alias working like info", async () => {
-    const root = await mkdtemp(resolve(import.meta.dir, "../.brick-cli-test-"));
+    const root = await tempProject("cli-test");
     try {
       const result = await run(root, ["services", entry]);
       expect(result.code).toBe(0);

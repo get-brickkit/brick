@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bundleComponents } from "../src/dashboard-extension";
 import { DevDocs, DocsHost, openDocs } from "../src/dev-docs";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
+import { settle, tempProject, waitFor } from "./helpers";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -278,7 +278,7 @@ describe("DevDocs", () => {
     docs.onChange(() => changes++);
     docs.close();
     await writeFile(join(root, "docs/late.mdx"), "# Late\n");
-    await Bun.sleep(400);
+    await settle(400);
     expect(changes).toBe(0);
   });
 });
@@ -433,18 +433,6 @@ describe("DocsHost", () => {
   });
 });
 
-async function waitFor(
-  check: () => boolean | Promise<boolean>,
-  timeoutMs = 5000,
-) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await check()) return;
-    await Bun.sleep(40);
-  }
-  throw new Error("Timed out waiting for the docs to change");
-}
-
 describe("under Node", () => {
   // The Vite dev server runs under Node, where there is no Bun.build and the
   // project's components are bundled by Vite instead.
@@ -456,7 +444,7 @@ describe("under Node", () => {
         "export const Thing = () => <i>thing</i>;\nexport const components = { Thing };\n",
     });
     // Bundled inside the package, so Node finds fumadocs-core and Vite there.
-    const out = await mkdtemp(resolve(import.meta.dir, "../.brick-node-docs-"));
+    const out = await tempProject("node-docs");
     roots.push(out);
     const built = await Bun.build({
       entrypoints: [join(import.meta.dir, "../src/dev-docs.ts")],

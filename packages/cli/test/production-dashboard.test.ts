@@ -12,6 +12,7 @@ import { startDevDashboard } from "../src/dev-dashboard";
 import { captureConsole } from "../src/dev-telemetry";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
 import { startProductionDashboard } from "../src/production-dashboard";
+import { freePort } from "./helpers";
 
 const token = "0123456789abcdef-secret";
 const bearer = { authorization: `Bearer ${token}` };
@@ -231,14 +232,6 @@ describe("the production dashboard server", () => {
     }
   });
 });
-
-/** A port nothing is listening on, for an app that asks for it by number. */
-async function freePort(): Promise<number> {
-  const server = Bun.serve({ port: 0, fetch: () => new Response() });
-  const { port } = server;
-  await server.stop(true);
-  return port!;
-}
 
 describe("startProductionDashboard", () => {
   function appWith(dashboard: object) {
