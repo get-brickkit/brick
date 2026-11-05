@@ -16,7 +16,7 @@ import type {
 import { WorkflowRuntime } from "./workflows";
 import { runWithDeps } from "../deps";
 import { portOf, type ServicePort } from "../service-port";
-import type { Service } from "../types";
+import { DuplicateNameError, type Service } from "../types";
 
 export function matchesEvent(pattern: string, name: string): boolean {
   if (pattern === "*") return true;
@@ -93,7 +93,9 @@ export class EventsHub {
     for (const listener of options.listeners ?? []) {
       validateListener(listener);
       if (this.byName.has(listener.name))
-        throw new Error(`Duplicate event listener '${listener.name}'`);
+        throw new DuplicateNameError(
+          `Duplicate event listener '${listener.name}'`,
+        );
       this.byName.set(listener.name, listener);
     }
     const workflowListeners = [...this.byName.values()].filter(

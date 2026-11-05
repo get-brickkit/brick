@@ -8,6 +8,7 @@ import {
   defineListener,
   t,
   defineService,
+  DuplicateNameError,
   emitEvent,
   getGlobalRegistry,
   EventsHub,
@@ -120,9 +121,9 @@ describe("defineListener", () => {
 describe("EventsHub", () => {
   it("refuses duplicate listener names", () => {
     const listener = defineListener({ name: "same", on: "x", run: () => {} });
-    expect(() => new EventsHub({ listeners: [listener, listener] })).toThrow(
-      "Duplicate event listener 'same'",
-    );
+    const create = () => new EventsHub({ listeners: [listener, listener] });
+    expect(create).toThrow("Duplicate event listener 'same'");
+    expect(create).toThrow(DuplicateNameError);
   });
 
   it("gives only a service whose database holds an outbox a recorder", () => {

@@ -133,13 +133,9 @@ async function checkApp(check: AppCheck): Promise<LintMessage[]> {
   try {
     app = await loadBrickApp(check.entry);
   } catch (error) {
-    const { name, message } = error as Error;
     // Startup refuses duplicate names; report it as the rule, not a crash.
-    // shortcut: server.ts and events/hub.ts still throw plain Errors for a
-    // duplicate service, route or listener; drop the regex once they throw
-    // DuplicateNameError.
-    if (name === "DuplicateNameError" || /duplicate/i.test(message)) {
-      add("unique-names", check.entry, message);
+    if ((error as Error).name === "DuplicateNameError") {
+      add("unique-names", check.entry, (error as Error).message);
       return messages;
     }
     throw error;

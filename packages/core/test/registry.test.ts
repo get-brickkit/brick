@@ -3,6 +3,7 @@ import {
   brick,
   defineDatabase,
   defineService,
+  DuplicateNameError,
   getGlobalRegistry,
   resetGlobalRegistry,
   sqliteTable,
@@ -178,7 +179,7 @@ it("throws on a duplicate service name from another file", () => {
 it("throws on two services with the same name in one app", () => {
   const first = defineService("orders");
   const second = defineService("orders");
-  expect(() => brick({ services: [first, second] })).toThrow(
-    'Brick: duplicate service "orders" in brick()',
-  );
+  const create = () => brick({ services: [first, second] });
+  expect(create).toThrow('Brick: duplicate service "orders" in brick()');
+  expect(create).toThrow(DuplicateNameError);
 });

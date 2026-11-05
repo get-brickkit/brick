@@ -6,7 +6,7 @@ import {
   type CompiledApplication,
   type RouteIR,
 } from "./compiler";
-import type { Service } from "./types";
+import { DuplicateNameError, type Service } from "./types";
 import { getGlobalRegistry } from "./registry";
 import { getPluginEndpoints, installedPlugins } from "./plugin";
 import { pluginLifecycle, setupAppPlugins } from "./plugin-app";
@@ -228,7 +228,9 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   const byName = new Map<string, unknown>();
   for (const service of services) {
     if ((byName.get(service.name) ?? service) !== service)
-      throw new Error(`Brick: duplicate service "${service.name}" in brick()`);
+      throw new DuplicateNameError(
+        `Brick: duplicate service "${service.name}" in brick()`,
+      );
     byName.set(service.name, service);
   }
   bindDeps(services, options.deps);
@@ -328,7 +330,9 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   for (const socket of sockets) {
     const key = routeKey("GET", socket.path);
     if (registeredRoutes.has(key) || socketRoutes.has(key))
-      throw new Error(`Brick: duplicate socket route '${socket.path}'`);
+      throw new DuplicateNameError(
+        `Brick: duplicate socket route '${socket.path}'`,
+      );
     socketRoutes.add(key);
   }
   const mountRoute = (
@@ -339,12 +343,14 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   ) => {
     const key = routeKey(method, path);
     if (socketRoutes.has(key))
-      throw new Error(
+      throw new DuplicateNameError(
         `Brick: route '${method} ${path}' conflicts with a socket`,
       );
     if (registeredRoutes.has(key)) {
       if (plugin || registeredRoutes.get(key))
-        throw new Error(`Brick: duplicate plugin route '${method} ${path}'`);
+        throw new DuplicateNameError(
+          `Brick: duplicate plugin route '${method} ${path}'`,
+        );
       return false;
     }
     app.route(method, path, handler);
