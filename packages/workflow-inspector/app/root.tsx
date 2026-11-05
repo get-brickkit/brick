@@ -15,14 +15,7 @@ import {
 } from "react-router";
 import { Toaster } from "~/components/ui/sonner";
 
-import type { Route } from "./+types/root";
 import "./globals.css";
-
-// `basename` is the embed mount path, threaded through the load context by
-// the fetch handler.
-export async function loader({ context }: Route.LoaderArgs) {
-  return { basename: context?.basename ?? "" };
-}
 
 // Catch-all action: handles stray POST requests (e.g. from Radix UI dialogs
 // that render internal <form method="dialog"> elements).
@@ -208,12 +201,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function App({ loaderData }: Route.ComponentProps) {
-  // Surface the embed mount path to client-only fetches (RPC + stream reads).
-  // Set during the first (hydration) render, before any post-mount data fetch.
-  if (typeof window !== "undefined") {
-    window.__WORKFLOW_BASENAME__ = loaderData.basename ?? "";
-  }
+export default function App() {
   return (
     <ThemeProvider
       attribute="class"

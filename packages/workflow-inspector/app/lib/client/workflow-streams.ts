@@ -1,4 +1,3 @@
-import { apiBase } from "~/lib/api-base";
 import type { ServerActionError } from "~/lib/types";
 import { unwrapOrThrow, WorkflowWebAPIError } from "./workflow-errors";
 import { rpc } from "~/lib/rpc-client";
@@ -33,7 +32,7 @@ export async function readStream(
     if (cursor) {
       params.set("cursor", cursor);
     }
-    const url = `${apiBase()}/api/stream/${encodeURIComponent(streamId)}?${params.toString()}`;
+    const url = `${import.meta.env.BASE_URL}api/stream/${encodeURIComponent(streamId)}?${params.toString()}`;
     const response = await fetch(url, { signal });
     if (!response.ok) {
       const errorData = await response.json().catch(() => null);

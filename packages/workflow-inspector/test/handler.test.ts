@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SPEC_VERSION_SUPPORTS_SLOT_IDENTITY } from "@workflow/world";
 import { decode } from "cbor-x";
+import { BASE_PATH } from "../base-path";
 
 // The server build, which `bun run build` makes. The CLI serves its files; this
 // is the page and the calls it makes. Named by a variable so that the type
@@ -15,8 +16,8 @@ const { createFetchHandler } = (await import(build)) as {
   ): (request: Request) => Promise<Response>;
 };
 
-// Where the dashboard serves it, and what the build is made for (Vite `base`).
-const base = "http://localhost/workflows";
+// Where the dashboard serves it, and what the build is made for.
+const base = `http://localhost${BASE_PATH}`;
 
 /** A world that records what the UI asks of it. */
 function stubWorld() {
@@ -63,7 +64,7 @@ describe("createFetchHandler", () => {
   const world = stubWorld();
   let handle: (request: Request) => Promise<Response>;
   beforeAll(() => {
-    handle = createFetchHandler("/workflows", { world });
+    handle = createFetchHandler(BASE_PATH, { world });
   });
 
   it("serves the page under its base path, without a header of its own", async () => {
@@ -71,7 +72,7 @@ describe("createFetchHandler", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/html");
     const html = await response.text();
-    expect(html).toContain("/workflows/assets/");
+    expect(html).toContain(`${BASE_PATH}/assets/`);
     // The dashboard around it has its own /assets/, which has none of these.
     expect(html).not.toMatch(/["'(]\/assets\//);
     // The dashboard around it has the navigation, the health probe and the theme switch.
@@ -91,10 +92,10 @@ describe("createFetchHandler", () => {
         .join("\n");
     // The manifest, the preloads of lazy chunks and the wasm decoder's URL.
     expect(read(".js")).not.toMatch(/["'`]\/assets\//);
-    expect(read(".js")).toContain("/workflows/assets/zstd-");
+    expect(read(".js")).toContain(`${BASE_PATH}/assets/zstd-`);
     // Only the dashboard serves the two fonts, and at its own /assets/.
     expect(read(".css")).toMatch(/url\(["']?\/assets\/Geist-Variable\.woff2/);
-    expect(read(".css")).not.toContain("/workflows/assets/Geist");
+    expect(read(".css")).not.toContain(`${BASE_PATH}/assets/Geist`);
   });
 
   it("reads the world the host gave it", async () => {
