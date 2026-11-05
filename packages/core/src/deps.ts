@@ -1,4 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { Service } from "./types";
+import { portOf } from "./service-port";
 
 declare const portType: unique symbol;
 
@@ -85,11 +87,7 @@ export function useDeps(): Record<string, unknown> {
  * provides one that no service declares.
  */
 export function bindDeps(
-  services: readonly {
-    name: string;
-    options: { deps?: Ports };
-    setDeps?(deps: Record<string, unknown>): void;
-  }[],
+  services: readonly Service<any, any>[],
   provided: Record<string, unknown> = {},
 ): void {
   const declared = new Set<string>();
@@ -103,7 +101,7 @@ export function bindDeps(
       declared.add(name);
       own[name] = provided[name];
     }
-    service.setDeps?.(Object.freeze(own));
+    portOf(service).setDeps(Object.freeze(own));
   }
   for (const name of Object.keys(provided))
     if (!declared.has(name))
