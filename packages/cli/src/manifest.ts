@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import { writeContractSource } from "./client-contract-file";
+import { writeFileIfChanged } from "./client-contract-file";
 
 import {
   DEFINITION_EXTENSIONS,
@@ -56,7 +56,7 @@ export async function writeServiceManifest(options: {
   generated: string;
 }): Promise<string> {
   const output = join(options.generated, MANIFEST_FILE);
-  await writeContractSource(
+  await writeFileIfChanged(
     output,
     renderManifest(options.services, options.generated),
   );

@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { writeContractSource } from "./client-contract-file";
+import { writeFileIfChanged } from "./client-contract-file";
 import {
   createServer,
   isRunnableDevEnvironment,
@@ -67,7 +67,7 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
 
   async function writeContract(value: unknown) {
     const source = generateClientContract(requireBrickApp(value));
-    await writeContractSource(output, source);
+    await writeFileIfChanged(output, source);
   }
 
   function collectDependencies(

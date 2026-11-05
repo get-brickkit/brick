@@ -3,6 +3,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { brick, isBrickApp } from "@brickkit/core";
 import { importEntry } from "./app-entry";
+import { TEMPORARY_FILE_PREFIX } from "./client-contract-file";
 import {
   ConfigError,
   DEFAULT_DASHBOARD_PORT,
@@ -346,7 +347,7 @@ export async function startDevServer(options: DevServerOptions = {}) {
       const file = resolve(dir, filename);
       if (
         file === contract ||
-        basename(file).startsWith(".brick-contract-") ||
+        basename(file).startsWith(TEMPORARY_FILE_PREFIX) ||
         // The dashboard rebuilds its extension itself; the app restarts only
         // for the files it imports.
         (extensionDir !== undefined &&
