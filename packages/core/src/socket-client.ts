@@ -35,7 +35,7 @@ export function connectSocket(
   contract: BrickClientSocket,
   options: BrickSocketConnectOptions,
 ): BrickSocketClient<Record<string, unknown>, Record<string, unknown>> {
-  const url = new URL(`${baseUrl.replace(/\/$/, "")}${contract.config.path}`);
+  const url = new URL(`${baseUrl}${contract.config.path}`);
   if (!["http:", "https:", "ws:", "wss:"].includes(url.protocol))
     throw new Error("Invalid socket URL protocol");
   url.protocol =

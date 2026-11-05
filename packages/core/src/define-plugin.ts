@@ -136,7 +136,7 @@ export interface PluginManifest<
   /** The npm package name, scoped: `@acme/brick-comments`. */
   name: string;
   description?: string;
-  /** The Brick versions it supports, as a semver range: `^0.11.0`. */
+  /** The Brick versions it supports, as a semver range: `^0.12.0`. */
   brick?: string;
   /** Plugins that must be installed on the same host first, by name. */
   requires?: readonly string[];
@@ -258,7 +258,7 @@ const snake = (value: string) =>
  * @example
  * export const audit = definePlugin({
  *   name: "@acme/brick-audit",
- *   brick: "^0.11.0",
+ *   brick: "^0.12.0",
  *   requires: ["@brickkit/crud"],
  *   options: t.Object({ table: t.String({ default: "audit" }) }),
  *   tables: ({ table, text, timestamp }) => ({
