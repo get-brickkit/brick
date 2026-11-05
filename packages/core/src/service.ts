@@ -268,11 +268,7 @@ export class ServiceImpl<
     const socket: RegisteredSocket = defineServiceSocket(
       this.name,
       config,
-      async (request) => {
-        const ctx = await resolveServiceContext(this, { request });
-        // A socket a plugin declared runs with the plugin's deps.
-        return socket.deps ? { ...ctx, deps: socket.deps } : ctx;
-      },
+      (request) => resolveServiceContext(this, { request }, socket.deps),
     );
     this.sockets.set(config.name, socket);
     this.touch();
@@ -340,8 +336,9 @@ export class ServiceImpl<
    */
   resolveContext(
     callCtx?: Partial<BaseContext<TDb> & TServiceContext>,
+    pluginDeps?: Readonly<Record<string, unknown>>,
   ): Promise<BaseContext<TDb> & TServiceContext> {
-    return resolveServiceContext(this, callCtx);
+    return resolveServiceContext(this, callCtx, pluginDeps);
   }
 
   introspect(): ServiceSchema {
@@ -409,24 +406,30 @@ function pluginTables(tables: Record<string, unknown>) {
   return owners.length ? { plugins: Object.fromEntries(owners) } : {};
 }
 
+/**
+ * The context of a call to one of the service's actions or sockets. The one
+ * rule for which deps it sees: those of the plugin install that created the
+ * action or socket (`pluginDeps`), else the service's own. The service's
+ * `context` hook always sees the service's own.
+ */
 async function resolveServiceContext<
   TDb,
   TServiceContext extends Record<string, any>,
 >(
   service: ServiceImpl<TDb, TServiceContext>,
   callCtx?: Partial<BaseContext<TDb>> & { user?: unknown },
+  pluginDeps?: Readonly<Record<string, unknown>>,
 ): Promise<BaseContext<TDb> & TServiceContext> {
   // Only a context this service resolved itself is accepted as it is.
   if ((callCtx as any)?.[RESOLVED_SYMBOL] === service) {
-    // A plugin action's copy carries the plugin's deps; this service's own actions get their own back.
-    const own = (callCtx as any)[OWN_DEPS];
+    const deps = pluginDeps ?? (callCtx as any)[OWN_DEPS];
     return (
-      (callCtx as { deps?: unknown }).deps === own
+      (callCtx as { deps?: unknown }).deps === deps
         ? callCtx
-        : { ...callCtx, deps: own }
+        : { ...callCtx, deps }
     ) as BaseContext<TDb> & TServiceContext;
   }
-  const { deps, ...framework } = baseContext({
+  const framework = baseContext({
     request: callCtx?.request,
     // Always this service's own database, never the caller's.
     db: service.getDb(),
@@ -456,9 +459,9 @@ async function resolveServiceContext<
   const finalCtx: any = {
     ...fullBaseCtx,
     ...resolvedExtra,
-    deps,
+    deps: pluginDeps ?? framework.deps,
     [RESOLVED_SYMBOL]: service,
-    [OWN_DEPS]: deps,
+    [OWN_DEPS]: framework.deps,
   };
   return finalCtx;
 }

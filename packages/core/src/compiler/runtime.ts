@@ -256,7 +256,7 @@ function requestContext(
     db: plan.cachedDb ?? plan.service.getDb(),
     logger: plan.logger,
     metadata: { headers },
-    // The service's context hook sees the service's deps; a plugin's action then gets its own.
+    // resolveServiceContext's rule: the hook sees the service's deps; a plugin's action then gets its own.
     deps: plan.contextHook
       ? plan.service.deps
       : (plan.deps ?? plan.service.deps),

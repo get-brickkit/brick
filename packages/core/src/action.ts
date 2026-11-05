@@ -187,11 +187,9 @@ export function defineAction(config: any): any {
     const meta = actionMeta(actionFn);
     // The registered service resolves the context once per request, and
     // recognizes one it already resolved.
-    let ctx: any = meta.service
-      ? await meta.service.resolveContext(params?.ctx)
+    const ctx: any = meta.service
+      ? await meta.service.resolveContext(params?.ctx, meta.deps?.values)
       : { ...baseContext(params?.ctx ?? {}), ...params?.ctx };
-    // A plugin's action runs with the deps of the install that created it.
-    if (meta.deps) ctx = { ...ctx, deps: meta.deps.values };
     try {
       return await runStages(stages, params?.input, ctx);
     } catch (err) {

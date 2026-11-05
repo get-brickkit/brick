@@ -1,4 +1,4 @@
-import type { PreparationContribution, Service } from "./types";
+import type { BaseContext, PreparationContribution, Service } from "./types";
 import type { OutboxTable } from "./events/outbox";
 import type { ServiceEvents } from "./events/types";
 import type { EventRef } from "./events/catalog";
@@ -16,6 +16,11 @@ export interface ServicePort<
   /** Whether the service declares an event catalog. */
   readonly hasCatalog: boolean;
   setDeps(deps: Readonly<Record<string, unknown>>): void;
+  /** `resolveContext`, for an action or socket a plugin install created: it sees `pluginDeps`. */
+  resolveContext(
+    callCtx?: Partial<BaseContext<TDb> & TServiceContext>,
+    pluginDeps?: Readonly<Record<string, unknown>>,
+  ): Promise<BaseContext<TDb> & TServiceContext>;
   setRecorder(recorder: ServiceEvents | undefined): void;
   getOutbox(): OutboxTable | undefined;
   /** @throws When the event is not in the catalog or its payload does not match. */

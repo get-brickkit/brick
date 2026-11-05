@@ -74,6 +74,28 @@ describe("declared deps", () => {
     await cleanup();
   });
 
+  it("gives the service's context hook its deps, over HTTP and in-process alike", async () => {
+    const seen: unknown[] = [];
+    const orders = defineService("hooked", {
+      deps: { carrier: port<Carrier>() },
+      context: (ctx: any) => {
+        seen.push(ctx.deps?.carrier);
+        return {};
+      },
+    });
+    orders.action({ name: "ping", execute: () => ({ tracking: "ok" }) });
+    const booked = carrier("trk");
+    const app = brick({
+      services: [orders],
+      deps: { carrier: booked },
+      requestLogging: false,
+      docs: false,
+    });
+    await call(app, "/api/hooked/ping", {});
+    await orders.getAction("ping")!.run();
+    expect(seen).toEqual([booked, booked]);
+  });
+
   it("fails at brick() when a dep is missing or extra", () => {
     const orders = ordersService("orders");
     expect(() => brick({ services: [orders], docs: false })).toThrow(
