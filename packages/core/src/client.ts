@@ -1,8 +1,10 @@
+import type { HttpMethod } from "./http";
 import type { Static, TSchema } from "@sinclair/typebox";
 import type { Action, ActionErrorDefinition } from "./types";
 import { ActionExecutionError, ValidationError } from "./types";
 import { connectSocket } from "./socket-client";
 import { kebabCase } from "./kebab";
+import { actionRoute } from "./routes";
 import type {
   BrickClientSocket,
   BrickSocketClient,
@@ -127,7 +129,7 @@ export interface BrickClientAction<
   plugin?: string;
   /** Owning resource name for resource-plugin actions (e.g. `page`). */
   resource?: string;
-  config: { path: string; method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" };
+  config: { path: string; method: HttpMethod };
   /** Type information only; never emitted at runtime. */
   readonly __types?: { input: TInput; output: TOutput; errors: TErrors };
 }
@@ -412,8 +414,16 @@ function planRequest(
     typeof actionTarget?.name === "string" && actionTarget.name
       ? actionTarget.name
       : path.slice(1).join(".");
-  const method = actionConfig?.method ?? "POST";
-  const configuredPath = actionConfig?.path;
+  // A raw server action's path is relative to its service: route it as the server does.
+  const route = isActionValue(actionTarget)
+    ? actionRoute(actionTarget as unknown as Action, service, prefix)
+    : actionConfig;
+  if (route === false)
+    throw new Error(
+      `[Brick-TS client] '${path.join(".")}' has no HTTP route: its plugin switched it off.`,
+    );
+  const method = route?.method ?? "POST";
+  const configuredPath = route?.path;
   let actionPath =
     configuredPath ??
     `${prefix}/${encodeURIComponent(kebabCase(service))}/${action
