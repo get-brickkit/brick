@@ -21,47 +21,18 @@ import {
 } from "./socket-schema";
 import type {
   BrickSocketConfig,
-  BrickSocketHandle,
-  BrickSocketSchema,
   BrickSocketSender,
   SocketBroker,
   SocketBrokerMessage,
   SocketEmitArgs,
   SocketPayloads,
-  SocketReplay,
   SocketSchemas,
+  RegisteredSocket,
+  SocketSender,
+  SocketSession,
 } from "./socket-types";
 
-interface SocketSender {
-  readonly isOpen: boolean;
-  send(event: string, payload: unknown): void;
-  close(): void;
-}
-interface SocketSession {
-  /** Server rooms, resolved from the handshake context. */
-  rooms: readonly string[];
-  open(socket: SocketSender): Promise<void>;
-  message(event: string, data: unknown, socket: SocketSender): Promise<void>;
-  join(room: string): Promise<boolean>;
-  close(socket: SocketSender, code: number, reason: string): Promise<void>;
-}
-export interface RegisteredSocket {
-  schema: BrickSocketSchema;
-  input: SocketSchemas;
-  output: SocketSchemas;
-  /** The errors its handlers declare, for the client contract. */
-  errors?: Record<string, ActionErrorDefinition>;
-  allowedOrigins?: readonly string[];
-  allowMissingOrigin?: boolean;
-  maxRooms: number;
-  replay?: SocketReplay;
-  /** Brokers of the apps this socket is mounted in. */
-  brokers: Set<SocketBroker>;
-  handle: BrickSocketHandle<any>;
-  topicPrefix: string;
-  topic(room: string): string;
-  connect(request: Request): Promise<SocketSession>;
-}
+export type { RegisteredSocket };
 
 class SocketDenied extends Error {}
 

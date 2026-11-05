@@ -2,12 +2,14 @@ import { and, eq, getTableColumns, inArray, type Column } from "drizzle-orm";
 import type { TObject, TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { installPlugin } from "./plugin";
+import type { ResourcePlugin } from "./plugin-types";
 import { buildErrorHelpers, defineAction } from "./action";
-import { kebabCase, type ResourceActionInfo } from "./routes";
+import { kebabCase } from "./routes";
+import { actionMeta, type ResourceActionInfo } from "./action-meta";
+import { portOf } from "./service-port";
 import { Type } from "./typebox";
 import { runInTransaction } from "./events/transaction";
 import type { EventRef } from "./events/catalog";
-import type { ServiceEvents } from "./events/types";
 import {
   ActionExecutionError,
   type ActionContext,
@@ -24,7 +26,8 @@ import {
   type Service,
 } from "./types";
 
-/** Resource actions can't take a CRUD route segment. */
+// shortcut: crud's segments, reserved even before crud (or its bulk operations) is installed;
+// remove once crud declares the segments it claims.
 const CRUD_SEGMENTS = new Set([
   "query",
   "count",
@@ -111,11 +114,25 @@ function defineResourceAction(
     throw new Error(`Invalid resource action name '${config.name}'`);
   const name = `${resource.name}.${config.name}`;
   const segment = kebabCase(config.name);
+  // A plugin route on this resource (crud's `/count`) owns its first segment.
   if (CRUD_SEGMENTS.has(segment))
     throw new Error(
       `Brick: duplicate name "${name}" in service "${service.name}": "${segment}" is a CRUD route`,
     );
-  if ((service.getAction(name) as { plugin?: string } | undefined)?.plugin)
+  const owner = service.listActions().find((action) => {
+    const route = actionMeta(action).route;
+    return (
+      route?.scope === "resource" &&
+      route.resource === resource.name &&
+      route.path.split("/")[1] === segment
+    );
+  });
+  if (owner)
+    throw new Error(
+      `Brick: duplicate name "${name}" in service "${service.name}": "${segment}" is a ${actionMeta(owner).route!.plugin} route`,
+    );
+  const existing = service.getAction(name);
+  if (existing && actionMeta(existing).route)
     throw new Error(
       `Brick: duplicate name "${name}" in service "${service.name}"`,
     );
@@ -155,7 +172,7 @@ function defineResourceAction(
     record,
     ...(access === undefined ? {} : { access }),
   };
-  Object.assign(action, { resource: resource.name, resourceAction: info });
+  actionMeta(action).resourceAction = info;
   service.action(action);
   return action;
 }
@@ -244,7 +261,7 @@ function defineCommand(
   const run = async ({ input, ctx }: { input: any; ctx: any }) => {
     const db = ctx.db;
     if (!db) throw new Error(`${where} requires a configured database`);
-    const recorder = (service as { recorder?: ServiceEvents }).recorder;
+    const recorder = service.recorder;
     const body = async (
       tx: any,
       record?: (name: string, payload: unknown) => Promise<void>,
@@ -283,9 +300,7 @@ function defineCommand(
             throw new Error(
               `${where} emits '${key}', which is not in the event catalog of service '${service.name}'`,
             );
-          (
-            service as { checkEvent?(n: string, p: unknown): void }
-          ).checkEvent?.(ref.name, payload);
+          portOf(service).checkEvent(ref.name, payload);
           return [ref.name, payload] as const;
         });
       if (emits.length && !record)
@@ -368,7 +383,7 @@ function defineCommand(
     } as ResourceActionConfig<any, any, any, any, any, boolean>,
     run,
   );
-  Object.assign(action, { decide, command: true });
+  Object.assign(action, { decide });
   return action;
 }
 
@@ -400,7 +415,7 @@ export function defineResource<
     ["__proto__", "constructor", "prototype"].includes(config.name)
   )
     throw new Error(`Invalid resource name '${config.name}'`);
-  service.registerTable(config.table);
+  portOf(service).registerTable(config.table);
   const resource = {
     name: config.name,
     serviceName: service.name,
@@ -408,7 +423,7 @@ export function defineResource<
     id,
     idField: entry[0],
     config: Object.freeze({ ...config, id }),
-    use(plugin: import("./plugin").ResourcePlugin<any, any, any>) {
+    use(plugin: ResourcePlugin<any, any, any>) {
       return installPlugin(
         service,
         resource as unknown as Resource<

@@ -1,7 +1,13 @@
 import type { Database } from "bun:sqlite";
 import { test, expect } from "bun:test";
 
-import { defineService, defineDatabase, brick, t } from "@brickkit/core";
+import {
+  defineService,
+  defineDatabase,
+  brick,
+  compileBrickApplication,
+  t,
+} from "@brickkit/core";
 import { eq } from "drizzle-orm";
 import { sqliteTable, integer, text } from "drizzle-orm/sqlite-core";
 
@@ -269,7 +275,7 @@ test("authorization and scoped-create rejection do not modify storage", async ()
 test("preparation prewarming preserves projection and repeated IDs", async () => {
   const { resource: r, service, sqlite } = fixture();
   try {
-    service.prepareContributions();
+    compileBrickApplication({ services: [service] });
     await r.create.run({ name: "A" });
     await r.create.run({ name: "B" });
     expect((await r.get.run({ id: 1 })).name).toBe("A");

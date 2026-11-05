@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
-import { getPluginActionRoute, kebabCase } from "@brickkit/core";
+import { actionMeta, getPluginActionRoute, kebabCase } from "@brickkit/core";
 import { loadBrickApp, type BrickApp } from "./app-entry";
 import { ConfigError, type LoadedConfig } from "./config";
 import {
@@ -214,7 +214,7 @@ function uniqueNames(check: AppCheck, app: BrickApp, add: Add) {
     for (const action of service.listActions())
       if (
         action.config.path === undefined &&
-        !(action as { resourceAction?: unknown }).resourceAction &&
+        !actionMeta(action).resourceAction &&
         getPluginActionRoute(action) === undefined
       )
         claim(action.name, `action "${action.name}"`);

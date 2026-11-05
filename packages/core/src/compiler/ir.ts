@@ -1,19 +1,32 @@
+import type { HttpMethod } from "../http";
 import { type Service, type Action } from "../types";
-import { getPluginActionRoute } from "../plugin";
-import { getActionRoute, kebabCase } from "../routes";
+import { actionMeta } from "../action-meta";
+import {
+  checkSegments,
+  getActionRoute,
+  inputSource,
+  isReadLike,
+  routeKey,
+} from "../routes";
+import { portOf } from "../service-port";
 
-export type RouteMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+export type RouteMethod = HttpMethod;
 export interface RouteIR {
   readonly method: RouteMethod;
   readonly path: string;
   readonly service: string;
   readonly action: string;
   readonly kind: "action";
+  /** The plugin that registered the action, if one did. */
+  readonly plugin?: string;
   readonly input: boolean;
   readonly output: boolean;
   readonly context: boolean;
   readonly authorize: boolean;
-  readonly inputPrecedence: readonly ("query" | "params" | "body")[];
+  /** Whether the server reads the query first (else path parameters, then body). */
+  readonly readLike: boolean;
+  /** Where callers send the input: the query (GET, DELETE) or the body. */
+  readonly inputSource: "query" | "body";
   readonly coercions: readonly {
     readonly key: string;
     readonly type: "number" | "boolean" | "array";
@@ -82,15 +95,14 @@ export function analyzeDeclaredApplication(
     action: Action<any, any, any, any>,
     method: RouteMethod,
     path: string,
-    kind: RouteIR["kind"],
   ) => {
     if (!path.startsWith("/"))
       throw new Error(`Brick compiler: invalid route '${method} ${path}'`);
-    const plugin = getPluginActionRoute(action, prefix) !== undefined;
-    const key = `${method} ${path.replace(/:[^/]+/g, ":param")}`;
+    const route = describeRoute(service, action, method, path);
+    const key = routeKey(method, path);
     const previous = registered.get(key);
     if (previous) {
-      if (plugin || previous.plugin)
+      if (route.plugin || previous.plugin)
         throw new Error(
           `Brick compiler: duplicate plugin route '${method} ${path}'`,
         );
@@ -103,43 +115,11 @@ export function analyzeDeclaredApplication(
       throw new Error(
         `Brick compiler: '${service.name}.${action.name}' has no execute handler`,
       );
-    registered.set(key, { name: `${service.name}.${action.name}`, plugin });
-    const readLike =
-      method === "GET" ||
-      action.name.startsWith("get") ||
-      action.name.endsWith(".get") ||
-      action.name.startsWith("list") ||
-      action.name.endsWith(".list") ||
-      action.name.startsWith("find") ||
-      action.name.startsWith("read");
-    const coercions: { key: string; type: "number" | "boolean" | "array" }[] =
-      [];
-    for (const [key, prop] of Object.entries(
-      action.config.input?.properties ?? {},
-    ) as [string, any][]) {
-      if (prop.type === "number" || prop.type === "integer")
-        coercions.push({ key, type: "number" });
-      else if (prop.type === "boolean")
-        coercions.push({ key, type: "boolean" });
-      else if (prop.type === "array") coercions.push({ key, type: "array" });
-    }
-    routes.push({
-      method,
-      path,
-      service: service.name,
-      action: action.name,
-      kind,
-      input: Boolean(action.config.input),
-      output: Boolean(action.config.output),
-      context: typeof service.options.context === "function",
-      authorize: typeof action.config.authorize === "function",
-      inputPrecedence: readLike
-        ? ["query", "params", "body"]
-        : ["params", "body", "query"],
-      coercions,
-      inputSchema: schemaSnapshot(action.config.input),
-      outputSchema: schemaSnapshot(action.config.output),
+    registered.set(key, {
+      name: `${service.name}.${action.name}`,
+      plugin: Boolean(route.plugin),
     });
+    routes.push(route);
     bindings.push({ service, action });
   };
   for (const service of services) {
@@ -147,15 +127,17 @@ export function analyzeDeclaredApplication(
     for (const action of service.listActions()) {
       const route = getActionRoute(action, prefix);
       if (route === false) continue;
-      add(service, action, route.method, route.path, "action");
+      add(service, action, route.method, route.path);
     }
   }
   const preparations = services.flatMap((service) =>
-    service.listPreparations().map((contribution) => ({
-      service: service.name,
-      name: contribution.name,
-      metadata: schemaSnapshot(contribution.describe?.()),
-    })),
+    portOf(service)
+      .listPreparations()
+      .map((contribution) => ({
+        service: service.name,
+        name: contribution.name,
+        metadata: schemaSnapshot(contribution.describe?.()),
+      })),
   );
   const ir: BrickIR = freezeIR({
     version: 1,
@@ -169,27 +151,38 @@ export function analyzeDeclaredApplication(
   return { ir, bindings };
 }
 
-/** A service action, resource, and socket own the URL segment after the service. */
-function checkSegments(service: Service<any, any>) {
-  const owners = new Map<string, string>();
-  const claim = (segment: string, owner: string) => {
-    const previous = owners.get(segment);
-    if (previous)
-      throw new Error(
-        `Brick: duplicate name "${segment}" in service "${service.name}": ${previous} and ${owner} share the URL segment`,
-      );
-    owners.set(segment, owner);
+/** What the compiler records about one action route. */
+export function describeRoute(
+  service: Service<any, any>,
+  action: Action<any, any, any, any>,
+  method: RouteMethod,
+  path: string,
+): RouteIR {
+  const coercions: { key: string; type: "number" | "boolean" | "array" }[] = [];
+  for (const [key, prop] of Object.entries(
+    action.config.input?.properties ?? {},
+  ) as [string, any][]) {
+    if (prop.type === "number" || prop.type === "integer")
+      coercions.push({ key, type: "number" });
+    else if (prop.type === "boolean") coercions.push({ key, type: "boolean" });
+    else if (prop.type === "array") coercions.push({ key, type: "array" });
+  }
+  const plugin = actionMeta(action).route?.plugin;
+  return {
+    method,
+    path,
+    service: service.name,
+    action: action.name,
+    kind: "action",
+    ...(plugin ? { plugin } : {}),
+    input: Boolean(action.config.input),
+    output: Boolean(action.config.output),
+    context: typeof service.options.context === "function",
+    authorize: typeof action.config.authorize === "function",
+    readLike: isReadLike(method, action.name),
+    inputSource: inputSource(method),
+    coercions,
+    inputSchema: schemaSnapshot(action.config.input),
+    outputSchema: schemaSnapshot(action.config.output),
   };
-  for (const resource of service.listResources())
-    claim(kebabCase(resource.name), `resource "${resource.name}"`);
-  for (const socket of service.listSockets())
-    if (socket.schema.path === undefined)
-      claim(kebabCase(socket.schema.name), `socket "${socket.schema.name}"`);
-  for (const action of service.listActions())
-    if (
-      action.config.path === undefined &&
-      !(action as { resourceAction?: unknown }).resourceAction &&
-      getPluginActionRoute(action) === undefined
-    )
-      claim(kebabCase(action.name), `action "${action.name}"`);
 }

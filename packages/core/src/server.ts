@@ -1,3 +1,4 @@
+import type { HttpMethod } from "./http";
 import { Elysia } from "elysia";
 import {
   compileBrickApplication,
@@ -6,16 +7,9 @@ import {
 } from "./compiler";
 import type { Service } from "./types";
 import { getGlobalRegistry } from "./registry";
-import {
-  getPluginActionRoute,
-  getPluginEndpoints,
-  installedPlugins,
-} from "./plugin";
-import {
-  pluginLifecycle,
-  setupAppPlugins,
-  type PluginInstance,
-} from "./define-plugin";
+import { getPluginEndpoints, installedPlugins } from "./plugin";
+import { pluginLifecycle, setupAppPlugins } from "./plugin-app";
+import type { PluginInstance } from "./define-plugin";
 import { generateOpenApiSpec } from "./openapi";
 import { resolveSecrets, type SecretSource } from "./secrets";
 import {
@@ -44,6 +38,7 @@ import { bindDeps } from "./deps";
 import { WEBHOOK_ROUTE } from "./events/workflows";
 import type { EventsOptions } from "./events/types";
 import { localBroker, mountSockets, socketPath } from "./socket";
+import { routeKey } from "./routes";
 import type { SocketBroker } from "./socket-types";
 import { corsHook, type CorsOptions } from "./cors";
 
@@ -312,8 +307,6 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
 
   // Dedicated Route Registry
   const registeredRoutes = new Map<string, boolean>();
-  const routeKey = (method: string, path: string) =>
-    `${method} ${path.replace(/:[^/]+/g, ":param")}`;
   registeredRoutes.set(routeKey("GET", "/_health"), false);
   registeredRoutes.set(routeKey("GET", "/_brick/services"), false);
   if (enableDocs) {
@@ -338,7 +331,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     socketRoutes.add(key);
   }
   const mountRoute = (
-    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+    method: HttpMethod,
     path: string,
     handler: any,
     plugin = false,
@@ -353,23 +346,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
         throw new Error(`Brick: duplicate plugin route '${method} ${path}'`);
       return false;
     }
-    switch (method) {
-      case "GET":
-        app.get(path, handler);
-        break;
-      case "POST":
-        app.post(path, handler);
-        break;
-      case "PUT":
-        app.put(path, handler);
-        break;
-      case "PATCH":
-        app.patch(path, handler);
-        break;
-      case "DELETE":
-        app.delete(path, handler);
-        break;
-    }
+    app.route(method, path, handler);
     registeredRoutes.set(key, plugin);
     return true;
   };
@@ -444,12 +421,6 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   }
   const mountedRoutes: RouteIR[] = [];
   for (const route of compilation.routes) {
-    const service = services.find(
-      (candidate) => candidate.name === route.ir.service,
-    )!;
-    const action = service
-      .listActions()
-      .find((candidate) => candidate.name === route.ir.action)!;
     const invoke = (context: any) => {
       const result = telemetry
         ? withSpan(
@@ -475,7 +446,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
               invoke(context),
             )
         : invoke,
-      getPluginActionRoute(action, prefix) !== undefined,
+      Boolean(route.ir.plugin),
     );
     if (mounted) mountedRoutes.push(route.ir);
   }
@@ -525,7 +496,6 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
       await lifecycle.stop();
     }
   }) as typeof brickApp.stop;
-  getGlobalRegistry().setApplicationRoutes(definition);
 
   // Serialize stable metadata once; registry changes invalidate the snapshot.
   app.get(

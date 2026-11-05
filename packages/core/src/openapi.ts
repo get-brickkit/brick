@@ -1,5 +1,6 @@
 import type { EventRef } from "./events/catalog";
-import { getActionRoute } from "./routes";
+import { actionOwners } from "./routes";
+import { analyzeDeclaredApplication } from "./compiler/ir";
 import { getActionAccess } from "./access";
 import type { ServiceRegistry } from "./registry";
 import { getGlobalRegistry } from "./registry";
@@ -131,12 +132,14 @@ export function generateOpenApiSpec(
   const tags = new Map<string, string>();
   let hasAnyAuthorizedAction = false;
 
+  // The routes the server mounts: shadowed ones are left out, as the router leaves them out.
+  const { ir, bindings } = analyzeDeclaredApplication([...services], prefix);
   for (const service of services) {
     tags.set(service.name, `Actions exposed by '${service.name}' service`);
 
-    for (const action of service.listActions()) {
-      const route = getActionRoute(action, prefix);
-      if (route === false) continue;
+    for (const [index, route] of ir.routes.entries()) {
+      if (route.service !== service.name) continue;
+      const { action } = bindings[index]!;
       const routePath = route.path;
       const method = route.method.toLowerCase();
       const pathParams = [...routePath.matchAll(/:([^/]+)/g)].map(
@@ -144,10 +147,8 @@ export function generateOpenApiSpec(
       );
       const actionPath = routePath.replace(/:([^/]+)/g, "{$1}");
       if (!paths[actionPath]) paths[actionPath] = {};
-      // Match the compiler's first-registration-wins policy for route collisions.
-      if (paths[actionPath][method]) continue;
 
-      const resource = (action as { resource?: string }).resource;
+      const { plugin, resource } = actionOwners(action);
       // Resource routes group under `service · resource`.
       const group = resource ? `${service.name} · ${resource}` : service.name;
       if (resource)
@@ -237,12 +238,8 @@ export function generateOpenApiSpec(
           action.config.description ??
           `Execute action '${action.name}' on service '${service.name}'`,
         tags: [...new Set([group, ...(action.config.tags ?? [])])],
-        ...((action as { plugin?: string }).plugin
-          ? { "x-brick-plugin": (action as { plugin?: string }).plugin }
-          : {}),
-        ...((action as { resource?: string }).resource
-          ? { "x-brick-resource": (action as { resource?: string }).resource }
-          : {}),
+        ...(plugin ? { "x-brick-plugin": plugin } : {}),
+        ...(resource ? { "x-brick-resource": resource } : {}),
         responses,
       };
 
@@ -254,8 +251,7 @@ export function generateOpenApiSpec(
         required: true,
         schema: properties[key] ?? { type: "string" },
       }));
-      const queryOnly = method === "get" || method === "delete";
-      if (queryOnly) {
+      if (route.inputSource === "query") {
         for (const [key, schema] of Object.entries(properties)) {
           if (pathParams.includes(key)) continue;
           parameters.push({

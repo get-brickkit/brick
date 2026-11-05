@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  actionOwners,
   getActionRoute,
   getPluginActionRoute,
   serializeSocketSchema,
@@ -107,16 +108,7 @@ function addServiceActions(
       kind: "action",
       name: action.name,
       serviceName: service.name,
-      ...((action as { plugin?: string }).plugin
-        ? { plugin: (action as { plugin?: string }).plugin }
-        : pluginRoute?.plugin
-          ? { plugin: pluginRoute.plugin }
-          : {}),
-      ...((action as { resource?: string }).resource
-        ? { resource: (action as { resource?: string }).resource }
-        : pluginRoute?.resource
-          ? { resource: pluginRoute.resource }
-          : {}),
+      ...actionOwners(action),
       config: { path: route.path, method: route.method },
     };
     insertAction(
