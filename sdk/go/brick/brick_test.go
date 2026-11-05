@@ -138,3 +138,11 @@ func TestContinueTrace(t *testing.T) {
 		}
 	}
 }
+
+func TestErrorStatusOutsideRange(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeError(rec, &Ctx{requestID: "r"}, &Error{Code: "ODD"})
+	if rec.Code != 500 || !strings.Contains(rec.Body.String(), `"status":500`) {
+		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+}

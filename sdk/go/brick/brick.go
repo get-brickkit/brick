@@ -91,11 +91,12 @@ func Action[I, O any](s *Service, name string, fn func(ctx *Ctx, in I) (O, error
 	s.actions = append(s.actions, manifestAction{Name: name, Input: input, Output: output})
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		serve, trust := checkToken(r)
-		ctx := newCtx(r, name, trust, s.auth)
 		if !serve {
-			writeError(w, ctx, &Error{Name: "ActionExecutionError", Code: "UNAUTHORIZED", Message: "Invalid internal token", Status: 401})
+			// A Ctx without auth, so a refused request costs no JWT verification.
+			writeError(w, newCtx(r, name, false, nil), &Error{Name: "ActionExecutionError", Code: "UNAUTHORIZED", Message: "Invalid internal token", Status: 401})
 			return
 		}
+		ctx := newCtx(r, name, trust, s.auth)
 		if ctx.badUser {
 			// As the TS internal call handler answers it.
 			writeError(w, ctx, &Error{Name: "ActionExecutionError", Code: "BAD_REQUEST", Message: "Invalid x-brick-user header", Status: 400})
@@ -177,6 +178,10 @@ func writeError(w http.ResponseWriter, ctx *Ctx, e *Error) {
 	envelope.RequestID = ctx.requestID
 	if envelope.Name == "" {
 		envelope.Name = "ActionExecutionError"
+	}
+	// An error is a 4xx or 5xx; anything else (0 panics in WriteHeader) is a 500.
+	if envelope.Status < 400 || envelope.Status > 599 {
+		envelope.Status = 500
 	}
 	data, _ := marshal(&envelope)
 	w.Header().Set("content-type", "application/json")

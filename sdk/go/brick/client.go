@@ -99,6 +99,10 @@ func Call(ctx context.Context, service, action string, in, out any) error {
 		if json.Unmarshal(data, e) != nil || e.Code == "" {
 			return &Error{Name: "ActionExecutionError", Code: "INTERNAL_SERVER_ERROR", Message: res.Status, Status: res.StatusCode}
 		}
+		// Only an error status from the body; otherwise the HTTP one.
+		if e.Status < 400 || e.Status > 599 {
+			e.Status = res.StatusCode
+		}
 		return e
 	}
 	if out == nil || len(data) == 0 {

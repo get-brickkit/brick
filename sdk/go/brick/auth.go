@@ -139,6 +139,10 @@ func (v *verifier) user(r *http.Request) json.RawMessage {
 	}
 	claims := token.PrivateClaims()
 	if _, ok := claims["id"]; !ok {
+		// No id and no sub: a token with no identity is no user.
+		if token.Subject() == "" {
+			return nil
+		}
 		claims["id"] = token.Subject()
 	}
 	data, err := json.Marshal(claims)
