@@ -52,6 +52,7 @@ import {
 import { globalSingleton } from "@workflow/utils";
 import type { Redis } from "ioredis";
 import { monotonicFactory } from "ulid";
+import { keys } from "./keys.js";
 import { compact, parse, stringify } from "./util.js";
 
 interface RedisStorageConfig {
@@ -805,12 +806,13 @@ function parseRunMeta(value: string): { status: string; specVersion?: number } {
 export function createRunsStorage(config: RedisStorageConfig): Storage["runs"] {
   const { redis, keyPrefix } = config;
 
-  const runKey = (id: string) => `${keyPrefix}run:${id}`;
-  const runAttributesKey = (id: string) => `${keyPrefix}run:attrs:${id}`;
-  const runsIndexKey = () => `${keyPrefix}runs:index`;
-  const runsByNameKey = (name: string) => `${keyPrefix}runs:by_name:${name}`;
-  const runsByStatusKey = (status: string) =>
-    `${keyPrefix}runs:by_status:${status}`;
+  const {
+    runKey,
+    runAttributesKey,
+    runsIndexKey,
+    runsByNameKey,
+    runsByStatusKey,
+  } = keys(keyPrefix);
 
   /** The statuses a list filter allows, or undefined for any. `status` takes one
    * status or an array; an empty array matches nothing, unlike omitting it. */
@@ -972,37 +974,24 @@ export function createEventsStorage(
   const ulid = monotonicFactory();
   const maxEventsPerRun = resolveMaxEventsPerRun(config.maxEventsPerRun);
 
-  const eventsKey = (runId: string) => `${keyPrefix}events:data:${runId}`;
-  // A correlation id is only unique within its run.
-  const eventsByCorrelationKey = (runId: string, correlationId: string) =>
-    `${keyPrefix}events:by_correlation:${runId}:${correlationId}`;
-  const resumeClaimKey = (runId: string, resumeId: string) =>
-    `${keyPrefix}events:resume:${runId}:${resumeId}`;
-
-  // Run key helpers (needed for event-sourced entity mutations)
-  const runKey = (id: string) => `${keyPrefix}run:${id}`;
-  const runAttributesKey = (id: string) => `${keyPrefix}run:attrs:${id}`;
-  const runMetaKey = (id: string) => `${keyPrefix}run:meta:${id}`;
-  const runsIndexKey = () => `${keyPrefix}runs:index`;
-  const runsByNameKey = (name: string) => `${keyPrefix}runs:by_name:${name}`;
-  const runsByStatusKey = (status: string) =>
-    `${keyPrefix}runs:by_status:${status}`;
-
-  // Step key helpers
-  const stepKey = (runId: string, stepId: string) =>
-    `${keyPrefix}step:${runId}:${stepId}`;
-  const stepsIndexKey = (runId: string) => `${keyPrefix}steps:by_run:${runId}`;
-  // `<status>|<attempt>`, kept beside the step so a script can check it atomically.
-  const stepStatusKey = (runId: string, stepId: string) =>
-    `${keyPrefix}step:status:${runId}:${stepId}`;
-
-  // Hook key helpers
-  const hookKey = (hookId: string) => `${keyPrefix}hook:${hookId}`;
-  const hooksByTokenKey = (token: string) =>
-    `${keyPrefix}hooks:by_token:${token}`;
-  const hooksIndexKey = (runId: string) => `${keyPrefix}hooks:by_run:${runId}`;
-  const hooksTokenMapKey = (runId: string) =>
-    `${keyPrefix}hooks:tokens:${runId}`;
+  const {
+    eventsKey,
+    eventsByCorrelationKey,
+    resumeClaimKey,
+    runKey,
+    runAttributesKey,
+    runMetaKey,
+    runsIndexKey,
+    runsByNameKey,
+    runsByStatusKey,
+    stepKey,
+    stepsIndexKey,
+    stepStatusKey,
+    hookKey,
+    hooksByTokenKey,
+    hooksIndexKey,
+    hooksTokenMapKey,
+  } = keys(keyPrefix);
 
   /** Events per `HMGET`; keeps a long log from building one huge command. */
   const READ_CHUNK = 500;
@@ -1100,8 +1089,8 @@ export function createEventsStorage(
       oldStatus,
       serializeEvent(event),
       releaseHooks ? "1" : "0",
-      `${keyPrefix}hook:`,
-      `${keyPrefix}hooks:by_token:`,
+      hookKey(""),
+      hooksByTokenKey(""),
     )) as [number, string];
     if (result[0] === 1) return { kind: "ok", eventId: result[1] };
     if (result[0] === -2) return { kind: "moved", status: result[1] };
@@ -2208,7 +2197,7 @@ export function createEventsStorage(
         now.getTime().toString(),
         eventData.token,
         serializeEvent(event),
-        `${keyPrefix}hook:`,
+        hookKey(""),
       )) as [number, string];
 
       if (result[0] === -6) {
@@ -2636,9 +2625,7 @@ export function createStepsStorage(
 ): Storage["steps"] {
   const { redis, keyPrefix } = config;
 
-  const stepKey = (runId: string, stepId: string) =>
-    `${keyPrefix}step:${runId}:${stepId}`;
-  const stepsIndexKey = (runId: string) => `${keyPrefix}steps:by_run:${runId}`;
+  const { stepKey, stepsIndexKey } = keys(keyPrefix);
 
   // Helper: Get step data from Redis key
   async function getStepData(
@@ -2721,10 +2708,12 @@ export function createHooksStorage(
 ): Storage["hooks"] {
   const { redis, keyPrefix } = config;
 
-  const hookKeyFn = (hookId: string) => `${keyPrefix}hook:${hookId}`;
-  const hooksByTokenKey = (token: string) =>
-    `${keyPrefix}hooks:by_token:${token}`;
-  const hooksIndexKey = (runId: string) => `${keyPrefix}hooks:by_run:${runId}`;
+  const {
+    hookKey: hookKeyFn,
+    hooksByTokenKey,
+    hooksIndexKey,
+    runsByStatusKey,
+  } = keys(keyPrefix);
 
   // A finished run holds no hooks, so every hook is in the index of a live run.
   // shortcut: one index read per live run on each page, upgrade to a global hooks
@@ -2732,7 +2721,7 @@ export function createHooksStorage(
   async function liveHooksIndexKeys(): Promise<string[]> {
     const live = await Promise.all(
       ["pending", "running"].map((status) =>
-        redis.zrange(`${keyPrefix}runs:by_status:${status}`, "0", "-1"),
+        redis.zrange(runsByStatusKey(status), "0", "-1"),
       ),
     );
     return live.flat().map(hooksIndexKey);
