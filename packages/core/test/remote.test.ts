@@ -211,10 +211,19 @@ describe("remote services", () => {
     });
   });
 
-  it("rejects two remote services with the same name", () => {
+  it("rejects two remote services with the same name or route", () => {
     expect(() =>
       brick({ services: [], remote: [billing, billing], docs: false }),
     ).toThrow('duplicate service "billing"');
+    const fx = (name: string) =>
+      remoteService({ name, dir: ".", dev: "true", port: 1 });
+    expect(() =>
+      brick({
+        services: [],
+        remote: [fx("fxRates"), fx("fx-rates")],
+        docs: false,
+      }),
+    ).toThrow('duplicate service "fx-rates"');
   });
 
   it("answers 400 to a malformed forwarded user", async () => {

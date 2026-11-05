@@ -197,6 +197,8 @@ export async function callRemoteAction(
       method: "POST",
       headers,
       body: JSON.stringify(input ?? {}),
+      // A child that never answers fails the call, as in the Go and Rust SDKs.
+      signal: AbortSignal.timeout(30_000),
     });
   } catch (cause) {
     if (cause instanceof ActionExecutionError) throw cause;
@@ -423,6 +425,14 @@ export async function startRemoteServices(
         BRICK_PORT: String(ports[remote.name]),
         BRICK_INTERNAL_TOKEN: token,
       },
+    });
+    // spawn reports a missing dir as an event; unhandled, it would crash the app.
+    child.on("error", (error) => {
+      console.error(
+        `[brick] remote service "${remote.name}" failed to start:`,
+        error,
+      );
+      if (children.get(remote.name) === child) children.delete(remote.name);
     });
     children.set(remote.name, child);
   };

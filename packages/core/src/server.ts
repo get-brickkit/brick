@@ -501,11 +501,12 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   }
 
   const remote = options.remote ?? [];
-  const remoteNames = new Set<string>();
+  // By route: names that kebab-case alike would share one base path.
+  const routes = new Set(services.map((service) => kebabCase(service.name)));
   for (const service of remote) {
-    if (byName.has(service.name) || remoteNames.has(service.name))
+    if (byName.has(service.name) || routes.has(kebabCase(service.name)))
       throw new Error(`Brick: duplicate service "${service.name}" in brick()`);
-    remoteNames.add(service.name);
+    routes.add(kebabCase(service.name));
     const base = ownerPath(prefix, service.name);
     const gateway = remoteGateway(service, base);
     const handler = ({ request }: { request: Request }) => gateway(request);
