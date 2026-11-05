@@ -110,8 +110,9 @@ let urls: Record<string, string> = {};
 export function serviceUrls(): Record<string, string> {
   const source = process.env.BRICK_SERVICES;
   if (source !== urlsSource) {
-    urlsSource = source;
+    // Parsed first: a malformed value keeps failing instead of caching {}.
     urls = source ? JSON.parse(source) : {};
+    urlsSource = source;
   }
   return urls;
 }
@@ -192,6 +193,7 @@ export async function callRemoteAction(
   const headers = envelopeHeaders(envelope);
   headers.set("content-type", "application/json");
   let response: Response;
+  let text: string;
   try {
     response = await fetch(`${remoteUrl(remote)}/${kebabCase(action)}`, {
       method: "POST",
@@ -200,17 +202,22 @@ export async function callRemoteAction(
       // A child that never answers fails the call, as in the Go and Rust SDKs.
       signal: AbortSignal.timeout(30_000),
     });
+    // Inside: the body read runs under the same timeout.
+    text = await response.text();
   } catch (cause) {
     if (cause instanceof ActionExecutionError) throw cause;
+    // Still 503, as Go and Rust report it, but saying it timed out.
+    const timedOut = (cause as Error)?.name === "TimeoutError";
     throw new ActionExecutionError(
       "SERVICE_UNAVAILABLE",
-      `Service '${remote.name}' is not reachable`,
+      timedOut
+        ? `Service '${remote.name}' did not answer within 30s`
+        : `Service '${remote.name}' is not reachable`,
       503,
       undefined,
       { cause },
     );
   }
-  const text = await response.text();
   let body: any;
   try {
     body = text ? JSON.parse(text) : undefined;

@@ -80,7 +80,9 @@ function app() {
       caller: ctx.caller,
       tenantId: ctx.tenantId,
       requestId: ctx.requestId,
-      sawToken: "x-brick-internal" in (ctx.metadata?.headers ?? {}),
+      sawToken:
+        "x-brick-internal" in (ctx.metadata?.headers ?? {}) ||
+        ctx.request.headers.has("x-brick-internal"),
     }),
   });
   return brick({

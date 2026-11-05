@@ -626,21 +626,21 @@ function mountInternalCalls(
           `No action '${params.service}.${params.action}'`,
           404,
         );
+      // The internal token is the gateway's secret, not the action's: neither
+      // ctx.request nor ctx.metadata carries it. The body is already the input.
+      const headers = new Headers(request.headers);
+      headers.delete("x-brick-internal");
       // What a public call's ctx has too: the headers and the action's logger.
       const result = await action.execute({
         input: body,
         ctx: {
-          request,
+          request: new Request(request.url, {
+            method: request.method,
+            headers,
+          }),
           requestId,
           traceId,
-          metadata: {
-            // The internal token is the gateway's secret, not the action's.
-            headers: Object.fromEntries(
-              [...request.headers].filter(
-                ([name]) => name !== "x-brick-internal",
-              ),
-            ),
-          },
+          metadata: { headers: Object.fromEntries(headers) },
           logger: createLogger(`[${service!.name}:${action.name}]`),
           ...envelope,
         },
