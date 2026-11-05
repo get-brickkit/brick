@@ -142,7 +142,7 @@ export function defineConfig(config: BrickConfig): BrickConfig {
   return config;
 }
 
-/** A missing file or an invalid config; `brick` prints the message alone, which names the file and key. */
+/** A user's mistake: a missing file, an invalid config, or flags that conflict. `brick` prints the message alone. */
 export class ConfigError extends Error {}
 
 /** The project: its config file, if any, and every path with defaults applied. */
@@ -213,6 +213,53 @@ export async function loadConfig(
 ): Promise<LoadedConfig | undefined> {
   const project = await resolveProject(explicit, cwd);
   return project.file ? project : undefined;
+}
+
+/** The dashboard flags of `brick dev`. */
+export interface DevDashboardFlags {
+  /** `false` with `--no-dashboard`. */
+  dashboard?: boolean;
+  dashboardPort?: number;
+  historyDays?: number;
+  dashboardExtension?: string;
+}
+
+/**
+ * Whether `brick dev` serves its dashboard, and its port and history, from the
+ * config's `dev.dashboard` and the flags. The config can turn it off; a port or
+ * history flag turns it back on.
+ *
+ * @throws ConfigError When a dashboard flag is combined with turning it off.
+ */
+export function resolveDevDashboard(
+  configured: NonNullable<BrickConfig["dev"]>["dashboard"],
+  flags: DevDashboardFlags,
+): { port?: number; historyDays?: number } | false {
+  if (flags.dashboard === false) {
+    if (flags.dashboardPort !== undefined)
+      throw new ConfigError(
+        "Brick: --dashboard-port cannot be combined with --no-dashboard.",
+      );
+    if (flags.historyDays !== undefined)
+      throw new ConfigError(
+        "Brick: --history-days cannot be combined with --no-dashboard.",
+      );
+  }
+  const off =
+    flags.dashboard === false ||
+    (configured === false &&
+      flags.dashboardPort === undefined &&
+      flags.historyDays === undefined);
+  if (off && flags.dashboardExtension)
+    throw new ConfigError(
+      "Brick: --dashboard-extension cannot be combined with --no-dashboard.",
+    );
+  if (off) return false;
+  const settings = configured || undefined;
+  return {
+    port: flags.dashboardPort ?? settings?.port,
+    historyDays: flags.historyDays ?? settings?.historyDays,
+  };
 }
 
 /** A port from a flag, else `PORT`, else the config, else 4000; throws outside 1-65535. */

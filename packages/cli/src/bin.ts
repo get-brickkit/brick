@@ -12,6 +12,7 @@ import {
   DEFAULT_HISTORY_DAYS,
   DEFAULT_PORT,
   resolvePort,
+  resolveDevDashboard,
   resolveProject,
   type LoadedConfig,
 } from "./config";
@@ -191,29 +192,7 @@ ${PORT_RESOLUTION_HELP}`,
         const { config } = project;
         const entry = entryOf(entryArg, project);
         const port = resolvePort(opts.port, config.dev?.port);
-        if (opts.dashboard === false && opts.dashboardPort !== undefined) {
-          throw new Error(
-            "Brick: --dashboard-port cannot be combined with --no-dashboard.",
-          );
-        }
-        if (opts.dashboard === false && opts.historyDays !== undefined) {
-          throw new Error(
-            "Brick: --history-days cannot be combined with --no-dashboard.",
-          );
-        }
-        const configured = config.dev?.dashboard;
-        // The config can turn the dashboard off; a dashboard flag turns it back on.
-        const dashboardOff =
-          opts.dashboard === false ||
-          (configured === false &&
-            opts.dashboardPort === undefined &&
-            opts.historyDays === undefined);
-        const dashboardConfig = configured || undefined;
-        if (dashboardOff && opts.dashboardExtension) {
-          throw new Error(
-            "Brick: --dashboard-extension cannot be combined with --no-dashboard.",
-          );
-        }
+        const dashboard = resolveDevDashboard(config.dev?.dashboard, opts);
         await startDevServer({
           entry,
           port,
@@ -221,10 +200,9 @@ ${PORT_RESOLUTION_HELP}`,
           frontend: opts.frontend ?? config.dev?.frontend,
           // The dashboard reads the app's requests, so it needs an entry.
           dashboard:
-            entry && !dashboardOff
+            entry && dashboard
               ? {
-                  port: opts.dashboardPort ?? dashboardConfig?.port,
-                  historyDays: opts.historyDays ?? dashboardConfig?.historyDays,
+                  ...dashboard,
                   ...configDashboard(project, opts.dashboardExtension),
                 }
               : false,
@@ -307,7 +285,7 @@ ${PORT_RESOLUTION_HELP}`,
         command: Command,
       ) => {
         if (opts.prefix !== undefined || opts.requestLogging === false) {
-          throw new Error(
+          throw new ConfigError(
             "Brick: configure prefix and requestLogging in your default-exported brick() app instead of build flags.",
           );
         }
@@ -316,7 +294,7 @@ ${PORT_RESOLUTION_HELP}`,
         // shortcut: brick() sets up request logging when the app is created, so
         // a build cannot switch it off; only the default (true) is accepted.
         if (build?.requestLogging === false)
-          throw new Error(
+          throw new ConfigError(
             "Brick: configure requestLogging in your default-exported brick() app instead of build.requestLogging.",
           );
         const entry = requireEntry(command, entryArg, project);

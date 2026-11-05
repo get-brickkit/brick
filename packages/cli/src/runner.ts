@@ -89,15 +89,15 @@ export async function startWorker(options: { entry: string }) {
   );
   const app = await importEntry(options.entry, { run: true });
   if (!isBrickApp(app))
-    throw new Error(
+    throw new ConfigError(
       "Brick: a worker needs an entry that default-exports a BrickApp.",
     );
   if (!app.events)
-    throw new Error(
+    throw new ConfigError(
       "Brick: this app has no events, so a worker has nothing to deliver.",
     );
   if (!app.events.describe().dispatch)
-    throw new Error(
+    throw new ConfigError(
       "Brick: this app only records events (events.dispatch is false), so a worker would deliver nothing. Enable dispatch for the worker process.",
     );
   await buildAppWorkflows(app);
@@ -130,7 +130,11 @@ export async function startWorker(options: { entry: string }) {
 export async function startDevServer(options: DevServerOptions = {}) {
   const entry = options.entry;
   if (!entry && (options.clientOutput || options.frontend))
-    throw new Error("Brick: --client and --frontend require an app entry.");
+    throw new ConfigError(
+      "Brick: --client and --frontend require an app entry.",
+    );
+  if (options.frontend && !options.clientOutput)
+    throw new ConfigError("Brick: --frontend requires --client <file>.");
   const port = resolvePort(options.port);
   if (!entry) return startDevApplication({ port, prefix: options.prefix });
   const resolvedEntry = resolve(entry);
@@ -143,13 +147,11 @@ export async function startDevServer(options: DevServerOptions = {}) {
     import.meta.url.endsWith(".ts") ? "./dev-worker.ts" : "./dev-worker.js",
     import.meta.url,
   );
-  if (options.frontend && !options.clientOutput)
-    throw new Error("Brick: --frontend requires --client <file>.");
   if (
     options.dashboard &&
     (options.dashboard.port ?? DEFAULT_DASHBOARD_PORT) === port
   )
-    throw new Error(
+    throw new ConfigError(
       "Brick: dashboard port must differ from the API port. Use --dashboard-port <number>.",
     );
   const manifest = options.manifest;
