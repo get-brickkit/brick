@@ -82,7 +82,6 @@ export {
 } from "./compiler";
 export { deny } from "./compiler/runtime";
 
-// Core Primitives
 export { defineService } from "./service";
 export type {
   BrickSocketConfig,
@@ -196,21 +195,16 @@ export {
   resetGlobalRegistry,
 } from "./registry";
 
-// TypeBox Schema Builders & Validators
 export { Type, t, validateWithSchema } from "./typebox";
 export type { TSchema, Static } from "./typebox";
 
-// OpenAPI 3.1 Specification Generation
 export { generateOpenApiSpec } from "./openapi";
 export type { OpenApiGeneratorOptions } from "./openapi";
 
-// Database Integration
 export * from "./db";
 
-// Types & Errors
 export * from "./types";
 
-// Secrets & Environment Variables
 export {
   defineSecret,
   SecretRef,

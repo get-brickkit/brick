@@ -16,7 +16,6 @@ import {
 } from "drizzle-orm/pg-core";
 
 const OWNER = Symbol.for("brickkit.plugin.owner");
-/** Mark a table as owned by a plugin. */
 export function setPluginOwner(table: object, plugin: string): void {
   Object.defineProperty(table, OWNER, { value: plugin });
 }

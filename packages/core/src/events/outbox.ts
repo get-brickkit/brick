@@ -142,7 +142,6 @@ export function isOutboxTable(value: unknown): value is OutboxTable {
   return typeof value === "object" && value !== null && OUTBOX in value;
 }
 
-/** A row of an outbox table. */
 export type OutboxRow = OutboxTable["$inferSelect"];
 
 /** The rows that record an event: one per listener, due now. */

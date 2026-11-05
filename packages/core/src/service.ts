@@ -308,7 +308,6 @@ export class ServiceImpl<
     this.recorder = recorder;
   }
 
-  /** Whether the service declares an event catalog. */
   get hasCatalog(): boolean {
     return this.options.events !== undefined;
   }
@@ -449,7 +448,6 @@ async function resolveServiceContext<
   });
   const fullBaseCtx: BaseContext<TDb> = {
     ...framework,
-    // Only the envelope fields a caller may set, never the framework's own.
     ...pickContextEnvelope(callCtx),
   };
 

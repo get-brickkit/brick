@@ -128,7 +128,6 @@ export function connectSocket(
     ws.onmessage = null;
     ws.onclose = null;
   };
-  /** Ends the client for good. */
   const finish = (info: { code: number; reason: string }, error?: unknown) => {
     if (status === "closed") return;
     detach();

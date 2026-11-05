@@ -167,9 +167,6 @@ export function createRpcEnvelope(
     ...pickContextEnvelope(defaultContext),
     ...pickContextEnvelope(callContext),
   } as Partial<ActionContext> & { caller?: string };
-  // `caller` identifies the service that created this proxy, never the target.
-  // A configured `from` wins over any supplied value; without `from` we keep
-  // an explicitly supplied caller (legacy) and otherwise leave it unset.
   if (from !== undefined) {
     envelope.caller = from;
   }

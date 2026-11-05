@@ -48,8 +48,7 @@ export interface ActionMeta {
   access?: ActionAccessInfo;
   /** The deps of the plugin install that created the action, and when they were bound. */
   deps?: { values: Readonly<Record<string, unknown>>; at: number };
-  /** Checked instead of `config.output` at runtime; `config.output` stays the published contract. */
-  runtimeOutput?: TSchema;
+  runtimeOutput?: PluginActionChecks["runtimeOutput"];
   /** Runs before input validation; errors reject the input. */
   checkInput?: PluginActionChecks["checkInput"];
 }

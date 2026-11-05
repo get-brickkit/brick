@@ -160,7 +160,6 @@ export class EventsHub {
     return this;
   }
 
-  /** The listeners that want an event. */
   matching(name: string): EventListener[] {
     const found: EventListener[] = [];
     for (const listener of this.byName.values())
@@ -169,7 +168,6 @@ export class EventsHub {
     return found;
   }
 
-  /** The listeners and settings, as plain data. */
   describe(): EventsDefinition {
     return {
       listeners: [...this.byName.values()].map((listener) => ({

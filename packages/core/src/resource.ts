@@ -368,7 +368,7 @@ function defineCommand(
   return action;
 }
 
-/** Declares a plugin host without registering actions or changing the schema. */
+/** Declares a resource: a plugin host over a table, with its own `action()` and `command()`. */
 export function defineResource<
   TTable = any,
   TCtx extends ActionContext = ActionContext,

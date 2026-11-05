@@ -32,7 +32,6 @@ const ANSI =
   /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\))/g;
 // oxlint-enable no-control-regex
 
-/** `text` without terminal formatting. */
 export function stripAnsi(text: string): string {
   return text.includes("\u001b") ? text.replace(ANSI, "") : text;
 }

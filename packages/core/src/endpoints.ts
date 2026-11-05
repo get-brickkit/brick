@@ -16,7 +16,7 @@ import type { InstalledPlugin } from "./plugin-types";
 
 export type EndpointMethod = HttpMethod;
 
-/** Logger subset handed to endpoint handlers (mirrors action context loggers). */
+/** The logger handed to endpoint handlers (the same one actions get). */
 export type EndpointLogger = Logger;
 
 /** Context for raw endpoint handlers: Elysia route fields + Brick extras. */
@@ -201,7 +201,7 @@ export type BrickApp = Elysia<any, any, any, any, any, any, any> & {
    * start it for you.
    */
   readonly events?: EventsHub;
-  /** Register a raw endpoint (outside the JSON action mesh). */
+  /** Register a raw endpoint (a plain route, not an action). */
   endpoint(def: EndpointDefinition): void;
   /**
    * The OpenAPI documents behind the dashboard's APIs view: this app's own

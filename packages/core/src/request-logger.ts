@@ -29,8 +29,7 @@ function thrownStatus(error: unknown): number | undefined {
 /**
  * Elysia plugin that logs each request as `METHOD path → status (elapsedms)`.
  * Timing is tracked per-Request via a WeakMap. The onError hook only logs and
- * returns undefined so existing error mapping is preserved. Logging only —
- * no CORS headers are set here.
+ * returns undefined so existing error mapping is preserved.
  *
  * Hooks are registered with the "global" scope so they propagate to the
  * parent app when mounted via `app.use(...)` — Elysia scopes plain instance

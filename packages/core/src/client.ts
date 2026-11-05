@@ -72,18 +72,13 @@ export type {
  *
  * ## URL mapping
  *
- * A client path is a namespace walk ending in an action call. The leaf segment
- * decides the route, matching the server compiler (`packages/cli/src/compiler`):
- *
- * | Client call | HTTP request |
- * |---|---|
- * Generated browser contracts carry each action's HTTP method and path,
- * including plugin routes, resource routes and consumer overrides. Without
+ * A client path is a namespace walk ending in an action call. Generated
+ * browser contracts carry each action's HTTP method and path, including
+ * plugin routes, resource routes and consumer overrides. Without
  * runtime metadata, callers use `POST /api/<service>/<action>` with the names
  * in kebab-case (`getSummary` → `get-summary`); resource and plugin routes
  * need the contract.
  * GET/DELETE input is serialized as a query string; other methods send JSON.
-
  */
 
 export interface BrickClientOptions {
@@ -132,7 +127,7 @@ export interface BrickClientAction<
   serviceName: string;
   /** Owning plugin descriptor name for plugin actions (e.g. `@brickkit/crud`). */
   plugin?: string;
-  /** Owning resource name for resource-plugin actions (e.g. `page`). */
+  /** Owning resource name for resource actions (e.g. `page`). */
   resource?: string;
   config: { path: string; method: HttpMethod };
   /** Type information only; never emitted at runtime. */

@@ -64,7 +64,7 @@ export interface CreateServerOptions {
    */
   reference?: boolean | ReferenceOptions; // default false
   secrets?: { source?: SecretSource; validate?: boolean };
-  /** Raw endpoints (outside the JSON action mesh), mounted at startup. */
+  /** Raw endpoints (plain routes, not actions), mounted at startup. */
   endpoints?: EndpointDefinition[];
   /**
    * Record request, action, and RPC spans with OpenTelemetry (default false).
@@ -247,7 +247,6 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   // Close declarations before anything reads them.
   for (const service of services) service.build();
 
-  // Raw endpoints declared via options or app.endpoint() (declaration order).
   const endpointDefs: EndpointDefinition[] = [];
   let endpointRevision = 0;
 
@@ -267,7 +266,6 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     return { ...spec, paths };
   };
 
-  // OpenAPI 3.1 & Interactive Documentation Endpoints
   if (enableDocs) {
     builtIn(
       openApiPath,
@@ -325,7 +323,6 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     return true;
   };
 
-  // Raw endpoints (outside the JSON action mesh).
   const mountEndpoint = (def: EndpointDefinition, plugin = false) => {
     const handler = createEndpointHandler(def, services);
     mountRoute(

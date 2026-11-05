@@ -402,7 +402,7 @@ export interface Tool<
     | ToolConfigWithoutAuthorize<I, O, E, C>;
 }
 
-/** A resource declares identity and a table; plugins supply behavior. */
+/** A resource declares identity and a table; plugins and its own `action`/`command` supply behavior. */
 export interface ResourceConfig<TTable = any, _TCtx = any> {
   name: string;
   table: TTable;
@@ -772,7 +772,7 @@ export interface ActionSchema {
   serviceName?: string;
   /** Owning plugin descriptor name for plugin actions (e.g. `@brickkit/crud`). */
   plugin?: string;
-  /** Owning resource name for resource-plugin actions (e.g. `page`). */
+  /** Owning resource name for resource actions (e.g. `page`). */
   resource?: string;
   description?: string;
   inputSchema?: unknown;

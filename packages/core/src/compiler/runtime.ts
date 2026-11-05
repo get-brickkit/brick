@@ -50,7 +50,6 @@ export interface CompiledRoutePlan {
 
 function isNonEmpty(value: any): boolean {
   if (value == null) return false;
-  // Early return on the first key: an allocation-free emptiness check.
   for (const _ in value) return true; // NOSONAR
   return false;
 }
@@ -101,7 +100,6 @@ export function readInput(
         if (query[key] !== undefined)
           coercedQuery[key] = coerceQueryValue(query[key], type, request, key);
     }
-    // Path segments are strings; numeric ids (`/:id`) need numbers.
     for (const { key, type } of route.coercions) {
       if (type !== "number" || typeof params?.[key] !== "string") continue;
       const value = Number(params[key]);

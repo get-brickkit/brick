@@ -104,9 +104,7 @@ export class Dispatcher {
     void this.tick();
   }
 
-  /**
-   * Stop the timer and wait for the deliveries that are running to finish.
-   */
+  /** Stop the timer and wait for the deliveries that are running to finish. */
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
@@ -145,9 +143,6 @@ export class Dispatcher {
     }
   }
 
-  /**
-   * How many rows are in each state.
-   */
   async counts(): Promise<OutboxCounts> {
     const t = this.table as any;
     const rows: { status: OutboxStatus; count: number }[] = await this.db

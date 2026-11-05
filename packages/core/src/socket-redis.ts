@@ -59,7 +59,6 @@ export function connection(
     );
   };
   return {
-    /** The connected client, starting a connection when there is none. */
     get(): RedisClient | undefined {
       start();
       return redis?.connected ? redis : undefined;

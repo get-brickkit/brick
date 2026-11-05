@@ -92,7 +92,6 @@ export class ServiceRegistry {
   }
 }
 
-// Global registry instance
 let globalRegistry = new ServiceRegistry();
 
 /**

@@ -10,7 +10,6 @@ export * from "./postgres";
 export * from "./define";
 export { columnValue } from "./column";
 
-// Re-export core Drizzle SQL expressions & operators for convenience
 export {
   sql,
   eq,
@@ -416,7 +415,6 @@ export function syncSchema(
 
   if (!db || tables.length === 0) return;
 
-  // Bun SQLite
   if ((db as any).$client?.run || (db as any).run) {
     for (const table of tables) {
       try {

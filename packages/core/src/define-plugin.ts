@@ -43,8 +43,6 @@ import type { Action, BaseContext, Resource, Service } from "./types";
  * collision checks and rollback are the same as for the older two kinds.
  */
 
-// ---------------------------------------------------------------- manifest
-
 type Secrets = Record<string, SecretRef<any>>;
 type OptionsOf<O> = O extends TSchema ? Static<O> : {};
 
@@ -597,5 +595,3 @@ function checkOptions(
   }
   return value as Record<string, unknown>;
 }
-
-// --------------------------------------------------------------- app part

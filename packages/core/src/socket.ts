@@ -372,7 +372,7 @@ function tokenRequest(request: Request): {
   };
 }
 
-/** Mounts native adapters. Each connection owns its queue and service session. */
+/** Each connection owns its queue and service session. */
 export function mountSockets(
   app: Elysia,
   sockets: { service: string; path: string; definition: RegisteredSocket }[],

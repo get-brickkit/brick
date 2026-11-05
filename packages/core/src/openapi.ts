@@ -159,10 +159,8 @@ export function generateOpenApiSpec(
         hasAnyAuthorizedAction = true;
       }
 
-      // Build responses map
       const responses: Record<string, any> = {};
 
-      // 200 Success Response
       if (action.config.output) {
         responses["200"] = {
           description: "Successful response",
