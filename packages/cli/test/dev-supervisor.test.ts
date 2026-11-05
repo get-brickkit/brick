@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { parsePort } from "../src/port-utils";
 
 async function waitFor(check: () => boolean | Promise<boolean>) {
   const deadline = Date.now() + 4000;
@@ -32,11 +31,6 @@ function capture(child: ReturnType<typeof Bun.spawn>) {
   return { read: () => output, finished };
 }
 
-test("empty PORT falls back to the default", () => {
-  expect(parsePort(undefined, "")).toBe(4000);
-  expect(parsePort("5000", "")).toBe(5000);
-});
-
 test("exported app prefix takes precedence with a warning", async () => {
   const { directory, port } = await fixture();
   const entry = join(directory, "main.ts");
@@ -48,9 +42,7 @@ test("exported app prefix takes precedence with a warning", async () => {
     [
       process.execPath,
       resolve(import.meta.dir, "../src/dev-worker.ts"),
-      entry,
-      String(port),
-      "/override",
+      JSON.stringify({ entry, port, prefix: "/override", telemetry: false }),
     ],
     { cwd: directory, stdout: "pipe", stderr: "pipe" },
   );

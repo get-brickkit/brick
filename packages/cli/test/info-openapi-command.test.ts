@@ -39,6 +39,15 @@ it("gen openapi loads app entry and generates OpenAPI spec", async () => {
   }
 });
 
+it("gen openapi writes the document the app serves at /openapi.json", async () => {
+  const app = join(import.meta.dir, "fixtures/compiler-app.ts");
+  const result = await run(import.meta.dir, "gen", "openapi", app);
+  expect(result.code).toBe(0);
+  const spec = JSON.parse(result.stdout);
+  expect(spec.info).toMatchObject({ title: "Compiled app", version: "3.2.1" });
+  expect(spec.paths["/raw"]).toBeDefined();
+});
+
 it("gen openapi writes to --output file", async () => {
   const root = await mkdtemp(
     resolve(import.meta.dir, "../.brick-vite-test-cli-"),

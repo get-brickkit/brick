@@ -133,7 +133,7 @@ export class DevTelemetryStore {
   }
 
   /** Begin a generation when an application process loads, and record the reload. */
-  startGeneration(detail: string): number {
+  startGeneration(detail?: string): number {
     this.#generation += 1;
     this.recordReload({
       kind: "started",

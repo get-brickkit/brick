@@ -6,10 +6,9 @@ import {
   themeCss,
   type DashboardExtensionOptions,
 } from "./dashboard-extension";
-import { DEFAULT_DASHBOARD_PORT, startDevDashboard } from "./dev-dashboard";
-import { openHistory } from "./dev-history";
+import { DEFAULT_DASHBOARD_PORT } from "./config";
+import { openDashboard } from "./dashboard-host";
 import { installTracing } from "./dev-telemetry";
-import { DevTelemetryStore } from "./dev-telemetry-store";
 
 export interface ProductionDashboard {
   readonly host: string;
@@ -58,43 +57,32 @@ export async function startProductionDashboard(
     );
   }
 
-  const history = await openHistory({
-    directory: options.directory ?? process.cwd(),
-    days: config.historyDays ?? 0,
-    warn,
-  });
-  const store = new DevTelemetryStore({ history });
   const extension = options.dashboard?.extension;
-  let started;
-  try {
-    started = await startDevDashboard({
-      port,
-      host,
-      mode: "production",
-      auth: config.auth,
-      store,
-      history,
-      dashboard: options.dashboard,
-      // A `brick build` folder already holds the plugins' extensions.
-      plugins:
-        extension && existsSync(join(resolve(extension), "extension.js"))
-          ? undefined
-          : app.definition.plugins,
-      appUrl: `http://127.0.0.1:${options.appPort}`,
-      probe: async () => {
-        const response = await fetch(
-          `http://127.0.0.1:${options.appPort}/_health`,
-          { signal: AbortSignal.timeout(2000) },
-        );
-        return response.ok;
-      },
-    });
-  } catch (error) {
-    history?.close();
-    const reason = error instanceof Error ? error.message : String(error);
-    warn(`[Brick-TS] ${reason} Continuing without the dashboard.`);
-    return undefined;
-  }
+  const started = await openDashboard({
+    directory: options.directory ?? process.cwd(),
+    historyDays: config.historyDays ?? 0,
+    warn,
+    port,
+    host,
+    mode: "production",
+    auth: config.auth,
+    dashboard: options.dashboard,
+    // A `brick build` folder already holds the plugins' extensions.
+    plugins:
+      extension && existsSync(join(resolve(extension), "extension.js"))
+        ? undefined
+        : app.definition.plugins,
+    appUrl: `http://127.0.0.1:${options.appPort}`,
+    probe: async () => {
+      const response = await fetch(
+        `http://127.0.0.1:${options.appPort}/_health`,
+        { signal: AbortSignal.timeout(2000) },
+      );
+      return response.ok;
+    },
+  });
+  if (!started) return undefined;
+  const { store } = started;
 
   const registered = installTracing((records) =>
     store.ingest(records, store.latestGeneration),
@@ -109,12 +97,5 @@ export async function startProductionDashboard(
     getGlobalRegistry().exportArchitecture(app.definition),
     generation,
   );
-  return {
-    host,
-    port: started.port,
-    stop() {
-      started.stop();
-      history?.close();
-    },
-  };
+  return { host, port: started.port, stop: () => started.stop() };
 }

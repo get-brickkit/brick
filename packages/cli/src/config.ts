@@ -1,6 +1,14 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  Type as t,
+  type Static,
+  type TOptional,
+  type TSchema,
+} from "@sinclair/typebox";
+import { Value, ValueErrorType } from "@sinclair/typebox/value";
+import type { PresetName, Severity } from "./lint/presets";
 
 import type {
   DashboardExtensionOptions,
@@ -9,58 +17,149 @@ import type {
 
 export type { DashboardExtensionOptions, DashboardTheme };
 
-export type LintSeverity = "error" | "warn" | "off";
-export type LintPreset = "recommended" | "layout" | "strict" | "plugin";
+export type LintSeverity = Severity;
+export type LintPreset = PresetName;
+
+export const DEFAULT_PORT = 4000;
+export const DEFAULT_DASHBOARD_PORT = 9400;
+export const DEFAULT_HISTORY_DAYS = 90;
+export const DEFAULT_OUTDIR = "dist/brick";
+const CONFIG_FILE = "brick.config.ts";
+
+const path = (message: string) => t.String({ minLength: 1, message });
+const port = t.Integer({
+  minimum: 1,
+  maximum: 65535,
+  message: "must be a port number",
+});
+const flag = t.Boolean({ message: "must be true or false" });
+const shape = <T extends Record<string, TSchema>>(properties: T) =>
+  t.Optional(t.Object(properties, { additionalProperties: false }));
+const optional = <T extends Record<string, TSchema>>(properties: T) =>
+  Object.fromEntries(
+    Object.entries(properties).map(([key, value]) => [key, t.Optional(value)]),
+  ) as { [K in keyof T]: TOptional<T[K]> };
+const tokens = t.Record(t.String(), t.String(), {
+  message: "must map token names to values",
+});
+const PRESET_NAMES = [
+  "recommended",
+  "layout",
+  "strict",
+  "plugin",
+] as const satisfies readonly PresetName[];
 
 /**
  * Project and tooling settings read by the `brick` CLI and its lint rules.
  * Paths are relative to the folder that holds `brick.config.ts`. Runtime
  * behaviour (prefix, docs, telemetry, events, sockets) stays in `brick()`.
  */
-export interface BrickConfig {
-  /** App entry whose default export is the BrickApp (default `src/app.ts`). */
-  entry?: string;
-  /** Folder scanned for definition files (default `src/services`). */
-  services?: string;
-  /** Folder for `services.gen.ts` and the default contract (default `_brick`). */
-  generated?: string;
-  client?: { output?: string };
-  openapi?: { output?: string };
-  dev?: {
-    port?: number;
-    /** Frontend command, started once the client contract exists. Needs `client.output`. */
-    frontend?: string;
-    dashboard?: { port?: number; historyDays?: number } | false;
-  };
-  build?: { outdir?: string; aot?: boolean; requestLogging?: boolean };
-  dashboard?: DashboardExtensionOptions;
-  lint?: {
-    presets?: LintPreset[];
-    rules?: Record<string, LintSeverity>;
-    ignore?: string[];
-  };
-}
+const BrickConfigSchema = t.Object(
+  optional({
+    /** App entry whose default export is the BrickApp (default `src/app.ts`). */
+    entry: path("must be a file path"),
+    /** Folder scanned for definition files (default `src/services`). */
+    services: path("must be a folder path"),
+    /** Folder for `services.gen.ts` and the default contract (default `_brick`). */
+    generated: path("must be a folder path"),
+    client: shape(optional({ output: path("must be a file path") })),
+    openapi: shape(optional({ output: path("must be a file path") })),
+    dev: shape(
+      optional({
+        port,
+        /** Frontend command, started once the client contract exists. Needs `client.output`. */
+        frontend: path("must be a command"),
+        dashboard: t.Union(
+          [
+            t.Literal(false),
+            t.Object(
+              optional({
+                port,
+                historyDays: t.Integer({
+                  minimum: 0,
+                  maximum: Number.MAX_SAFE_INTEGER,
+                  message: "must be a whole number of days, or 0 for none",
+                }),
+              }),
+              { additionalProperties: false },
+            ),
+          ],
+          { message: "must be an object or false" },
+        ),
+      }),
+    ),
+    build: shape(
+      optional({
+        outdir: path("must be a folder path"),
+        aot: flag,
+        requestLogging: flag,
+      }),
+    ),
+    dashboard: shape(
+      optional({
+        extension: path("must be a file path"),
+        theme: shape(
+          optional({
+            light: tokens,
+            dark: tokens,
+            radius: path("must be a CSS length"),
+            fonts: shape(
+              optional({
+                sans: path("must be a font-family value"),
+                mono: path("must be a font-family value"),
+              }),
+            ),
+          }),
+        ),
+      }),
+    ),
+    lint: shape(
+      optional({
+        presets: t.Array(t.Union(PRESET_NAMES.map((name) => t.Literal(name))), {
+          message: `must list presets from ${PRESET_NAMES.join(", ")}`,
+        }),
+        rules: t.Record(
+          t.String(),
+          t.Union([t.Literal("error"), t.Literal("warn"), t.Literal("off")]),
+          { message: 'must map rule names to "error", "warn" or "off"' },
+        ),
+        ignore: t.Array(t.String({ minLength: 1 }), {
+          message: "must be a list of glob patterns",
+        }),
+      }),
+    ),
+  }),
+  {
+    additionalProperties: false,
+    message: "must default-export defineConfig({ ... })",
+  },
+);
+
+export type BrickConfig = Static<typeof BrickConfigSchema>;
 
 /** Types the config file in the editor; the CLI validates it at load. */
 export function defineConfig(config: BrickConfig): BrickConfig {
   return config;
 }
 
-export const CONFIG_FILE = "brick.config.ts";
-
-/** A missing or invalid config file; the message names the file and key. */
+/** A missing file or an invalid config; `brick` prints the message alone, which names the file and key. */
 export class ConfigError extends Error {}
 
+/** The project: its config file, if any, and every path with defaults applied. */
 export interface LoadedConfig {
-  /** Absolute path of the config file. */
-  file: string;
-  /** Folder the config's paths are relative to. */
+  /** Absolute path of the config file; absent when the project has none. */
+  file?: string;
+  /** Folder the config's paths are relative to (the working folder without a file). */
   root: string;
   config: BrickConfig;
   /** Absolute paths with defaults applied. */
   entry: string;
   services: string;
   generated: string;
+  /** Where the client contract goes: `client.output`, else `<generated>/contract.ts`. */
+  contract: string;
+  /** Where `brick build` writes: `build.outdir`, else `dist/brick`. */
+  outdir: string;
 }
 
 /** The nearest `brick.config.ts` in `cwd` or its parents. */
@@ -73,6 +172,38 @@ export function findConfigFile(cwd = process.cwd()): string | undefined {
 }
 
 /**
+ * The project, from `explicit` (`--config`) when given, else the nearest
+ * `brick.config.ts`, validated. Without a file, the defaults from `cwd`.
+ */
+export async function resolveProject(
+  explicit?: string,
+  cwd = process.cwd(),
+): Promise<LoadedConfig> {
+  const file = explicit ? resolve(cwd, explicit) : findConfigFile(cwd);
+  if (file && !existsSync(file))
+    throw new ConfigError(`Brick: config file not found: ${file}`);
+  const config: BrickConfig = file
+    ? (await import(pathToFileURL(file).href)).default
+    : {};
+  if (file)
+    validateConfig(config, file.endsWith(CONFIG_FILE) ? CONFIG_FILE : file);
+  const root = file ? dirname(file) : resolve(cwd);
+  const generated = resolve(root, config.generated ?? "_brick");
+  return {
+    file,
+    root,
+    config,
+    entry: resolve(root, config.entry ?? "src/app.ts"),
+    services: resolve(root, config.services ?? "src/services"),
+    generated,
+    contract: config.client?.output
+      ? resolve(root, config.client.output)
+      : join(generated, "contract.ts"),
+    outdir: resolve(root, config.build?.outdir ?? DEFAULT_OUTDIR),
+  };
+}
+
+/**
  * Load and validate the project's config: `explicit` (`--config`) when given,
  * else the nearest `brick.config.ts`. Returns undefined when there is none.
  */
@@ -80,92 +211,38 @@ export async function loadConfig(
   explicit?: string,
   cwd = process.cwd(),
 ): Promise<LoadedConfig | undefined> {
-  const file = explicit ? resolve(cwd, explicit) : findConfigFile(cwd);
-  if (!file) return undefined;
-  if (!existsSync(file))
-    throw new ConfigError(`Brick: config file not found: ${file}`);
-  const module = await import(pathToFileURL(file).href);
-  const config = module.default as BrickConfig;
-  validateConfig(config, file.endsWith(CONFIG_FILE) ? CONFIG_FILE : file);
-  const root = dirname(file);
-  return {
-    file,
-    root,
-    config,
-    entry: resolve(root, config.entry ?? "src/app.ts"),
-    services: resolve(root, config.services ?? "src/services"),
-    generated: resolve(root, config.generated ?? "_brick"),
-  };
+  const project = await resolveProject(explicit, cwd);
+  return project.file ? project : undefined;
 }
 
-type Check = (value: unknown) => boolean;
-type Shape = { [key: string]: [Check, string] | Shape };
-
-const isString: Check = (v) => typeof v === "string" && v.length > 0;
-const isBoolean: Check = (v) => typeof v === "boolean";
-const isPort: Check = (v) =>
-  Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 65535;
-const isRecordOf =
-  (check: Check): Check =>
-  (v) =>
-    isPlainObject(v) && Object.values(v).every(check);
-const isArrayOf =
-  (check: Check): Check =>
-  (v) =>
-    Array.isArray(v) && v.every(check);
-const PRESETS = ["recommended", "layout", "strict", "plugin"];
-const SEVERITIES = ["error", "warn", "off"];
-
-const SCHEMA: Shape = {
-  entry: [isString, "must be a file path"],
-  services: [isString, "must be a folder path"],
-  generated: [isString, "must be a folder path"],
-  client: { output: [isString, "must be a file path"] },
-  openapi: { output: [isString, "must be a file path"] },
-  dev: {
-    port: [isPort, "must be a port number"],
-    frontend: [isString, "must be a command"],
-    // `false`, or the shape below, checked in validateConfig.
-    dashboard: {
-      port: [isPort, "must be a port number"],
-      historyDays: [
-        (v) => Number.isSafeInteger(v) && (v as number) >= 0,
-        "must be a whole number of days, or 0 for none",
-      ],
-    },
-  },
-  build: {
-    outdir: [isString, "must be a folder path"],
-    aot: [isBoolean, "must be true or false"],
-    requestLogging: [isBoolean, "must be true or false"],
-  },
-  dashboard: {
-    extension: [isString, "must be a file path"],
-    theme: {
-      light: [isRecordOf(isString), "must map token names to values"],
-      dark: [isRecordOf(isString), "must map token names to values"],
-      radius: [isString, "must be a CSS length"],
-      fonts: {
-        sans: [isString, "must be a font-family value"],
-        mono: [isString, "must be a font-family value"],
-      },
-    },
-  },
-  lint: {
-    presets: [
-      isArrayOf((v) => PRESETS.includes(v as string)),
-      `must list presets from ${PRESETS.join(", ")}`,
-    ],
-    rules: [
-      isRecordOf((v) => SEVERITIES.includes(v as string)),
-      'must map rule names to "error", "warn" or "off"',
-    ],
-    ignore: [isArrayOf(isString), "must be a list of glob patterns"],
-  },
-};
+/** A port from a flag, else `PORT`, else the config, else 4000; throws outside 1-65535. */
+export function resolvePort(
+  flag?: number | string,
+  configured?: number,
+  env = process.env.PORT,
+): number {
+  const port = Number(flag ?? (env || undefined) ?? configured ?? DEFAULT_PORT);
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    throw new Error(
+      `Invalid port: ${port}. Port must be an integer between 1 and 65535`,
+    );
+  return port;
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The schema of `key` inside `schema`, looking into the object of a union. */
+function child(schema: TSchema, key: string): TSchema | undefined {
+  const object: TSchema =
+    schema.anyOf?.find((s: TSchema) => s.type === "object") ?? schema;
+  return (
+    object.properties?.[key] ??
+    (object.patternProperties &&
+      (Object.values(object.patternProperties)[0] as TSchema)) ??
+    object.items
+  );
 }
 
 /** Throws on an unknown key, a bad type, or `dev.frontend` without `client.output`. */
@@ -176,24 +253,31 @@ export function validateConfig(
   const fail = (message: string): never => {
     throw new ConfigError(`${label}: ${message}`);
   };
-  if (!isPlainObject(config)) fail("must default-export defineConfig({ ... })");
-  const walk = (value: Record<string, unknown>, shape: Shape, path: string) => {
-    for (const [key, child] of Object.entries(value)) {
-      const keyPath = path + key;
-      const rule = shape[key];
-      if (!rule) fail(`unknown key ${keyPath}`);
-      if (child === undefined) continue;
-      if (keyPath === "dev.dashboard" && child === false) continue;
-      if (Array.isArray(rule)) {
-        if (!rule[0](child)) fail(`${keyPath} ${rule[1]}`);
-      } else if (!isPlainObject(child)) {
-        fail(
-          `${keyPath} must be an object${keyPath === "dev.dashboard" ? " or false" : ""}`,
-        );
-      } else walk(child, rule as Shape, `${keyPath}.`);
-    }
-  };
-  walk(config as Record<string, unknown>, SCHEMA, "");
+  let error = Value.Errors(BrickConfigSchema, config).First();
+  const keys: string[] = [];
+  // `false` or an object: given an object, report what is wrong inside it.
+  while (error?.schema.anyOf && isPlainObject(error.value)) {
+    const object = error.schema.anyOf.find((s: TSchema) => s.type === "object");
+    if (!object) break;
+    keys.push(...error.path.split("/").slice(1));
+    error = Value.Errors(object, error.value).First();
+  }
+  if (error) {
+    keys.push(...error.path.split("/").slice(1));
+    if (error.type === ValueErrorType.ObjectAdditionalProperties)
+      fail(`unknown key ${keys.join(".")}`);
+    // The message of the deepest schema that has one, at that schema's path.
+    let schema: TSchema | undefined = BrickConfigSchema;
+    let message: string = schema.message;
+    let at = 0;
+    keys.forEach((key, index) => {
+      schema = schema && child(schema, key);
+      if (schema?.message) [message, at] = [schema.message, index + 1];
+      else if (schema?.type === "object" && index === keys.length - 1)
+        [message, at] = ["must be an object", index + 1];
+    });
+    fail(at ? `${keys.slice(0, at).join(".")} ${message}` : message);
+  }
   const typed = config as BrickConfig;
   if (typed.dev?.frontend && !typed.client?.output)
     fail("dev.frontend requires client.output");

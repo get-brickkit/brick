@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { mkdtemp, mkdir, rm, rename } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, rename, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -269,3 +269,68 @@ globalThis.Function = new Proxy(Function, {
     }
   }, 20000);
 }
+
+it("a built server serves the monitoring dashboard its app asks for, as brick start does", async () => {
+  const root = resolve(import.meta.dir, "../../..");
+  const dir = await mkdtemp(join(tmpdir(), "brick-dashboard-build-"));
+  let server: ReturnType<typeof Bun.spawn> | undefined;
+  try {
+    // The built server imports the dashboard from @brickkit/cli at run time.
+    await mkdir(join(dir, "node_modules/@brickkit"), { recursive: true });
+    for (const name of ["core", "cli"])
+      await symlink(
+        join(root, "packages", name),
+        join(dir, "node_modules/@brickkit", name),
+      );
+    const free = () => {
+      const listener = Bun.serve({ port: 0, fetch: () => new Response() });
+      const port = listener.port!;
+      listener.stop(true);
+      return port;
+    };
+    const dashboardPort = free();
+    const appPort = free();
+    await Bun.write(
+      join(dir, "app.ts"),
+      `import { brick } from "@brickkit/core";
+export default brick({ dashboard: { port: ${dashboardPort} } });
+`,
+    );
+    const build = Bun.spawn(
+      [
+        process.execPath,
+        join(root, "packages/cli/src/bin.ts"),
+        "build",
+        "app.ts",
+        // AOT needs elysia beside the entry; this test is about the dashboard.
+        "--no-aot",
+      ],
+      { cwd: dir, stdout: "pipe", stderr: "pipe" },
+    );
+    const [code, stderr] = await Promise.all([
+      build.exited,
+      new Response(build.stderr).text(),
+    ]);
+    expect(stderr).toBe("");
+    expect(code).toBe(0);
+    server = Bun.spawn([process.execPath, "dist/brick/server.js"], {
+      cwd: dir,
+      env: { ...process.env, PORT: String(appPort) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const deadline = Date.now() + 10000;
+    let health: Response | undefined;
+    while (!health && Date.now() < deadline) {
+      health = await fetch(`http://127.0.0.1:${dashboardPort}/_health`).catch(
+        () => undefined,
+      );
+      if (!health) await Bun.sleep(50);
+    }
+    expect(health?.status).toBe(200);
+  } finally {
+    server?.kill();
+    await server?.exited;
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 30000);

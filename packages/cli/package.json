@@ -32,6 +32,14 @@
       "import": "./dist/compiler.js",
       "types": "./dist/compiler.d.ts"
     },
+    "./config": {
+      "import": "./dist/config.js",
+      "types": "./dist/config.d.ts"
+    },
+    "./production-dashboard": {
+      "import": "./dist/production-dashboard.js",
+      "types": "./dist/production-dashboard.d.ts"
+    },
     "./dashboard": {
       "import": "./dashboard-dist/kit.js",
       "types": "./dist/dashboard.d.ts"

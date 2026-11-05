@@ -1,10 +1,7 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { resetGlobalRegistry } from "@brickkit/core";
-import {
-  startDevApplication,
-  startProdServer,
-  startWorker,
-} from "../src/runner";
+import { startDevApplication } from "../src/dev-application";
+import { startProdServer, startWorker } from "../src/runner";
 
 const fixture = (name: string) =>
   new URL(`./fixtures/${name}.ts`, import.meta.url).pathname;
@@ -249,8 +246,11 @@ describe("signals", () => {
         [
           process.execPath,
           new URL("../src/dev-worker.ts", import.meta.url).pathname,
-          fixture("events-dev-signal"),
-          String(port),
+          JSON.stringify({
+            entry: fixture("events-dev-signal"),
+            port,
+            telemetry: false,
+          }),
         ],
         {
           stdout: "pipe",
@@ -289,8 +289,11 @@ describe("signals", () => {
         [
           process.execPath,
           new URL("../src/dev-worker.ts", import.meta.url).pathname,
-          fixture("events-dev-loading"),
-          String(port),
+          JSON.stringify({
+            entry: fixture("events-dev-loading"),
+            port,
+            telemetry: false,
+          }),
         ],
         { stdout: "pipe", stderr: "inherit" },
       );
@@ -327,8 +330,11 @@ describe("signals", () => {
         [
           process.execPath,
           new URL("../src/dev-worker.ts", import.meta.url).pathname,
-          fixture("events-dev-failing-stop"),
-          String(port),
+          JSON.stringify({
+            entry: fixture("events-dev-failing-stop"),
+            port,
+            telemetry: false,
+          }),
         ],
         { stdout: "pipe", stderr: "pipe" },
       );

@@ -26,8 +26,6 @@ import {
   type RowFilters,
 } from "./dashboard-query";
 
-export const DEFAULT_HISTORY_DAYS = 90;
-
 const DAY_MS = 86_400_000;
 const MAX_TRACES = 100_000;
 const FLUSH_MS = 250;

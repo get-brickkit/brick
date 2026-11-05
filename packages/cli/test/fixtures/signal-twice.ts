@@ -1,8 +1,8 @@
 // A process whose deliveries never finish, for the second-signal test.
-import { finishDeliveriesOnSignal } from "../../src/runner";
+import { shutdownOnSignal } from "../../src/serve";
 
-finishDeliveriesOnSignal({
-  stop: () => {
+shutdownOnSignal({
+  shutdown: () => {
     console.log("stopping");
     return new Promise<void>(() => {});
   },

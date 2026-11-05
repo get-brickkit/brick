@@ -38,7 +38,6 @@ import {
   type DashboardExtensionOptions,
 } from "./dashboard-extension";
 
-export const DEFAULT_DASHBOARD_PORT = 9400;
 const KEEPALIVE_MS = 15_000;
 const MAX_INGEST_BYTES = 5 * 1024 * 1024;
 const MAX_PROXY_BYTES = 10 * 1024 * 1024;

@@ -4,16 +4,10 @@ import {
   type ApiDocument,
   type BrickApp,
 } from "@brickkit/core";
-import {
-  DEFAULT_DASHBOARD_PORT,
-  startDevDashboard,
-  type DevDashboard,
-} from "./dev-dashboard";
+import { DEFAULT_DASHBOARD_PORT, DEFAULT_HISTORY_DAYS } from "./config";
+import { openDashboard } from "./dashboard-host";
 import { ROUTES } from "./dashboard-protocol";
-import { DocsHost } from "./dev-docs";
 import type { DashboardExtensionOptions } from "./dashboard-extension";
-import { DEFAULT_HISTORY_DAYS, openHistory } from "./dev-history";
-import { DevTelemetryStore } from "./dev-telemetry-store";
 
 export interface DashboardLogger {
   info(message: string): void;
@@ -47,30 +41,16 @@ export async function startViteDashboard(options: {
   dashboard?: DashboardExtensionOptions;
   logger: DashboardLogger;
 }): Promise<ViteDashboard | undefined> {
-  const history = await openHistory({
+  const dashboard = await openDashboard({
+    port: options.port ?? DEFAULT_DASHBOARD_PORT,
     directory: options.directory,
-    days: options.historyDays ?? DEFAULT_HISTORY_DAYS,
+    historyDays: options.historyDays ?? DEFAULT_HISTORY_DAYS,
     warn: (message) => options.logger.warn(message),
+    docs: true,
+    dashboard: options.dashboard,
   });
-  const store = new DevTelemetryStore({ history });
-  const docs = new DocsHost(store, (message) => options.logger.warn(message));
-  let dashboard: DevDashboard;
-  try {
-    dashboard = await startDevDashboard({
-      port: options.port ?? DEFAULT_DASHBOARD_PORT,
-      store,
-      history,
-      docs: () => docs.current,
-      dashboard: options.dashboard,
-    });
-  } catch (error) {
-    history?.close();
-    const reason = error instanceof Error ? error.message : String(error);
-    options.logger.warn(
-      `[Brick-TS] ${reason} Continuing without the dashboard.`,
-    );
-    return undefined;
-  }
+  if (!dashboard) return undefined;
+  const { store, docs } = dashboard;
   options.logger.info(
     `  ➜  Brick dashboard: http://127.0.0.1:${dashboard.port}`,
   );
@@ -91,7 +71,10 @@ export async function startViteDashboard(options: {
         getGlobalRegistry().exportArchitecture(app.definition),
         store.latestGeneration,
       );
-      void docs.configure(dirname(options.entry), app.definition.documentation);
+      void docs?.configure(
+        dirname(options.entry),
+        app.definition.documentation,
+      );
       // A later load supersedes this one if it finishes first.
       const load = ++loads;
       app.referenceDocuments().then(
@@ -114,8 +97,6 @@ export async function startViteDashboard(options: {
       if (stopped) return;
       stopped = true;
       dashboard.stop();
-      docs.close();
-      history?.close();
     },
   };
 }
