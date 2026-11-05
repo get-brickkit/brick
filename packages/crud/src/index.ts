@@ -1,4 +1,9 @@
-import { defineResourcePlugin, t, setActionAccess } from "@brickkit/core";
+import {
+  defineResourcePlugin,
+  idSchema as resourceIdSchema,
+  t,
+  setActionAccess,
+} from "@brickkit/core";
 import { type TSchema } from "@sinclair/typebox";
 import { getTableColumns, type Column } from "drizzle-orm";
 
@@ -148,7 +153,7 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
       const idColumn: Column = resource.id;
       if (!Object.values(columns).includes(idColumn))
         throw new Error("CRUD ID must belong to the resource table");
-      const idSchema = columnSchema(idColumn);
+      const idSchema = resourceIdSchema(idColumn);
       const defaultLimit = options.defaultLimit ?? 20;
       const maxLimit = options.maxLimit ?? 100;
       if (

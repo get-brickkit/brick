@@ -364,3 +364,45 @@ test("a record action finds a row whose id column holds dates", async () => {
     sqlite.close();
   }
 });
+
+test("crud and record actions accept the same ids", async () => {
+  const events = sqliteTable("events", {
+    at: integer("at", { mode: "timestamp_ms" }).primaryKey(),
+    name: text("name").notNull(),
+  });
+  const database = defineDatabase({ tables: { events } });
+  const db = database.getDb();
+  const sqlite = (db as typeof db & { $client: Database }).$client;
+  try {
+    sqlite.exec(
+      "CREATE TABLE events (at INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+    );
+    await db
+      .insert(events)
+      .values({ at: new Date("2026-01-01T00:00:00.000Z"), name: "launch" });
+    const service = defineService("calendar", { database });
+    const event = service
+      .resource({ name: "event", table: events, id: events.at })
+      .use(crud({ access: "public", fields: { name: { read: true } } }));
+    event.action({
+      name: "show",
+      record: true,
+      method: "GET",
+      access: "public",
+      output: t.Object({ name: t.String() }),
+      execute: ({ row }) => ({ name: row.name }),
+    });
+    const app = brick({ services: [service], docs: false });
+    for (const id of ["2026-01-01T00:00:00.000Z", "2026-01-01", "not-a-date"]) {
+      const viaCrud = await call(app, "GET", `/api/calendar/event/${id}`);
+      const viaAction = await call(
+        app,
+        "GET",
+        `/api/calendar/event/${id}/show`,
+      );
+      expect([id, viaCrud.status]).toEqual([id, viaAction.status]);
+    }
+  } finally {
+    sqlite.close();
+  }
+});

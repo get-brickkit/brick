@@ -1,6 +1,7 @@
 import {
   ActionExecutionError,
   crudEventName,
+  columnValue,
   crudEventSource,
   deny,
   getHostHooks,
@@ -182,7 +183,20 @@ export function operations(model: CrudModel) {
       scope,
       asked.where ? condition(asked.where, columns, query) : undefined,
       ["get", "update", "delete"].includes(operation)
-        ? eq(idColumn, query.bind(databaseValue(idColumn, input.id)))
+        ? eq(
+            idColumn,
+            // Encoded by the column: a placeholder's value is not.
+            new Param(
+              query.bind(
+                input.id === undefined // prewarm builds the statement with no id
+                  ? undefined
+                  : // An id its column can't hold names no row, as in core's loadRecord.
+                    (columnValue(idColumn, input.id) ??
+                      errors.NOT_FOUND("Resource not found")),
+              ),
+              idColumn,
+            ),
+          )
         : undefined,
     );
     return { operation, input, scope, db, derived, selected, query, where };

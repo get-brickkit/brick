@@ -76,7 +76,8 @@ export function checkRecordAccess(
     );
 }
 
-function idSchema(column: Column): TSchema {
+/** The schema of a resource's `:id`. */
+export function idSchema(column: Column): TSchema {
   return column.dataType === "number" ? Type.Number() : Type.String();
 }
 

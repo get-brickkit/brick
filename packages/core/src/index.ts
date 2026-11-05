@@ -113,7 +113,7 @@ export { getActionAccess, setActionAccess } from "./access";
 export type { ActionAccessInfo } from "./access";
 export type { HttpMethod } from "./http";
 export { defineAction, errorsOf, buildErrorHelpers } from "./action";
-export { defineResource, loadRecord } from "./resource";
+export { defineResource, idSchema, loadRecord } from "./resource";
 export {
   getActionRoute,
   getPluginActionRoute,
