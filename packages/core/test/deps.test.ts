@@ -16,6 +16,7 @@ import {
   type BrickApp,
 } from "../src";
 import { createTestApp } from "../src/testing";
+import { postJson } from "./helpers";
 
 interface Carrier {
   book(orderId: string): string;
@@ -44,17 +45,7 @@ function ordersService(name: string) {
 }
 
 const call = async (app: BrickApp, path: string, body: unknown) =>
-  (
-    await app.handle(
-      new Request(`http://localhost${path}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      }),
-    )
-  )
-    .json()
-    .then((body: any) => body.tracking);
+  ((await (await postJson(app, path, body)).json()) as any).tracking;
 
 describe("declared deps", () => {
   it("gives actions the app's deps as ctx.deps", async () => {

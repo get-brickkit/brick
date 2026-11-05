@@ -12,7 +12,6 @@ import {
   type BunSQLiteDatabase,
   createPostgresDatabase,
 } from "../src";
-import { portOf } from "../src/service-port";
 
 const items = sqliteTable("defined_items", { id: text("id").primaryKey() });
 const other = sqliteTable("defined_other", { id: text("id").primaryKey() });
@@ -68,18 +67,17 @@ describe("defineDatabase", () => {
     const database = defineDatabase();
     const a = defineService("defined_tables_a", { database });
     const b = defineService("defined_tables_b", { database });
-    portOf(a).registerTable(items);
-    portOf(b).registerTable(other);
+    a.resource({ name: "item", table: items });
+    b.resource({ name: "other", table: other });
     expect(() => a.getDb()!.select().from(items).all()).toThrow();
     expect(() => b.getDb()!.select().from(other).all()).toThrow();
-    portOf(a).registerTable(other);
+    a.resource({ name: "other", table: other });
     expect(() => a.getDb()!.select().from(other).all()).toThrow();
   });
 
   it("never applies declared tables at runtime", () => {
     const database = defineDatabase({ tables: { items } });
     const service = defineService("defined_migrations", { database });
-    portOf(service).registerTable(items);
     service.resource({ name: "item", table: items });
     expect(() => database.getDb().select().from(items).all()).toThrow();
     expect(database.tables.items).toBe(items);

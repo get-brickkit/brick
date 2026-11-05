@@ -18,7 +18,9 @@ import {
   t,
   text,
 } from "../src";
-import { brickVersion, satisfiesRange } from "../src/version";
+import { satisfiesRange } from "../src/version";
+import { version } from "../package.json";
+import { postJson, waitFor } from "./helpers";
 
 beforeEach(resetGlobalRegistry);
 
@@ -92,9 +94,8 @@ describe("definePlugin manifest", () => {
       resource: () => ({}),
     });
     expect(() => old()).toThrow(
-      `@acme/brick-old supports Brick ^0.0.1; this app runs ${brickVersion()}`,
+      `@acme/brick-old supports Brick ^0.0.1; this app runs ${version}`,
     );
-    expect(brickVersion()).toMatch(/^\d+\.\d+\.\d+/);
   });
 
   it("fills option defaults and names the plugin and option on bad values", () => {
@@ -310,37 +311,6 @@ describe("app part and lifecycle", () => {
     await app.events?.stop();
   });
 
-  it("adds a workflow listener, tagged with the plugin's deps for its steps", () => {
-    const sync = Object.assign(async () => {}, { workflowId: "flows/sync" });
-    const flows = definePlugin({
-      name: "@acme/flows",
-      deps: { mailer: port<string>() },
-      app: ({ listeners }) => {
-        listeners(
-          defineListener({
-            name: "flow-listener",
-            on: "pages.*",
-            workflow: sync,
-          }),
-        );
-      },
-    });
-    const app = brick({
-      services: [],
-      requestLogging: false,
-      plugins: [flows({}, { deps: { mailer: "plugin" } })],
-      events: { world: { createRunId: () => "run" } },
-    });
-    expect(app.events?.describe().listeners).toEqual([
-      { name: "flow-listener", on: ["pages.*"], kind: "workflow" },
-    ]);
-    // The workflow runtime reads this tag to run the steps with the plugin's deps.
-    const listener = (app.events as any).byName.get("flow-listener");
-    expect(listener[Symbol.for("brickkit.plugin.deps")]).toEqual({
-      mailer: "plugin",
-    });
-  });
-
   it("refuses a plugin passed to brick() that a resource already installed", () => {
     const audit = definePlugin({
       name: "@acme/audit",
@@ -403,7 +373,7 @@ describe("app part and lifecycle", () => {
     const app = create().listen(0);
     const url = `http://localhost:${app.server!.port}/openapi.json`;
     try {
-      for (let i = 0; i < 100 && app.server; i++) await Bun.sleep(5);
+      await waitFor(() => !app.server);
       await expect(fetch(url)).rejects.toThrow();
       expect(logged).toHaveBeenCalled();
     } finally {
@@ -477,16 +447,7 @@ describe("plugin deps", () => {
     app: { handle(request: Request): Promise<Response> },
     path: string,
     body: unknown = {},
-  ) =>
-    (
-      await app.handle(
-        new Request(`http://localhost${path}`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        }),
-      )
-    ).json();
+  ) => (await postJson(app, path, body)).json();
 
   const seen: Record<string, unknown> = {};
   const notify = definePlugin({

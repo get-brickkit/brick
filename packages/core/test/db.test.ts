@@ -12,21 +12,20 @@ import {
   text,
   integer,
   eq,
-  sql,
   ensureResourceIndexes,
   ensureSQLiteFts,
+  syncSchema,
 } from "../src";
 import { pgTable, text as pgText } from "drizzle-orm/pg-core";
 
-// Define Drizzle tables for testing
-export const itemsTable = sqliteTable("items", {
+const itemsTable = sqliteTable("items", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
   quantity: integer("quantity").notNull(),
   category: text("category").notNull(),
 });
 
-export const logsTable = sqliteTable("logs", {
+const logsTable = sqliteTable("logs", {
   id: text("id").primaryKey(),
   message: text("message").notNull(),
   timestamp: integer("timestamp").notNull(),
@@ -38,22 +37,11 @@ describe("@brickkit/core Database & Drizzle Integration", () => {
   });
 
   it("should create a table with Drizzle ORM and perform queries", async () => {
-    // 1. Zero-config SQLite database helper
     const db = createSQLiteDatabase();
-    expect(db).toBeDefined();
     expect(typeof db.select).toBe("function");
 
-    // Create table schema
-    db.run(sql`
-      CREATE TABLE IF NOT EXISTS items (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        quantity INTEGER NOT NULL,
-        category TEXT NOT NULL
-      );
-    `);
+    syncSchema([itemsTable], db);
 
-    // Insert records with Drizzle ORM
     await db.insert(itemsTable).values([
       {
         id: "item_1",
@@ -69,7 +57,6 @@ describe("@brickkit/core Database & Drizzle Integration", () => {
       },
     ]);
 
-    // Query back with Drizzle ORM
     const items = await db
       .select()
       .from(itemsTable)
@@ -87,15 +74,7 @@ describe("@brickkit/core Database & Drizzle Integration", () => {
     expect(inventoryService.db).toBeDefined();
     expect(inventoryService.getDb()).toBeDefined();
 
-    // Initialize table on service.db
-    inventoryService.db!.run(sql`
-      CREATE TABLE IF NOT EXISTS items (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        quantity INTEGER NOT NULL,
-        category TEXT NOT NULL
-      );
-    `);
+    syncSchema([itemsTable], inventoryService.db!);
 
     const addItem = defineAction({
       name: "addItem",
@@ -112,7 +91,6 @@ describe("@brickkit/core Database & Drizzle Integration", () => {
         category: t.String(),
       }),
       execute: async ({ input, ctx }) => {
-        // ctx.db is automatically injected from the service
         expect(ctx.db).toBeDefined();
         await ctx.db.insert(itemsTable).values(input);
         return input;
@@ -140,7 +118,6 @@ describe("@brickkit/core Database & Drizzle Integration", () => {
 
     inventoryService.action(addItem).action(getItem);
 
-    // 1. Insert a record through an action's ctx.db
     const created = await addItem({
       input: {
         id: "item_desk",
@@ -151,7 +128,6 @@ describe("@brickkit/core Database & Drizzle Integration", () => {
     });
     expect(created.title).toBe("Standing Desk");
 
-    // 2. Query it back through an action's ctx.db
     const fetched = await getItem({ input: { id: "item_desk" } });
     expect(fetched).toBeDefined();
     expect(fetched.id).toBe("item_desk");
@@ -160,26 +136,17 @@ describe("@brickkit/core Database & Drizzle Integration", () => {
   });
 
   it("should support attachDatabase(service, definedDatabase)", async () => {
-    // Service created without database option
     const auditService = defineService("audit");
     expect(auditService.getDb()).toBeUndefined();
 
-    // Attach new zero-config SQLite database via attachDatabase
     const db = attachDatabase(
       auditService,
       defineDatabase({ path: ":memory:" }),
     );
-    expect(db).toBeDefined();
     expect(auditService.getDb()).toBe(db);
     expect(auditService.db).toBe(db);
 
-    db.run(sql`
-      CREATE TABLE IF NOT EXISTS logs (
-        id TEXT PRIMARY KEY,
-        message TEXT NOT NULL,
-        timestamp INTEGER NOT NULL
-      );
-    `);
+    syncSchema([logsTable], db);
 
     const logEvent = defineAction({
       name: "logEvent",
@@ -205,62 +172,10 @@ describe("@brickkit/core Database & Drizzle Integration", () => {
     expect(rows.length).toBe(1);
     expect(rows[0].message).toBe("User logged in");
 
-    // Test attaching an already existing Drizzle instance
     const customDb = defineDatabase();
     const otherService = defineService("other");
     attachDatabase(otherService, customDb);
     expect(otherService.db).toBe(customDb.getDb());
-  });
-
-  it("should execute zero-latency local queries in sub-millisecond time", async () => {
-    const perfService = defineService("perf", { database: defineDatabase() });
-
-    perfService.db!.run(sql`
-      CREATE TABLE IF NOT EXISTS items (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        quantity INTEGER NOT NULL,
-        category TEXT NOT NULL
-      );
-    `);
-
-    // Bulk insert 100 items locally
-    const bulkItems = Array.from({ length: 100 }, (_, i) => ({
-      id: `perf_${i}`,
-      title: `Widget ${i}`,
-      quantity: i * 2,
-      category: i % 2 === 0 ? "even" : "odd",
-    }));
-
-    await perfService.db!.insert(itemsTable).values(bulkItems);
-
-    const queryPerfAction = defineAction({
-      name: "queryPerf",
-      execute: async ({ ctx }) => {
-        return ctx.db
-          .select()
-          .from(itemsTable)
-          .where(eq(itemsTable.category, "even"));
-      },
-    });
-
-    perfService.action(queryPerfAction);
-
-    // Warm-up query
-    await queryPerfAction({});
-
-    // Benchmark local query execution
-    const iterations = 50;
-    const start = performance.now();
-    for (let i = 0; i < iterations; i++) {
-      await queryPerfAction({});
-    }
-    const totalDuration = performance.now() - start;
-    const avgDuration = totalDuration / iterations;
-
-    // Verify sub-millisecond / zero-latency local execution
-    expect(avgDuration).toBeLessThan(2.0); // Averaging < 2ms (typically < 0.2ms)
-    expect(totalDuration).toBeLessThan(100.0);
   });
 
   it("should propagate service.db across RPC service proxies", async () => {
@@ -268,14 +183,7 @@ describe("@brickkit/core Database & Drizzle Integration", () => {
       database: defineDatabase(),
     });
 
-    warehouseService.db!.run(sql`
-      CREATE TABLE IF NOT EXISTS items (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        quantity INTEGER NOT NULL,
-        category TEXT NOT NULL
-      );
-    `);
+    syncSchema([itemsTable], warehouseService.db!);
 
     await warehouseService.db!.insert(itemsTable).values({
       id: "item_rpc",

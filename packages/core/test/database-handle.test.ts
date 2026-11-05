@@ -2,8 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { sql } from "drizzle-orm";
 import postgres from "postgres";
-import { defineDatabase } from "../src/db/define";
-import { SecretRef } from "../src/secrets";
+import { defineDatabase, SecretRef } from "../src";
 
 describe("database handle disposal", () => {
   it("closes an owned SQLite client once and rejects further access", () => {

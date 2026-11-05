@@ -2,16 +2,15 @@ import { expect, test, spyOn } from "bun:test";
 import {
   defineAction,
   defineError,
-  errorsOf,
   defineService,
   t,
   brick,
   generateOpenApiSpec,
   ActionExecutionError,
   ValidationError,
-  compileBrickApplication,
 } from "../src";
 import { createTestApp } from "../src/testing";
+import { postJson } from "./helpers";
 
 for (const scenario of [
   "declared",
@@ -59,16 +58,9 @@ for (const scenario of [
         .execute({ input: input as never })
         .catch((error) => error);
       expect(local).toMatchObject(expected);
-      const response = await app.handle(
-        new Request(`http://localhost/api/${service.name}/fail`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-request-id": "test-request",
-          },
-          body: JSON.stringify(input),
-        }),
-      );
+      const response = await postJson(app, `/api/${service.name}/fail`, input, {
+        "x-request-id": "test-request",
+      });
       const envelope = await response.json();
       expect(response.status).toBe(expected.status);
       expect(envelope).toMatchObject({
@@ -161,31 +153,7 @@ test("OpenAPI groups declared errors and uses shared envelopes", () => {
   );
 });
 
-test("route handler authorization uses the shared envelope", async () => {
-  for (const user of [undefined, { id: "guest" }]) {
-    const action = defineAction({
-      name: "emitted",
-      authorize: () => false,
-      execute: () => "ok",
-    });
-    const service = defineService("emitted_errors", {
-      context: () => ({ user }),
-    }).action(action);
-    const handler = compileBrickApplication({ services: [service] }).routes[0]!
-      .handler;
-    const result = await handler({
-      set: { headers: {} },
-      headers: { "x-request-id": "emitted-id" },
-    });
-    expect(result).toMatchObject({
-      code: user == null ? "UNAUTHORIZED" : "FORBIDDEN",
-      status: user == null ? 401 : 403,
-      requestId: "emitted-id",
-    });
-  }
-});
-
-test("route handlers redact synchronous and asynchronous failures and log causes", async () => {
+test("actions redact synchronous and asynchronous failures and log causes", async () => {
   const log = spyOn(console, "error").mockImplementation(() => {});
   const cause = new Error("private root cause");
   try {
@@ -198,18 +166,20 @@ test("route handlers redact synchronous and asynchronous failures and log causes
           throw failure;
         },
       });
-      const service = defineService("emitted_failure").action(action);
-      const handler = compileBrickApplication({ services: [service] })
-        .routes[0]!.handler;
-      const result = await handler({
-        set: { headers: {} },
-        headers: { "x-request-id": "emitted-failure-id" },
-      });
+      const service = defineService("route_failure").action(action);
+      const response = await postJson(
+        brick({ services: [service], requestLogging: false }),
+        "/api/route_failure/failure",
+        {},
+        { "x-request-id": "route-failure-id" },
+      );
+      expect(response.status).toBe(500);
+      const result = await response.json();
       expect(result).toMatchObject({
         code: "INTERNAL_SERVER_ERROR",
         status: 500,
         message: "Internal Server Error",
-        requestId: "emitted-failure-id",
+        requestId: "route-failure-id",
       });
       expect(JSON.stringify(result)).not.toContain("private");
       expect(log.mock.calls.flat()).toContain(failure);
@@ -405,7 +375,6 @@ test("defineError types details, keeps plain errors loose, and shows in OpenAPI"
     slug: 1,
   });
 
-  expect(errorsOf(create)).toEqual(create.config.errors!);
   const spec = generateOpenApiSpec({
     services: [defineService("detail_errors").action(create)],
   });

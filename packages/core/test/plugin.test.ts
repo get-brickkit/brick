@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import {
+  brick,
   defineDatabase,
   defineService,
   defineServicePlugin,
@@ -288,17 +289,11 @@ describe("plugin installation", () => {
         },
       }),
     );
-    const [endpoint] = getPluginEndpoints(service);
-    expect(
-      await endpoint!.handler({
-        request: new Request("http://localhost"),
-        params: {},
-        query: {},
-        body: undefined,
-        headers: {},
-        set: { headers: {} },
-      }),
-    ).toBe("alice");
+    const app = brick({ services: [service], requestLogging: false });
+    const response = await app.handle(
+      new Request("http://localhost/api/pages/who"),
+    );
+    expect(await response.text()).toBe("alice");
     expect(() =>
       saved!.endpoint({
         name: "late",
@@ -335,7 +330,6 @@ describe("plugin installation", () => {
         },
       }),
     );
-    // Public names, no plugin package leak.
     expect(api.list.name).toBe("page.list");
     expect(api.get.name).toBe("page.get");
     expect(
@@ -360,7 +354,6 @@ describe("plugin installation", () => {
       .filter((a) => a.name === "page.list");
     expect(listed[0]?.plugin).toBe("@brickkit/crud");
     expect(listed[0]?.resource).toBe("page");
-    // Service-plugin scoped names are public too (no descriptor prefix).
     const svc = makeHost();
     const helloApi = svc.use(
       defineServicePlugin({
@@ -381,7 +374,6 @@ describe("plugin installation", () => {
     expect(
       svc.listActions().some((n) => n.name.includes("@brickkit/greeting")),
     ).toBe(false);
-    // OpenAPI operationIds/summaries use public names.
     const spec = generateOpenApiSpec({ services: [service] });
     const ops = Object.values(spec.paths).flatMap((p) =>
       Object.values(p as Record<string, any>),

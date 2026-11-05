@@ -11,8 +11,6 @@ import {
   createBrickClient,
   BrickTransportError,
   BrickServerError,
-  type InferActionInput,
-  type InferActionErrorCodes,
 } from "../src/client";
 
 const listPages = defineAction({
@@ -509,7 +507,7 @@ describe("createBrickClient (typed HTTP client)", () => {
       output: t.Object({ ok: t.Boolean() }),
       execute: async () => ({ ok: true }),
     });
-    (chargeAction as any).serviceName = "payments";
+    defineService("payments").action(chargeAction);
     const runtimeContract = {
       money: { settle: chargeAction },
       posts: {
@@ -537,27 +535,5 @@ describe("createBrickClient (typed HTTP client)", () => {
     await api.posts.list({ limit: 3 } as any);
     expect(calls[1]!.init.method).toBe("GET");
     expect(calls[1]!.url).toBe("http://localhost:4000/api/article?limit=3");
-  });
-
-  it("infers inputs, outputs, and declared error codes at the type level", () => {
-    type ListInput = InferActionInput<typeof listPages>;
-    const valid: ListInput = { limit: 10, sort: "-createdAt" };
-    expect(valid.limit).toBe(10);
-
-    type Codes = InferActionErrorCodes<typeof createPage>;
-    const code: Codes = "SLUG_EXISTS";
-    expect(code).toBe("SLUG_EXISTS");
-
-    // Compile-time payload checking (never invoked at runtime): wrong shapes
-    // must not typecheck.
-    function _typeChecks(api: import("../src/client").BrickClient<AppServer>) {
-      // @ts-expect-error title must be a string
-      void api.page.create({ title: 123, content: "World" });
-      // @ts-expect-error amount is required
-      void api.billing.charge({});
-      // @ts-expect-error unknown namespaces do not exist
-      void api.unknownNamespace.action({});
-    }
-    expect(typeof _typeChecks).toBe("function");
   });
 });

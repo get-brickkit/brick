@@ -85,7 +85,7 @@ describe("tools", () => {
     );
     await expect(
       registry.callTool("echo", { message: "hello" }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED", status: 401 });
     await expect(registry.callTool("missing")).rejects.toThrow(
       "unknown tool: missing",
     );

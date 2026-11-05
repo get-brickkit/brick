@@ -15,7 +15,6 @@ describe("architecture export", () => {
     // The dev dashboard sends the architecture over IPC, which uses structured
     // clone and throws on functions. The schema is data, so no function is in it.
     expect(() => structuredClone(architecture)).not.toThrow();
-    // Functions are left out.
     expect(architecture.services[0].options).toEqual({});
   });
 });

@@ -6,7 +6,7 @@ import {
   overrideSecret,
   resetSecrets,
   type SecretSource,
-} from "../src/secrets";
+} from "../src";
 
 const ENV_KEYS = ["BRICK_TEST_REQ", "BRICK_TEST_OPT", "BRICK_TEST_MISSING"];
 const savedEnv: Record<string, string | undefined> = {};

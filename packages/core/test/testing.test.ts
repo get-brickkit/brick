@@ -1,6 +1,6 @@
 import { expect, it, spyOn } from "bun:test";
 import { defineListener, defineService, getGlobalRegistry, t } from "../src";
-import { compileBrickApplication } from "../src/compiler";
+import { compileBrickApplication } from "../src";
 import { createTestApp } from "../src/testing";
 
 it("defines services in an empty registry and calls them through a typed client", async () => {

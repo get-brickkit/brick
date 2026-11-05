@@ -14,9 +14,10 @@ import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from "@opentelemetry/sdk-trace";
+import { GLOBAL_SYMBOL } from "../src";
 import { createLogger, DEFAULT_LOG_PREFIXES, stripAnsi } from "../src/logger";
 
-const CAPTURE = Symbol.for("brickkit.logs.capture");
+const CAPTURE = Symbol.for(GLOBAL_SYMBOL.logsCapture);
 const exporter = new InMemorySpanExporter();
 const capture = (on: boolean) => {
   (globalThis as Record<symbol, unknown>)[CAPTURE] = on ? true : undefined;
