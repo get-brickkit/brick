@@ -10,18 +10,16 @@ import {
   type DocsSnapshot,
   type FailureSummary,
   type ReloadSummary,
+  type SerializedError,
+  type SpanEndRecord,
   type SpanOutcome,
+  type SpanStartRecord,
+  type TelemetryRecord,
   type TraceSpan,
   type TraceSummary,
+  type WorkerErrorPhase,
 } from "./dashboard-protocol";
 import { actionSpan, findException, stringAttribute } from "./dashboard-query";
-import type {
-  SerializedError,
-  SpanEndRecord,
-  SpanStartRecord,
-  TelemetryRecord,
-  WorkerErrorPhase,
-} from "./dev-telemetry";
 
 const LIMITS = { ...LIVE_LIMITS, spansPerTrace: 500 };
 

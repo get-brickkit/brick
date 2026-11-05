@@ -1,16 +1,52 @@
 import type { Attributes } from "@opentelemetry/api";
 import type { ArchitectureSchema } from "@brickkit/core";
-import type {
-  SpanEventRecord,
-  TelemetryRecord,
-  WorkerErrorPhase,
-} from "./dev-telemetry";
 
 /*
  * What the dashboard server and its page agree on: the routes, headers, event
  * names and the data they carry. Types and constants only, so the page can
  * import it without the server's code.
  */
+
+// ---------------------------------------------------------------------------
+// Span records: what the app's tracer reports, over IPC or `/api/ingest`
+
+export interface SpanEventRecord {
+  name: string;
+  timeMs: number;
+  attributes: Attributes;
+}
+
+export interface SpanStartRecord {
+  phase: "start";
+  traceId: string;
+  spanId: string;
+  parentSpanId?: string;
+  name: string;
+  startMs: number;
+  attributes: Attributes;
+}
+
+export interface SpanEndRecord {
+  phase: "end";
+  traceId: string;
+  spanId: string;
+  name: string;
+  endMs: number;
+  status: "unset" | "ok" | "error";
+  statusMessage?: string;
+  attributes: Attributes;
+  events: SpanEventRecord[];
+}
+
+export type TelemetryRecord = SpanStartRecord | SpanEndRecord;
+
+export type WorkerErrorPhase = "startup" | "uncaught" | "unhandled-rejection";
+
+export interface SerializedError {
+  name: string;
+  message: string;
+  stack?: string;
+}
 
 // ---------------------------------------------------------------------------
 // Routes

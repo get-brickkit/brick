@@ -1,8 +1,7 @@
 import { brick, isBrickApp } from "@brickkit/core";
 import { importEntry } from "./app-entry";
 import { writeAppContract } from "./client-contract-file";
-import type { WorkerOptions } from "./dev-protocol";
-import { sendToSupervisor } from "./dev-telemetry";
+import { sendToSupervisor, type WorkerOptions } from "./dev-protocol";
 import { printBanner, serveApp } from "./serve";
 import { buildAppWorkflows } from "./workflows";
 

@@ -7,9 +7,9 @@ import {
   type HistoryTrace,
   type Outcome,
   type TraceSummary,
+  type SpanEventRecord,
   type VolumeBucket,
 } from "./dashboard-protocol";
-import type { SpanEventRecord } from "./dev-telemetry";
 
 /*
  * The request log's rules, as plain functions over rows: what a request's

@@ -1,13 +1,9 @@
 import { getGlobalRegistry, stopAllEvents } from "@brickkit/core";
 import { startInspector } from "./dev-inspector";
 import { startDevApplication } from "./dev-application";
-import type { WorkerOptions } from "./dev-protocol";
-import {
-  installWorkerTelemetry,
-  reportWorkerError,
-  sendToSupervisor,
-} from "./dev-telemetry";
-import type { WorkerErrorPhase } from "./dev-telemetry";
+import type { WorkerErrorPhase } from "./dashboard-protocol";
+import { sendToSupervisor, type WorkerOptions } from "./dev-protocol";
+import { installWorkerTelemetry, reportWorkerError } from "./dev-telemetry";
 
 let stopping = false;
 // A reload stops this process. Deliveries cut off would stay claimed, and wait
