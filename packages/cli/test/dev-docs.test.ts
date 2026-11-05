@@ -3,7 +3,8 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DevDocs, DocsHost, bundleComponents, openDocs } from "../src/dev-docs";
+import { bundleComponents } from "../src/dashboard-extension";
+import { DevDocs, DocsHost, openDocs } from "../src/dev-docs";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
 
 const roots: string[] = [];

@@ -4,8 +4,7 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { ConfigError } from "./config";
-import type { ExtensionPart } from "./dashboard-protocol";
-import { bundleComponents } from "./dev-docs";
+import { SHARED_MODULES, type ExtensionPart } from "./dashboard-protocol";
 
 /*
  * The dashboard's extension: one module of the project's own, built with the
@@ -127,6 +126,57 @@ export function themeCss(theme: DashboardTheme | undefined): string {
   return rules.length ? `${rules.join("\n")}\n` : "";
 }
 
+const SHARED = SHARED_MODULES.map((module) => module.specifier);
+
+/** Bundle a module of React components for the dashboard to import (an extension, or the docs' components), with its shared modules left to the page. */
+export async function bundleComponents(entry: string): Promise<string> {
+  if (typeof Bun !== "undefined") {
+    const result = await Bun.build({
+      entrypoints: [entry],
+      target: "browser",
+      format: "esm",
+      external: SHARED,
+      minify: false,
+      // Report what went wrong, not only that something did.
+      throw: false,
+    });
+    if (!result.success)
+      throw new Error(result.logs.map((log) => log.message).join("\n"));
+    // A CSS import adds a stylesheet output; the module is the entry point.
+    const output =
+      result.outputs.find((item) => item.kind === "entry-point") ??
+      result.outputs[0]!;
+    return output.text();
+  }
+  // Under Node the dev server's own bundler does the work. The name is not
+  // written as a literal so the CLI's Bun bundle, which never gets here,
+  // stays free of a Vite import.
+  const bundler = "vite";
+  const { build } = (await import(bundler)) as typeof import("vite");
+  const output = await build({
+    configFile: false,
+    logLevel: "silent",
+    root: dirname(entry),
+    oxc: { jsx: { runtime: "automatic" } },
+    esbuild: { jsx: "automatic" },
+    define: { "process.env.NODE_ENV": '"development"' },
+    build: {
+      write: false,
+      minify: false,
+      lib: { entry, formats: ["es"], fileName: "components" },
+      rollupOptions: { external: SHARED },
+    },
+  } as never);
+  const bundles = Array.isArray(output) ? output : [output];
+  for (const bundle of bundles) {
+    const chunk = ("output" in bundle ? bundle.output : []).find(
+      (item) => item.type === "chunk" && item.isEntry,
+    );
+    if (chunk && "code" in chunk) return chunk.code;
+  }
+  throw new Error("Brick: the dashboard module produced no output.");
+}
+
 /** The built React app, next to `src/` in the repo and next to `dist/` when published. */
 export function assetsDirectory(): string | undefined {
   for (const relative of ["../dashboard-dist/", "../../dashboard-dist/"]) {
@@ -144,7 +194,8 @@ export interface BuiltExtension {
   parts?: Record<string, string>;
 }
 
-let warnedTailwind = false;
+/** The `warn` functions already told that tailwindcss is missing: once each, not once per rebuild. */
+const warnedTailwind = new WeakSet<(message: string) => void>();
 
 /**
  * Tailwind for the classes in the extension's bundle, compiled against the
@@ -174,11 +225,11 @@ async function extensionCss(
     ? join(assets, "theme.css")
     : fileURLToPath(new URL("../dashboard/theme.css", import.meta.url));
   if (!tailwind || !main) {
-    if (!warnedTailwind)
+    if (!warnedTailwind.has(warn))
       warn(
         "[Brick-TS] tailwindcss is not installed, so the dashboard extension's own Tailwind classes are not compiled. The UI kit is styled either way.",
       );
-    warnedTailwind = true;
+    warnedTailwind.add(warn);
     return "";
   }
   const root = dirname(tailwind);
@@ -248,9 +299,10 @@ export async function writeDashboardExtension(
     })),
   ];
   if (!parts.length) return false;
+  const warn = (message: string) => console.warn(message);
   const built = await Promise.all(
     parts.map((part) =>
-      buildDashboardExtension(part.path).catch((error: unknown) => {
+      buildDashboardExtension(part.path, { warn }).catch((error: unknown) => {
         if (!part.plugin) throw error;
         throw new Error(
           `Brick compiler: the dashboard extension of plugin ${part.name} failed to build: ${error instanceof Error ? error.message : String(error)}`,
@@ -259,15 +311,42 @@ export async function writeDashboardExtension(
       }),
     ),
   );
-  const layout = layoutParts(
-    parts.map((part, index) => ({ ...part, built: built[index] })),
-  )!;
+  await writeBuiltFolder(
+    outdir,
+    layoutParts(
+      parts.map((part, index) => ({ ...part, built: built[index] })),
+    )!,
+  );
+  return true;
+}
+
+/** Whether `path` is a folder `brick build` wrote, which is served as it is. */
+const isBuiltFolder = (path: string): boolean =>
+  existsSync(join(path, "extension.js"));
+
+/** Write the extensions as `layoutParts` lays them out; `readBuiltFolder` reads them back. */
+async function writeBuiltFolder(
+  outdir: string,
+  layout: BuiltExtension,
+): Promise<void> {
   await mkdir(outdir, { recursive: true });
   await writeFile(join(outdir, "extension.js"), layout.js);
   await writeFile(join(outdir, "extension.css"), layout.css);
   for (const [name, js] of Object.entries(layout.parts ?? {}))
     await writeFile(join(outdir, name), js);
-  return true;
+}
+
+async function readBuiltFolder(path: string): Promise<BuiltExtension> {
+  const css = join(path, "extension.css");
+  const parts: Record<string, string> = {};
+  for (const name of await readdir(path))
+    if (/^extension-\d+\.js$/.test(name))
+      parts[name] = await readFile(join(path, name), "utf8");
+  return {
+    js: await readFile(join(path, "extension.js"), "utf8"),
+    css: existsSync(css) ? await readFile(css, "utf8") : "",
+    parts,
+  };
 }
 
 /**
@@ -330,18 +409,8 @@ export class DashboardExtensionHost {
     this.#pending = this.#pending.then(async () => {
       const before = JSON.stringify([this.built, this.error]);
       try {
-        const prebuilt = join(this.#path, "extension.js");
-        if (existsSync(prebuilt)) {
-          const css = join(this.#path, "extension.css");
-          const parts: Record<string, string> = {};
-          for (const name of await readdir(this.#path))
-            if (/^extension-\d+\.js$/.test(name))
-              parts[name] = await readFile(join(this.#path, name), "utf8");
-          this.built = {
-            js: await readFile(prebuilt, "utf8"),
-            css: existsSync(css) ? await readFile(css, "utf8") : "",
-            parts,
-          };
+        if (isBuiltFolder(this.#path)) {
+          this.built = await readBuiltFolder(this.#path);
         } else {
           if (!existsSync(this.#path))
             throw new Error(
@@ -429,25 +498,29 @@ export function extensionManifest(parts: readonly ExtensionPart[]): string {
 export class DashboardExtensions {
   readonly #warn: (message: string) => void;
   readonly #listeners = new Set<() => void>();
+  /** The app's own first, when it has one, then its plugins'. */
   readonly #parts: {
     name: string;
     path: string;
+    plugin: boolean;
     host: DashboardExtensionHost;
   }[] = [];
-  readonly #own: boolean;
   revision = 0;
 
   constructor(path: string | undefined, warn: (message: string) => void) {
     this.#warn = warn;
-    this.#own = path !== undefined;
-    if (path) this.#add("app", path);
+    if (path) this.#add("app", path, false);
   }
 
-  #add(name: string, path: string) {
+  #add(name: string, path: string, plugin: boolean) {
     const host = new DashboardExtensionHost(path, this.#warn);
     host.onChange(() => this.#changed());
-    this.#parts.push({ name, path: resolve(path), host });
+    this.#parts.push({ name, path: resolve(path), plugin, host });
     return host;
+  }
+
+  get #own() {
+    return this.#parts.find((part) => !part.plugin);
   }
 
   #changed() {
@@ -462,9 +535,9 @@ export class DashboardExtensions {
 
   get built(): BuiltExtension | undefined {
     return layoutParts(
-      this.#parts.map((part, index) => ({
+      this.#parts.map((part) => ({
         name: part.name,
-        plugin: !(this.#own && index === 0),
+        plugin: part.plugin,
         built: part.host.built,
       })),
       `?v=${this.revision}`,
@@ -475,7 +548,7 @@ export class DashboardExtensions {
     const errors = this.#parts.flatMap((part) =>
       part.host.error
         ? [
-            this.#own && this.#parts.length === 1
+            this.#parts.length === 1 && !part.plugin
               ? part.host.error
               : `${part.name}: ${part.host.error}`,
           ]
@@ -495,20 +568,19 @@ export class DashboardExtensions {
   /** Follow the app's plugins: build the extensions they ship, drop the rest. */
   async setPlugins(plugins: readonly PluginDashboard[]): Promise<void> {
     // A `brick build` folder already holds its plugins' extensions.
-    if (this.#own && existsSync(join(this.#parts[0]!.path, "extension.js")))
-      return;
+    const own = this.#own;
+    if (own && isBuiltFolder(own.path)) return;
     const wanted = pluginDashboards(plugins);
-    const start = this.#own ? 1 : 0;
-    const current = this.#parts.slice(start);
+    const current = this.#parts.filter((part) => part.plugin);
     if (
       current.length === wanted.size &&
       current.every((part) => wanted.get(part.path) === part.name)
     )
       return;
     for (const part of current) part.host.close();
-    this.#parts.splice(start);
+    this.#parts.splice(own ? 1 : 0);
     const loads = [...wanted].map(([path, name]) =>
-      this.#add(name, path).load(),
+      this.#add(name, path, true).load(),
     );
     await Promise.all(loads);
     this.#changed();
@@ -522,7 +594,7 @@ export class DashboardExtensions {
 
   /** Rebuild the app's own as its folder changes; plugins' are packages. */
   watch(): void {
-    if (this.#own) this.#parts[0]!.host.watch();
+    this.#own?.host.watch();
   }
 
   onChange(listener: () => void): () => void {
