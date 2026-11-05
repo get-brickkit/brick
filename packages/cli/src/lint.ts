@@ -1,11 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
-import {
-  actionMeta,
-  getPluginActionRoute,
-  isCrudEvent,
-  kebabCase,
-} from "@brickkit/core";
+import { isCrudEvent, kebabCase } from "@brickkit/core";
 import { loadBrickApp, type BrickApp } from "./app-entry";
 import { ConfigError, type LoadedConfig } from "./config";
 import {
@@ -147,9 +142,12 @@ async function checkApp(check: AppCheck): Promise<LintMessage[]> {
   try {
     app = await loadBrickApp(check.entry);
   } catch (error) {
-    const message = (error as Error).message;
+    const { name, message } = error as Error;
     // Startup refuses duplicate names; report it as the rule, not a crash.
-    if (/duplicate/i.test(message)) {
+    // shortcut: server.ts and events/hub.ts still throw plain Errors for a
+    // duplicate service, route or listener; drop the regex once they throw
+    // DuplicateNameError.
+    if (name === "DuplicateNameError" || /duplicate/i.test(message)) {
       add("unique-names", check.entry, message);
       return messages;
     }
@@ -157,7 +155,6 @@ async function checkApp(check: AppCheck): Promise<LintMessage[]> {
   }
   const files = sourceFiles(check);
   singleAppEntry(check, files, add);
-  uniqueNames(check, app, add);
   await noCrossServiceTables(check, app, add);
   declaredEvents(check, app, add);
   testColocated(check, add);
@@ -189,46 +186,6 @@ function singleAppEntry(check: AppCheck, files: string[], add: Add) {
         lineOf(source, match.index),
       );
     }
-  }
-}
-
-function uniqueNames(check: AppCheck, app: BrickApp, add: Add) {
-  const services = [...app.definition.services];
-  const seen = new Set<string>();
-  for (const service of services) {
-    if (seen.has(service.name))
-      add(
-        "unique-names",
-        check.entry,
-        `Two services are named "${service.name}".`,
-      );
-    seen.add(service.name);
-    // Actions, sockets and resources share the service's URL segments;
-    // an explicit path or a resource action takes no segment of its own.
-    const owners = new Map<string, string>();
-    const claim = (name: string, what: string) => {
-      const segment = kebabCase(name);
-      const other = owners.get(segment);
-      if (other)
-        add(
-          "unique-names",
-          check.entry,
-          `In service "${service.name}", ${what} and ${other} share the name "${segment}".`,
-        );
-      else owners.set(segment, what);
-    };
-    for (const action of service.listActions())
-      if (
-        action.config.path === undefined &&
-        !actionMeta(action).resourceAction &&
-        getPluginActionRoute(action) === undefined
-      )
-        claim(action.name, `action "${action.name}"`);
-    for (const socket of service.listSockets())
-      if (socket.schema.path === undefined)
-        claim(socket.schema.name, `socket "${socket.schema.name}"`);
-    for (const resource of service.listResources())
-      claim(resource.name, `resource "${resource.name}"`);
   }
 }
 

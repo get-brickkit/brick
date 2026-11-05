@@ -170,3 +170,20 @@ export const notCrud = (ctx: any) => emitEvent(ctx, "invoice.archive", {});
   expect(problems[1]).toStartWith(`${S}/billing/listeners/emit.ts:6:`);
   expect(problems[1]).toContain(`"invoice.archive"`);
 });
+
+it("unique-names reports two declarations that share a URL segment", async () => {
+  const root = await project({
+    ...BASE,
+    "brick.config.ts": `export default { lint: { presets: [], rules: { "brick/unique-names": "error" } } };\n`,
+    [`${S}/orders/actions/get-summary-copy.action.ts`]: `import { orders } from "../orders.service";
+
+export default orders.action({ name: "get-summary", execute: () => null });
+`,
+  });
+  const result = await lint(root);
+  expect(result.code).toBe(1);
+  expect(result.stdout).toContain(
+    'src/app.ts:1:1  error  Brick: duplicate name "get-summary" in service "orders"',
+  );
+  expect(result.stdout).toContain("brick/unique-names");
+});
