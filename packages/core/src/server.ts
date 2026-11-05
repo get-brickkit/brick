@@ -489,12 +489,13 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   const listen = app.listen.bind(app);
   const stop = app.stop.bind(app);
   Object.defineProperty(brickApp, "start", { value: lifecycle.start });
+  // One rule with serve(): an app whose plugins fail to start does not serve.
+  // listen() is synchronous, so it stops the server it already opened.
   brickApp.listen = ((...args: Parameters<typeof listen>) => {
-    lifecycle
-      .start()
-      .catch((error) =>
-        console.error("[Brick-TS] A plugin failed to start:", error),
-      );
+    lifecycle.start().catch((error) => {
+      console.error("[Brick-TS] A plugin failed to start:", error);
+      return stop(true);
+    });
     return listen(...args);
   }) as typeof brickApp.listen;
   brickApp.stop = (async (closeActiveConnections?: boolean) => {

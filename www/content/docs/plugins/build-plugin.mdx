@@ -188,7 +188,7 @@ orders.use(notify({}, { deps: { mailer: createMailer() } }));
 
 The `app` part receives `on`, `middleware` and `listeners`:
 
-- `on("start", fn)` runs when the app starts, in install order; `on("stop", fn)` when it stops, in reverse order. Both may be async. `brick dev`, `brick start`, `brick worker` and a built server start the app before serving; `app.listen()` starts it too, and `app.stop()` stops it. In a test, `await app.start()` and `await app.stop()`. A start that throws stops the plugins already started and fails the start.
+- `on("start", fn)` runs when the app starts, in install order; `on("stop", fn)` when it stops, in reverse order. Both may be async. `brick dev`, `brick start`, `brick worker` and a built server start the app before serving; `app.listen()` starts it too, and `app.stop()` stops it. In a test, `await app.start()` and `await app.stop()`. A start that throws stops the plugins already started and fails the start: `app.serve()` rejects, and `app.listen()` logs the error and stops the server.
 - `middleware(fn)` runs before every request is routed. Return a `Response` to answer it; return nothing to let it through.
 - `listeners(...)` adds event listeners to the app's `events`: `run` listeners and [workflow listeners](/docs/events#workflows). The app needs an `events.world` for a workflow listener, as for its own.
 

@@ -10,7 +10,7 @@ import { actionMeta, type ResourceActionInfo } from "./action-meta";
 import { portOf } from "./service-port";
 import { Type } from "./typebox";
 import { runInTransaction } from "./events/transaction";
-import { crudEventSource, type EventRef } from "./events/catalog";
+import { checkPayload, crudEventSource, type EventRef } from "./events/catalog";
 import {
   ActionExecutionError,
   DuplicateNameError,
@@ -267,7 +267,7 @@ function defineCommand(
             throw new Error(
               `${where} emits '${key}', which is not in the event catalog of service '${service.name}'`,
             );
-          portOf(service).checkEvent(ref.name, payload);
+          checkPayload(ref, payload);
           return [ref.name, payload] as const;
         });
       if (emits.length && !record)

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { getTableConfig as pgTableConfig } from "drizzle-orm/pg-core";
 import {
   brick,
@@ -389,6 +389,29 @@ describe("app part and lifecycle", () => {
     await expect(app.start()).rejects.toThrow("no connection");
     expect(calls).toEqual(["start ok", "stop ok"]);
   });
+  it("serve and listen both refuse to serve when a plugin fails to start", async () => {
+    const broken = definePlugin({
+      name: "@acme/broken",
+      app: ({ on }) =>
+        on("start", () => {
+          throw new Error("no connection");
+        }),
+    });
+    const create = () =>
+      brick({ services: [], requestLogging: false, plugins: [broken()] });
+    await expect(create().serve({ port: 0 })).rejects.toThrow("no connection");
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    const app = create().listen(0);
+    const url = `http://localhost:${app.server!.port}/openapi.json`;
+    try {
+      for (let i = 0; i < 100 && app.server; i++) await Bun.sleep(5);
+      await expect(fetch(url)).rejects.toThrow();
+      expect(logged).toHaveBeenCalled();
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   it("serve starts plugins, listens, then delivers events; shutdown reverses it", async () => {
     const calls: string[] = [];
     const state = () => (app.server ? "listening" : "not listening");
