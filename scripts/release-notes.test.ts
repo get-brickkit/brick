@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { publishedPackages } from "./published-packages.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -25,15 +26,25 @@ function fixture() {
   git("config", "user.name", "Release test");
   git("config", "user.email", "release@example.com");
   mkdirSync(join(root, "scripts"));
-  mkdirSync(join(root, "packages/core"), { recursive: true });
+  for (const script of ["release-notes.ts", "published-packages.ts"])
+    copyFileSync(join(import.meta.dir, script), join(root, "scripts", script));
   copyFileSync(
-    join(import.meta.dir, "release-notes.ts"),
-    join(root, "scripts/release-notes.ts"),
+    join(import.meta.dir, "../package.json"),
+    join(root, "package.json"),
   );
+  const [first, ...rest] = publishedPackages();
+  for (const { dir, data } of [first!, ...rest]) {
+    mkdirSync(join(root, "packages", dir), { recursive: true });
+    writeFileSync(
+      join(root, "packages", dir, "package.json"),
+      JSON.stringify({ name: data.name }),
+    );
+  }
+  // The notes read the (lockstep) version from one package, so only it changes.
   const commit = (subject: string, version: string) => {
     writeFileSync(
-      join(root, "packages/core/package.json"),
-      JSON.stringify({ version }),
+      join(root, "packages", first!.dir, "package.json"),
+      JSON.stringify({ name: first!.data.name, version }),
     );
     git("add", ".");
     git("commit", "--allow-empty", "-m", subject);
@@ -89,7 +100,6 @@ test("notes list changes to the world packages", () => {
   commit("chore(release): v0.8.1", "0.8.1");
   git("tag", "v0.8.1");
   for (const pkg of ["bullmq-world", "redis-world"]) {
-    mkdirSync(join(root, "packages", pkg), { recursive: true });
     writeFileSync(join(root, "packages", pkg, "index.ts"), pkg);
     git("add", ".");
     git("commit", "-m", `feat(${pkg}): start a run once`);
@@ -105,7 +115,10 @@ test("notes list changes to the inspector under the CLI, which ships it", () => 
   commit("chore(release): v0.8.1", "0.8.1");
   git("tag", "v0.8.1");
   mkdirSync(join(root, "packages/workflow-inspector"), { recursive: true });
-  writeFileSync(join(root, "packages/workflow-inspector/index.ts"), "x");
+  writeFileSync(
+    join(root, "packages/workflow-inspector/package.json"),
+    JSON.stringify({ name: "@brickkit/workflow-inspector", private: true }),
+  );
   git("add", ".");
   git(
     "commit",
@@ -130,4 +143,17 @@ test("notes ignore tags on unrelated branches and handle maintenance-only releas
   commit("chore(release): v0.3.0-beta.0", "0.3.0-beta.0");
   expect(notes()).toContain("No user-facing package changes.");
   expect(notes()).toContain("v0.2.4...v0.3.0-beta.0");
+});
+
+test("notes link commits and the changelog to the repository the packages publish from", () => {
+  const { git, commit, notes } = fixture();
+  commit("chore(release): v0.2.4", "0.2.4");
+  git("tag", "v0.2.4");
+  commit("fix: link to the right repository", "0.2.5");
+  const sha = git("rev-parse", "HEAD");
+  git("tag", "v0.2.5");
+  const output = notes();
+  const repo = "https://github.com/get-brickkit/brick";
+  expect(output).toContain(`(${repo}/commit/${sha})`);
+  expect(output).toContain(`(${repo}/compare/v0.2.4...v0.2.5)`);
 });

@@ -2,6 +2,10 @@
   "name": "brick-ts-monorepo",
   "version": "0.1.1",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/get-brickkit/brick.git"
+  },
   "workspaces": [
     "packages/*",
     "examples/showcase",
