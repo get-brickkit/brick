@@ -57,24 +57,22 @@ const call = async (app: BrickApp, path: string, body: unknown) =>
     .then((body: any) => body.tracking);
 
 describe("declared deps", () => {
-  for (const compiler of [true, false])
-    it(`gives actions the app's deps as ctx.deps (compiler: ${compiler})`, async () => {
-      const { client, cleanup } = createTestApp(() => {
-        const orders = ordersService("orders");
-        const ship = orders.getAction("ship")!;
-        return {
-          services: [orders],
-          deps: { carrier: carrier("trk") },
-          compiler,
-          docs: false,
-          contract: { orders: { ship } },
-        };
-      });
-      expect(await client.orders.ship({ id: "o1" })).toEqual({
-        tracking: "trk_o1",
-      });
-      await cleanup();
+  it("gives actions the app's deps as ctx.deps", async () => {
+    const { client, cleanup } = createTestApp(() => {
+      const orders = ordersService("orders");
+      const ship = orders.getAction("ship")!;
+      return {
+        services: [orders],
+        deps: { carrier: carrier("trk") },
+        docs: false,
+        contract: { orders: { ship } },
+      };
     });
+    expect(await client.orders.ship({ id: "o1" })).toEqual({
+      tracking: "trk_o1",
+    });
+    await cleanup();
+  });
 
   it("fails at brick() when a dep is missing or extra", () => {
     const orders = ordersService("orders");

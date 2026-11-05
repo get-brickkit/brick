@@ -7,12 +7,24 @@ import {
   type RouteIR,
 } from "./compiler/ir";
 import {
+  bindRoute,
   compilerRuntime,
   type CompiledHandler,
+  type CompiledRoutePlan,
   type HandlerFactory,
 } from "./compiler/runtime";
 import { requireBrickApp } from "./app-entry";
 import { portOf } from "./service-port";
+
+/** @throws When the services no longer analyze to `ir`, so the build is stale. */
+function analyzeMatching(services: Service<any, any>[], ir: BrickIR) {
+  const analyzed = analyzeApplication(services, ir.prefix);
+  if (JSON.stringify(analyzed.ir) !== JSON.stringify(ir))
+    throw new Error(
+      "Brick compiler: application definitions differ from the compiled IR; rebuild the application",
+    );
+  return analyzed;
+}
 
 /**
  * Build artifact bootstrap: import the app and check that its definitions
@@ -25,14 +37,7 @@ export async function loadCompiledBrickApp(
   ir: BrickIR,
 ) {
   const app = requireBrickApp((await load()).default);
-  const { ir: current } = analyzeApplication(
-    [...app.definition.services],
-    app.definition.prefix,
-  );
-  if (JSON.stringify(current) !== JSON.stringify(ir))
-    throw new Error(
-      "Brick compiler: application definitions differ from the compiled IR; rebuild the application",
-    );
+  analyzeMatching([...app.definition.services], ir);
   return app;
 }
 
@@ -54,15 +59,12 @@ export interface CompiledApplication {
 function bindAnalyzed(
   ir: BrickIR,
   bindings: ReturnType<typeof analyzeApplication>["bindings"],
-  factories: readonly HandlerFactory[],
+  bind: (plan: CompiledRoutePlan, index: number) => CompiledHandler = bindRoute,
 ): CompiledApplication {
-  if (factories.length !== ir.routes.length)
-    throw new Error("Brick compiler: handler factory count does not match IR");
   const routes = ir.routes.map((route, index) => {
     const { service, action } = bindings[index]!;
     const plan = Object.freeze(planRoute(route, service, action));
-    const handler = factories[index]!(plan, compilerRuntime);
-    return Object.freeze({ ir: route, handler });
+    return Object.freeze({ ir: route, handler: bind(plan, index) });
   });
   return Object.freeze({ ir: freezeIR(ir), routes: Object.freeze(routes) });
 }
@@ -71,21 +73,23 @@ function bindAnalyzed(
 export function compileBrickApplication(options: {
   services: Service<any, any>[];
   prefix?: string;
+  /** `"generic"` skips the plugins' preparations (no prewarm). */
   mode?: "specialized" | "generic";
 }): CompiledApplication {
   const { ir, bindings } = analyzeApplication(options.services, options.prefix);
-  // Both modes bind the one pipeline; only the specialized one runs preparations.
   if (options.mode !== "generic")
     for (const service of options.services)
       portOf(service).prepareContributions();
-  return bindAnalyzed(
-    ir,
-    bindings,
-    ir.routes.map(() => (plan, runtime) => runtime.bindRoute(plan)),
-  );
+  return bindAnalyzed(ir, bindings);
 }
 
-/** Build artifact binder: consumes emitted functions, with no runtime handler code generation. */
+/**
+ * Build artifact binder: consumes emitted functions, with no runtime handler code generation.
+ *
+ * @deprecated `brick build` no longer emits handler factories; built servers
+ * use `loadCompiledBrickApp`. Pass `compileBrickApplication(...)` as
+ * `brick({ compilation })` instead.
+ */
 export function bindCompiledApplication(
   ir: BrickIR,
   services: Service<any, any>[],
@@ -95,11 +99,11 @@ export function bindCompiledApplication(
     throw new Error(
       "Brick compiler: unsupported IR version or target; rebuild the application",
     );
-  const analyzed = analyzeApplication(services, ir.prefix);
-  if (JSON.stringify(analyzed.ir) !== JSON.stringify(ir))
-    throw new Error(
-      "Brick compiler: application definitions differ from the compiled IR; rebuild the application",
-    );
+  const analyzed = analyzeMatching(services, ir);
+  if (factories.length !== ir.routes.length)
+    throw new Error("Brick compiler: handler factory count does not match IR");
   for (const service of services) portOf(service).prepareContributions();
-  return bindAnalyzed(ir, analyzed.bindings, factories);
+  return bindAnalyzed(ir, analyzed.bindings, (plan, index) =>
+    factories[index]!(plan, compilerRuntime),
+  );
 }

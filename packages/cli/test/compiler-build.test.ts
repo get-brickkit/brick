@@ -110,7 +110,7 @@ for (const aot of [true, false]) {
       ).toBe(true);
       expect(ir.preparations[0].service).toBe("store");
       expect(await Bun.file(join(dir, "routes.js")).text()).toContain(
-        "function bindAction",
+        "export const ir",
       );
       const bundle = await Bun.file(join(dir, "server.js")).text();
       expect(bundle.includes("Compiled.register(")).toBe(aot);

@@ -18,6 +18,7 @@ import type { RouteIR } from "./ir";
  */
 
 export type CompiledHandler = (context: any) => unknown | Promise<unknown>;
+/** @deprecated `brick build` no longer emits handler factories; see `bindCompiledApplication`. */
 export type HandlerFactory = (
   binding: CompiledRoutePlan,
   runtime: typeof compilerRuntime,
@@ -295,5 +296,5 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
   };
 }
 
-/** What generated (`brick build`) handler factories call. */
+/** What `bindCompiledApplication`'s handler factories receive. */
 export const compilerRuntime = Object.freeze({ bindRoute });

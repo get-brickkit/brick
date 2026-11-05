@@ -28,11 +28,10 @@ afterEach(async () => {
   resetGlobalRegistry();
 });
 
-function start(service: ReturnType<typeof defineService>, compiler = true) {
+function start(service: ReturnType<typeof defineService>) {
   const app = brick({
     services: [service],
     prefix: "/v2",
-    compiler,
     docs: false,
     requestLogging: false,
   }).listen(0);
@@ -64,7 +63,7 @@ function closed(ws: WebSocket): Promise<number> {
     ws.addEventListener("close", ({ code }) => resolve(code), { once: true }),
   );
 }
-function echo(compiler = true) {
+function echo() {
   const service = defineService("chat");
   service.socket({
     name: "live",
@@ -73,7 +72,7 @@ function echo(compiler = true) {
     allowMissingOrigin: true,
     handlers: { say: ({ input, socket }) => socket.send("message", input) },
   });
-  return start(service, compiler);
+  return start(service);
 }
 const contract: {
   chat: { live: BrickClientSocket<{ say: string }, { message: string }> };
@@ -89,19 +88,18 @@ const contract: {
   },
 };
 
-for (const compiler of [true, false])
-  it(`round trips through a real listener with compiler=${compiler}`, async () => {
-    const api = createBrickClient({ baseUrl: echo(compiler), contract });
-    const live = api.chat.live.connect();
-    const received = new Promise<string>((resolve) =>
-      live.on("message", resolve),
-    );
-    await live.ready;
-    live.send("say", "hello");
-    expect(await received).toBe("hello");
-    live.close();
-    expect(() => live.send("say", "again")).toThrow(BrickSocketError);
-  });
+it("round trips through a real listener", async () => {
+  const api = createBrickClient({ baseUrl: echo(), contract });
+  const live = api.chat.live.connect();
+  const received = new Promise<string>((resolve) =>
+    live.on("message", resolve),
+  );
+  await live.ready;
+  live.send("say", "hello");
+  expect(await received).toBe("hello");
+  live.close();
+  expect(() => live.send("say", "again")).toThrow(BrickSocketError);
+});
 
 it("sends a declared handler error to the client and keeps the connection open", async () => {
   const service = defineService("chat");

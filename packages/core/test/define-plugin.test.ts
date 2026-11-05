@@ -529,42 +529,40 @@ describe("plugin deps", () => {
     },
   });
 
-  for (const compiler of [true, false])
-    it(`gives the plugin's actions the deps passed at install, never the host's (compiler: ${compiler})`, async () => {
-      const service = defineService("mail", {
-        deps: { carrier: port<string>() },
-      });
-      service.action({
-        name: "own",
-        execute: ({ ctx }) => ({ keys: Object.keys(ctx.deps) }),
-      });
-      const passed = mailer("plugin");
-      service.use(notify({}, { deps: { mailer: passed } }));
-      const app = brick({
-        services: [service],
-        deps: { carrier: "host" },
-        compiler,
-        requestLogging: false,
-        docs: false,
-      });
-      expect(seen.service).toBe(passed);
-      expect(await post(app, "/api/mail/notify-send", { to: "a" })).toEqual({
-        sent: "plugin:a",
-        keys: ["mailer"],
-      });
-      expect(await post(app, "/api/mail/own")).toEqual({ keys: ["carrier"] });
-      // A direct call too.
-      expect(
-        await (service.getAction("notifySend") as any).run({ to: "b" }),
-      ).toEqual({ sent: "plugin:b", keys: ["mailer"] });
-      expect(await (service.getAction("relay") as any).run()).toEqual({
-        keys: ["carrier"],
-      });
-      await app.start();
-      expect(seen.app).toBe(passed);
-      expect(seen.start).toBe(passed);
-      await app.stop();
+  it("gives the plugin's actions the deps passed at install, never the host's", async () => {
+    const service = defineService("mail", {
+      deps: { carrier: port<string>() },
     });
+    service.action({
+      name: "own",
+      execute: ({ ctx }) => ({ keys: Object.keys(ctx.deps) }),
+    });
+    const passed = mailer("plugin");
+    service.use(notify({}, { deps: { mailer: passed } }));
+    const app = brick({
+      services: [service],
+      deps: { carrier: "host" },
+      requestLogging: false,
+      docs: false,
+    });
+    expect(seen.service).toBe(passed);
+    expect(await post(app, "/api/mail/notify-send", { to: "a" })).toEqual({
+      sent: "plugin:a",
+      keys: ["mailer"],
+    });
+    expect(await post(app, "/api/mail/own")).toEqual({ keys: ["carrier"] });
+    // A direct call too.
+    expect(
+      await (service.getAction("notifySend") as any).run({ to: "b" }),
+    ).toEqual({ sent: "plugin:b", keys: ["mailer"] });
+    expect(await (service.getAction("relay") as any).run()).toEqual({
+      keys: ["carrier"],
+    });
+    await app.start();
+    expect(seen.app).toBe(passed);
+    expect(seen.start).toBe(passed);
+    await app.stop();
+  });
 
   it("reaches resource actions, endpoints and the setup's deps", async () => {
     const { service, page } = host();

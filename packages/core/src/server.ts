@@ -20,7 +20,6 @@ import {
 import {
   scalarDocsHTML,
   swaggerDocsHTML,
-  registerReferenceRoute,
   type ApiDocument,
   type DocumentationOptions,
   type OpenApiDocument,
@@ -45,7 +44,7 @@ import { corsHook, type CorsOptions } from "./cors";
 
 export interface CreateServerOptions {
   port?: number;
-  /** Generate specialized handlers once at startup (default true). */
+  /** Run the plugins' preparations (such as CRUD's prepared queries) at startup (default true). */
   compiler?: boolean;
   /** Ahead-of-time handlers already bound to the supplied services. */
   compilation?: CompiledApplication;
@@ -156,7 +155,6 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   const prefix = options.prefix ?? options.compilation?.ir.prefix ?? "/api";
   const title = options.title ?? "Brick-TS API Mesh";
   const version = options.version ?? "1.0.0";
-  const compiled = options.compiler !== false;
   const enableDocs = options.docs ?? true;
   const openApiPath = options.openApiPath ?? "/openapi.json";
   const docsPath = options.docsPath ?? "/docs";
@@ -204,17 +202,15 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   const referencePath =
     reference === true ? "/reference" : referenceOptions.path;
   if (referencePath !== undefined) {
-    const settings = {
-      path: referencePath,
-      title: referenceOptions.title ?? title,
-      specUrl: referenceOptions.specUrl ?? openApiPath,
-    };
-    if (compiled)
-      app.get(
-        settings.path,
-        htmlResponse(scalarDocsHTML(settings.specUrl, settings.title)),
-      );
-    else registerReferenceRoute(app, settings);
+    app.get(
+      referencePath,
+      htmlResponse(
+        scalarDocsHTML(
+          referenceOptions.specUrl ?? openApiPath,
+          referenceOptions.title ?? title,
+        ),
+      ),
+    );
   }
 
   const byName = new Map<string, unknown>();
@@ -268,32 +264,17 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   if (enableDocs) {
     app.get(
       openApiPath,
-      compiled
-        ? cachedJsonRoute(
-            buildSpec,
-            () =>
-              [
-                getGlobalRegistry(),
-                getGlobalRegistry().revision + endpointRevision,
-              ] as const,
-          )
-        : buildSpec,
+      cachedJsonRoute(
+        buildSpec,
+        () =>
+          [
+            getGlobalRegistry(),
+            getGlobalRegistry().revision + endpointRevision,
+          ] as const,
+      ),
     );
-
-    if (compiled) {
-      app.get(docsPath, htmlResponse(scalarDocsHTML(openApiPath, title)));
-      app.get(swaggerPath, htmlResponse(swaggerDocsHTML(openApiPath, title)));
-    } else {
-      app.get(docsPath, ({ set }) => {
-        set.headers["content-type"] = "text/html; charset=utf-8";
-        return scalarDocsHTML(openApiPath, title);
-      });
-
-      app.get(swaggerPath, ({ set }) => {
-        set.headers["content-type"] = "text/html; charset=utf-8";
-        return swaggerDocsHTML(openApiPath, title);
-      });
-    }
+    app.get(docsPath, htmlResponse(scalarDocsHTML(openApiPath, title)));
+    app.get(swaggerPath, htmlResponse(swaggerDocsHTML(openApiPath, title)));
   }
 
   // Dedicated Route Registry
@@ -511,15 +492,13 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   // Serialize stable metadata once; registry changes invalidate the snapshot.
   app.get(
     "/_brick/services",
-    compiled
-      ? cachedJsonRoute(
-          () => getGlobalRegistry().exportArchitecture(definition),
-          () => {
-            const registry = getGlobalRegistry();
-            return [registry, registry.revision] as const;
-          },
-        )
-      : () => getGlobalRegistry().exportArchitecture(definition),
+    cachedJsonRoute(
+      () => getGlobalRegistry().exportArchitecture(definition),
+      () => {
+        const registry = getGlobalRegistry();
+        return [registry, registry.revision] as const;
+      },
+    ),
   );
 
   return brickApp;

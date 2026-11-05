@@ -47,16 +47,8 @@ export {
   type EndpointDefinition,
   type EndpointLogger,
   type EndpointMethod,
-  resolveEndpointDb,
-  createEndpointHandler,
-  toOpenApiPath,
-  endpointPaths,
 } from "./endpoints";
-export {
-  compileRoutePlan,
-  executeCompiledRoute,
-  createActionHandler,
-} from "./action-handler";
+export { createActionHandler } from "./action-handler";
 export { isBrickApp, requireBrickApp } from "./app-entry";
 export {
   requestLoggingPlugin,
@@ -67,7 +59,6 @@ export { SPAN, ATTR, GLOBAL_SYMBOL } from "./telemetry-names";
 export type { DashboardAuth, DashboardOptions } from "./dashboard";
 export {
   scalarDocsHTML,
-  swaggerDocsHTML,
   referencePlugin,
   registerReferenceRoute,
   type ApiDocument,
@@ -89,7 +80,7 @@ export {
   type CompiledRoutePlan,
   type HandlerFactory,
 } from "./compiler";
-export { compilerRuntime, deny } from "./compiler/runtime";
+export { deny } from "./compiler/runtime";
 
 // Core Primitives
 export { defineService } from "./service";

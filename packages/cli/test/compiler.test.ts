@@ -9,6 +9,8 @@ import {
   compileBrickApplication,
   brick,
   loadCompiledBrickApp,
+  bindCompiledApplication,
+  type HandlerFactory,
 } from "@brickkit/core";
 import { emitCompiledApplication } from "../src/compiler";
 
@@ -241,7 +243,7 @@ it("isolates request contexts and maps Promise/thenable rejections", async () =>
   });
 });
 
-it("loads emitted handler functions and rejects stale schemas rather than using old validation", async () => {
+it("emits the IR that a built server checks its app against", async () => {
   const service = defineService("emitted");
   const action = service.action({
     name: "getItem",
@@ -256,28 +258,29 @@ it("loads emitted handler functions and rejects stale schemas rather than using 
   const dir = await mkdtemp(join(tmpdir(), "brick-compiler-"));
   try {
     const path = join(dir, "routes.mjs");
-    // The temp dir can't resolve the package name, so point at the resolved module.
-    await Bun.write(
-      path,
-      emitCompiledApplication(
-        compilation.ir,
-        import.meta.resolve("@brickkit/core"),
-      ),
-    );
+    await Bun.write(path, emitCompiledApplication(compilation.ir));
     const emitted = await import(path);
-    const rebound = emitted.bind([service]);
     const app = brick({
       services: [service],
-      compilation: rebound,
+      prefix: "/v1",
       requestLogging: false,
     });
+    const load = async () => ({ default: app });
+    expect(await loadCompiledBrickApp(load, emitted.ir)).toBe(app);
     expect(
       await (await app.handle(request("/v1/emitted/get-item?id=abc"))).json(),
-    ).toEqual({
-      id: "abc",
-    });
+    ).toEqual({ id: "abc" });
+    // Deprecated, still working: binding emitted factories by hand.
+    const bound = bindCompiledApplication(
+      emitted.ir,
+      [service],
+      emitted.ir.routes.map(
+        (): HandlerFactory => (plan, runtime) => runtime.bindRoute(plan),
+      ),
+    );
+    expect(bound.routes).toHaveLength(1);
     action.config.input = t.Object({ id: t.Number() }) as any;
-    expect(() => emitted.bind([service])).toThrow(
+    await expect(loadCompiledBrickApp(load, emitted.ir)).rejects.toThrow(
       "differ from the compiled IR",
     );
   } finally {
@@ -347,7 +350,7 @@ it("runs generic preparation contributions only for specialized compilation and 
   expect(compiled.ir.preparations[0]!.metadata).toEqual({ revision: 1 });
 });
 
-it("rejects over-nested input with the generic handler's 400 in both modes", async () => {
+it("rejects over-nested input with a 400", async () => {
   const service = defineService("nested");
   service.action({
     name: "tree",
@@ -357,18 +360,13 @@ it("rejects over-nested input with the generic handler's 400 in both modes", asy
   });
   let input: Record<string, unknown> = {};
   for (let i = 0; i < 20_000; i++) input = { child: input };
-  for (const compiler of [true, false]) {
-    resetGlobalRegistry();
-    const app = brick({ services: [service], compiler, requestLogging: false });
-    const response = await app.handle(
-      request("/api/nested/tree", "POST", input),
-    );
-    expect(response.status).toBe(400);
-    const body = await response.json();
-    expect(body.errors).toEqual([
-      { path: "", message: "Input exceeds maximum nesting depth" },
-    ]);
-  }
+  const app = brick({ services: [service], requestLogging: false });
+  const response = await app.handle(request("/api/nested/tree", "POST", input));
+  expect(response.status).toBe(400);
+  const body = await response.json();
+  expect(body.errors).toEqual([
+    { path: "", message: "Input exceeds maximum nesting depth" },
+  ]);
 });
 
 it("loads a built app without a binder, and refuses one whose definitions changed since the build", async () => {
