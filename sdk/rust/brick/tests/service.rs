@@ -248,6 +248,13 @@ fn rejects_actions_with_the_same_path() {
 }
 
 #[tokio::test]
+async fn takes_a_forwarded_null_as_no_user() {
+    let headers = [("x-brick-internal", "secret"), ("x-brick-user", "bnVsbA==")];
+    let (status, body) = text(send("POST", "/me", &headers).await).await;
+    assert_eq!(status, 401, "{body}");
+}
+
+#[tokio::test]
 async fn rejects_without_token() {
     let (status, _) = call("{}", &[("x-brick-internal", "wrong")]).await;
     assert_eq!(status, 401);
@@ -281,4 +288,13 @@ fn kebab_matches_typescript() {
     assert_eq!(kebab("chargeCard"), "charge-card");
     assert_eq!(kebab("importCSV"), "import-csv");
     assert_eq!(kebab("page.list"), "page.list");
+}
+
+#[tokio::test]
+async fn normalizes_a_prefix_without_its_leading_slash() {
+    // SAFETY: "api/" normalizes to the default /api the other tests use.
+    unsafe { std::env::set_var("BRICK_PREFIX", "api/") };
+    let headers = [("x-brick-internal", "secret")];
+    let (status, _) = text(send("POST", "/api/people/me", &headers).await).await;
+    assert_eq!(status, 401, "routed, and refused for want of a user");
 }

@@ -67,9 +67,14 @@ static SERVICE_NAME: OnceLock<String> = OnceLock::new();
 /// `{ name, code, message, status, details?, errors?, requestId }`.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct Error {
+    // Defaults, so a callee's envelope missing a field still keeps its code.
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub code: String,
+    #[serde(default)]
     pub message: String,
+    #[serde(default)]
     pub status: u16,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub details: Option<Value>,
@@ -385,6 +390,11 @@ impl Service {
             .ok()
             .filter(|p| !p.is_empty())
             .unwrap_or_else(|| "/api".into());
+        // One leading slash and none trailing ("api", "/api/" and "/" all work), as in Go.
+        let prefix = match prefix.trim_matches('/') {
+            "" => String::new(),
+            p => format!("/{p}"),
+        };
         let base = format!("{}/{}", prefix.trim_end_matches('/'), kebab(&self.name));
         for action in self.actions {
             let path = kebab(&action.name);
@@ -471,7 +481,7 @@ async fn handle(
             request_id,
         );
     }
-    let ctx = Ctx::from_request(&action.name, &headers, trust, action.auth.as_deref()).await;
+    let mut ctx = Ctx::from_request(&action.name, &headers, trust, action.auth.as_deref()).await;
     let request_id = ctx.request_id.clone();
     if trust && ctx.user.is_none() && headers.get("x-brick-user").is_some_and(|v| !v.is_empty()) {
         // A trusted x-brick-user that isn't base64 JSON, as the TS internal call handler answers it.
@@ -479,6 +489,10 @@ async fn handle(
             Error::new("BAD_REQUEST", 400, "Invalid x-brick-user header"),
             request_id,
         );
+    }
+    // A forwarded null is no user, as in Go.
+    if ctx.user.as_ref().is_some_and(Value::is_null) {
+        ctx.user = None;
     }
     let body = match body {
         Ok(body) => body,

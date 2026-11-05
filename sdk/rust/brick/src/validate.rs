@@ -56,20 +56,39 @@ fn push(issues: &mut Vec<Issue>, path: &str, message: String, value: Option<&Val
     });
 }
 
-/// `schema` without minLength and maxLength (numbers, so a property of that name stays).
+/// `schema` without minLength and maxLength where the walk checks them (it
+/// follows properties, additionalProperties, items, anyOf and oneOf). Under
+/// anything else ($ref, allOf, prefixItems, ...) jsonschema keeps them.
 pub(crate) fn without_lengths(schema: &Value) -> Value {
-    match schema {
-        Value::Object(map) => Value::Object(
-            map.iter()
-                .filter(|(k, v)| {
-                    !(matches!(k.as_str(), "minLength" | "maxLength") && v.is_number())
-                })
-                .map(|(k, v)| (k.clone(), without_lengths(v)))
-                .collect(),
-        ),
+    let Value::Object(map) = schema else {
+        return schema.clone();
+    };
+    let each = |v: &Value| match v {
         Value::Array(items) => Value::Array(items.iter().map(without_lengths).collect()),
         other => other.clone(),
-    }
+    };
+    Value::Object(
+        map.iter()
+            .filter(|(k, v)| !(matches!(k.as_str(), "minLength" | "maxLength") && v.is_number()))
+            .map(|(k, v)| {
+                let v = match k.as_str() {
+                    "items" | "additionalProperties" => without_lengths(v),
+                    "anyOf" | "oneOf" => each(v),
+                    "properties" => match v {
+                        Value::Object(props) => Value::Object(
+                            props
+                                .iter()
+                                .map(|(name, prop)| (name.clone(), without_lengths(prop)))
+                                .collect(),
+                        ),
+                        other => other.clone(),
+                    },
+                    _ => v.clone(),
+                };
+                (k.clone(), v)
+            })
+            .collect(),
+    )
 }
 
 /// `value` with every whole float that fits exactly (up to 2^53) as an integer.
@@ -418,6 +437,18 @@ mod tests {
         ] {
             assert_eq!(js_number(f), want, "{f}");
         }
+    }
+
+    #[test]
+    fn keeps_lengths_where_the_walk_does_not_go() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": { "a": { "type": "string", "minLength": 2 } },
+            "$defs": { "b": { "type": "string", "minLength": 3 } },
+        });
+        let out = without_lengths(&schema);
+        assert!(out["properties"]["a"].get("minLength").is_none());
+        assert_eq!(out["$defs"]["b"]["minLength"], 3);
     }
 
     #[test]

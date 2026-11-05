@@ -109,6 +109,9 @@ pub async fn call<I: Serialize, O: DeserializeOwned>(
                 if !(400..600).contains(&e.status) {
                     e.status = status.as_u16();
                 }
+                if e.name.is_empty() {
+                    e.name = "ActionExecutionError".into();
+                }
                 e
             }
             _ => Error::new(

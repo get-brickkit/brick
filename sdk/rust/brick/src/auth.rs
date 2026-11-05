@@ -288,6 +288,12 @@ mod tests {
                     c.insert("nbf".into(), json!(nbf));
                 }))),
             ),
+            (
+                "no exp",
+                bearer(&key.sign(claims(|c| {
+                    c.remove("exp");
+                }))),
+            ),
             ("bad signature", bearer(&impostor.sign(claims(|_| {})))),
             ("garbage", bearer("not.a.jwt")),
         ];
