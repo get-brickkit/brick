@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { writeContractSource } from "./client-contract-file";
+import { writeFileIfChanged } from "./client-contract-file";
 import {
   createServer,
   isRunnableDevEnvironment,
@@ -17,9 +17,9 @@ import {
   type DashboardExtensionOptions,
   type DashboardTheme,
 } from "./dashboard-extension";
+import { ModuleRunner } from "vite/module-runner";
 
 export type { DashboardTheme };
-import { ModuleRunner } from "vite/module-runner";
 
 export interface BrickClientPluginOptions {
   /** Any module whose default export is a BrickApp; do not call listen() there. */
@@ -67,7 +67,7 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
 
   async function writeContract(value: unknown) {
     const source = generateClientContract(requireBrickApp(value));
-    await writeContractSource(output, source);
+    await writeFileIfChanged(output, source);
   }
 
   function collectDependencies(
@@ -251,11 +251,9 @@ installDevReporter({ url: ${JSON.stringify(dashboard.ingestUrl)} });
       const reporter = dashboard
         ? `import ${JSON.stringify(reporterId)};\n`
         : "";
-      return `${reporter}import app from ${JSON.stringify(entry)};
-if (!app || typeof app.fetch !== "function" || typeof app.endpoint !== "function") {
-  throw new Error("Brick: the entry module must default-export a BrickApp created by brick().");
-}
-export default app;
+      return `${reporter}import { requireBrickApp } from "@brickkit/core";
+import app from ${JSON.stringify(entry)};
+export default requireBrickApp(app);
 `;
     },
   };

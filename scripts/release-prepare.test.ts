@@ -42,6 +42,7 @@ test("prepares candidates and dispatches releases without creating release refs"
       join(checkout, "package.json"),
       JSON.stringify({
         private: true,
+        repository: { url: "git+https://github.com/get-brickkit/brick.git" },
         workspaces: ["packages/*"],
         scripts: { build: "exit 99", test: "exit 99" },
       }),

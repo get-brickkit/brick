@@ -7,9 +7,7 @@ function isServerActionError(value: unknown): value is ServerActionError {
     typeof value === "object" &&
     value !== null &&
     "message" in value &&
-    "layer" in value &&
-    "cause" in value &&
-    "request" in value
+    "layer" in value
   );
 }
 

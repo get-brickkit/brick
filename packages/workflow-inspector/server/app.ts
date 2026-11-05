@@ -3,10 +3,7 @@ import "react-router";
 import * as serverBuild from "virtual:react-router/server-build";
 import { createRequestHandler, type ServerBuild } from "react-router";
 import { BASE_PATH } from "../base-path";
-import {
-  type InspectorHost,
-  setInspectorHost,
-} from "../app/server/inspector-host.server";
+import type { CreateFetchHandler } from "./handler";
 
 /**
  * Build a Web `Request` -> `Response` handler for the observability UI, the SSR
@@ -17,18 +14,14 @@ import {
  *   `BASE_PATH`, so it must be that path.
  * @param host - What the host gives the inspector: the world to read.
  */
-export function createFetchHandler(
-  basename: string,
-  host: InspectorHost,
-): (request: Request) => Promise<Response> {
+export const createFetchHandler: CreateFetchHandler = (basename, host) => {
   if (basename.replace(/\/$/, "") !== BASE_PATH)
     throw new Error(
       `The workflow inspector is built to be served at ${BASE_PATH}, not ${basename}.`,
     );
-  setInspectorHost(host);
   const handler = createRequestHandler(
     serverBuild as unknown as ServerBuild,
     "production",
   );
-  return (request: Request) => handler(request);
-}
+  return (request: Request) => handler(request, { world: host.world });
+};

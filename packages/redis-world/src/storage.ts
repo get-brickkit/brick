@@ -53,7 +53,11 @@ import { globalSingleton } from "@workflow/utils";
 import type { Redis } from "ioredis";
 import { monotonicFactory } from "ulid";
 import { keys } from "./keys.js";
-import { compact, parse, stringify } from "./util.js";
+import { compact } from "./internal/util.js";
+// `parse`/`stringify` take a fast path that skips JSON's reviver/replacer when
+// the payload holds no binary (~5x on parse, ~2x on stringify) with identical
+// semantics.
+import { parse, stringify } from "./internal/serialization.js";
 
 interface RedisStorageConfig {
   redis: Redis;
@@ -147,20 +151,6 @@ local function isTerminal(status)
   return status == 'completed' or status == 'failed' or status == 'cancelled'
 end
 `;
-
-/** Stringify an object with Uint8Array support. Delegates to the shared
- * helper, which tags binary as base64; the previous number-array encoding
- * cost ~450x more CPU to re-parse and ~2.7x more storage at 2MB. */
-function stringifyWithUint8Array(obj: any): string {
-  return stringify(obj);
-}
-
-/** Parse JSON with Uint8Array and Date support. The shared reviver decodes
- * both the base64 tag and the legacy number-array tag, so rows already in
- * Redis keep reading back correctly. */
-function parseWithUint8Array<T>(json: string): T {
-  return parse<T>(json);
-}
 
 /**
  * Filter hook data based on resolveData parameter
@@ -852,9 +842,7 @@ export function createRunsStorage(config: RedisStorageConfig): Storage["runs"] {
         continue;
       }
 
-      const run: WorkflowRun = parseWithUint8Array<WorkflowRun>(
-        result[1] as string,
-      );
+      const run: WorkflowRun = parse<WorkflowRun>(result[1] as string);
       run.attributes =
         (results![i + 1]?.[1] as Record<string, string> | undefined) ?? {};
 
@@ -885,7 +873,7 @@ export function createRunsStorage(config: RedisStorageConfig): Storage["runs"] {
       if (!data) {
         throw new WorkflowRunNotFoundError(id);
       }
-      const run = parseWithUint8Array<WorkflowRun>(data);
+      const run = parse<WorkflowRun>(data);
       run.attributes =
         (replies?.[1]?.[1] as Record<string, string> | undefined) ?? {};
       const parsed = WorkflowRunSchema.parse(compact(run));
@@ -1015,7 +1003,7 @@ export function createEventsStorage(
   /** Serialize an event for a script: `eventId` first, holding the placeholder. */
   function serializeEvent(event: Record<string, unknown>): string {
     const { eventId: _eventId, ...rest } = event;
-    return stringifyWithUint8Array({ eventId: EVENT_ID_PLACEHOLDER, ...rest });
+    return stringify({ eventId: EVENT_ID_PLACEHOLDER, ...rest });
   }
 
   /** Read events by id out of one run's log, skipping any that are absent. */
@@ -1031,9 +1019,7 @@ export function createEventsStorage(
       );
       for (const value of values) {
         if (value) {
-          events.push(
-            EventSchema.parse(compact(parseWithUint8Array<Event>(value))),
-          );
+          events.push(EventSchema.parse(compact(parse<Event>(value))));
         }
       }
     }
@@ -1082,7 +1068,7 @@ export function createEventsStorage(
       eventsKey(runId),
       hooksIndexKey(runId),
       hooksTokenMapKey(runId),
-      stringifyWithUint8Array(updatedRun),
+      stringify(updatedRun),
       runId,
       at.getTime().toString(),
       runMetaValue(newStatus, updatedRun.specVersion),
@@ -1314,7 +1300,7 @@ export function createEventsStorage(
     async function loadRunBody(): Promise<void> {
       const runData = await redis.get(runKey(effectiveRunId));
       if (runData) {
-        existingRun = parseWithUint8Array<WorkflowRun>(runData);
+        existingRun = parse<WorkflowRun>(runData);
         currentRun = {
           status: existingRun.status,
           specVersion: existingRun.specVersion,
@@ -1404,7 +1390,7 @@ export function createEventsStorage(
           runMetaKey(effectiveRunId),
           eventsKey(effectiveRunId),
           runAttributesKey(effectiveRunId),
-          stringifyWithUint8Array(newRun),
+          stringify(newRun),
           effectiveRunId,
           now.getTime().toString(),
           runMetaValue("pending", effectiveSpecVersion),
@@ -1437,7 +1423,7 @@ export function createEventsStorage(
         } else {
           // Run already exists (the resilient re-start path, which must
           // tolerate losing the race): read the state the other writer left.
-          const parsed = parseWithUint8Array<WorkflowRun>(result[1]);
+          const parsed = parse<WorkflowRun>(result[1]);
           currentRun = {
             status: parsed.status,
             specVersion: parsed.specVersion,
@@ -1551,7 +1537,7 @@ export function createEventsStorage(
         stepKey(effectiveRunId, data.correlationId),
       );
       if (stepData) {
-        validatedStep = parseWithUint8Array<Step>(stepData);
+        validatedStep = parse<Step>(stepData);
       }
 
       if (!validatedStep && !lazyStepStart) {
@@ -1610,7 +1596,7 @@ export function createEventsStorage(
       if (!existingHook) {
         throw new HookNotFoundError(data.correlationId);
       }
-      validatedHook = parseWithUint8Array<Hook>(existingHook);
+      validatedHook = parse<Hook>(existingHook);
     }
 
     // ============================================================
@@ -1680,7 +1666,7 @@ export function createEventsStorage(
         runMetaKey(effectiveRunId),
         eventsKey(effectiveRunId),
         runAttributesKey(effectiveRunId),
-        stringifyWithUint8Array(newRun),
+        stringify(newRun),
         effectiveRunId,
         now.getTime().toString(),
         runMetaValue("pending", effectiveSpecVersion),
@@ -1886,7 +1872,7 @@ export function createEventsStorage(
         eventsByCorrelationKey(effectiveRunId, data.correlationId!),
         stepStatusKey(effectiveRunId, data.correlationId!),
         runMetaKey(effectiveRunId),
-        stringifyWithUint8Array(newStep),
+        stringify(newStep),
         data.correlationId!,
         now.getTime().toString(),
         serializeEvent(event),
@@ -1992,7 +1978,7 @@ export function createEventsStorage(
           eventsByCorrelationKey(effectiveRunId, data.correlationId!),
           stepStatusKey(effectiveRunId, data.correlationId!),
           runMetaKey(effectiveRunId),
-          stringifyWithUint8Array(startedStep),
+          stringify(startedStep),
           data.correlationId!,
           now.getTime().toString(),
           serializeEvent(createdEvent),
@@ -2035,7 +2021,7 @@ export function createEventsStorage(
           updatedAt: now,
         };
         pendingEntityKey = stepKey(effectiveRunId, data.correlationId!);
-        pendingEntityJson = stringifyWithUint8Array(updatedStep);
+        pendingEntityJson = stringify(updatedStep);
         pendingStep = {
           key: stepStatusKey(effectiveRunId, data.correlationId!),
           status: "running",
@@ -2054,7 +2040,7 @@ export function createEventsStorage(
         stepKey(effectiveRunId, data.correlationId!),
       );
       if (existingData) {
-        const existing = parseWithUint8Array<Step>(existingData);
+        const existing = parse<Step>(existingData);
         if (isTerminal(existing.status)) {
           throw new EntityConflictError(
             `Cannot modify step in terminal state "${existing.status}"`,
@@ -2068,7 +2054,7 @@ export function createEventsStorage(
           updatedAt: now,
         };
         pendingEntityKey = stepKey(effectiveRunId, data.correlationId!);
-        pendingEntityJson = stringifyWithUint8Array(updatedStep);
+        pendingEntityJson = stringify(updatedStep);
         pendingStep = {
           key: stepStatusKey(effectiveRunId, data.correlationId!),
           status: "completed",
@@ -2091,7 +2077,7 @@ export function createEventsStorage(
         stepKey(effectiveRunId, data.correlationId!),
       );
       if (existingData) {
-        const existing = parseWithUint8Array<Step>(existingData);
+        const existing = parse<Step>(existingData);
         if (isTerminal(existing.status)) {
           throw new EntityConflictError(
             `Cannot modify step in terminal state "${existing.status}"`,
@@ -2106,7 +2092,7 @@ export function createEventsStorage(
           updatedAt: now,
         };
         pendingEntityKey = stepKey(effectiveRunId, data.correlationId!);
-        pendingEntityJson = stringifyWithUint8Array(updatedStep);
+        pendingEntityJson = stringify(updatedStep);
         pendingStep = {
           key: stepStatusKey(effectiveRunId, data.correlationId!),
           status: "failed",
@@ -2139,7 +2125,7 @@ export function createEventsStorage(
           updatedAt: now,
         };
         pendingEntityKey = stepKey(effectiveRunId, data.correlationId!);
-        pendingEntityJson = stringifyWithUint8Array(updatedStep);
+        pendingEntityJson = stringify(updatedStep);
         pendingStep = {
           key: stepStatusKey(effectiveRunId, data.correlationId!),
           status: "pending",
@@ -2192,7 +2178,7 @@ export function createEventsStorage(
         eventsKey(effectiveRunId),
         eventsByCorrelationKey(effectiveRunId, data.correlationId!),
         runMetaKey(effectiveRunId),
-        stringifyWithUint8Array(newHook),
+        stringify(newHook),
         data.correlationId!,
         now.getTime().toString(),
         eventData.token,
@@ -2215,7 +2201,7 @@ export function createEventsStorage(
         let conflictingRunId: string | undefined;
         const owningHookData = await redis.get(hookKey(owningHookId));
         if (owningHookData) {
-          conflictingRunId = parseWithUint8Array<Hook>(owningHookData).runId;
+          conflictingRunId = parse<Hook>(owningHookData).runId;
         }
 
         // Recorded once: a redelivered hook_created must not journal a second
@@ -2518,9 +2504,7 @@ export function createEventsStorage(
           status: 404,
         });
       }
-      const event = EventSchema.parse(
-        compact(parseWithUint8Array<Event>(data)),
-      );
+      const event = EventSchema.parse(compact(parse<Event>(data)));
       return stripEventDataRefs(event, params?.resolveData ?? "all");
     },
 
@@ -2641,7 +2625,7 @@ export function createStepsStorage(
       });
     }
 
-    const step = parseWithUint8Array<Step>(data);
+    const step = parse<Step>(data);
     const parsed = StepSchema.parse(compact(step));
     const resolveData = params?.resolveData ?? "all";
     return filterStepData(parsed, resolveData);
@@ -2679,7 +2663,7 @@ export function createStepsStorage(
       const steps: { step: Step | StepWithoutData; cursor: string }[] = [];
       for (const [i, result] of (results ?? []).entries()) {
         if (result?.[1]) {
-          const step = parseWithUint8Array<Step>(result[1] as string);
+          const step = parse<Step>(result[1] as string);
           const parsed = StepSchema.parse(compact(step));
           steps.push({
             step: filterStepData(parsed, resolveData),
@@ -2733,7 +2717,7 @@ export function createHooksStorage(
       if (!data) {
         throw new HookNotFoundError(hookId);
       }
-      const hook = parseWithUint8Array<Hook>(data);
+      const hook = parse<Hook>(data);
       const parsed = HookSchema.parse(compact(hook));
       const resolveData = params?.resolveData ?? "all";
       return filterHookData(parsed, resolveData);
@@ -2769,7 +2753,7 @@ export function createHooksStorage(
       const hooks: { hook: Hook; cursor: string }[] = [];
       for (const [i, result] of (results ?? []).entries()) {
         if (result?.[1]) {
-          const hook = parseWithUint8Array<Hook>(result[1] as string);
+          const hook = parse<Hook>(result[1] as string);
           const parsed = HookSchema.parse(compact(hook));
           hooks.push({
             hook: filterHookData(parsed, params?.resolveData ?? "all"),

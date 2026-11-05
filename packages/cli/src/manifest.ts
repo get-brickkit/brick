@@ -1,14 +1,12 @@
 import { existsSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import { writeContractSource } from "./client-contract-file";
+import { writeFileIfChanged } from "./client-contract-file";
 
 import {
   DEFINITION_EXTENSIONS,
   DEFINITION_KINDS,
   MANIFEST_FILE,
 } from "./definitions";
-
-export { MANIFEST_FILE };
 
 function rank(file: string) {
   if (/\.service\.[^.]+$/.test(file)) return 0;
@@ -19,8 +17,8 @@ function rank(file: string) {
 /** Definition files under `services`: service files first, then resources, then the rest, each by path. */
 export function scanDefinitionFiles(services: string): string[] {
   if (!existsSync(services)) return [];
-  // Built per call: index.ts re-exports this module, and Node (ESLint loading
-  // brick.config.ts) has no Bun global.
+  // Built per call: index.ts imports this module (through runner) and still
+  // exports defineConfig, so Node may load it (ESLint reading brick.config.ts).
   const glob = new Bun.Glob(
     `**/*.{${DEFINITION_KINDS.join(",")}}.{${DEFINITION_EXTENSIONS.join(",")}}`,
   );
@@ -56,7 +54,7 @@ export async function writeServiceManifest(options: {
   generated: string;
 }): Promise<string> {
   const output = join(options.generated, MANIFEST_FILE);
-  await writeContractSource(
+  await writeFileIfChanged(
     output,
     renderManifest(options.services, options.generated),
   );

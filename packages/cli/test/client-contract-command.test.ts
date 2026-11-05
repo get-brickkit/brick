@@ -1,6 +1,7 @@
 import { expect, it } from "bun:test";
 import { mkdtemp, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { TEMPORARY_FILE_PREFIX } from "../src/client-contract-file";
 
 const cli = resolve(import.meta.dir, "../src/bin.ts");
 const entry = join(import.meta.dir, "fixtures/client-app.ts");
@@ -112,7 +113,7 @@ const originalRename = fs.rename;
 mock.module("node:fs/promises", () => ({
   ...fs,
   ${operation}: async (path, ...args) => {
-    if (String(path).includes(".brick-contract-")) {
+    if (String(path).includes(${JSON.stringify(TEMPORARY_FILE_PREFIX)})) {
       if (${JSON.stringify(operation)} === "writeFile") await originalWrite(path, "partial write");
       throw new Error("Injected ${operation} failure");
     }

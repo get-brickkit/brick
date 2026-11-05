@@ -1,19 +1,21 @@
 import { beforeAll, describe, expect, it } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SPEC_VERSION_SUPPORTS_SLOT_IDENTITY } from "@workflow/world";
+import {
+  SPEC_VERSION_SUPPORTS_SLOT_IDENTITY,
+  type World,
+} from "@workflow/world";
+import { WorkflowRunNotFoundError } from "@workflow/errors";
 import { decode } from "cbor-x";
 import { BASE_PATH } from "../base-path";
+import type { CreateFetchHandler } from "../server/handler";
 
 // The server build, which `bun run build` makes. The CLI serves its files; this
 // is the page and the calls it makes. Named by a variable so that the type
 // checker does not follow it into the bundle.
 const build = "../build/server/index.js";
 const { createFetchHandler } = (await import(build)) as {
-  createFetchHandler(
-    basename: string,
-    host: { world: unknown },
-  ): (request: Request) => Promise<Response>;
+  createFetchHandler: CreateFetchHandler;
 };
 
 // Where the dashboard serves it, and what the build is made for.
@@ -88,7 +90,10 @@ describe("createFetchHandler", () => {
   const world = stubWorld();
   let handle: (request: Request) => Promise<Response>;
   beforeAll(() => {
-    handle = createFetchHandler(BASE_PATH, { world });
+    // A stub: only the parts the tests reach.
+    handle = createFetchHandler(BASE_PATH, {
+      world: world as unknown as World,
+    });
   });
 
   it("serves the page under its base path, without a header of its own", async () => {
@@ -127,6 +132,32 @@ describe("createFetchHandler", () => {
     const answer = await rpc(handle, "fetchRuns");
     expect(answer.success).toBe(true);
     expect(world.listed).toBe(before + 1);
+  });
+
+  it("keeps each handler's own world when another is made", async () => {
+    const other = stubWorld();
+    const second = createFetchHandler(BASE_PATH, {
+      world: other as unknown as World,
+    });
+    const before = world.listed;
+    await rpc(handle, "fetchRuns");
+    await rpc(second, "fetchRuns");
+    expect(world.listed).toBe(before + 1);
+    expect(other.listed).toBe(1);
+  });
+
+  it("answers a stream of a missing run with 404 and the error the page reads", async () => {
+    const missing = stubWorld();
+    missing.streams.getChunks = async () => {
+      throw new WorkflowRunNotFoundError("wrun_gone");
+    };
+    const response = await createFetchHandler(BASE_PATH, {
+      world: missing as unknown as World,
+    })(new Request(`${base}/api/stream/strm_1?runId=wrun_gone`));
+    expect(response.status).toBe(404);
+    const body = await response.json();
+    expect(body.layer).toBe("API");
+    expect(body.message).toContain("not found");
   });
 
   it("resumes a stream after the chunks it already sent, past one page", async () => {

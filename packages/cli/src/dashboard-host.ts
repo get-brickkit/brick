@@ -33,7 +33,9 @@ export async function openDashboard(
   const { directory, historyDays, warn, docs: withDocs, ...rest } = options;
   const history = await openHistory({ directory, days: historyDays, warn });
   const store = new DevTelemetryStore({ history });
-  const docs = withDocs ? new DocsHost(store, warn) : undefined;
+  const docs = withDocs
+    ? new DocsHost((docs) => store.setDocs(docs), warn)
+    : undefined;
   let server: DevDashboard;
   try {
     server = await startDevDashboard({

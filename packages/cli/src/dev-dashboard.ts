@@ -118,6 +118,8 @@ export interface DevDashboardOptions {
   plugins?: readonly PluginDashboard[];
   /** Where `/app/*` goes; the app the store's API documents name otherwise. */
   appUrl?: string;
+  /** How the host's user picks another port, added when the port is taken. */
+  portHint?: string;
 }
 
 export interface DevDashboard {
@@ -624,9 +626,7 @@ export function startDevDashboard(
         extension?.close();
         reject(
           new Error(
-            production
-              ? `Brick: dashboard port ${options.port} is unavailable. Set dashboard.port in brick() to another.`
-              : `Brick: dashboard port ${options.port} is unavailable. Use --dashboard-port <number> or --no-dashboard.`,
+            `Brick: dashboard port ${options.port} is unavailable.${options.portHint ? ` ${options.portHint}` : ""}`,
             { cause: error },
           ),
         );

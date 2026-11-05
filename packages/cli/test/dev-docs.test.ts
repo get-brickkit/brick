@@ -375,7 +375,10 @@ describe("DocsHost", () => {
     store.subscribe((event) => {
       if (event.type === "docs") events.push(event.docs?.status ?? null);
     });
-    const host = new DocsHost(store, () => {});
+    const host = new DocsHost(
+      (docs) => store.setDocs(docs),
+      () => {},
+    );
     try {
       expect(store.snapshot().docs).toBeNull();
 
@@ -411,7 +414,10 @@ describe("DocsHost", () => {
     const root = await project({});
     const store = new DevTelemetryStore();
     const warnings: string[] = [];
-    const host = new DocsHost(store, (message) => warnings.push(message));
+    const host = new DocsHost(
+      (docs) => store.setDocs(docs),
+      (message) => warnings.push(message),
+    );
     try {
       await host.configure(root, { dir: "./nowhere" });
       expect(host.current).toBeUndefined();

@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { brick } from "@brickkit/core";
+import { INSPECTOR_TOKEN_HEADER } from "../src/dashboard-protocol";
 import { startInspector } from "../src/dev-inspector";
 
 const built = join(import.meta.dir, "..", "inspector-dist");
@@ -23,18 +24,18 @@ describe("startInspector", () => {
     try {
       expect(inspector).toBeDefined();
       const base = `http://127.0.0.1:${inspector!.port}`;
-      const headers = { "x-brick-inspector": inspector!.token };
+      const headers = { [INSPECTOR_TOKEN_HEADER]: inspector!.token };
 
       expect((await fetch(`${base}/workflows/`)).status).toBe(403);
       const page = await fetch(`${base}/workflows/`, { headers });
       expect(page.status).toBe(200);
       expect(page.headers.get("content-type")).toContain("text/html");
 
-      // The UI lists runs through the world it finds by module name: ours.
+      // The UI lists runs through the world the app gave it.
       const rpc = await fetch(`${base}/workflows/api/rpc`, {
         method: "POST",
         headers: { ...headers, "content-type": "application/json" },
-        body: JSON.stringify({ method: "fetchRuns", params: { params: {} } }),
+        body: JSON.stringify({ method: "fetchRuns", params: {} }),
       });
       expect(rpc.status).toBe(200);
       expect(world.listed).toBe(1);
@@ -49,7 +50,7 @@ describe("startInspector", () => {
     } as never);
     try {
       const base = `http://127.0.0.1:${inspector!.port}`;
-      const headers = { "x-brick-inspector": inspector!.token };
+      const headers = { [INSPECTOR_TOKEN_HEADER]: inspector!.token };
       const styles = readdirSync(join(built, "client", "assets")).find((name) =>
         name.endsWith(".css"),
       )!;

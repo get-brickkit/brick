@@ -24,14 +24,17 @@ export async function writeAppContract(
   output: string,
 ) {
   checkContractOutput(entry, output);
-  await writeContractSource(
+  await writeFileIfChanged(
     resolve(output),
     generateClientContract(requireBrickApp(app)),
   );
 }
 
-/** Atomically replace changed contracts, preserving timestamps when unchanged. */
-export async function writeContractSource(output: string, source: string) {
+/** Begins the name of the temporary file `writeFileIfChanged` renames into place; watchers skip it. */
+export const TEMPORARY_FILE_PREFIX = ".brick-write-";
+
+/** Atomically replace a generated file whose text changed, leaving it (and its timestamp) alone otherwise. */
+export async function writeFileIfChanged(output: string, source: string) {
   const previous = await readFile(output, "utf8").catch((error) => {
     if (error.code !== "ENOENT") throw error;
     return undefined;
@@ -40,7 +43,7 @@ export async function writeContractSource(output: string, source: string) {
     await mkdir(dirname(output), { recursive: true });
     const temporary = join(
       dirname(output),
-      `.brick-contract-${randomUUID()}.tmp`,
+      `${TEMPORARY_FILE_PREFIX}${randomUUID()}.tmp`,
     );
     try {
       await writeFile(temporary, source, { flag: "wx" });

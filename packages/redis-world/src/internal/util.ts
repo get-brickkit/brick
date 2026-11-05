@@ -46,8 +46,4 @@ export class Rc {
       await this.disposeFn();
     }
   }
-
-  getCount(): number {
-    return this.count;
-  }
 }

@@ -8,7 +8,7 @@ import type {
 } from "@workflow/world";
 import type { Redis } from "ioredis";
 import { keys } from "./keys.js";
-import { Mutex, Rc } from "./util.js";
+import { Mutex, Rc } from "./internal/util.js";
 
 interface StreamPublishMessage {
   runId: string;

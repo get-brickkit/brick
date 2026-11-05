@@ -13,7 +13,7 @@ import type {
 } from "./socket-types";
 export { BrickSocketError } from "./socket-types";
 export { kebabCase };
-export { STANDARD_ERRORS } from "./protocol";
+export { STANDARD_ERRORS, isControlEvent } from "./protocol";
 // For the dev dashboard page, which reads traces in the browser.
 export { SPAN, ATTR } from "./telemetry-names";
 export type {

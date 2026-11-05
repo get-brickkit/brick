@@ -89,9 +89,4 @@ async function setupRedis(
   process.exit(exitCode);
 }
 
-// Check if running as main module
-if (import.meta.url === `file://${process.argv[1]}`) {
-  setupRedis();
-}
-
 export { setupRedis };

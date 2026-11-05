@@ -3,6 +3,7 @@ import { existsSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { BrickApp } from "@brickkit/core";
+import type { CreateFetchHandler } from "../../workflow-inspector/server/handler";
 import { INSPECTOR_TOKEN_HEADER, ROUTES } from "./dashboard-protocol";
 
 /** Where the dashboard serves the inspector. */
@@ -71,12 +72,12 @@ export async function startInspector(
       "The workflow inspector is not built. Build it with: bun run --filter @brickkit/cli build",
     );
   const { createFetchHandler } = (await import(pathToFileURL(entry).href)) as {
-    createFetchHandler(
-      basename: string,
-      host: { world: unknown },
-    ): (request: Request) => Promise<Response>;
+    createFetchHandler: CreateFetchHandler;
   };
-  const page = createFetchHandler(INSPECTOR_PATH, { world: target.world });
+  const page = createFetchHandler(INSPECTOR_PATH, {
+    // Core types only the parts of the world it calls; the world is a whole Workflow SDK World.
+    world: target.world as Parameters<CreateFetchHandler>[1]["world"],
+  });
   const client = join(directory, "client");
   const token = randomBytes(16).toString("hex");
   const server = Bun.serve({

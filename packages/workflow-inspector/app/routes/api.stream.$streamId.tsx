@@ -15,7 +15,7 @@
 import { readStreamChunksServerAction } from "~/server/workflow-server-actions.server";
 import type { Route } from "./+types/api.stream.$streamId";
 
-export async function loader({ params, request }: Route.LoaderArgs) {
+export async function loader({ params, request, context }: Route.LoaderArgs) {
   const { streamId } = params;
 
   if (!streamId || !/^[\w-]+$/.test(streamId)) {
@@ -38,10 +38,15 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   const cursor = url.searchParams.get("cursor") ?? undefined;
 
   try {
-    const result = await readStreamChunksServerAction(streamId, runId, cursor);
+    const result = await readStreamChunksServerAction(
+      context.world,
+      streamId,
+      runId,
+      cursor,
+    );
 
     if (!("buffer" in result)) {
-      return Response.json(result, { status: 500 });
+      return Response.json(result, { status: result.request?.status ?? 500 });
     }
 
     const headers: HeadersInit = {

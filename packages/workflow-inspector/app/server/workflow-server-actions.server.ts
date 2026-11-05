@@ -24,13 +24,12 @@ import type {
   ServerActionError,
   ServerActionResult,
 } from "~/lib/types";
-import { getInspectorHost } from "./inspector-host.server";
 
-function createServerActionError<T>(
+function createServerActionError(
   error: unknown,
   operation: string,
   requestParams?: Record<string, any>,
-): ServerActionResult<T> {
+): ServerActionError {
   const err = error instanceof Error ? error : new Error(String(error));
   let errorResponse: ServerActionError;
 
@@ -73,10 +72,7 @@ function createServerActionError<T>(
     };
   }
 
-  return {
-    success: false,
-    error: errorResponse,
-  };
+  return errorResponse;
 }
 
 /**
@@ -118,15 +114,15 @@ type ResolveData = "none" | "all";
 function method<P extends object, T>(
   operation: string,
   run: (world: World, params: P) => Promise<T>,
-): (params: P) => Promise<ServerActionResult<T>> {
-  return async (params) => {
+): (world: World, params: P) => Promise<ServerActionResult<T>> {
+  return async (world, params) => {
     try {
-      return {
-        success: true,
-        data: await run(getInspectorHost().world, params),
-      };
+      return { success: true, data: await run(world, params) };
     } catch (error) {
-      return createServerActionError<T>(error, operation, params);
+      return {
+        success: false,
+        error: createServerActionError(error, operation, params),
+      };
     }
   };
 }
@@ -434,12 +430,12 @@ export interface StreamChunksResult {
  * it back as `cursor` to get only the chunks written since.
  */
 export async function readStreamChunksServerAction(
+  world: World,
   streamId: string,
   runId: string,
   cursor?: string,
 ): Promise<StreamChunksResult | ServerActionError> {
   try {
-    const { world } = getInspectorHost();
     const allChunks: Uint8Array[] = [];
     const separator = cursor?.indexOf(":") ?? -1;
     let skip = separator > 0 ? Number(cursor!.slice(0, separator)) : 0;
@@ -488,14 +484,9 @@ export async function readStreamChunksServerAction(
       done: streamDone,
     };
   } catch (error) {
-    const actionError = createServerActionError(
-      error,
-      "world.streams.getChunks",
-      { streamId, runId },
-    );
-    if (!actionError.success) {
-      return actionError.error;
-    }
-    throw new Error();
+    return createServerActionError(error, "world.streams.getChunks", {
+      streamId,
+      runId,
+    });
   }
 }

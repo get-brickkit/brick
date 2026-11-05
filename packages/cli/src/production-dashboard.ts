@@ -1,5 +1,3 @@
-import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
 import { getGlobalRegistry, type BrickApp } from "@brickkit/core";
 import { isLoopbackHost } from "./dashboard-access";
 import {
@@ -57,7 +55,6 @@ export async function startProductionDashboard(
     );
   }
 
-  const extension = options.dashboard?.extension;
   const started = await openDashboard({
     directory: options.directory ?? process.cwd(),
     historyDays: config.historyDays ?? 0,
@@ -65,13 +62,10 @@ export async function startProductionDashboard(
     port,
     host,
     mode: "production",
+    portHint: "Set dashboard.port in brick() to another.",
     auth: config.auth,
     dashboard: options.dashboard,
-    // A `brick build` folder already holds the plugins' extensions.
-    plugins:
-      extension && existsSync(join(resolve(extension), "extension.js"))
-        ? undefined
-        : app.definition.plugins,
+    plugins: app.definition.plugins,
     appUrl: `http://127.0.0.1:${options.appPort}`,
     probe: async () => {
       const response = await fetch(
