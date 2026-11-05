@@ -15,11 +15,11 @@ import {
   type DashboardExtension,
   type NavItem,
 } from "../dashboard/extension-registry";
+import { loadParts } from "../dashboard/extension";
 import { parseRoute } from "../dashboard/state";
 import { buildApplication } from "../src/build";
 import {
   buildDashboardExtension,
-  extensionLoader,
   THEME_TOKENS,
   themeCss,
 } from "../src/dashboard-extension";
@@ -426,36 +426,33 @@ describe("the dashboard server with an extension", () => {
 });
 
 describe("plugin dashboard extensions", () => {
-  it("the loader merges extensions and isolates one that fails", async () => {
+  it("the page merges the listed parts and isolates one that fails", async () => {
     const folder = mkdtempSync(join(tmpdir(), "brick-plugin-ext-"));
     try {
-      const write = (name: string, source: string) => {
+      const write = (name: string, source: string) =>
         writeFileSync(join(folder, name), source);
-        return pathToFileURL(join(folder, name)).href;
-      };
-      const app = write(
+      write(
         "app.js",
         `export default { pages: [{ id: "queues", label: "Queues", after: "overview" }], slots: { "topbar.end": "app", "request.drawer.tabs": [{ id: "a" }] } };`,
       );
-      const plugin = write(
+      write(
         "plugin.js",
         `export default { pages: [{ id: "comments", label: "Comments" }, { id: "queues", label: "Dup" }], slots: { "topbar.end": "plugin", "request.drawer.tabs": [{ id: "b" }] }, sidebar: [{ label: "Docs", href: "https://x" }] };`,
       );
-      const broken = write("broken.js", `throw new Error("boom");`);
-      const loader = write(
-        "loader.js",
-        extensionLoader([
-          { name: "app", src: app, plugin: false },
-          { name: "@acme/brick-comments", src: plugin, plugin: true },
-          { name: "@acme/broken", src: broken, plugin: true },
-        ]),
-      );
+      write("broken.js", `throw new Error("boom");`);
       const errors: unknown[][] = [];
       const original = console.error;
       console.error = (...args: unknown[]) => void errors.push(args);
       let merged: DashboardExtension;
       try {
-        merged = (await import(loader)).default;
+        merged = await loadParts(
+          [
+            { name: "app", src: "./app.js", plugin: false },
+            { name: "@acme/brick-comments", src: "./plugin.js", plugin: true },
+            { name: "@acme/broken", src: "./broken.js", plugin: true },
+          ],
+          pathToFileURL(join(folder, "extension.js")).href,
+        );
       } finally {
         console.error = original;
       }

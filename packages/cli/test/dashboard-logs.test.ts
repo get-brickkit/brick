@@ -15,10 +15,8 @@ import {
   installTracing,
   type TelemetryRecord,
 } from "../src/dev-telemetry";
-import {
-  DevTelemetryStore,
-  type TraceSummary,
-} from "../src/dev-telemetry-store";
+import type { TraceSummary } from "../src/dashboard-protocol";
+import { DevTelemetryStore } from "../src/dev-telemetry-store";
 
 function traceWith(
   id: string,

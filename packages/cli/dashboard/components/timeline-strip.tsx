@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { formatAxis, formatCount, formatDateTime } from "@/format";
-import type { VolumeBucket } from "../../src/dev-history";
+import type { VolumeBucket } from "../../src/dashboard-protocol";
 
 const TICKS = [0, 1, 2, 3, 4];
 

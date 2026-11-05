@@ -5,8 +5,8 @@ import { DocsSearch } from "@/components/docs/docs-search";
 import { DocsTree, firstPage } from "@/components/docs/docs-tree";
 import { useDocsInfo, useProjectComponents } from "@/components/docs/use-docs";
 import { docsHref, useMediaQuery, type Route } from "@/state";
-import type { DocsPage } from "../../src/dev-docs";
-import type { DocsSnapshot } from "../../src/dev-telemetry-store";
+import type { DocsPage } from "../../src/dashboard-protocol";
+import type { DocsSnapshot } from "../../src/dashboard-protocol";
 
 /**
  * The app's developer documentation: its folder of pages in the dashboard,

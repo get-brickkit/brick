@@ -1,10 +1,20 @@
-import type { TraceSpan, TraceSummary } from "../src/dev-telemetry-store";
+import {
+  ATTR,
+  SPAN,
+  type TraceSpan,
+  type TraceSummary,
+} from "../src/dashboard-protocol";
+import {
+  findException,
+  outcomeOf,
+  stringAttribute,
+} from "../src/dashboard-query";
 
 /** Client and server errors both count as failures, matching the Errors view. */
 export function isFailure(
   trace: Pick<TraceSummary, "status" | "httpStatus">,
 ): boolean {
-  return trace.status === "error" || (trace.httpStatus ?? 0) >= 400;
+  return outcomeOf(trace) !== "ok";
 }
 
 export function formatDuration(ms: number | undefined): string {
@@ -63,55 +73,13 @@ export function formatCount(value: number): string {
     : value.toLocaleString();
 }
 
-/** Linear-interpolated percentile of an ascending list; 0 for an empty list. */
-export function percentile(sorted: number[], fraction: number): number {
-  if (sorted.length === 0) return 0;
-  const position = (sorted.length - 1) * fraction;
-  const lower = Math.floor(position);
-  const upper = Math.ceil(position);
-  return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower);
-}
-
-export interface Bucket {
-  start: number;
-  ok: number;
-  client: number;
-  server: number;
-}
-
-/** Count traces into `count` equal buckets ending at `end`, oldest first. */
-export function bucketize(
-  traces: TraceSummary[],
-  windowMs: number,
-  count: number,
-  end: number,
-): Bucket[] {
-  const size = windowMs / count;
-  const start = end - windowMs;
-  const buckets: Bucket[] = Array.from({ length: count }, (_, index) => ({
-    start: start + index * size,
-    ok: 0,
-    client: 0,
-    server: 0,
-  }));
-  for (const trace of traces) {
-    const index = Math.floor((trace.startMs - start) / size);
-    if (index < 0 || index >= count) continue;
-    const bucket = buckets[index];
-    if (trace.status === "error") bucket.server += 1;
-    else if ((trace.httpStatus ?? 0) >= 400) bucket.client += 1;
-    else bucket.ok += 1;
-  }
-  return buckets;
-}
-
 export type SpanKind = "http" | "action" | "rpc" | "sql" | "other";
 
 export function spanKind(span: TraceSpan): SpanKind {
-  if (span.attributes["db.statement"] !== undefined) return "sql";
-  if (span.name.startsWith("action ")) return "action";
-  if (span.name.startsWith("rpc ")) return "rpc";
-  if (span.attributes["http.route"] !== undefined) return "http";
+  if (span.attributes[ATTR.dbStatement] !== undefined) return "sql";
+  if (span.name.startsWith(SPAN.actionPrefix)) return "action";
+  if (span.name.startsWith(SPAN.rpcPrefix)) return "rpc";
+  if (span.attributes[ATTR.httpRoute] !== undefined) return "http";
   return "other";
 }
 
@@ -149,28 +117,19 @@ export interface TraceBreakdown {
 const spanMs = (span: TraceSpan): number =>
   span.endMs === undefined ? 0 : span.endMs - span.startMs;
 
-const textAttribute = (
-  attributes: TraceSpan["attributes"] | undefined,
-  key: string,
-): string | undefined => {
-  const value = attributes?.[key];
-  return typeof value === "string" ? value : undefined;
-};
-
 /** What a request did, picked out of its spans for the detail view. */
 export function describeTrace(trace: TraceSummary): TraceBreakdown {
   const queries = trace.spans.filter((span) => spanKind(span) === "sql");
   const durations = queries.map(spanMs);
   let exception: TraceBreakdown["exception"];
   for (const span of trace.spans) {
-    const event = span.events.find((item) => item.name === "exception");
-    const code = textAttribute(span.attributes, "brick.error.code");
+    const event = findException(span.events);
+    const code = stringAttribute(span.attributes, ATTR.errorCode);
     if (!event && !code) continue;
     exception = {
       message:
-        textAttribute(event?.attributes, "exception.message") ??
-        span.statusMessage,
-      stack: textAttribute(event?.attributes, "exception.stacktrace"),
+        stringAttribute(event, ATTR.exceptionMessage) ?? span.statusMessage,
+      stack: stringAttribute(event, ATTR.exceptionStack),
       code,
       span: span.name,
     };

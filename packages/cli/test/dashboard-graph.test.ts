@@ -9,7 +9,7 @@ import type {
   ArchitectureSnapshot,
   TraceSpan,
   TraceSummary,
-} from "../src/dev-telemetry-store";
+} from "../src/dashboard-protocol";
 
 function span(spanId: string, options: Partial<TraceSpan> = {}): TraceSpan {
   return {

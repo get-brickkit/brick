@@ -3,7 +3,10 @@ import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { docsHref } from "@/state";
 import { segmentsOf } from "@/components/docs/docs-tree";
-import type { DocsSearchHit } from "../../../src/dev-docs";
+import {
+  DOCS_PATHS,
+  type DocsSearchHit,
+} from "../../../src/dashboard-protocol";
 
 /** Search over the docs' titles, headings, and text. */
 export function DocsSearch({ revision }: { revision: number }) {
@@ -18,7 +21,7 @@ export function DocsSearch({ revision }: { revision: number }) {
     const controller = new AbortController();
     // Wait for a pause in typing before asking.
     const timer = setTimeout(() => {
-      fetch(`/api/docs/search?q=${encodeURIComponent(query)}`, {
+      fetch(`${DOCS_PATHS.search}?q=${encodeURIComponent(query)}`, {
         signal: controller.signal,
       })
         .then((response) => (response.ok ? response.json() : []))

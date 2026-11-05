@@ -1,4 +1,9 @@
-import { installTracing, type TelemetryRecord } from "./dev-telemetry";
+import {
+  CSRF_HEADER,
+  CSRF_VALUE,
+  type IngestPayload,
+} from "./dashboard-protocol";
+import { installTracing } from "./dev-telemetry";
 
 export interface DevReporterOptions {
   /** The dashboard's ingest endpoint, for example http://127.0.0.1:9400/api/ingest. */
@@ -13,12 +18,12 @@ export interface DevReporterOptions {
  * not running never affects the app.
  */
 export function installDevReporter(options: DevReporterOptions): boolean {
-  const post = (body: { records?: TelemetryRecord[]; worker?: string }) => {
+  const post = (body: IngestPayload) => {
     void fetch(options.url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-brick-dashboard": "1",
+        [CSRF_HEADER]: CSRF_VALUE,
       },
       body: JSON.stringify(body),
     }).catch(() => {});

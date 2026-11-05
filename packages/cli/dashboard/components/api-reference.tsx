@@ -33,10 +33,11 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useMediaQuery } from "@/state";
 import type { ApiDocument } from "@brickkit/core";
-import type {
-  FailureSummary,
-  TraceSummary,
-} from "../../src/dev-telemetry-store";
+import {
+  ROUTES,
+  type FailureSummary,
+  type TraceSummary,
+} from "../../src/dashboard-protocol";
 
 // Examples are JavaScript fetch calls first, as the app's own client makes them.
 const codeUsages = createCodeUsageGeneratorRegistry();
@@ -56,7 +57,7 @@ const OpenAPIPage = createOpenAPIPage({
 });
 
 // The app is another origin; the dashboard forwards Try it requests.
-const PROXY_URL = "/api/proxy";
+const PROXY_URL = ROUTES.proxy.path;
 
 const METHOD_COLOR: Record<ApiMethod, string> = {
   get: "text-green-600 dark:text-green-400",

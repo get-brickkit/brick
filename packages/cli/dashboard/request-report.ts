@@ -1,7 +1,11 @@
 import { describeTrace, formatDuration, spanDepths, spanKind } from "@/format";
 import type { LogRow } from "@/filters";
 import { logsOfTrace } from "@/logs";
-import type { TraceSpan, TraceSummary } from "../src/dev-telemetry-store";
+import {
+  SPAN,
+  type TraceSpan,
+  type TraceSummary,
+} from "../src/dashboard-protocol";
 
 const pad = (width: number, text: string) => text.padEnd(width);
 
@@ -41,7 +45,7 @@ function describeSpan(
   }
   for (const event of span.events) {
     // Log lines have a section of their own.
-    if (event.name === "log") continue;
+    if (event.name === SPAN.logEvent) continue;
     lines.push(
       `${detail}event ${event.name} at +${formatDuration(event.timeMs - trace.startMs)}`,
     );

@@ -20,7 +20,7 @@ import { InlineTOC } from "@fumadocs/base-ui/components/inline-toc";
 import { Step, Steps } from "@fumadocs/base-ui/components/steps";
 import { Tab, Tabs } from "@fumadocs/base-ui/components/tabs";
 import { TypeTable } from "@fumadocs/base-ui/components/type-table";
-import type { DocsHeading } from "../../../src/dev-docs";
+import type { DocsHeading } from "../../../src/dashboard-protocol";
 
 /** The headings of the page being shown, for components that list them. */
 export const PageHeadings = createContext<DocsHeading[]>([]);

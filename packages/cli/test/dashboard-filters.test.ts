@@ -1,19 +1,21 @@
 import { describe, expect, it } from "bun:test";
 import {
-  applyFilters,
-  bucketRows,
-  computeFacets,
   hasFilters,
   historyParams,
   NO_FILTERS,
-  outcomeOf,
   sparkGroups,
-  summarizeRows,
-  toRow,
   type LogFilters,
   type LogRow,
 } from "../dashboard/filters";
-import type { TraceSummary } from "../src/dev-telemetry-store";
+import {
+  applyFilters,
+  bucketRows,
+  computeFacets,
+  outcomeOf,
+  summarizeRows,
+  toRow,
+} from "../src/dashboard-query";
+import type { TraceSummary } from "../src/dashboard-protocol";
 
 function row(id: string, options: Partial<LogRow> = {}): LogRow {
   return {

@@ -5,61 +5,27 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type {
-  ApiSnapshot,
-  ArchitectureSnapshot,
-  DevTelemetrySnapshot,
-  DocsSnapshot,
-  FailureSummary,
-  ReloadSummary,
-  TraceSummary,
-} from "../src/dev-telemetry-store";
+import {
+  LIVE_LIMITS,
+  ROUTES,
+  TELEMETRY_EVENTS,
+  THEME_STORAGE_KEY,
+  type DashboardEvents,
+  type DashboardSnapshot,
+  type DevTelemetryEvent,
+  type ExtensionBuild,
+} from "../src/dashboard-protocol";
 
-const MAX_TRACES = 200;
-const MAX_FAILURES = 200;
-const MAX_RELOADS = 100;
-
-export interface DashboardState {
-  traces: TraceSummary[];
-  failures: FailureSummary[];
-  reloads: ReloadSummary[];
-  architecture: ArchitectureSnapshot | null;
-  /** The OpenAPI documents the app offers; null until the app has started. */
-  api: ApiSnapshot | null;
-  /** The app's developer documentation; null when it has none. */
-  docs: DocsSnapshot | null;
-  /** Whether the app serves the workflow inspector, shown in the Workflows view. */
-  inspector: boolean;
-  canRestart: boolean;
-  /** Days of requests kept on disk; zero when history is off. */
-  historyDays: number;
-  /** `production` is the monitoring dashboard `brick start` serves: read-only, with no APIs or Docs. */
-  mode: "dev" | "production";
-  /** The project's extension as last built; null when it has none. */
-  extension: ExtensionBuild | null;
+export interface DashboardState extends DashboardSnapshot {
   connected: boolean;
   loaded: boolean;
-}
-
-export interface ExtensionBuild {
-  revision: number;
-  /** Why the last build failed. */
-  error?: string;
-}
-
-/** What the dashboard server adds to the store's snapshot. */
-interface ServerFields {
-  canRestart: boolean;
-  historyDays: number;
-  mode: "dev" | "production";
-  extension?: ExtensionBuild | null;
 }
 
 /**
  * The page runs the extension it was served with. When the server has built
  * another since, the page reloads to run that one.
  */
-function followExtension(build: ExtensionBuild | null | undefined) {
+function followExtension(build: ExtensionBuild | null) {
   const served = document
     .querySelector('meta[name="brick-extension"]')
     ?.getAttribute("data-revision");
@@ -68,17 +34,8 @@ function followExtension(build: ExtensionBuild | null | undefined) {
 }
 
 type Action =
-  | {
-      type: "snapshot";
-      snapshot: DevTelemetrySnapshot & ServerFields;
-    }
-  | { type: "trace"; trace: TraceSummary }
-  | { type: "failure"; failure: FailureSummary }
-  | { type: "reload"; reload: ReloadSummary }
-  | { type: "architecture"; architecture: ArchitectureSnapshot }
-  | { type: "api"; api: ApiSnapshot }
-  | { type: "docs"; docs: DocsSnapshot | null }
-  | { type: "inspector"; inspector: boolean }
+  | { type: "snapshot"; snapshot: DashboardSnapshot }
+  | DevTelemetryEvent
   | { type: "connection"; connected: boolean };
 
 export const initialState: DashboardState = {
@@ -100,21 +57,7 @@ export const initialState: DashboardState = {
 export function reduce(state: DashboardState, action: Action): DashboardState {
   switch (action.type) {
     case "snapshot":
-      return {
-        ...state,
-        traces: action.snapshot.traces,
-        failures: action.snapshot.failures,
-        reloads: action.snapshot.reloads,
-        architecture: action.snapshot.architecture,
-        api: action.snapshot.api,
-        docs: action.snapshot.docs,
-        inspector: action.snapshot.inspector ?? false,
-        canRestart: action.snapshot.canRestart,
-        historyDays: action.snapshot.historyDays,
-        mode: action.snapshot.mode ?? "dev",
-        extension: action.snapshot.extension ?? null,
-        loaded: true,
-      };
+      return { ...state, ...action.snapshot, loaded: true };
     case "trace": {
       const index = state.traces.findIndex(
         (trace) => trace.traceId === action.trace.traceId,
@@ -126,18 +69,24 @@ export function reduce(state: DashboardState, action: Action): DashboardState {
       }
       return {
         ...state,
-        traces: [action.trace, ...state.traces].slice(0, MAX_TRACES),
+        traces: [action.trace, ...state.traces].slice(0, LIVE_LIMITS.traces),
       };
     }
     case "failure":
       return {
         ...state,
-        failures: [action.failure, ...state.failures].slice(0, MAX_FAILURES),
+        failures: [action.failure, ...state.failures].slice(
+          0,
+          LIVE_LIMITS.failures,
+        ),
       };
     case "reload":
       return {
         ...state,
-        reloads: [action.reload, ...state.reloads].slice(0, MAX_RELOADS),
+        reloads: [action.reload, ...state.reloads].slice(
+          0,
+          LIVE_LIMITS.reloads,
+        ),
       };
     case "architecture":
       return { ...state, architecture: action.architecture };
@@ -156,38 +105,24 @@ export function reduce(state: DashboardState, action: Action): DashboardState {
 export function useDashboard(): DashboardState {
   const [state, dispatch] = useReducer(reduce, initialState);
   useEffect(() => {
-    const source = new EventSource("/api/events");
-    const listen = <T>(name: string, handle: (data: T) => void) =>
+    const source = new EventSource(ROUTES.events.path);
+    const listen = <K extends keyof DashboardEvents>(
+      name: K,
+      handle: (data: DashboardEvents[K]) => void,
+    ) =>
       source.addEventListener(name, (event) =>
-        handle(JSON.parse((event as MessageEvent<string>).data) as T),
+        handle(
+          JSON.parse(
+            (event as MessageEvent<string>).data,
+          ) as DashboardEvents[K],
+        ),
       );
-    listen<DevTelemetrySnapshot & ServerFields>("snapshot", (snapshot) => {
+    listen("snapshot", (snapshot) => {
       followExtension(snapshot.extension);
       dispatch({ type: "snapshot", snapshot });
     });
-    listen<ExtensionBuild>("extension", followExtension);
-    listen<{ trace: TraceSummary }>("trace", ({ trace }) =>
-      dispatch({ type: "trace", trace }),
-    );
-    listen<{ failure: FailureSummary }>("failure", ({ failure }) =>
-      dispatch({ type: "failure", failure }),
-    );
-    listen<{ reload: ReloadSummary }>("reload", ({ reload }) =>
-      dispatch({ type: "reload", reload }),
-    );
-    listen<{ architecture: ArchitectureSnapshot }>(
-      "architecture",
-      ({ architecture }) => dispatch({ type: "architecture", architecture }),
-    );
-    listen<{ api: ApiSnapshot }>("api", ({ api }) =>
-      dispatch({ type: "api", api }),
-    );
-    listen<{ docs: DocsSnapshot | null }>("docs", ({ docs }) =>
-      dispatch({ type: "docs", docs }),
-    );
-    listen<{ inspector: boolean }>("inspector", ({ inspector }) =>
-      dispatch({ type: "inspector", inspector }),
-    );
+    listen("extension", followExtension);
+    for (const name of TELEMETRY_EVENTS) listen(name, dispatch);
     source.onopen = () => dispatch({ type: "connection", connected: true });
     source.onerror = () => dispatch({ type: "connection", connected: false });
     return () => source.close();
@@ -283,7 +218,7 @@ export function useRoute(): Route {
 }
 
 export type Theme = "light" | "dark" | "system";
-const THEME_KEY = "brick-dashboard-theme";
+const THEME_KEY = THEME_STORAGE_KEY;
 
 function applyTheme(theme: Theme) {
   const dark =

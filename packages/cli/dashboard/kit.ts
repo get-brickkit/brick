@@ -29,7 +29,7 @@ export {
   type AppFetchResult,
 } from "@/extension";
 export type { Route } from "@/state";
-export type { TraceSummary, TraceSpan } from "../src/dev-telemetry-store";
+export type { TraceSummary, TraceSpan } from "../src/dashboard-protocol";
 
 export { Panel } from "@/components/panel";
 export { Metric, SparkBars } from "@/components/metric";

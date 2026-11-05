@@ -2,13 +2,17 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DevHistory, openHistory, parseHistoryQuery } from "../src/dev-history";
 import {
-  DevHistory,
-  openHistory,
-  parseHistoryQuery,
+  applyFilters,
+  bucketRows,
+  computeFacets,
+  summarizeRows,
+  toRow,
   tracesToCsv,
-} from "../src/dev-history";
-import type { TraceSummary } from "../src/dev-telemetry-store";
+} from "../src/dashboard-query";
+import type { HistoryQuery } from "../src/dev-history";
+import type { TraceSummary } from "../src/dashboard-protocol";
 
 const DAY = 86_400_000;
 // Retention is measured from the real clock, so the fixtures are too.
@@ -468,6 +472,69 @@ describe("DevHistory", () => {
     history.close();
     history.saveTrace(trace("late"));
     expect(() => history.close()).not.toThrow();
+  });
+});
+
+describe("stored and live requests", () => {
+  // The page filters live requests in JS and stored ones through SQL; both
+  // must give the same answers for the same rows.
+  const rows = [
+    trace("ok", { agoMs: 9_000, durationMs: 12 }),
+    trace("not-found", { agoMs: 8_000, httpStatus: 404, durationMs: 3 }),
+    trace("teapot", { agoMs: 7_500, httpStatus: 418, path: "/api/tea_pot" }),
+    trace("crash", { agoMs: 7_000, status: "error", httpStatus: 200 }),
+    trace("bad-gateway", { agoMs: 6_000, httpStatus: 502, durationMs: 300 }),
+    trace("no-status", { agoMs: 5_000, httpStatus: undefined }),
+    trace("post", {
+      agoMs: 4_000,
+      method: "POST",
+      route: "/api/pages/:id",
+      service: "pages",
+      action: "Pages.Create",
+      durationMs: 80,
+    }),
+    trace("raw", {
+      agoMs: 3_000,
+      method: undefined,
+      route: undefined,
+      name: "websocket",
+      message: "Wrong Password",
+    }),
+    trace("auth", { agoMs: 2_000, service: "auth", httpStatus: 401 }),
+    trace("Zed", { agoMs: 1_000, service: "Zed", durationMs: 80 }),
+  ];
+  const window = { from: NOW - 10_000, to: NOW };
+  const queries: HistoryQuery[] = [
+    window,
+    { ...window, outcomes: ["client"] },
+    { ...window, outcomes: ["ok", "server"], methods: ["GET"] },
+    { ...window, services: ["auth", "Zed"], sort: "slowest" },
+    { ...window, endpoints: ["POST /api/pages/:id", "websocket"] },
+    { ...window, minMs: 50, sort: "slowest" },
+    { ...window, query: "pages.create" },
+    { ...window, query: "wrong pass" },
+    { ...window, query: "_pot" },
+    { from: NOW - 6_500, to: NOW - 2_500 },
+  ];
+
+  it("agree on every filter, count, bucket and summary", async () => {
+    const history = await open();
+    for (const item of rows) history.saveTrace(item);
+    const live = rows.map(toRow);
+    for (const query of queries) {
+      const inWindow = live.filter(
+        (row) => row.startMs >= query.from && row.startMs <= query.to,
+      );
+      const matching = applyFilters(inWindow, query);
+      expect(history.traces(query).traces.map((row) => row.traceId)).toEqual(
+        matching.map((row) => row.traceId),
+      );
+      expect(history.facets(query)).toEqual(computeFacets(inWindow, query));
+      expect(history.volume(query, 7)).toEqual(
+        bucketRows(matching, query.from, query.to, 7),
+      );
+      expect(history.summary(query)).toEqual(summarizeRows(matching));
+    }
   });
 });
 
