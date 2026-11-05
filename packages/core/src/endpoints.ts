@@ -9,6 +9,7 @@ import type { EventsDefinition, EventsHub } from "./events/hub";
 import { toErrorResponse } from "./error-response";
 import { pathParamNames, toOpenApiPath } from "./routes";
 import { createLogger } from "./logger";
+import { requestIds } from "./context";
 import { ActionExecutionError, ValidationError } from "./types";
 import type { BrickSocketSchema } from "./socket-types";
 import type { InstalledPlugin } from "./plugin-types";
@@ -77,13 +78,7 @@ export function createEndpointHandler(
   const tag = `endpoint:${def.method} ${def.path}`;
   const logger = createLogger(`[${tag}]`);
   return async ({ params, body, query, headers, request, set }: any) => {
-    const traceId = headers?.["x-trace-id"] || `tr_${crypto.randomUUID()}`;
-    const requestId = headers?.["x-request-id"] || `req_${crypto.randomUUID()}`;
-
-    if (set?.headers) {
-      set.headers["x-trace-id"] = traceId;
-      set.headers["x-request-id"] = requestId;
-    }
+    const { traceId, requestId } = requestIds(headers, set);
 
     const ctx: EndpointContext = {
       body,

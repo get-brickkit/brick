@@ -7,7 +7,7 @@ import {
   type ValidationErrorItem,
 } from "../types";
 import { toErrorResponse } from "../error-response";
-import { baseContext } from "../context";
+import { baseContext, requestIds } from "../context";
 import type { ServicePort } from "../service-port";
 import type { RouteIR } from "./ir";
 
@@ -225,10 +225,9 @@ function requestContext(
   plan: CompiledRoutePlan,
   { headers, request, set }: any,
 ): ActionContext & { requestId: string } {
-  const ctx = baseContext({
+  return baseContext({
+    ...requestIds(headers, set),
     request: request instanceof Request ? request : undefined,
-    traceId: headers?.["x-trace-id"] || undefined,
-    requestId: headers?.["x-request-id"] || undefined,
     db: plan.cachedDb ?? plan.service.getDb(),
     logger: plan.logger,
     metadata: { headers },
@@ -237,11 +236,6 @@ function requestContext(
       ? plan.service.deps
       : (plan.deps ?? plan.service.deps),
   }) as ActionContext & { requestId: string };
-  if (set?.headers) {
-    set.headers["x-trace-id"] = ctx.traceId;
-    set.headers["x-request-id"] = ctx.requestId;
-  }
-  return ctx;
 }
 
 /** The HTTP handler of one route: the pipeline's stages, synchronous when no stage needs to wait. */

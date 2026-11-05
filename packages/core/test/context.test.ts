@@ -571,3 +571,25 @@ describe("Receiver-owned context", () => {
     });
   });
 });
+
+describe("generated ids", () => {
+  it("never repeat across processes, as a restarted or second worker's would", async () => {
+    // Each process makes its first id; a per-process counter gives both the same one.
+    const script = `const { brick, defineService } = await import(${JSON.stringify(new URL("../src/index.ts", import.meta.url).pathname)});
+const service = defineService("ids");
+service.action({ name: "id", execute: ({ ctx }) => ctx.traceId });
+const app = brick({ services: [service], requestLogging: false, docs: false });
+const response = await app.handle(new Request("http://localhost/api/ids/id", { method: "POST" }));
+console.log(response.headers.get("x-trace-id"), await (service.getAction("id") as any).run());`;
+    const run = async () => {
+      const child = Bun.spawn([process.execPath, "-e", script], {
+        stdout: "pipe",
+      });
+      return (await new Response(child.stdout).text()).trim().split(" ");
+    };
+    const [first, second] = await Promise.all([run(), run()]);
+    expect(first).toHaveLength(2);
+    for (const id of [...first!, ...second!]) expect(id).toMatch(/^tr_/);
+    expect(new Set([...first!, ...second!]).size).toBe(4);
+  });
+});
