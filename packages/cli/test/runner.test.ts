@@ -2,38 +2,32 @@ import { describe, it, expect, beforeEach, spyOn } from "bun:test";
 import { brick, defineService, resetGlobalRegistry } from "@brickkit/core";
 import { startDevServer } from "../src/runner";
 import { printBanner } from "../src/serve";
-import { existsSync, mkdtempSync, rmSync } from "fs";
+import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
+import { freePort } from "./helpers";
 
 describe("startDevServer", () => {
   beforeEach(() => {
     resetGlobalRegistry();
   });
 
-  it("should start server without entry when no entry is provided", async () => {
-    const app = await startDevServer({ port: 45111 });
-    expect(app).toBeDefined();
-    await (app as { shutdown(): Promise<void> }).shutdown();
+  it("serves the registered services in this process without an entry", async () => {
+    const port = freePort();
+    const app = await startDevServer({ port });
+    try {
+      expect((await fetch(`http://localhost:${port}/_health`)).status).toBe(
+        200,
+      );
+    } finally {
+      await (app as { shutdown(): Promise<void> }).shutdown();
+    }
   });
 
   it("should fail when entry is provided but not found", async () => {
     await expect(
-      startDevServer({ entry: "does-not-exist.ts", port: 45112 }),
+      startDevServer({ entry: "does-not-exist.ts", port: freePort() }),
     ).rejects.toThrow(/Entry file not found: .*does-not-exist\.ts/);
-  });
-
-  it("should load valid entry file successfully", async () => {
-    const filename = `.test-entry-${Date.now()}.ts`;
-    const entryPath = path.join(process.cwd(), filename);
-    await Bun.write(entryPath, "console.log('Entry loaded');");
-    try {
-      const app = await startDevServer({ entry: filename, port: 45113 });
-      expect(app).toBeDefined();
-      (app as { stop(): void }).stop();
-    } finally {
-      if (existsSync(entryPath)) await Bun.file(entryPath).delete();
-    }
   });
 
   it("watches the entry's folder, not folders named after the working directory", async () => {
@@ -45,7 +39,7 @@ describe("startDevServer", () => {
       lines.push(String(line));
     });
     try {
-      const dev = (await startDevServer({ entry, port: 45114 })) as {
+      const dev = (await startDevServer({ entry, port: freePort() })) as {
         stop(): void;
       };
       dev.stop();
@@ -60,7 +54,8 @@ describe("startDevServer", () => {
   });
 
   it("refuses a dashboard on the app's port, when PORT sets it too", async () => {
-    const filename = `.test-entry-port-${Date.now()}.ts`;
+    const root = mkdtempSync(path.join(tmpdir(), "brick-port-"));
+    const filename = path.join(root, "app.ts");
     await Bun.write(filename, "export {};");
     const previous = process.env.PORT;
     process.env.PORT = "9400";
@@ -71,7 +66,7 @@ describe("startDevServer", () => {
     } finally {
       if (previous === undefined) delete process.env.PORT;
       else process.env.PORT = previous;
-      await Bun.file(filename).delete();
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

@@ -193,8 +193,8 @@ describe("the extension build", () => {
     const built = await buildDashboardExtension(entry);
     expect(built.js).toContain('from "@brickkit/cli/dashboard"');
     expect(built.js).toMatch(/from "react\/jsx(-dev)?-runtime"/);
-    // No copy of React inside.
-    expect(built.js).not.toContain("__SECRET_INTERNALS");
+    // React's internals object: React 18 and 19 name it differently.
+    expect(built.js).not.toMatch(/__(SECRET|CLIENT)_INTERNALS/);
     expect(built.css).toContain(".bg-chart-3");
     expect(built.css).toContain("var(--chart-3)");
     expect(built.css).toContain(".p-7");

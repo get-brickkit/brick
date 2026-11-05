@@ -155,7 +155,8 @@ describe("apps with workflows", () => {
 });
 
 describe("reusing the bundle", () => {
-  // Its own copy: the edits below would change what the tests above see.
+  // Its own copy: the edits below would change what the tests above see. The
+  // tests are steps of one scenario: each starts from the state the last left.
   const copy = copyFixture();
   const flow = join(copy, ".well-known", "workflow", "v1", "flow.mjs");
   const steps = join(

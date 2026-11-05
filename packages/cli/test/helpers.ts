@@ -1,5 +1,8 @@
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { context, propagation, trace } from "@opentelemetry/api";
+import { GLOBAL_SYMBOL } from "@brickkit/core";
+import { captureConsole } from "../src/dev-telemetry";
 
 export const CLI = resolve(import.meta.dir, "../src/bin.ts");
 
@@ -82,4 +85,18 @@ export async function runCli(
     new Response(child.stderr).text(),
   ]);
   return { code, stdout, stderr };
+}
+
+/**
+ * No tracing, no log capture, and the real console. A tracer provider another
+ * test file left registered would leave `installTracing` nothing to install.
+ */
+export function resetTracing(): void {
+  captureConsole()();
+  (globalThis as Record<symbol, unknown>)[
+    Symbol.for(GLOBAL_SYMBOL.logsCapture)
+  ] = undefined;
+  trace.disable();
+  context.disable();
+  propagation.disable();
 }
