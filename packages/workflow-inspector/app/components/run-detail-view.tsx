@@ -41,19 +41,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import { useCancellationReason } from "~/lib/client/hooks/use-cancellation-reason";
 import { useEventsListData } from "~/lib/client/hooks/use-events-list-data";
 import { useStreamReader } from "~/lib/hooks/use-stream-reader";
-import { fetchEvent, getEncryptionKeyForRun } from "~/lib/rpc-client";
-import type { EnvMap } from "~/lib/types";
-import {
-  cancelRun,
-  fetchSpanDetailResource,
-  getErrorMessage,
-  recreateRun,
-  resumeHook,
-  unwrapServerActionResult,
-  useWorkflowStreams,
-  useWorkflowTraceViewerData,
-  wakeUpRun,
-} from "~/lib/workflow-api-client";
 
 import { CopyableText } from "./display-utils/copyable-text";
 import { LiveStatus } from "./display-utils/live-status";
@@ -61,6 +48,15 @@ import { RelativeTime } from "./display-utils/relative-time";
 import { StatusBadge } from "./display-utils/status-badge";
 import { RunActionsButtons } from "./run-actions";
 import { Skeleton } from "./ui/skeleton";
+import { fetchSpanDetailResource } from "~/lib/client/hooks/use-resource-data";
+import { useWorkflowTraceViewerData } from "~/lib/client/hooks/use-trace-viewer";
+import { useWorkflowStreams } from "~/lib/client/hooks/use-workflow-streams";
+import {
+  getErrorMessage,
+  unwrapOrThrow,
+  unwrapServerActionResult,
+} from "~/lib/client/workflow-errors";
+import { rpc } from "~/lib/rpc-client";
 
 interface RunDetailViewProps {
   runId: string;
@@ -80,8 +76,6 @@ export function RunDetailView({
   const [rerunning, setRerunning] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [showRerunDialog, setShowRerunDialog] = useState(false);
-  // Empty env object - server actions read from process.env
-  const env: EnvMap = useMemo(() => ({}), []);
 
   // An unknown `?tab=` shows the trace, not an empty body.
   const activeTab: Tab =
@@ -143,9 +137,11 @@ export function RunDetailView({
 
   const handleWakeUpSleep = useCallback(
     async (runId: string, correlationId: string) => {
-      return wakeUpRun(env, runId, { correlationIds: [correlationId] });
+      return unwrapOrThrow(
+        rpc("wakeUpRun", { runId, correlationIds: [correlationId] }),
+      );
     },
-    [env],
+    [],
   );
 
   // Ref for encryption key so event loading callbacks can access it
@@ -154,30 +150,31 @@ export function RunDetailView({
 
   const handleResolveHook = useCallback(
     async (hookToken: string, payload: unknown) => {
-      await resumeHook(env, hookToken, payload);
+      await unwrapOrThrow(rpc("resumeHook", { token: hookToken, payload }));
     },
-    [env],
+    [],
   );
 
-  const handleLoadEventData = useCallback(
-    async (event: Event) => {
-      const { error, result } = await unwrapServerActionResult(
-        fetchEvent(env, event.runId, event.eventId, "all"),
-      );
-      if (error) {
-        throw error;
-      }
-      const fullEvent = await hydrateResourceIOAsync(
-        result,
-        encryptionKeyRef.current ?? undefined,
-      );
-      if ("eventData" in fullEvent) {
-        return fullEvent.eventData;
-      }
-      return null;
-    },
-    [env],
-  );
+  const handleLoadEventData = useCallback(async (event: Event) => {
+    const { error, result } = await unwrapServerActionResult(
+      rpc("fetchEvent", {
+        runId: event.runId,
+        eventId: event.eventId,
+        resolveData: "all",
+      }),
+    );
+    if (error) {
+      throw error;
+    }
+    const fullEvent = await hydrateResourceIOAsync(
+      result,
+      encryptionKeyRef.current ?? undefined,
+    );
+    if ("eventData" in fullEvent) {
+      return fullEvent.eventData;
+    }
+    return null;
+  }, []);
 
   // Fetch run + events for the trace viewer (always asc)
   const {
@@ -190,10 +187,10 @@ export function RunDetailView({
     loadMoreTraceData,
     hasMoreTraceData,
     isLoadingMoreTraceData,
-  } = useWorkflowTraceViewerData(env, runId, { live: true });
+  } = useWorkflowTraceViewerData(runId, { live: true });
 
   const run = runData ?? ({} as WorkflowRun);
-  const cancelReason = useCancellationReason(env, runId, run.status, allEvents);
+  const cancelReason = useCancellationReason(runId, run.status, allEvents);
 
   // Encryption key persisted for the lifetime of this run page.
   // Once fetched (via Decrypt button), it's used automatically for all
@@ -210,7 +207,7 @@ export function RunDetailView({
     loadingMore: loadingMoreEventsTab,
     loadMore: loadMoreEventsTab,
     searchByExactId,
-  } = useEventsListData(env, runId, {
+  } = useEventsListData(runId, {
     sortOrder: eventsSortOrder,
     encryptionKey: encryptionKey ?? undefined,
     enabled: activeTab === "events",
@@ -218,10 +215,10 @@ export function RunDetailView({
 
   const fetchSpanDetail = useCallback<FetchSpanDetail>(
     (selection) =>
-      fetchSpanDetailResource(env, selection, {
+      fetchSpanDetailResource(selection, {
         encryptionKey: encryptionKey ?? undefined,
       }),
-    [env, encryptionKey],
+    [encryptionKey],
   );
 
   const [isDecrypting, setIsDecrypting] = useState(false);
@@ -233,7 +230,9 @@ export function RunDetailView({
     setIsDecrypting(true);
     try {
       const { error: keyError, result: keyResult } =
-        await unwrapServerActionResult(getEncryptionKeyForRun(env, runId));
+        await unwrapServerActionResult(
+          rpc("getEncryptionKeyForRun", { runId }),
+        );
       if (keyError) {
         toast.error(`Failed to fetch encryption key: ${keyError.message}`);
         return;
@@ -246,7 +245,7 @@ export function RunDetailView({
     } finally {
       setIsDecrypting(false);
     }
-  }, [encryptionKey, env, runId]);
+  }, [encryptionKey, runId]);
 
   const sidebarData = useMemo<SidebarDataContextValue>(
     () => ({
@@ -284,14 +283,14 @@ export function RunDetailView({
     streams,
     loading: streamsLoading,
     error: streamsError,
-  } = useWorkflowStreams(env, runId);
+  } = useWorkflowStreams(runId);
 
   const {
     chunks: streamChunks,
     isLive: streamIsLive,
     isInitialLoading: streamIsInitialLoading,
     error: streamError,
-  } = useStreamReader(env, selectedStreamId, runId, encryptionKey, run.status);
+  } = useStreamReader(selectedStreamId, runId, encryptionKey, run.status);
 
   const handleCancelClick = () => {
     setShowCancelDialog(true);
@@ -303,7 +302,7 @@ export function RunDetailView({
     try {
       setCancelling(true);
       setShowCancelDialog(false);
-      await cancelRun(env, runId);
+      await unwrapOrThrow(rpc("cancelRun", { runId }));
       // Trigger a refresh of the data
       await update();
       toast.success("Run cancelled");
@@ -332,7 +331,9 @@ export function RunDetailView({
       setRerunning(true);
       setShowRerunDialog(false);
       // Start a new run with the same workflow and input arguments
-      const newRunId = await recreateRun(env, run.runId);
+      const newRunId = await unwrapOrThrow(
+        rpc("recreateRun", { runId: run.runId }),
+      );
       toast.success("New run started", {
         description: `Run ID: ${newRunId}`,
       });
@@ -446,7 +447,6 @@ export function RunDetailView({
               <div className="flex items-center justify-between gap-2">
                 <LiveStatus hasError={hasError} errorMessage={errorMessage} />
                 <RunActionsButtons
-                  env={env}
                   runId={runId}
                   runStatus={run.status}
                   events={allEvents}

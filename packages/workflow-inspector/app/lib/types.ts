@@ -1,20 +1,16 @@
 /**
- * Shared types that are used by both server and client code.
+ * Types shared by the server's RPC methods and the browser.
  * This file should NOT import any server-only modules.
  */
 
 import type { Hook } from "@workflow/world";
 
 /**
- * Environment variable map for world configuration.
- */
-export type EnvMap = Record<string, string | undefined>;
-
-/**
  * Structured error information that can be sent to the client
  */
 export interface ServerActionError {
   message: string;
+  // "server" if the error originates in the inspector, "API" if it originates in the World
   layer: "server" | "API";
   cause?: string;
   request?: {
@@ -39,28 +35,9 @@ export interface PaginatedResult<T> {
   hasMore: boolean;
 }
 
-export interface StopSleepResult {
-  /** Number of pending sleeps that were stopped */
-  stoppedCount: number;
-}
-
-export interface StopSleepOptions {
-  correlationIds?: string[];
-}
-
-export interface ResumeHookResult {
-  hookId: string;
-  runId: string;
-}
-
 /**
  * A hook as shown in list views. The secret `token` is omitted: list rows are
  * metadata-only, and the token is fetched on demand per hook (see
  * `fetchHookToken`) for the copy-token and resume affordances.
  */
 export type HookListItem = Omit<Hook, "token">;
-
-/** Result of a lazy per-hook token fetch. */
-export interface HookTokenResult {
-  token: string;
-}

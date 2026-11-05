@@ -99,7 +99,7 @@ describe("createFetchHandler", () => {
 
   it("reads the world the host gave it", async () => {
     const before = world.listed;
-    const answer = await rpc(handle, "fetchRuns", { params: {} });
+    const answer = await rpc(handle, "fetchRuns");
     expect(answer.success).toBe(true);
     expect(world.listed).toBe(before + 1);
   });

@@ -51,31 +51,24 @@ import {
   shouldRetainSelectionAfterBulkCancel,
 } from "~/lib/bulk-cancel-ui";
 import { useTableSelection } from "~/lib/hooks/use-table-selection";
-import { fetchEvents, fetchRun } from "~/lib/rpc-client";
 import { getRunReplayDisabledReason } from "~/lib/run-replay";
-import type { EnvMap } from "~/lib/types";
-import {
-  bulkCancelRuns,
-  getErrorMessage,
-  reenqueueRun,
-  useLoadMoreOnScroll,
-  useWorkflowRunsInfinite,
-} from "~/lib/workflow-api-client";
 import { CopyableText } from "./display-utils/copyable-text";
 import { RelativeTime } from "./display-utils/relative-time";
 import { SelectionBar } from "./display-utils/selection-bar";
 import { StatusBadge } from "./display-utils/status-badge";
 import { RunActionsDropdownItems } from "./run-actions";
 import { Checkbox } from "./ui/checkbox";
+import { useWorkflowRunsInfinite } from "~/lib/client/hooks/use-infinite-list";
+import { useLoadMoreOnScroll } from "~/lib/client/hooks/use-load-more-on-scroll";
+import { getErrorMessage, unwrapOrThrow } from "~/lib/client/workflow-errors";
+import { rpc } from "~/lib/rpc-client";
 
 // Inner content that fetches events when it mounts (only rendered when dropdown is open)
 function RunActionsDropdownContentInner({
-  env,
   runId,
   runStatus,
   onSuccess,
 }: {
-  env: EnvMap;
   runId: string;
   runStatus: WorkflowRunStatus | undefined;
   onSuccess: () => void;
@@ -89,7 +82,7 @@ function RunActionsDropdownContentInner({
   useEffect(() => {
     setRun(undefined);
     setRunIdentityLoading(true);
-    fetchRun(env, runId, "none")
+    rpc("fetchRun", { runId, resolveData: "none" })
       .then((runResult) => {
         if (runResult.success) {
           setRun(runResult.data);
@@ -104,7 +97,7 @@ function RunActionsDropdownContentInner({
 
     setEvents(undefined);
     setEventsLoading(true);
-    fetchEvents(env, runId, { limit: 1000, sortOrder: "desc" })
+    rpc("fetchEvents", { runId, limit: 1000, sortOrder: "desc" })
       .then((eventsResult) => {
         if (eventsResult.success) {
           setEvents(eventsResult.data.data);
@@ -116,11 +109,10 @@ function RunActionsDropdownContentInner({
       .finally(() => {
         setEventsLoading(false);
       });
-  }, [env, runId]);
+  }, [runId]);
 
   return (
     <RunActionsDropdownItems
-      env={env}
       runId={runId}
       runStatus={status}
       events={events}
@@ -134,12 +126,10 @@ function RunActionsDropdownContentInner({
 
 // Wrapper that only renders content when dropdown is open (lazy loading)
 function LazyDropdownMenu({
-  env,
   runId,
   runStatus,
   onSuccess,
 }: {
-  env: EnvMap;
   runId: string;
   runStatus: WorkflowRunStatus | undefined;
   onSuccess: () => void;
@@ -162,7 +152,6 @@ function LazyDropdownMenu({
       {isOpen && (
         <DropdownMenuContent align="end">
           <RunActionsDropdownContentInner
-            env={env}
             runId={runId}
             runStatus={runStatus}
             onSuccess={onSuccess}
@@ -380,8 +369,6 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
     () => new Date(),
   );
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
-  // Empty env object - server actions read from process.env
-  const env: EnvMap = useMemo(() => ({}), []);
 
   // TODO: This is a workaround. We should be getting a list of valid workflow names
   // from the manifest.
@@ -397,7 +384,7 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
     hasMore,
     loadMore,
     reload,
-  } = useWorkflowRunsInfinite(env, {
+  } = useWorkflowRunsInfinite({
     sortOrder,
     workflowName: workflowNameFilter === "all" ? undefined : workflowNameFilter,
     status: status === "all" ? undefined : status,
@@ -484,9 +471,10 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
 
     setIsBulkCancelling(true);
     try {
-      const { summary, results } = await bulkCancelRuns(
-        env,
-        cancellableSelectedRuns.map((run) => run.runId),
+      const { summary, results } = await unwrapOrThrow(
+        rpc("bulkCancelRuns", {
+          runIds: cancellableSelectedRuns.map((run) => run.runId),
+        }),
       );
 
       // Summarize as a single toast, listing only the categories that occurred.
@@ -524,7 +512,7 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
     } finally {
       setIsBulkCancelling(false);
     }
-  }, [env, cancellableSelectedRuns, isBulkCancelling, selection, onReload]);
+  }, [cancellableSelectedRuns, isBulkCancelling, selection, onReload]);
 
   const handleBulkReenqueue = useCallback(async () => {
     if (isBulkReenqueuing || selectedRuns.length === 0) return;
@@ -532,7 +520,9 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
     setIsBulkReenqueuing(true);
     try {
       const results = await Promise.allSettled(
-        selectedRuns.map((run) => reenqueueRun(env, run.runId)),
+        selectedRuns.map((run) =>
+          unwrapOrThrow(rpc("reenqueueRun", { runId: run.runId })),
+        ),
       );
 
       const succeeded = results.filter((r) => r.status === "fulfilled").length;
@@ -561,7 +551,7 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
     } finally {
       setIsBulkReenqueuing(false);
     }
-  }, [env, selectedRuns, isBulkReenqueuing, selection, onReload]);
+  }, [selectedRuns, isBulkReenqueuing, selection, onReload]);
 
   const toggleSortOrder = () => {
     setSortOrder((prev) => (prev === "desc" ? "asc" : "desc"));
@@ -723,7 +713,6 @@ export function RunsTable({ onRunClick }: RunsTableProps) {
                     </TableCell>
                     <TableCell className="py-2">
                       <LazyDropdownMenu
-                        env={env}
                         runId={run.runId}
                         runStatus={run.status}
                         onSuccess={onReload}

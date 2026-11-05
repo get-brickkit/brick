@@ -5,8 +5,8 @@ import {
   unwrapOrThrow,
   WorkflowWebAPIError,
 } from "~/lib/client/workflow-errors";
-import { fetchRuns } from "~/lib/rpc-client";
-import type { EnvMap, PaginatedResult } from "~/lib/types";
+import type { PaginatedResult } from "~/lib/types";
+import { rpc } from "~/lib/rpc-client";
 
 export interface InfiniteList<T> {
   /** All rows accumulated so far, in fetch order (deduped by item key). */
@@ -126,15 +126,12 @@ export function useInfiniteList<T>(
  * accumulate; with the ClickHouse-backed analytics read path this keeps the
  * number of round-trips low while scrolling.
  */
-export function useWorkflowRunsInfinite(
-  env: EnvMap,
-  params: {
-    workflowName?: string;
-    status?: WorkflowRunStatus;
-    limit?: number;
-    sortOrder?: "asc" | "desc";
-  },
-): InfiniteList<WorkflowRun> {
+export function useWorkflowRunsInfinite(params: {
+  workflowName?: string;
+  status?: WorkflowRunStatus;
+  limit?: number;
+  sortOrder?: "asc" | "desc";
+}): InfiniteList<WorkflowRun> {
   const { workflowName, status, limit = 25, sortOrder = "desc" } = params;
 
   const cacheKey = `workflow-runs:${workflowName ?? ""}:${status ?? ""}:${sortOrder}:${limit}`;
@@ -142,7 +139,7 @@ export function useWorkflowRunsInfinite(
   const fetchFn = useCallback(
     (cursor?: string) =>
       unwrapOrThrow(
-        fetchRuns(env, {
+        rpc("fetchRuns", {
           cursor,
           sortOrder,
           limit,
@@ -150,7 +147,7 @@ export function useWorkflowRunsInfinite(
           status,
         }),
       ),
-    [env, workflowName, limit, sortOrder, status],
+    [workflowName, limit, sortOrder, status],
   );
 
   const getItemKey = useCallback((run: WorkflowRun) => run.runId, []);

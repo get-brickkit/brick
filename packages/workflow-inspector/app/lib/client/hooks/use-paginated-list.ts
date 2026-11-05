@@ -3,9 +3,9 @@ import {
   unwrapOrThrow,
   WorkflowWebAPIError,
 } from "~/lib/client/workflow-errors";
-import { fetchHooks } from "~/lib/rpc-client";
-import type { EnvMap, HookListItem, PaginatedResult } from "~/lib/types";
+import type { HookListItem, PaginatedResult } from "~/lib/types";
 import { getPaginationDisplay } from "~/lib/utils";
+import { rpc } from "~/lib/rpc-client";
 
 export interface PageResult<T> {
   data: T[] | null;
@@ -245,20 +245,17 @@ export function usePaginatedList<T>(
 /**
  * Returns a list of hooks with pagination control
  */
-export function useWorkflowHooks(
-  env: EnvMap,
-  params: {
-    runId?: string;
-    limit?: number;
-    sortOrder?: "asc" | "desc";
-  },
-): PaginatedList<HookListItem> {
+export function useWorkflowHooks(params: {
+  runId?: string;
+  limit?: number;
+  sortOrder?: "asc" | "desc";
+}): PaginatedList<HookListItem> {
   const { runId, limit = 10, sortOrder = "desc" } = params;
 
   const fetchFn = useCallback(
     (cursor?: string) =>
-      unwrapOrThrow(fetchHooks(env, { runId, cursor, sortOrder, limit })),
-    [env, runId, limit, sortOrder],
+      unwrapOrThrow(rpc("fetchHooks", { runId, cursor, sortOrder, limit })),
+    [runId, limit, sortOrder],
   );
 
   return usePaginatedList(fetchFn);

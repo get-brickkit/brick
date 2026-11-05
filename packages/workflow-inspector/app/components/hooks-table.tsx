@@ -15,7 +15,7 @@ import {
   MoreHorizontal,
   RefreshCw,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Card, CardContent } from "~/components/ui/card";
 import { DocsLink } from "~/components/ui/docs-link";
@@ -33,18 +33,14 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
-import { fetchEvents } from "~/lib/rpc-client";
-import type { EnvMap, HookListItem } from "~/lib/types";
-import {
-  fetchHookToken,
-  getErrorMessage,
-  resumeHook,
-  useWorkflowHooks,
-} from "~/lib/workflow-api-client";
+import type { HookListItem } from "~/lib/types";
 import { CopyableText } from "./display-utils/copyable-text";
 import { HookTokenCell } from "./display-utils/hook-token-cell";
 import { RelativeTime } from "./display-utils/relative-time";
 import { TableSkeleton } from "./display-utils/table-skeleton";
+import { useWorkflowHooks } from "~/lib/client/hooks/use-paginated-list";
+import { getErrorMessage, unwrapOrThrow } from "~/lib/client/workflow-errors";
+import { rpc } from "~/lib/rpc-client";
 
 interface HooksTableProps {
   runId?: string;
@@ -63,8 +59,6 @@ interface InvocationData {
  * Uses the PaginatingTable pattern similar to RunsTable.
  * Fetches invocation counts in the background for each hook.
  *
- * World configuration is read from server-side environment variables.
- * The env object passed to server actions is empty - the server uses process.env.
  */
 export function HooksTable({
   runId,
@@ -74,8 +68,6 @@ export function HooksTable({
   const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(
     () => new Date(),
   );
-  // Empty env object - server actions read from process.env
-  const env: EnvMap = useMemo(() => ({}), []);
 
   const {
     data,
@@ -86,7 +78,7 @@ export function HooksTable({
     hasPreviousPage,
     refresh,
     pageInfo,
-  } = useWorkflowHooks(env, {
+  } = useWorkflowHooks({
     runId,
     sortOrder: "desc",
   });
@@ -96,8 +88,10 @@ export function HooksTable({
     onResolve: async (hook, payload) => {
       // List rows are metadata-only; fetch the secret token on demand just
       // before resuming, keyed by the hook's run/hook id.
-      const token = await fetchHookToken(env, hook.runId, hook.hookId);
-      await resumeHook(env, token, payload);
+      const { token } = await unwrapOrThrow(
+        rpc("fetchHookToken", { runId: hook.runId, hookId: hook.hookId }),
+      );
+      await unwrapOrThrow(rpc("resumeHook", { token, payload }));
     },
     callbacks: {
       onSuccess: refresh,
@@ -135,7 +129,8 @@ export function HooksTable({
       setInvocationData(initialData);
 
       try {
-        const serverResult = await fetchEvents(env, runId, {
+        const serverResult = await rpc("fetchEvents", {
+          runId,
           sortOrder: "asc",
           limit: 1000,
         });
@@ -201,7 +196,7 @@ export function HooksTable({
     };
 
     fetchInvocations();
-  }, [hooks, env, runId]);
+  }, [hooks, runId]);
 
   // Render invocation count for a hook
   const renderInvocationCount = (hook: HookListItem) => {
@@ -332,7 +327,6 @@ export function HooksTable({
                       </TableCell>
                       <TableCell className="font-mono text-xs py-2">
                         <HookTokenCell
-                          env={env}
                           runId={hook.runId}
                           hookId={hook.hookId}
                         />

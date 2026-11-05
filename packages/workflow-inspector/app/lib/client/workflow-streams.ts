@@ -1,7 +1,7 @@
 import { apiBase } from "~/lib/api-base";
-import { fetchStreams } from "~/lib/rpc-client";
-import type { EnvMap, ServerActionError } from "~/lib/types";
+import type { ServerActionError } from "~/lib/types";
 import { unwrapOrThrow, WorkflowWebAPIError } from "./workflow-errors";
+import { rpc } from "~/lib/rpc-client";
 
 function isServerActionError(value: unknown): value is ServerActionError {
   return (
@@ -23,7 +23,6 @@ export interface StreamResponse {
 }
 
 export async function readStream(
-  _env: EnvMap,
   streamId: string,
   runId: string,
   signal?: AbortSignal,
@@ -78,9 +77,6 @@ export async function readStream(
 }
 
 /** List all stream IDs for a run */
-export async function listStreams(
-  env: EnvMap,
-  runId: string,
-): Promise<string[]> {
-  return unwrapOrThrow(fetchStreams(env, runId));
+export async function listStreams(runId: string): Promise<string[]> {
+  return unwrapOrThrow(rpc("fetchStreams", { runId }));
 }

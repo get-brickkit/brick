@@ -7,12 +7,10 @@ import {
   unwrapOrThrow,
   WorkflowWebAPIError,
 } from "~/lib/client/workflow-errors";
-import { fetchEvents, fetchHook, fetchRun, fetchStep } from "~/lib/rpc-client";
-import type { EnvMap } from "~/lib/types";
+import { rpc } from "~/lib/rpc-client";
 
 // Helper function to fetch resource and get correlation ID
 async function fetchResourceWithCorrelationId(
-  env: EnvMap,
   resource: "run" | "step" | "hook",
   resourceId: string,
   options: {
@@ -28,7 +26,9 @@ async function fetchResourceWithCorrelationId(
   let correlationId: string;
 
   if (resource === "run") {
-    resourceData = await unwrapOrThrow(fetchRun(env, resourceId, resolveData));
+    resourceData = await unwrapOrThrow(
+      rpc("fetchRun", { runId: resourceId, resolveData }),
+    );
     correlationId = (resourceData as WorkflowRun).runId;
   } else if (resource === "step") {
     const { runId } = options;
@@ -38,11 +38,13 @@ async function fetchResourceWithCorrelationId(
       });
     }
     resourceData = await unwrapOrThrow(
-      fetchStep(env, runId, resourceId, resolveData),
+      rpc("fetchStep", { runId, stepId: resourceId, resolveData }),
     );
     correlationId = (resourceData as Step).stepId;
   } else if (resource === "hook") {
-    resourceData = await unwrapOrThrow(fetchHook(env, resourceId, resolveData));
+    resourceData = await unwrapOrThrow(
+      rpc("fetchHook", { hookId: resourceId, resolveData }),
+    );
     correlationId = (resourceData as Hook).hookId;
   } else {
     throw new WorkflowWebAPIError(`Unknown resource type: ${resource}`, {
@@ -54,7 +56,6 @@ async function fetchResourceWithCorrelationId(
 }
 
 export async function fetchSpanDetailResource(
-  env: EnvMap,
   selection: {
     resource: "run" | "step" | "hook" | "sleep";
     resourceId: string;
@@ -68,7 +69,9 @@ export async function fetchSpanDetailResource(
     hydrateResourceIOAsync(value, encryptionKey);
 
   if (resource === "hook") {
-    const result = await unwrapOrThrow(fetchHook(env, resourceId, "all"));
+    const result = await unwrapOrThrow(
+      rpc("fetchHook", { hookId: resourceId, resolveData: "all" }),
+    );
     return hydrate(result);
   }
 
@@ -80,7 +83,8 @@ export async function fetchSpanDetailResource(
       );
     }
     const result = await unwrapOrThrow(
-      fetchEvents(env, runId, {
+      rpc("fetchEvents", {
+        runId,
         sortOrder: "asc",
         limit: 1000,
         withData: true,
@@ -105,13 +109,8 @@ export async function fetchSpanDetailResource(
     return data as unknown as Event;
   }
 
-  const { data } = await fetchResourceWithCorrelationId(
-    env,
-    resource,
-    resourceId,
-    {
-      runId,
-    },
-  );
+  const { data } = await fetchResourceWithCorrelationId(resource, resourceId, {
+    runId,
+  });
   return hydrate(data);
 }

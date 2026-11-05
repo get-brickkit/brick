@@ -8,8 +8,7 @@ import {
 import { getWebRevivers } from "@workflow/web-shared";
 import type { WorkflowRunStatus } from "@workflow/world";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { EnvMap } from "~/lib/types";
-import { readStream } from "~/lib/workflow-api-client";
+import { readStream } from "~/lib/client/workflow-streams";
 
 export interface StreamChunk {
   id: number;
@@ -49,7 +48,6 @@ function detectEncoding(data: Uint8Array): StreamEncoding {
 }
 
 export function useStreamReader(
-  env: EnvMap,
   streamId: string | null,
   runId?: string,
   encryptionKey?: Uint8Array | null,
@@ -185,7 +183,6 @@ export function useStreamReader(
         }
     > => {
       const streamResponse = await readStream(
-        env,
         streamId,
         runId,
         abortController.signal,
@@ -396,7 +393,7 @@ export function useStreamReader(
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [env, streamId, runId, encryptionKey, processFrame]);
+  }, [streamId, runId, encryptionKey, processFrame]);
 
   // When run finishes, stop polling
   useEffect(() => {
