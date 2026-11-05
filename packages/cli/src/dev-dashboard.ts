@@ -7,6 +7,7 @@ import {
 import { extname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { ConfigError } from "./config";
 import type { DevDocs } from "./dev-docs";
 import { parseHistoryQuery, type DevHistory } from "./dev-history";
 import type { DevTelemetryStore } from "./dev-telemetry-store";
@@ -144,7 +145,7 @@ export function startDevDashboard(
   const production = options.mode === "production";
   if (!loopback && !options.auth) {
     return Promise.reject(
-      new Error(
+      new ConfigError(
         `Brick: the dashboard would listen on ${host}, where others can reach it, so it needs access control. Set dashboard.auth with a token or an authorize function.`,
       ),
     );

@@ -12,10 +12,9 @@ import {
 } from "vite";
 import { requireBrickApp } from "@brickkit/core";
 import { startViteDashboard, type ViteDashboard } from "./dev-vite-dashboard";
-import {
-  themeCss,
-  type DashboardExtensionOptions,
-  type DashboardTheme,
+import type {
+  DashboardExtensionOptions,
+  DashboardTheme,
 } from "./dashboard-extension";
 import { ModuleRunner } from "vite/module-runner";
 
@@ -81,7 +80,6 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
           options.output ?? join(PROJECT_DEFAULTS.generated, CONTRACT_FILE),
         ),
       );
-      if (options.dashboard) themeCss(options.dashboard.theme);
     },
     async configureServer(server) {
       const environment = server.environments.ssr;

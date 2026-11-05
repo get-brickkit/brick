@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { ConfigError } from "./config";
 import type { ExtensionPart } from "./dashboard-protocol";
 import { bundleComponents } from "./dev-docs";
 
@@ -77,7 +78,7 @@ const TOKENS = new Set<string>(THEME_TOKENS);
 /** A value that cannot close the rule it sits in. */
 function cssValue(where: string, value: unknown): string {
   if (typeof value !== "string" || !value.trim() || /[;{}<>\\]/.test(value))
-    throw new Error(
+    throw new ConfigError(
       `Brick: dashboard.theme.${where} must be a CSS value without ; { } < > or \\.`,
     );
   return value.trim();
@@ -91,7 +92,7 @@ export function themeCss(theme: DashboardTheme | undefined): string {
   if (!theme) return "";
   for (const key of Object.keys(theme))
     if (!THEME_KEYS.has(key))
-      throw new Error(
+      throw new ConfigError(
         `Brick: dashboard.theme has no "${key}". It takes light, dark, radius and fonts.`,
       );
   const rules: string[] = [];
@@ -100,7 +101,7 @@ export function themeCss(theme: DashboardTheme | undefined): string {
     root.push(`--radius: ${cssValue("radius", theme.radius)};`);
   for (const [name, value] of Object.entries(theme.fonts ?? {})) {
     if (!FONT_KEYS.has(name))
-      throw new Error(
+      throw new ConfigError(
         `Brick: dashboard.theme.fonts has no "${name}". It takes sans and mono.`,
       );
     root.push(`--font-${name}: ${cssValue(`fonts.${name}`, value)};`);
@@ -116,7 +117,7 @@ export function themeCss(theme: DashboardTheme | undefined): string {
     if (!tokens) continue;
     const lines = Object.entries(tokens).map(([name, value]) => {
       if (!TOKENS.has(name))
-        throw new Error(
+        throw new ConfigError(
           `Brick: dashboard.theme.${mode} has no token "${name}". Tokens: ${THEME_TOKENS.join(", ")}.`,
         );
       return `--${name}: ${cssValue(`${mode}.${name}`, value)};`;

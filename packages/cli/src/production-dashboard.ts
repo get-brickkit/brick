@@ -1,10 +1,5 @@
 import { getGlobalRegistry, type BrickApp } from "@brickkit/core";
-import { isLoopbackHost } from "./dashboard-access";
-import {
-  themeCss,
-  type DashboardExtensionOptions,
-} from "./dashboard-extension";
-import { DEFAULT_DASHBOARD_PORT } from "./config";
+import type { DashboardExtensionOptions } from "./dashboard-extension";
 import { openDashboard } from "./dashboard-host";
 import { installTracing } from "./dev-telemetry";
 
@@ -45,21 +40,12 @@ export async function startProductionDashboard(
   const config = app.definition.dashboard;
   if (!config) return undefined;
   const warn = options.warn ?? ((message) => console.warn(message));
-  // A mistyped token is a configuration error, not a reason to run without the dashboard.
-  themeCss(options.dashboard?.theme);
   const host = config.host ?? "127.0.0.1";
-  const port = config.port ?? DEFAULT_DASHBOARD_PORT;
-  if (!isLoopbackHost(host) && !config.auth) {
-    throw new Error(
-      `Brick: the dashboard would listen on ${host}, where others can reach it, so it needs access control. Set dashboard.auth with a token or an authorize function.`,
-    );
-  }
-
   const started = await openDashboard({
     directory: options.directory ?? process.cwd(),
     historyDays: config.historyDays ?? 0,
     warn,
-    port,
+    port: config.port,
     host,
     mode: "production",
     portHint: "Set dashboard.port in brick() to another.",

@@ -8,7 +8,6 @@ import {
   CONTRACT_FILE,
   DEFAULT_DASHBOARD_PORT,
   PROJECT_DEFAULTS,
-  DEFAULT_HISTORY_DAYS,
   resolvePort,
 } from "./config";
 import { openDashboard } from "./dashboard-host";
@@ -169,9 +168,9 @@ export async function startDevServer(options: DevServerOptions = {}) {
   // have somewhere to go.
   const dashboard = options.dashboard
     ? await openDashboard({
-        port: options.dashboard.port ?? DEFAULT_DASHBOARD_PORT,
+        port: options.dashboard.port,
         directory: process.cwd(),
-        historyDays: options.dashboard.historyDays ?? DEFAULT_HISTORY_DAYS,
+        historyDays: options.dashboard.historyDays,
         warn: (message) => console.warn(message),
         docs: true,
         dashboard: {
