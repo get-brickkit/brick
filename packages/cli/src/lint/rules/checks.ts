@@ -19,8 +19,11 @@ import {
   type RuleContext,
 } from "../ast";
 import { MANIFEST_FILE } from "../../definitions";
+import { version } from "../../../package.json";
 
 const MANIFEST_STEM = MANIFEST_FILE.replace(/\.ts$/, "");
+/** This release's range, for the `brick` field example: `^0.12.0`. */
+const BRICK_RANGE = `^${version.split(".").slice(0, 2).join(".")}.0`;
 
 function rule(
   description: string,
@@ -872,8 +875,7 @@ export const checkRules: Record<string, Rule> = {
           if (!stringValue(getProperty(config, "brick")?.value))
             context.report({
               node: node.callee,
-              message:
-                'Declare the Brick versions this plugin supports: brick: "^0.11.0".',
+              message: `Declare the Brick versions this plugin supports: brick: "${BRICK_RANGE}".`,
             });
           const options = getProperty(config, "options")?.value;
           if (!options)
