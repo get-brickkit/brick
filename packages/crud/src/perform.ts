@@ -104,7 +104,6 @@ function uniqueViolation(error: unknown): boolean {
   return false;
 }
 
-/** What the operations need from crud() and its setup. */
 export interface CrudModel extends Pick<
   ResourcePluginContext,
   "resource" | "service"
@@ -112,12 +111,10 @@ export interface CrudModel extends Pick<
   options: CrudOptions<any, any>;
   fields: Fields;
   columns: Record<string, Column>;
-  /** Readable column fields, in field order. */
   readable: string[];
   defaultLimit: number;
 }
 
-/** Runs CRUD operations against the resource's table. */
 export function operations(model: CrudModel) {
   const { options, resource, service, fields, columns, readable } = model;
   const idColumn: Column = resource.id;
@@ -313,7 +310,6 @@ export function operations(model: CrudModel) {
     };
   };
 
-  /** Adds the derived fields the call includes. */
   const resolveRows = async (call: Call, rows: Record<string, unknown>[]) => {
     if (!rows.length) return rows;
     const resolved = rows.map((row) => ({ ...row }));
@@ -328,7 +324,6 @@ export function operations(model: CrudModel) {
     }
     return resolved;
   };
-  /** The selected fields of a row, as JSON, scrubbed. */
   const scrub = async (call: Call, row: Record<string, unknown>) => {
     const result: Record<string, unknown> = {};
     for (const key of call.selected)
@@ -618,7 +613,6 @@ export function operations(model: CrudModel) {
     return single === "delete" ? { count: results.length } : { items: results };
   };
 
-  /** Prepares the unfiltered list and get statements ahead of the first call. */
   const prewarm = (enabled: readonly ("list" | "get")[]) => {
     const db: any = service.getDb();
     // A scoped call binds its scope's SQL, so only unscoped statements warm.

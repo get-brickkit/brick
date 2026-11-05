@@ -91,7 +91,6 @@ const operator = (name: string): Operator | undefined =>
     ? OPERATORS[name as FilterOperator]
     : undefined;
 
-/** Throws when a field's filter operators do not fit its column. */
 export function checkFilters(
   key: string,
   column: Column,
@@ -111,7 +110,6 @@ export function checkFilters(
   }
 }
 
-/** The `where` input schema: field leaves plus recursive `and`/`or` branches. */
 export function whereSchema(
   resourceName: string,
   fields: Fields,

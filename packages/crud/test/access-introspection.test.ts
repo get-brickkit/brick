@@ -77,8 +77,6 @@ test("CRUD with authorize+scope reports hasAuthorize/hasScope/scoped", () => {
       const op = action.name.split(".").pop()!;
       expect(action.hasAuthorize).toBe(true);
       if (op === "create") {
-        // create never runs row-scoped: its scope is always undefined and a
-        // nonempty create scope is rejected with FORBIDDEN.
         expect(action.hasScope).toBe(false);
         expect(action.accessPolicy).toBe("authorized");
       } else {

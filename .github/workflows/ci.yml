@@ -35,10 +35,9 @@ jobs:
           --health-cmd "redis-cli ping" --health-interval 5s
           --health-timeout 5s --health-retries 10
     env:
-      # Without it the Postgres outbox and CRUD transaction tests skip. The Redis
-      # socket broker tests use the redis service on its default localhost:6379.
-      # REDIS_TEST_URL stays unset, so the world tests start their own Redis
-      # testcontainers instead of sharing this service.
+      # Without it every *.postgres.test.ts suite (and the other Postgres-gated
+      # tests) skips. REDIS_TEST_URL stays unset, so the world tests start their
+      # own Redis testcontainer instead of sharing the redis service.
       TEST_DATABASE_URL: postgres://brick:brick@localhost:5432/brick_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,8 +47,8 @@ jobs:
         with:
           bun-version-file: .bun-version
       - run: bun install --frozen-lockfile
-      # Lint, format, build, typecheck and test: the same pipeline as the hook.
-      # REDIS_URL turns on examples/events' workflow tests (a Redis world). The
+      # REDIS_URL turns on examples/events' workflow tests (a Redis world) and
+      # points core's Redis socket broker tests at the redis service. The
       # test script runs them from the example's folder: the Workflow SDK
       # resolves from the working directory, and their workflow transform would
       # leak into other test files.

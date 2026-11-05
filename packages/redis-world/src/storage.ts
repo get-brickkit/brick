@@ -200,9 +200,6 @@ function filterRunData(
   return run;
 }
 
-// ============================================================
-// Lua Scripts for Atomic Multi-Key Writes
-// ============================================================
 // Each script encapsulates a multi-key write operation to ensure
 // atomicity. Lua scripts execute as a single atomic operation in
 // Redis, preventing partial writes on connection failures AND
@@ -725,10 +722,6 @@ const LUA_SET_ATTRIBUTES = `${LUA_APPEND_EVENT}
   return {1, appendEvent(KEYS[2], correlationKey, ARGV[1])}
 `;
 
-// ============================================================
-// Script registration (EVALSHA)
-// ============================================================
-
 /** Registered via `defineCommand` so ioredis dispatches with `EVALSHA` rather
  * than shipping the script body every call. `LUA_STORE_EVENT` is ~1 KB and
  * runs once per workflow event. */
@@ -814,10 +807,8 @@ export function createRunsStorage(config: RedisStorageConfig): Storage["runs"] {
     return Array.isArray(status) ? status : [status];
   }
 
-  // Helper: Select the index (or indexes) to scan, based on filters
   function selectIndexKeys(params?: ListWorkflowRunsParams): string[] {
     if (params?.workflowName) {
-      // Use the workflowName index and filter by status in memory
       return [runsByNameKey(params.workflowName)];
     }
     const statuses = allowedStatuses(params);
@@ -828,7 +819,6 @@ export function createRunsStorage(config: RedisStorageConfig): Storage["runs"] {
     return [runsIndexKey()];
   }
 
-  // Helper: Fetch and parse runs from pipeline results
   function parseRunsFromPipeline(
     results: any[] | null,
     params?: ListWorkflowRunsParams,
@@ -846,7 +836,6 @@ export function createRunsStorage(config: RedisStorageConfig): Storage["runs"] {
       run.attributes =
         (results![i + 1]?.[1] as Record<string, string> | undefined) ?? {};
 
-      // Apply filters
       const statuses = allowedStatuses(params);
       const statusMatches = !statuses || statuses.includes(run.status);
       const nameMatches =
@@ -915,7 +904,6 @@ export function createRunsStorage(config: RedisStorageConfig): Storage["runs"] {
           break;
         }
 
-        // Fetch this batch of runs via pipeline
         const pipeline = redis.pipeline();
         for (const { id } of entries) {
           pipeline.get(runKey(id));
@@ -1244,7 +1232,6 @@ export function createEventsStorage(
     // The created event and the entities are never trimmed to the page option.
     const entityData = entityResolveData(resolveData);
 
-    // For run_created events, generate runId server-side if null or empty
     let effectiveRunId: string;
     if (data.eventType === "run_created" && (!runId || runId === "")) {
       effectiveRunId = `wrun_${ulid()}`;
@@ -1267,7 +1254,6 @@ export function createEventsStorage(
       ...overrides,
     });
 
-    // Track entity created/updated for EventResult
     let run: WorkflowRun | undefined;
     let step: Step | undefined;
     let hook: Hook | undefined;
@@ -1287,10 +1273,6 @@ export function createEventsStorage(
           newAttempt?: number;
         }
       | undefined;
-
-    // ============================================================
-    // VALIDATION: Terminal state and event ordering checks
-    // ============================================================
 
     let currentRun: { status: string; specVersion?: number } | null = null;
     // Read at most once per call; every mutation branch below reuses it
@@ -1326,9 +1308,6 @@ export function createEventsStorage(
       }
     }
 
-    // ============================================================
-    // RESILIENT START: Bootstrap run from run_started eventData
-    // ============================================================
     if (
       data.eventType === "run_started" &&
       !currentRun &&
@@ -1433,9 +1412,6 @@ export function createEventsStorage(
       }
     }
 
-    // ============================================================
-    // VERSION COMPATIBILITY: Check run spec version
-    // ============================================================
     if (currentRun) {
       if (requiresNewerWorld(currentRun.specVersion)) {
         throw new RunNotSupportedError(
@@ -1453,12 +1429,10 @@ export function createEventsStorage(
       }
     }
 
-    // Run terminal state validation
     if (currentRun && isTerminal((currentRun as { status: string }).status)) {
       const terminalStatus = (currentRun as { status: string }).status;
       const runTerminalEvents = ["run_started", "run_completed", "run_failed"];
 
-      // Idempotent operation: run_cancelled on already cancelled run is allowed
       if (
         data.eventType === "run_cancelled" &&
         terminalStatus === "cancelled"
@@ -1497,7 +1471,6 @@ export function createEventsStorage(
         );
       }
 
-      // Other run state transitions are not allowed on terminal runs
       if (
         runTerminalEvents.includes(data.eventType) ||
         data.eventType === "run_cancelled"
@@ -1507,7 +1480,6 @@ export function createEventsStorage(
         );
       }
 
-      // Creating new entities on terminal runs is not allowed
       if (
         data.eventType === "step_created" ||
         data.eventType === "hook_created" ||
@@ -1519,7 +1491,6 @@ export function createEventsStorage(
       }
     }
 
-    // Step-related event validation
     // Held whole so `step_started`/`step_retrying` can mutate it below
     // without re-fetching and re-parsing the step (including its input).
     let validatedStep: Step | null = null;
@@ -1599,11 +1570,6 @@ export function createEventsStorage(
       validatedHook = parse<Hook>(existingHook);
     }
 
-    // ============================================================
-    // Entity creation/updates based on event type
-    // ============================================================
-
-    // Handle run_created event: create the run entity atomically
     if (data.eventType === "run_created") {
       const eventData = (data as any).eventData as {
         deploymentId: string;
@@ -1689,7 +1655,6 @@ export function createEventsStorage(
       };
     }
 
-    // Handle run_started event: update run status atomically via Lua
     if (data.eventType === "run_started") {
       // Core reads the per-run event ceiling only from the run_started response, so
       // omitting it here would drop the limit on every replay after the first.
@@ -1762,8 +1727,6 @@ export function createEventsStorage(
       });
     }
 
-    // Handle run_completed / run_failed / run_cancelled: update the run status
-    // atomically, then clean up the run's hooks.
     if (
       data.eventType === "run_completed" ||
       data.eventType === "run_failed" ||
@@ -1838,7 +1801,6 @@ export function createEventsStorage(
       });
     }
 
-    // Handle step_created event: create step entity
     if (data.eventType === "step_created") {
       const eventData = (data as any).eventData as {
         stepName: string;
@@ -1910,7 +1872,6 @@ export function createEventsStorage(
           ? "completion"
           : undefined;
 
-    // Handle step_started event: increment attempt, set status to 'running'
     if (data.eventType === "step_started") {
       // Retried steps may be scheduled for later. TooEarlyError tells core
       // to re-deliver after the remaining backoff instead of starting the
@@ -2033,7 +1994,6 @@ export function createEventsStorage(
       }
     }
 
-    // Handle step_completed event: update step status
     if (data.eventType === "step_completed") {
       const eventData = (data as any).eventData as { result?: any };
       const existingData = await redis.get(
@@ -2069,7 +2029,6 @@ export function createEventsStorage(
       }
     }
 
-    // Handle step_failed event: terminal state with error
     if (data.eventType === "step_failed") {
       const eventData = (data as any).eventData as { error?: any };
 
@@ -2107,7 +2066,6 @@ export function createEventsStorage(
       }
     }
 
-    // Handle step_retrying event: sets status back to 'pending', records error
     if (data.eventType === "step_retrying") {
       const eventData = (data as any).eventData as {
         error?: any;
@@ -2136,7 +2094,6 @@ export function createEventsStorage(
       }
     }
 
-    // Handle hook_created event: create hook entity atomically via Lua
     if (data.eventType === "hook_created") {
       const eventData = (data as any).eventData as {
         token: string;
@@ -2611,7 +2568,6 @@ export function createStepsStorage(
 
   const { stepKey, stepsIndexKey } = keys(keyPrefix);
 
-  // Helper: Get step data from Redis key
   async function getStepData(
     key: string,
     stepId: string,
@@ -2652,7 +2608,6 @@ export function createStepsStorage(
         params?.pagination?.sortOrder ?? "desc",
       );
 
-      // Fetch all steps
       const pipeline = redis.pipeline();
       for (const { id } of entries) {
         pipeline.get(stepKey(params.runId, id));
@@ -2743,7 +2698,6 @@ export function createHooksStorage(
         params?.pagination?.sortOrder ?? "asc",
       );
 
-      // Fetch all hooks
       const pipeline = redis.pipeline();
       for (const { id } of entries) {
         pipeline.get(hookKeyFn(id));

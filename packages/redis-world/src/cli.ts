@@ -19,7 +19,6 @@ async function setupRedis(
     description: `Redis queue: ${keys(keyPrefix).queue.ready}, processing lists and delayed set`,
   }),
 ) {
-  // Load .env file if it exists.
   loadOptionalEnvFile();
 
   const { redis: connectionString, keyPrefix } = resolveConfig(configFromEnv());
@@ -37,18 +36,15 @@ async function setupRedis(
   try {
     redis = new Redis(connectionString);
 
-    // Test connection
     await redis.ping();
     console.log("Successfully connected to Redis!");
 
-    // Get Redis info
     const info = await redis.info("server");
     const version = info.match(/redis_version:([^\r\n]+)/)?.[1];
     if (version) {
       console.log(`Redis version: ${version}`);
     }
 
-    // Check if any workflow keys exist
     const existingKeys = await redis.keys(`${keyPrefix}*`);
     if (keyPattern) existingKeys.push(...(await redis.keys(keyPattern)));
     if (existingKeys.length > 0) {
