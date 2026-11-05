@@ -188,6 +188,12 @@ if (releases.some((r) => r.data.version !== coreJson.version))
 const crateToml = readFileSync(CRATE_TOML, "utf-8");
 if (CRATE_VERSION.exec(crateToml)?.[1] !== coreJson.version)
   fail(`${CRATE_TOML} version must match the packages (${coreJson.version})`);
+// Checked before anything is written, so a failure leaves no half-bumped checkout.
+const cargoLocks = CARGO_LOCKS.filter((lock) => existsSync(lock)).map(
+  (lock) => ({ lock, text: readFileSync(lock, "utf-8") }),
+);
+for (const { lock, text } of cargoLocks)
+  if (!LOCKED_CRATE.test(text)) fail(`${lock} has no brickkit entry to bump`);
 const version = bumpVersion(coreJson.version, bump);
 const tag = `v${version}`;
 const goTag = `sdk/go/${tag}`;
@@ -248,11 +254,7 @@ writeFileSync(
   CRATE_TOML,
   crateToml.replace(CRATE_VERSION, `version = "${version}"`),
 );
-for (const lock of CARGO_LOCKS)
-  if (existsSync(lock)) {
-    const text = readFileSync(lock, "utf-8");
-    if (!LOCKED_CRATE.test(text)) fail(`${lock} has no brickkit entry to bump`);
-    writeFileSync(lock, text.replace(LOCKED_CRATE, `$1${version}"`));
-  }
+for (const { lock, text } of cargoLocks)
+  writeFileSync(lock, text.replace(LOCKED_CRATE, `$1${version}"`));
 sh(["bun", "install"]);
 console.log(`prepared ${tag}; release refs and registry are unchanged`);
