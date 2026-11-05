@@ -24,6 +24,14 @@ export const DEFAULT_PORT = 4000;
 export const DEFAULT_DASHBOARD_PORT = 9400;
 export const DEFAULT_HISTORY_DAYS = 90;
 export const DEFAULT_OUTDIR = "dist/brick";
+/** Project paths a config leaves out, relative to its folder. */
+export const PROJECT_DEFAULTS = {
+  entry: "src/app.ts",
+  services: "src/services",
+  generated: "_brick",
+} as const;
+/** The client contract's name in the generated folder, when `client.output` names none. */
+export const CONTRACT_FILE = "contract.ts";
 const CONFIG_FILE = "brick.config.ts";
 
 const path = (message: string) => t.String({ minLength: 1, message });
@@ -188,17 +196,20 @@ export async function resolveProject(
   if (file)
     validateConfig(config, file.endsWith(CONFIG_FILE) ? CONFIG_FILE : file);
   const root = file ? dirname(file) : resolve(cwd);
-  const generated = resolve(root, config.generated ?? "_brick");
+  const generated = resolve(
+    root,
+    config.generated ?? PROJECT_DEFAULTS.generated,
+  );
   return {
     file,
     root,
     config,
-    entry: resolve(root, config.entry ?? "src/app.ts"),
-    services: resolve(root, config.services ?? "src/services"),
+    entry: resolve(root, config.entry ?? PROJECT_DEFAULTS.entry),
+    services: resolve(root, config.services ?? PROJECT_DEFAULTS.services),
     generated,
     contract: config.client?.output
       ? resolve(root, config.client.output)
-      : join(generated, "contract.ts"),
+      : join(generated, CONTRACT_FILE),
     outdir: resolve(root, config.build?.outdir ?? DEFAULT_OUTDIR),
   };
 }

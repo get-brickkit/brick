@@ -1,16 +1,18 @@
 import { existsSync, watch } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import { brick, isBrickApp } from "@brickkit/core";
 import { importEntry } from "./app-entry";
 import { TEMPORARY_FILE_PREFIX } from "./client-contract-file";
 import {
   ConfigError,
+  CONTRACT_FILE,
   DEFAULT_DASHBOARD_PORT,
+  PROJECT_DEFAULTS,
   DEFAULT_HISTORY_DAYS,
   resolvePort,
 } from "./config";
 import { openDashboard } from "./dashboard-host";
+import { ownModule } from "./own-module";
 import type { DashboardExtensionOptions } from "./dashboard-extension";
 import { startDevApplication } from "./dev-application";
 import type { WorkerMessage, WorkerOptions } from "./dev-protocol";
@@ -143,10 +145,6 @@ export async function startDevServer(options: DevServerOptions = {}) {
       `[Brick-TS] Error: Entry file not found: ${resolvedEntry}`,
     );
 
-  const worker = new URL(
-    import.meta.url.endsWith(".ts") ? "./dev-worker.ts" : "./dev-worker.js",
-    import.meta.url,
-  );
   if (
     options.dashboard &&
     (options.dashboard.port ?? DEFAULT_DASHBOARD_PORT) === port
@@ -158,7 +156,7 @@ export async function startDevServer(options: DevServerOptions = {}) {
   if (manifest) await writeServiceManifest(manifest);
   const contract = resolve(
     options.clientOutput ??
-      join(manifest?.generated ?? "_brick", "contract.ts"),
+      join(manifest?.generated ?? PROJECT_DEFAULTS.generated, CONTRACT_FILE),
   );
   const workerOptions: WorkerOptions = {
     entry: resolvedEntry,
@@ -263,7 +261,11 @@ export async function startDevServer(options: DevServerOptions = {}) {
     telemetry?.setInspector(undefined);
     const generation = telemetry?.startGeneration() ?? 0;
     const application = Bun.spawn(
-      [process.execPath, fileURLToPath(worker), JSON.stringify(workerOptions)],
+      [
+        process.execPath,
+        ownModule("dev-worker"),
+        JSON.stringify(workerOptions),
+      ],
       {
         cwd: process.cwd(),
         stdout: "inherit",
