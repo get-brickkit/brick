@@ -7,7 +7,7 @@ import type {
   InferActionOutput,
 } from "./client";
 import { getGlobalRegistry } from "./registry";
-import { getPluginActionRoute } from "./plugin";
+import { getPluginActionRoute } from "./routes";
 import { pickContextEnvelope } from "./context";
 import { withCallSpan } from "./telemetry";
 

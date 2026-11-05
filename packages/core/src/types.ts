@@ -1,4 +1,9 @@
-import type { ServicePlugin, ResourcePlugin } from "./plugin";
+import type {
+  InstalledPlugin,
+  ResourcePlugin,
+  ResourcePluginAPI,
+  ServicePlugin,
+} from "./plugin-types";
 import type {
   TSchema,
   Static,
@@ -11,7 +16,7 @@ import type {
 import type { BunSQLiteDatabase } from "./db/sqlite";
 import type { DatabaseHandle } from "./db/define";
 import type { Ports } from "./deps";
-import type { OutboxTable } from "./events/outbox";
+import type { HttpMethod } from "./http";
 import type { ServiceEvents } from "./events/types";
 import type { EventCatalog, EventRefs } from "./events/catalog";
 import type { EventsDefinition } from "./events/hub";
@@ -21,8 +26,8 @@ import type {
   BrickSocketSchema,
   SocketPayloads,
   SocketSchemas,
+  RegisteredSocket,
 } from "./socket-types";
-import type { RegisteredSocket } from "./socket";
 
 /**
  * The logger on action, tool, and endpoint contexts. While a dashboard is on
@@ -232,7 +237,7 @@ export interface BaseActionConfig<
    */
   path?: string;
   /** Single HTTP method exposed for this action (default POST). */
-  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  method?: HttpMethod;
   input?: TInputSchema;
   output?: TOutputSchema;
   errors?: TErrors;
@@ -315,10 +320,6 @@ export interface Action<
 
   name: string;
   serviceName?: string;
-  /** Owning plugin descriptor name for plugin actions (e.g. `@brickkit/crud`). */
-  plugin?: string;
-  /** Owning resource name for resource-plugin actions (e.g. `page`). */
-  resource?: string;
   config: ActionConfig<TInputSchema, TOutputSchema, TErrors, TContext>;
   /**
    * Optional runtime-only output schema. When present, `validateOutput` and
@@ -335,10 +336,6 @@ export interface Action<
   execute(params: {
     input?: TInputSchema extends TSchema ? Static<TInputSchema> : any;
     ctx?: Partial<TContext>;
-  }): Promise<TOutputSchema extends TSchema ? Static<TOutputSchema> : any>;
-  executeResolved?(params: {
-    input?: TInputSchema extends TSchema ? Static<TInputSchema> : any;
-    ctx: TContext;
   }): Promise<TOutputSchema extends TSchema ? Static<TOutputSchema> : any>;
   validateInput(
     input: unknown,
@@ -465,7 +462,7 @@ export interface Resource<
     >,
   >(
     plugin: P,
-  ): this & import("./plugin").ResourcePluginAPI<P, TTable, TCtx, this>;
+  ): this & ResourcePluginAPI<P, TTable, TCtx, this>;
   readonly name: string;
   readonly serviceName: string;
   readonly table: TTable;
@@ -773,7 +770,7 @@ export type ActionAccessPolicy = "public" | "authorized" | "scoped";
 export interface ActionSchema {
   name: string;
   /** Present only when this action has a registered HTTP route. */
-  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  method?: HttpMethod;
   path?: string;
   serviceName?: string;
   /** Owning plugin descriptor name for plugin actions (e.g. `@brickkit/crud`). */
@@ -818,40 +815,7 @@ export interface ArchitectureSchema {
   /** Present when the app has an `events` option. */
   events?: EventsDefinition;
   /** Every `definePlugin` installation, with its dashboard extension. */
-  plugins?: import("./define-plugin").InstalledPlugin[];
-}
-
-export interface CompiledRoutePlan {
-  service: Service<any, any>;
-  action: Action<any, any, any, any>;
-  actionName: string;
-  serviceName: string;
-  routePath: string;
-  method?: string;
-  isGetLike: boolean;
-  hasInput: boolean;
-  hasContextHook: boolean;
-  contextHook?: (baseCtx: any) => Promise<any> | any;
-  hasAuthorize: boolean;
-  authorize?: (params: any) => boolean | Promise<boolean>;
-  execute: (params: any) => Promise<any> | any;
-  inputChecker?: {
-    Check: (val: any) => boolean;
-    Errors: (val: any) => Iterable<any>;
-  };
-  outputChecker?: {
-    Check: (val: any) => boolean;
-    Errors: (val: any) => Iterable<any>;
-  };
-  coercions?: Array<{
-    key: string;
-    isNumber: boolean;
-    isBoolean: boolean;
-    isArray?: boolean;
-  }>;
-  logger: Logger;
-  errorBuilder: any;
-  cachedDb: any;
+  plugins?: InstalledPlugin[];
 }
 
 export interface Service<
@@ -863,13 +827,8 @@ export interface Service<
   /** The declared events, as handles for `defineListener` and `emitEvent`. */
   readonly events: EventRefs<TEvents>;
   readonly options: ServiceOptions<TServiceContext, TDb>;
-  readonly actions: Map<string, Action<any, any, any, any>>;
-  readonly tools: Map<string, Tool<any, any, any, any>>;
+  /** The tables of the service's resources and plugins, by table name. */
   readonly tables: Map<string, any>;
-  readonly resources: Map<
-    string,
-    Resource<any, BaseContext<TDb> & TServiceContext>
-  >;
   readonly db?: TDb;
   readonly isBuilt?: boolean;
 
@@ -986,11 +945,7 @@ export interface Service<
     TEvents
   >;
 
-  readonly preparations: Map<string, PreparationContribution>;
   contributePreparation(contribution: PreparationContribution): void;
-  listPreparations(): PreparationContribution[];
-  prepareContributions(): void;
-  registerTable(table: any): this;
   getAction(name: string): Action<any, any, any, any> | undefined;
   listActions(): Action<any, any, any, any>[];
   getTool(name: string): Tool<any, any, any, any> | undefined;
@@ -1001,16 +956,10 @@ export interface Service<
   listResources(): Resource<any, BaseContext<TDb> & TServiceContext>[];
   getDb(): TDb | undefined;
   /** The handle from `defineDatabase`, without connecting. */
-  getDatabaseHandle?(): DatabaseHandle<TDb> | undefined;
+  getDatabaseHandle(): DatabaseHandle<TDb> | undefined;
   setDb(database: DatabaseHandle<TDb>): void;
-  /** The outbox table of this service's database, if it holds one (see `outboxTable`). */
-  getOutbox?(): OutboxTable | undefined;
   /** What a write needs to record events. Set by `brick({ events })`; absent otherwise. */
   readonly recorder?: ServiceEvents;
-  setRecorder?(recorder: ServiceEvents | undefined): void;
-  /** The values of this service's `deps`. Set by `brick({ deps })`. */
-  readonly deps?: Readonly<Record<string, unknown>>;
-  setDeps?(deps: Readonly<Record<string, unknown>>): void;
   resolveContext(
     callCtx?: Partial<BaseContext<TDb> & TServiceContext>,
   ): Promise<BaseContext<TDb> & TServiceContext>;

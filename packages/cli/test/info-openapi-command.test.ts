@@ -160,7 +160,7 @@ it("pages info exports effective routes matching the live server", async () => {
     try {
       const live = await fetch(app.server.url + "_brick/services").then(r => r.json());
       const prefixedLive = await fetch(prefixed.server.url + "_brick/services").then(r => r.json());
-      console.log(JSON.stringify({ original, live, prefixedLive, current: registry.exportArchitecture(),
+      console.log(JSON.stringify({ original, live, prefixedLive, current: registry.exportArchitecture(prefixed.definition),
         routes: app.routes.map(({ method, path }) => ({ method, path })),
         prefixedRoutes: prefixed.routes.map(({ method, path }) => ({ method, path })) }));
     } finally {

@@ -1,18 +1,18 @@
 import type { Service } from "./types";
-import { compileRoutePlan, executeCompiledRoute } from "./action-handler";
+import { planRoute } from "./action-handler";
 import {
   analyzeApplication,
   freezeIR,
   type BrickIR,
   type RouteIR,
 } from "./compiler/ir";
-import { createHandlerFactory } from "./compiler/handler";
 import {
   compilerRuntime,
   type CompiledHandler,
   type HandlerFactory,
 } from "./compiler/runtime";
 import { requireBrickApp } from "./app-entry";
+import { portOf } from "./service-port";
 
 type ApplicationBinder = (services: Service<any, any>[]) => CompiledApplication;
 const buildBindings = new Map<string, ApplicationBinder>();
@@ -47,7 +47,11 @@ export async function loadCompiledBrickApp(
 }
 
 export type { BrickIR, RouteIR, RouteMethod } from "./compiler/ir";
-export type { CompiledHandler, HandlerFactory } from "./compiler/runtime";
+export type {
+  CompiledHandler,
+  CompiledRoutePlan,
+  HandlerFactory,
+} from "./compiler/runtime";
 export interface CompiledRoute {
   readonly ir: RouteIR;
   readonly handler: CompiledHandler;
@@ -66,9 +70,7 @@ function bindAnalyzed(
     throw new Error("Brick compiler: handler factory count does not match IR");
   const routes = ir.routes.map((route, index) => {
     const { service, action } = bindings[index]!;
-    const plan = Object.freeze(
-      compileRoutePlan(service, action, route.path, route.method),
-    );
+    const plan = Object.freeze(planRoute(route, service, action));
     const handler = factories[index]!(plan, compilerRuntime);
     return Object.freeze({ ir: route, handler });
   });
@@ -86,17 +88,15 @@ export function compileBrickApplication(options: {
   );
   if (bind && options.mode !== "generic") return bind(options.services);
   const { ir, bindings } = analyzeApplication(options.services, options.prefix);
-  const factories: HandlerFactory[] =
-    options.mode === "generic"
-      ? ir.routes.map(
-          () => (plan) => (context) => executeCompiledRoute(plan, context),
-        )
-      : ir.routes.map(createHandlerFactory);
+  // Both modes bind the one pipeline; only the specialized one runs preparations.
   if (options.mode !== "generic")
-    for (const service of options.services) {
-      service.prepareContributions();
-    }
-  return bindAnalyzed(ir, bindings, factories);
+    for (const service of options.services)
+      portOf(service).prepareContributions();
+  return bindAnalyzed(
+    ir,
+    bindings,
+    ir.routes.map(() => (plan, runtime) => runtime.bindRoute(plan)),
+  );
 }
 
 /** Build artifact binder: consumes emitted functions, with no runtime handler code generation. */
@@ -114,8 +114,6 @@ export function bindCompiledApplication(
     throw new Error(
       "Brick compiler: application definitions differ from the compiled IR; rebuild the application",
     );
-  for (const service of services) {
-    service.prepareContributions();
-  }
+  for (const service of services) portOf(service).prepareContributions();
   return bindAnalyzed(ir, analyzed.bindings, factories);
 }

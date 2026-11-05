@@ -43,7 +43,7 @@ it("lists a service's tools next to its actions", () => {
   ]);
 });
 
-it("exports only registered HTTP routes and keeps each app's route table", async () => {
+it("exports only an app's mounted HTTP routes", async () => {
   const service = defineService("records");
   service.action({
     name: "first",
@@ -80,7 +80,7 @@ it("exports only registered HTTP routes and keeps each app's route table", async
     ],
   });
   const registry = getGlobalRegistry();
-  const architecture = registry.exportArchitecture();
+  const architecture = registry.exportArchitecture(first.definition);
   expect(
     architecture.services[0]!.actions.find((action) => action.name === "save"),
   ).toMatchObject({ method: "POST", path: "/v2/records/save" });
@@ -103,10 +103,14 @@ it("exports only registered HTTP routes and keeps each app's route table", async
     expect(action).not.toHaveProperty("method");
     expect(action).not.toHaveProperty("path");
   }
-  brick({ services: [service], prefix: "/v3", requestLogging: false });
+  const second = brick({
+    services: [service],
+    prefix: "/v3",
+    requestLogging: false,
+  });
   expect(
     registry
-      .exportArchitecture()
+      .exportArchitecture(second.definition)
       .services[0]!.actions.find((action) => action.name === "save"),
   ).toMatchObject({ method: "POST", path: "/v3/records/save" });
   const response = await first.handle(

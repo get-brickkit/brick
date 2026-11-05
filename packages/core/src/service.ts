@@ -1,35 +1,26 @@
-import {
-  installPlugin,
-  isInstallingPlugin,
-  type ServicePlugin,
-} from "./plugin";
-import type { TSchema } from "@sinclair/typebox";
+import { installPlugin, isInstallingPlugin } from "./plugin";
+import type { ServicePlugin } from "./plugin-types";
 import type { BunSQLiteDatabase } from "./db/sqlite";
 import type {
   Service,
   ServiceOptions,
   Action,
   Tool,
-  ToolConfigWithAuthorize,
-  ToolConfigWithoutAuthorize,
-  ActionConfigWithAuthorize,
-  ActionConfigWithoutAuthorize,
   ActionErrorDefinition,
   ServiceSchema,
   BaseContext,
-  Logger,
   Resource,
-  ResourceConfig,
-  ResourceTypeOptions,
-  ResourceIdentity,
   PreparationContribution,
 } from "./types";
 import { defineTool, isTool } from "./tool";
 import { defineAction } from "./action";
-import { claimName, definitionSite, getGlobalRegistry } from "./registry";
+import { claimName, definitionSite } from "./definition-site";
+import { getGlobalRegistry } from "./registry";
 import { getTableName, isDatabaseHandle, type DatabaseHandle } from "./db";
 import { checkRecordAccess, defineResource } from "./resource";
-import type { ResourceActionInfo } from "./routes";
+import { actionMeta } from "./action-meta";
+import { actionOwners } from "./routes";
+import type { ServicePort } from "./service-port";
 import { isOutboxTable, type OutboxTable } from "./events/outbox";
 import type { ServiceEvents } from "./events/types";
 import {
@@ -39,53 +30,55 @@ import {
   type EventRef,
 } from "./events/catalog";
 import { getActionAccess } from "./access";
-import { pluginOwner } from "./define-plugin";
-import { pickContextEnvelope } from "./context";
-import { PLUGIN_DEPS, type DepsOf, type Ports } from "./deps";
+import { pluginOwner } from "./plugin-tables";
+import { baseContext, pickContextEnvelope } from "./context";
+import type { DepsOf, Ports } from "./deps";
 import type { NamedService } from "./rpc";
-import { createLogger, DEFAULT_LOG_PREFIXES } from "./logger";
-import { defineServiceSocket, type RegisteredSocket } from "./socket";
+import { defineServiceSocket } from "./socket";
 import type {
   BrickSocketConfig,
   BrickSocketHandle,
   SocketPayloads,
   SocketSchemas,
+  RegisteredSocket,
 } from "./socket-types";
-
-const defaultLogger: Logger = createLogger(DEFAULT_LOG_PREFIXES);
-
-const DEFAULT_REQUEST = new Request("http://localhost");
-const EMPTY_SERVICES = Object.freeze({});
-const EMPTY_METADATA = Object.freeze({});
-const EMPTY_DEPS = Object.freeze({});
-let _ctxSeq = 0;
 
 // Symbol to tie context resolution to a specific service instance and invocation
 const RESOLVED_SYMBOL = Symbol("resolved");
 /** The deps a resolved context was resolved with, to restore them when a plugin's copy comes back. */
 const OWN_DEPS = Symbol("ownDeps");
 
+// The public overloads of `action`, `tool` and `resource`; the class implements them once, untyped.
+// Safe: the interface only adds signatures of methods the class defines.
+// oxlint-disable-next-line typescript/no-unsafe-declaration-merging
+export interface ServiceImpl<
+  TDb = BunSQLiteDatabase<Record<string, unknown>>,
+  TServiceContext extends Record<string, any> = Record<string, any>,
+> extends Pick<Service<TDb, TServiceContext>, "action" | "tool" | "resource"> {}
 export class ServiceImpl<
   TDb = BunSQLiteDatabase<Record<string, unknown>>,
   TServiceContext extends Record<string, any> = Record<string, any>,
-> implements Service<TDb, TServiceContext> {
+> implements ServicePort<TDb, TServiceContext> {
   readonly name: string;
   readonly options: ServiceOptions<TServiceContext, TDb>;
-  readonly actions = new Map<string, Action<any, any, any, any>>();
-  readonly tools = new Map<string, Tool<any, any, any, any>>();
+  private readonly actions = new Map<string, Action<any, any, any, any>>();
+  private readonly tools = new Map<string, Tool<any, any, any, any>>();
   readonly tables = new Map<string, any>();
   private readonly sockets = new Map<string, RegisteredSocket>();
-  readonly resources = new Map<
+  private readonly resources = new Map<
     string,
     Resource<any, BaseContext<TDb> & TServiceContext>
   >();
-  readonly preparations = new Map<string, PreparationContribution>();
+  private readonly preparations = new Map<string, PreparationContribution>();
   /** Where each `kind:name` was defined, to reject duplicates from another file. */
   private readonly sites = new Map<string, string | undefined>();
   private database?: DatabaseHandle<TDb>;
   private _isBuilt = false;
-  /** The declared events: `service.events.<name>`. */
-  readonly events: Readonly<Record<string, EventRef>>;
+  private _events: Readonly<Record<string, EventRef>>;
+  /** What a write needs to record events. Set by `brick({ events })`. */
+  recorder?: ServiceEvents;
+  /** The values of this service's `deps`. Set by `brick({ deps })`. */
+  deps?: Readonly<Record<string, unknown>>;
 
   constructor(
     name: string,
@@ -93,12 +86,17 @@ export class ServiceImpl<
   ) {
     this.name = name;
     this.options = options;
-    this.events = eventRefs(name, options.events);
-    for (const key of Object.keys(this.events)) this.claim("event", key);
+    this._events = eventRefs(name, options.events);
+    for (const key of Object.keys(this._events)) this.claim("event", key);
     if (options.database !== undefined && !isDatabaseHandle(options.database)) {
       throw new Error("Service database must be created with defineDatabase()");
     }
     this.database = options.database;
+  }
+
+  /** The declared events: `service.events.<name>`. */
+  get events(): Readonly<Record<string, EventRef>> {
+    return this._events;
   }
 
   use<A>(plugin: ServicePlugin<this, A>): A {
@@ -113,6 +111,49 @@ export class ServiceImpl<
     return this._isBuilt;
   }
 
+  /** Every definition change passes here, so cached architecture and OpenAPI are rebuilt. */
+  touch(): void {
+    getGlobalRegistry().touch();
+  }
+
+  snapshot(): () => void {
+    const maps = [
+      this.actions,
+      this.tools,
+      this.tables,
+      this.sockets,
+      this.resources,
+      this.preparations,
+      this.sites,
+    ] as Map<unknown, unknown>[];
+    const saved = maps.map((map) => new Map(map));
+    const events = this._events;
+    const properties = new Map(
+      [...this.resources.values()].map((item) => [
+        item,
+        Object.getOwnPropertyDescriptors(item),
+      ]),
+    );
+    return () => {
+      maps.forEach((map, index) => {
+        map.clear();
+        for (const [key, value] of saved[index]!) map.set(key, value);
+      });
+      this._events = events;
+      for (const [item, own] of properties) {
+        for (const key of Reflect.ownKeys(item))
+          if (!Object.hasOwn(own, key)) Reflect.deleteProperty(item, key);
+        Object.defineProperties(item, own);
+      }
+      this.touch();
+    };
+  }
+
+  addEvents(refs: Readonly<Record<string, EventRef>>): void {
+    this._events = Object.freeze({ ...this._events, ...refs });
+    this.touch();
+  }
+
   /**
    * Closes declarations after plugins have registered their actions and preparations.
    */
@@ -121,8 +162,7 @@ export class ServiceImpl<
       throw new Error("Cannot build a service during plugin setup");
     if (this._isBuilt) return this;
     for (const action of this.actions.values()) {
-      const info = (action as { resourceAction?: ResourceActionInfo })
-        .resourceAction;
+      const info = actionMeta(action).resourceAction;
       const resource = info?.record && this.resources.get(info.resource);
       if (resource) checkRecordAccess(resource, info);
     }
@@ -145,7 +185,7 @@ export class ServiceImpl<
     if (this.preparations.has(contribution.name))
       throw new Error(`Duplicate preparation '${contribution.name}'`);
     this.preparations.set(contribution.name, contribution);
-    getGlobalRegistry().touch();
+    this.touch();
   }
 
   listPreparations(): PreparationContribution[] {
@@ -165,36 +205,19 @@ export class ServiceImpl<
         (table as any)._?.name ?? `table_${this.tables.size + 1}`;
       this.tables.set(fallbackName, table);
     }
-
+    this.touch();
     return this;
   }
 
-  // The public signature preserves config literals; runtime registration stores
-  // resources with different tables in the same map.
-  resource = <
-    TTable = any,
-    const TOptions extends ResourceTypeOptions = ResourceTypeOptions,
-  >(
-    config: ResourceConfig<TTable, BaseContext<TDb> & TServiceContext> &
-      TOptions &
-      Record<Exclude<keyof TOptions, keyof ResourceConfig>, never>,
-  ): Resource<
-    TTable,
-    BaseContext<TDb> & TServiceContext,
-    ResourceIdentity<TTable, TOptions>
-  > => {
+  resource(config: any): any {
     if (this._isBuilt)
       throw new Error("Resources must be registered before service build");
     this.claim("resource", config.name);
     const resourceInstance = defineResource(this, config);
-    this.resources.set(resourceInstance.name, resourceInstance);
-    getGlobalRegistry().touch();
-    return resourceInstance as Resource<
-      TTable,
-      BaseContext<TDb> & TServiceContext,
-      ResourceIdentity<TTable, TOptions>
-    >;
-  };
+    this.resources.set(resourceInstance.name, resourceInstance as any);
+    this.touch();
+    return resourceInstance;
+  }
 
   getResource(
     name: string,
@@ -206,122 +229,32 @@ export class ServiceImpl<
     return Array.from(this.resources.values());
   }
 
-  action<
-    TIn extends TSchema | undefined = undefined,
-    TOut extends TSchema | undefined = undefined,
-    TErr extends Record<string, ActionErrorDefinition> = Record<
-      string,
-      ActionErrorDefinition
-    >,
-  >(action: Action<TIn, TOut, TErr, BaseContext<TDb> & TServiceContext>): this;
-  action<
-    TIn extends TSchema | undefined = undefined,
-    TOut extends TSchema | undefined = undefined,
-    TErr extends Record<string, ActionErrorDefinition> = Record<
-      string,
-      ActionErrorDefinition
-    >,
-  >(
-    config: ActionConfigWithAuthorize<
-      TIn,
-      TOut,
-      TErr,
-      BaseContext<TDb> & TServiceContext
-    >,
-  ): Action<TIn, TOut, TErr, BaseContext<TDb> & TServiceContext>;
-  action<
-    TIn extends TSchema | undefined = undefined,
-    TOut extends TSchema | undefined = undefined,
-    TErr extends Record<string, ActionErrorDefinition> = Record<
-      string,
-      ActionErrorDefinition
-    >,
-  >(
-    config: ActionConfigWithoutAuthorize<
-      TIn,
-      TOut,
-      TErr,
-      BaseContext<TDb> & TServiceContext
-    >,
-  ): Action<TIn, TOut, TErr, BaseContext<TDb> & TServiceContext>;
   action(actionOrConfig: any): any {
-    let actionInstance: Action<any, any, any, any>;
     const isActionFunction =
       typeof actionOrConfig === "function" && "config" in actionOrConfig;
+    const actionInstance: Action<any, any, any, any> = isActionFunction
+      ? actionOrConfig
+      : defineAction(actionOrConfig);
 
-    if (isActionFunction) {
-      actionInstance = actionOrConfig;
-    } else {
-      actionInstance = defineAction(actionOrConfig);
-    }
-
-    if (
-      isInstallingPlugin(this) &&
-      this.actions.has(actionInstance.name) &&
-      this.actions.get(actionInstance.name) !== actionInstance
-    )
-      throw new Error(`Duplicate plugin action: ${actionInstance.name}`);
     if (this.actions.get(actionInstance.name) !== actionInstance)
       this.claim("action", actionInstance.name);
     if (isTool(actionInstance)) actionInstance.config.http = true;
     actionInstance.serviceName = this.name;
-    (actionInstance as any).service = this;
+    actionMeta(actionInstance).service = this;
     this.actions.set(actionInstance.name, actionInstance);
-    getGlobalRegistry().touch();
-
-    if (isActionFunction) {
-      return this;
-    }
-    return actionInstance;
+    this.touch();
+    return isActionFunction ? this : actionInstance;
   }
 
-  tool<
-    TIn extends TSchema | undefined = undefined,
-    TOut extends TSchema | undefined = undefined,
-    TErr extends Record<string, ActionErrorDefinition> = Record<
-      string,
-      ActionErrorDefinition
-    >,
-  >(action: Tool<TIn, TOut, TErr, BaseContext<TDb> & TServiceContext>): this;
-  tool<
-    TIn extends TSchema | undefined = undefined,
-    TOut extends TSchema | undefined = undefined,
-    TErr extends Record<string, ActionErrorDefinition> = Record<
-      string,
-      ActionErrorDefinition
-    >,
-  >(
-    config: ToolConfigWithAuthorize<
-      TIn,
-      TOut,
-      TErr,
-      BaseContext<TDb> & TServiceContext
-    >,
-  ): Tool<TIn, TOut, TErr, BaseContext<TDb> & TServiceContext>;
-  tool<
-    TIn extends TSchema | undefined = undefined,
-    TOut extends TSchema | undefined = undefined,
-    TErr extends Record<string, ActionErrorDefinition> = Record<
-      string,
-      ActionErrorDefinition
-    >,
-  >(
-    config: ToolConfigWithoutAuthorize<
-      TIn,
-      TOut,
-      TErr,
-      BaseContext<TDb> & TServiceContext
-    >,
-  ): Tool<TIn, TOut, TErr, BaseContext<TDb> & TServiceContext>;
   tool(toolOrConfig: any): any {
     const existing = isTool(toolOrConfig);
     const tool = existing ? toolOrConfig : defineTool(toolOrConfig);
     this.claim("tool", tool.name);
     tool.serviceName = this.name;
-    (tool as any).service = this;
+    actionMeta(tool).service = this;
     this.tools.set(tool.name, tool);
     if (tool.config.http) this.action(tool);
-    getGlobalRegistry().touch();
+    this.touch();
     return existing ? this : tool;
   }
 
@@ -345,14 +278,11 @@ export class ServiceImpl<
       async (request) => {
         const ctx = await resolveServiceContext(this, { request });
         // A socket a plugin declared runs with the plugin's deps.
-        const deps = (socket as unknown as Record<symbol, unknown>)[
-          PLUGIN_DEPS
-        ];
-        return deps ? { ...ctx, deps } : ctx;
+        return socket.deps ? { ...ctx, deps: socket.deps } : ctx;
       },
     );
     this.sockets.set(config.name, socket);
-    getGlobalRegistry().touch();
+    this.touch();
     return socket.handle;
   }
 
@@ -381,9 +311,6 @@ export class ServiceImpl<
     return this.database;
   }
 
-  /** What a write needs to record events. Set by `brick({ events })`. */
-  recorder?: ServiceEvents;
-
   getOutbox(): OutboxTable | undefined {
     return Object.values(this.database?.tables ?? {}).find(isOutboxTable);
   }
@@ -402,9 +329,6 @@ export class ServiceImpl<
     checkEvent(this, name, payload);
   }
 
-  /** The values of this service's `deps`. Set by `brick({ deps })`. */
-  deps?: Readonly<Record<string, unknown>>;
-
   setDeps(deps: Readonly<Record<string, unknown>>): void {
     this.deps = deps;
   }
@@ -413,7 +337,7 @@ export class ServiceImpl<
     if (!isDatabaseHandle(database))
       throw new Error("Use defineDatabase() to set a service database");
     this.database = database;
-    getGlobalRegistry().touch();
+    this.touch();
   }
 
   /**
@@ -454,12 +378,7 @@ export class ServiceImpl<
         return {
           name: act.name,
           serviceName: this.name,
-          ...((act as { plugin?: string }).plugin
-            ? { plugin: (act as { plugin?: string }).plugin }
-            : {}),
-          ...((act as { resource?: string }).resource
-            ? { resource: (act as { resource?: string }).resource }
-            : {}),
+          ...actionOwners(act),
           description: act.config.description,
           inputSchema: act.config.input,
           outputSchema: act.config.output,
@@ -514,32 +433,26 @@ async function resolveServiceContext<
         : { ...callCtx, deps: own }
     ) as BaseContext<TDb> & TServiceContext;
   }
-  const seq = ++_ctxSeq;
-  const req = callCtx?.request ?? DEFAULT_REQUEST;
-  // Always use this service's own database, never the caller's
-  const db = service.getDb() as TDb;
-  const logger = callCtx?.logger ?? defaultLogger;
-  const traceId = callCtx?.traceId ?? `tr_${seq.toString(36)}`;
-  const requestId = callCtx?.requestId ?? `req_${seq.toString(36)}`;
-  const services = callCtx?.services ?? EMPTY_SERVICES;
-  const metadata = callCtx?.metadata ?? EMPTY_METADATA;
-  // The app's deps for this service; a direct call with no app (a unit test) may pass its own,
-  // but never those of a context another service (or a plugin) resolved.
-  const deps =
-    service.deps ??
-    ((callCtx as any)?.[RESOLVED_SYMBOL]
-      ? undefined
-      : (callCtx as { deps?: unknown } | undefined)?.deps) ??
-    EMPTY_DEPS;
-
+  const { deps, ...framework } = baseContext({
+    request: callCtx?.request,
+    // Always this service's own database, never the caller's.
+    db: service.getDb(),
+    logger: callCtx?.logger,
+    traceId: callCtx?.traceId,
+    requestId: callCtx?.requestId,
+    services: callCtx?.services,
+    metadata: callCtx?.metadata,
+    // The app's deps for this service; a direct call with no app (a unit test) may pass its own,
+    // but never those of a context another service (or a plugin) resolved.
+    deps:
+      service.deps ??
+      ((callCtx as any)?.[RESOLVED_SYMBOL]
+        ? undefined
+        : (callCtx as { deps?: Readonly<Record<string, unknown>> } | undefined)
+            ?.deps),
+  });
   const fullBaseCtx: BaseContext<TDb> = {
-    request: req,
-    db,
-    logger,
-    traceId,
-    requestId,
-    services,
-    metadata,
+    ...framework,
     // Only the envelope fields a caller may set, never the framework's own.
     ...pickContextEnvelope(callCtx),
   };

@@ -1,3 +1,4 @@
+import type { HttpMethod } from "./http";
 import type { RouteIR } from "./compiler/ir";
 import type { Elysia } from "elysia";
 import type { Service } from "./types";
@@ -9,9 +10,9 @@ import { toErrorResponse } from "./error-response";
 import { createLogger } from "./logger";
 import { ActionExecutionError, ValidationError } from "./types";
 import type { BrickSocketSchema } from "./socket-types";
-import type { InstalledPlugin } from "./define-plugin";
+import type { InstalledPlugin } from "./plugin-types";
 
-export type EndpointMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+export type EndpointMethod = HttpMethod;
 
 /** Logger subset handed to endpoint handlers (mirrors action context loggers). */
 export interface EndpointLogger {

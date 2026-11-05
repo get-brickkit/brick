@@ -6,23 +6,13 @@ import {
   type ActionContext,
   type ActionErrorDefinition,
   type ErrorBuilder,
-  type BaseContext,
   ActionExecutionError,
-  ValidationError,
-  type Logger,
 } from "./types";
 import { normalizeActionError } from "./error-response";
 import { validateWithSchema } from "./typebox";
-import { getGlobalRegistry } from "./registry";
-import { createLogger, DEFAULT_LOG_PREFIXES } from "./logger";
-
-const defaultLogger: Logger = createLogger(DEFAULT_LOG_PREFIXES);
-
-const DEFAULT_REQUEST = new Request("http://localhost");
-let _defaultCtxSeq = 0;
-
-// Symbol to tie context resolution to a specific service instance and invocation
-const RESOLVED_SYMBOL = Symbol("resolved");
+import { actionMeta } from "./action-meta";
+import { baseContext } from "./context";
+import { authorizeCall, invalid } from "./compiler/runtime";
 
 const standardErrorDefaults: Record<
   string,
@@ -35,25 +25,6 @@ const standardErrorDefaults: Record<
   CONFLICT: { status: 409, message: "Conflict" },
   INTERNAL_SERVER_ERROR: { status: 500, message: "Internal Server Error" },
 };
-
-function createDefaultContext(partial?: any): BaseContext & any {
-  // Only accept pre-resolved context with a service-specific marker or when service will handle resolution
-  if (partial?.[RESOLVED_SYMBOL]) return partial;
-  const seq = (++_defaultCtxSeq).toString(36);
-  const req = partial?.request ?? DEFAULT_REQUEST;
-  return {
-    request: req,
-    traceId: partial?.traceId || `tr_${seq}`,
-    requestId: partial?.requestId || `req_${seq}`,
-    db: partial?.db,
-    user: partial?.user,
-    logger: partial?.logger || defaultLogger,
-    services: partial?.services || {},
-    metadata: partial?.metadata || {},
-    ...partial,
-    [RESOLVED_SYMBOL]: true,
-  };
-}
 
 /**
  * The `error` helpers an action receives: one function per error code that
@@ -204,88 +175,43 @@ export function defineAction(config: any): any {
     return validateWithSchema(config.input, input);
   };
 
-  actionFn.validateOutput = (output: unknown) => {
-    const runtimeSchema =
-      (actionFn as { outputValidationSchema?: TSchema })
-        .outputValidationSchema ?? config.output;
-    return validateWithSchema(runtimeSchema, output);
-  };
+  // `outputValidationSchema`: a runtime-only output schema (crud's), checked instead of `config.output`.
+  actionFn.validateOutput = (output: unknown) =>
+    validateWithSchema(
+      actionFn.outputValidationSchema ?? config.output,
+      output,
+    );
 
   actionFn.run = async (input?: any, ctx?: any) => {
     return actionFn.execute({ input, ctx });
   };
 
   actionFn.execute = async (params: { input?: any; ctx?: any }) => {
-    const boundService = actionFn.service;
-    // The bound service resolves the context once per request, and recognizes
-    // one it already resolved.
-    const fullCtx: any = boundService?.resolveContext
-      ? await boundService.resolveContext(params?.ctx)
-      : createDefaultContext(params?.ctx);
-
+    const meta = actionMeta(actionFn);
+    // The registered service resolves the context once per request, and
+    // recognizes one it already resolved.
+    let ctx: any = meta.service
+      ? await meta.service.resolveContext(params?.ctx)
+      : { ...baseContext(params?.ctx ?? {}), ...params?.ctx };
+    // A plugin's action runs with the deps of the install that created it.
+    if (meta.deps) ctx = { ...ctx, deps: meta.deps.values };
+    const input = params?.input;
     try {
-      // Fill ctx.db from the bound service or the registry when the call has none.
-      if (!fullCtx.db) {
-        const service =
-          boundService ??
-          (actionFn.serviceName
-            ? getGlobalRegistry().get(actionFn.serviceName)
-            : undefined);
-        if (service?.getDb()) fullCtx.db = service.getDb();
-      }
-
-      // 1. Validate Input
       if (config.input) {
-        const inputValidation = actionFn.validateInput(params?.input);
-        if (!inputValidation.success) {
-          throw new ValidationError(
-            `Validation failed for action '${config.name}' input` as string,
-            inputValidation.errors,
-          );
-        }
+        const checked = actionFn.validateInput(input);
+        if (!checked.success)
+          throw invalid(config.name, "input", checked.errors);
       }
-
-      // 2. Authorize
-      if (config.authorize) {
-        const allowed = await config.authorize({
-          user: fullCtx.user,
-          input: params?.input,
-          ctx: fullCtx,
-        });
-        if (!allowed) {
-          throw new ActionExecutionError(
-            fullCtx.user == null ? "UNAUTHORIZED" : "FORBIDDEN",
-            `Access denied for action '${config.name}'`,
-            fullCtx.user == null ? 401 : 403,
-          );
-        }
+      await authorizeCall(config.authorize, ctx, input, config.name);
+      const result = await config.execute({ input, ctx, error: errorHelpers });
+      if (actionFn.outputValidationSchema ?? config.output) {
+        const checked = actionFn.validateOutput(result);
+        if (!checked.success)
+          throw invalid(config.name, "output", checked.errors);
       }
-
-      // 3. Execute implementation
-      const result = await config.execute({
-        input: params?.input,
-        ctx: fullCtx,
-        error: errorHelpers,
-      });
-
-      // 4. Validate Output
-      const runtimeOutputSchema =
-        (actionFn as { outputValidationSchema?: TSchema })
-          .outputValidationSchema ?? config.output;
-      if (runtimeOutputSchema) {
-        const outputValidation = actionFn.validateOutput(result);
-        if (!outputValidation.success) {
-          throw new ValidationError(
-            `Validation failed for action '${config.name}' output` as string,
-            outputValidation.errors,
-            500,
-          );
-        }
-      }
-
       return result;
     } catch (err) {
-      throw normalizeActionError(err, fullCtx);
+      throw normalizeActionError(err, ctx);
     }
   };
 

@@ -2,7 +2,6 @@
 export {
   defineServicePlugin,
   defineResourcePlugin,
-  getPluginActionRoute,
   getPluginEndpoints,
 } from "./plugin";
 export type {
@@ -17,13 +16,19 @@ export type {
   PluginRouteScope,
   PluginRouteMethod,
   PluginEndpointContext,
-} from "./plugin";
+  InstalledPlugin,
+} from "./plugin-types";
+export { definePlugin } from "./define-plugin";
+export { satisfiesRange, brickVersion } from "./version";
+export { isPluginInstance } from "./plugin-app";
 export {
-  definePlugin,
-  satisfiesRange,
-  brickVersion,
-  isPluginInstance,
-} from "./define-plugin";
+  HOST_HOOKS,
+  getHostHooks,
+  type HostHooks,
+  type PluginHooks,
+  type PluginHookArgs,
+} from "./plugin-hooks";
+export type { PluginTableBuilders } from "./plugin-tables";
 export type {
   PluginManifest,
   PluginFactory,
@@ -35,9 +40,6 @@ export type {
   PluginSetupContext,
   PluginAppContext,
   PluginLifecycleContext,
-  PluginHooks,
-  PluginTableBuilders,
-  InstalledPlugin,
 } from "./define-plugin";
 // HTTP Runtime (Elysia app): bundled to user apps, never the CLI.
 export { brick, type CreateServerOptions } from "./server";
@@ -86,6 +88,7 @@ export {
   type CompiledApplication,
   type CompiledRoute,
   type CompiledHandler,
+  type CompiledRoutePlan,
   type HandlerFactory,
 } from "./compiler";
 export { emitHandlerFactory } from "./compiler/emit";
@@ -109,8 +112,10 @@ export type {
 } from "./socket-types";
 export { serializeSocketSchema } from "./socket-schema";
 export { redisBroker, type RedisBrokerOptions } from "./socket-redis";
-export { getActionAccess, setActionAccess, ACTION_ACCESS_KEY } from "./access";
+export { getActionAccess, setActionAccess } from "./access";
 export type { ActionAccessInfo } from "./access";
+export { ACTION_META, actionMeta, type ActionMeta } from "./action-meta";
+export { HTTP_METHODS, type HttpMethod } from "./http";
 export {
   defineAction,
   defineError,
@@ -120,6 +125,10 @@ export {
 export { defineResource, loadRecord } from "./resource";
 export {
   getActionRoute,
+  getPluginActionRoute,
+  actionOwners,
+  claimedSegments,
+  routeKey,
   kebabCase,
   type ActionRoute,
   type ResourceActionInfo,

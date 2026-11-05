@@ -1,7 +1,13 @@
 import type { Database } from "bun:sqlite";
 import { test, expect, spyOn } from "bun:test";
 
-import { defineService, defineDatabase, brick, t } from "@brickkit/core";
+import {
+  defineService,
+  defineDatabase,
+  brick,
+  compileBrickApplication,
+  t,
+} from "@brickkit/core";
 import { eq } from "drizzle-orm";
 import { sqliteTable, integer, text } from "drizzle-orm/sqlite-core";
 
@@ -271,7 +277,7 @@ test("preparation prewarming prepares the default list and get statements", asyn
   try {
     await r.create.run({ name: "A" });
     await r.create.run({ name: "B" });
-    service.prepareContributions();
+    compileBrickApplication({ services: [service] });
     const prepare = spyOn(sqlite, "prepare");
     expect((await r.get.run({ id: 1 })).name).toBe("A");
     expect((await r.get.run({ id: 2 })).name).toBe("B");
