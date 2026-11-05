@@ -14,6 +14,7 @@ import {
   tracesToCsv,
 } from "../src/dashboard-query";
 import type { TraceSummary } from "../src/dashboard-protocol";
+import { nodeVersion, runsIf } from "./helpers";
 
 const DAY = 86_400_000;
 // Retention is measured from the real clock, so the fixtures are too.
@@ -574,16 +575,13 @@ describe("stored and live requests", () => {
 
 describe("under Node", () => {
   // Vite's dev server runs under Node, which has no bun:sqlite.
-  const nodeVersion = Bun.spawnSync(["node", "--version"]).stdout.toString();
-  const [major = 0, minor = 0] = nodeVersion
-    .trim()
-    .replace(/^v/, "")
-    .split(".")
-    .map(Number);
-  // node:sqlite needs Node 22.5.
-  const supported = major > 22 || (major === 22 && minor >= 5);
+  const [major = 0, minor = 0] = nodeVersion() ?? [];
+  const supported = runsIf(
+    major > 22 || (major === 22 && minor >= 5),
+    "node:sqlite needs Node 22.5 or later",
+  );
 
-  it.skipIf(!supported)("saves and queries requests", async () => {
+  it.if(supported)("saves and queries requests", async () => {
     const directory = mkdtempSync(join(tmpdir(), "brick-node-history-"));
     directories.push(directory);
     // Bundle it first, as the package does, so Node runs plain JavaScript.

@@ -16,7 +16,7 @@ import {
 import { pgSchema, text as pgText } from "@brickkit/core/pg";
 import { appDatabases } from "../src/db";
 import app from "./fixtures/db-app";
-import { runCli, tempProject } from "./helpers";
+import { runCli, runsIf, tempProject } from "./helpers";
 
 // Other test files leave services in the shared registry; names here repeat.
 beforeEach(resetGlobalRegistry);
@@ -240,7 +240,9 @@ describe("brick db on SQLite", () => {
 
 const url = process.env.TEST_DATABASE_URL;
 // describe.skip still runs this body, so it must not connect without a URL.
-(url ? describe : describe.skip)("brick db on Postgres", () => {
+(runsIf(Boolean(url), "set TEST_DATABASE_URL to run brick db on Postgres")
+  ? describe
+  : describe.skip)("brick db on Postgres", () => {
   const name = `brick_db_${randomUUID().slice(0, 8)}`;
   const admin = new SQL(url ?? "postgres://localhost/unused");
   const target = new URL(url ?? "postgres://localhost/unused");

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { bundleComponents } from "../src/dashboard-extension";
 import { DevDocs, DocsHost, openDocs } from "../src/dev-docs";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
-import { settle, tempProject, waitFor } from "./helpers";
+import { nodeVersion, runsIf, settle, tempProject, waitFor } from "./helpers";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -439,25 +439,28 @@ describe("DocsHost", () => {
 describe("under Node", () => {
   // The Vite dev server runs under Node, where there is no Bun.build and the
   // project's components are bundled by Vite instead.
-  it("opens the docs, compiles a page, and bundles components", async () => {
-    const root = await project({
-      "docs/index.mdx":
-        "---\ntitle: Home\n---\n\n## Part\n\nHello <Thing />.\n",
-      "docs/components.tsx":
-        "export const Thing = () => <i>thing</i>;\nexport const components = { Thing };\n",
-    });
-    // Bundled inside the package, so Node finds fumadocs-core and Vite there.
-    const out = await tempProject("node-docs");
-    roots.push(out);
-    const built = await Bun.build({
-      entrypoints: [join(import.meta.dir, "../src/dev-docs.ts")],
-      outdir: out,
-      target: "node",
-      format: "esm",
-      packages: "external",
-    });
-    expect(built.success).toBe(true);
-    const script = `
+  const hasNode = runsIf(Boolean(nodeVersion()), "Node is not installed");
+  it.if(hasNode)(
+    "opens the docs, compiles a page, and bundles components",
+    async () => {
+      const root = await project({
+        "docs/index.mdx":
+          "---\ntitle: Home\n---\n\n## Part\n\nHello <Thing />.\n",
+        "docs/components.tsx":
+          "export const Thing = () => <i>thing</i>;\nexport const components = { Thing };\n",
+      });
+      // Bundled inside the package, so Node finds fumadocs-core and Vite there.
+      const out = await tempProject("node-docs");
+      roots.push(out);
+      const built = await Bun.build({
+        entrypoints: [join(import.meta.dir, "../src/dev-docs.ts")],
+        outdir: out,
+        target: "node",
+        format: "esm",
+        packages: "external",
+      });
+      expect(built.success).toBe(true);
+      const script = `
       import { openDocs } from ${JSON.stringify(join(out, "dev-docs.js"))};
       const opened = await openDocs({ base: ${JSON.stringify(root)},
         documentation: { dir: "./docs", components: "./docs/components.tsx" }, warn: console.warn });
@@ -473,20 +476,22 @@ describe("under Node", () => {
         bundleImportsReact: /from\\s*["']react\\/jsx-(dev-)?runtime["']/.test(bundle),
         hits: hits.length > 0 }));
     `;
-    const result = Bun.spawnSync(
-      ["node", "--input-type=module", "-e", script],
-      {
-        stderr: "pipe",
-      },
-    );
-    expect(result.stderr.toString()).not.toContain("Error");
-    expect(JSON.parse(result.stdout.toString())).toEqual({
-      runtime: "node",
-      toc: [{ title: "Part", url: "#part", depth: 2 }],
-      shiki: true,
-      bundleHasThing: true,
-      bundleImportsReact: true,
-      hits: true,
-    });
-  }, 60000);
+      const result = Bun.spawnSync(
+        ["node", "--input-type=module", "-e", script],
+        {
+          stderr: "pipe",
+        },
+      );
+      expect(result.stderr.toString()).not.toContain("Error");
+      expect(JSON.parse(result.stdout.toString())).toEqual({
+        runtime: "node",
+        toc: [{ title: "Part", url: "#part", depth: 2 }],
+        shiki: true,
+        bundleHasThing: true,
+        bundleImportsReact: true,
+        hits: true,
+      });
+    },
+    60000,
+  );
 });

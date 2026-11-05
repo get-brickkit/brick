@@ -100,3 +100,21 @@ export function resetTracing(): void {
   context.disable();
   propagation.disable();
 }
+
+/** Node's [major, minor] version, or undefined when `node` is not installed. */
+export function nodeVersion(): [number, number] | undefined {
+  if (!Bun.which("node")) return undefined;
+  const [major = 0, minor = 0] = Bun.spawnSync(["node", "--version"])
+    .stdout.toString()
+    .trim()
+    .replace(/^v/, "")
+    .split(".")
+    .map(Number);
+  return [major, minor];
+}
+
+/** `ok`, after saying why the tests it gates are skipped when it is false. */
+export function runsIf(ok: boolean, reason: string): boolean {
+  if (!ok) console.warn(`Skipping: ${reason}`);
+  return ok;
+}
