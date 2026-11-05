@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,9 +21,12 @@ var (
 		// A callee that never answers fails the call as SERVICE_UNAVAILABLE, as in TS and Rust.
 		Timeout: 30 * time.Second,
 		// A redirect would carry the internal token to wherever it points.
-		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if req.Header.Get("x-brick-internal") != "" {
 				return http.ErrUseLastResponse
+			}
+			if len(via) >= 10 { // net/http's default limit
+				return errors.New("stopped after 10 redirects")
 			}
 			return nil
 		},

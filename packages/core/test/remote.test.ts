@@ -80,6 +80,7 @@ function app() {
       caller: ctx.caller,
       tenantId: ctx.tenantId,
       requestId: ctx.requestId,
+      sawToken: "x-brick-internal" in (ctx.metadata?.headers ?? {}),
     }),
   });
   return brick({
@@ -257,6 +258,7 @@ describe("remote services", () => {
       caller: "billing",
       tenantId: "t1",
       requestId: "req-7",
+      sawToken: false,
     });
     const invalid = await post(
       "/_brick/call/orders/whoami",

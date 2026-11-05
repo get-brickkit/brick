@@ -633,7 +633,14 @@ function mountInternalCalls(
           request,
           requestId,
           traceId,
-          metadata: { headers: Object.fromEntries(request.headers) },
+          metadata: {
+            // The internal token is the gateway's secret, not the action's.
+            headers: Object.fromEntries(
+              [...request.headers].filter(
+                ([name]) => name !== "x-brick-internal",
+              ),
+            ),
+          },
           logger: createLogger(`[${service!.name}:${action.name}]`),
           ...envelope,
         },

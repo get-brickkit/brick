@@ -500,6 +500,8 @@ CMD ["/bin/sh", "-c", "bun dist/brick/server.js"]
 exports[`brick build --deploy writes every target: compose/app.Dockerfile.dockerignore 1`] = `
 "**/node_modules
 **/.git
+**/.env
+**/.env.*
 dist
 deploy
 "
@@ -527,6 +529,8 @@ exports[`brick build --deploy writes every target: compose/billing.Dockerfile.do
 "**/target
 **/node_modules
 **/.git
+**/.env
+**/.env.*
 "
 `;
 
@@ -552,6 +556,8 @@ exports[`brick build --deploy writes every target: compose/fx-rates.Dockerfile.d
 "**/target
 **/node_modules
 **/.git
+**/.env
+**/.env.*
 "
 `;
 

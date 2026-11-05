@@ -571,11 +571,11 @@ export function deployFiles(
     for (const u of table.upstreams) {
       files[`compose/${u.name}.Dockerfile`] = dockerfile(table, u);
       // Docker reads <Dockerfile>.dockerignore: keep build output and host
-      // installs (native modules built for another OS) out of the context.
+      // installs (native modules built for another OS) and secrets out of the context.
       files[`compose/${u.name}.Dockerfile.dockerignore`] =
         u.language === "ts"
-          ? "**/node_modules\n**/.git\ndist\ndeploy\n"
-          : "**/target\n**/node_modules\n**/.git\n";
+          ? "**/node_modules\n**/.git\n**/.env\n**/.env.*\ndist\ndeploy\n"
+          : "**/target\n**/node_modules\n**/.git\n**/.env\n**/.env.*\n";
     }
   }
   return files;
