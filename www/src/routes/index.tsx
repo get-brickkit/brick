@@ -13,6 +13,36 @@ import mainSource from "../../../examples/showcase/src/main.ts?raw";
 import serverSource from "../../../examples/showcase/src/server.ts?raw";
 
 export const Route = createFileRoute("/")({
+  head: () => ({
+    meta: [
+      {
+        name: "keywords",
+        content: "Brick, TypeScript backend framework, Bun, API, MCP",
+      },
+    ],
+    scripts: [
+      {
+        type: "application/ld+json",
+        children: JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "SoftwareApplication",
+          name: "Brick",
+          description: site.description,
+          url: site.url,
+          applicationCategory: "DeveloperApplication",
+          operatingSystem: "Bun",
+          keywords: "TypeScript backend framework",
+          sameAs: ["https://github.com/get-brickkit/brick"],
+          publisher: {
+            "@type": "Organization",
+            name: "Brick",
+            url: site.url,
+            sameAs: ["https://github.com/get-brickkit"],
+          },
+        }),
+      },
+    ],
+  }),
   component: Home,
 });
 

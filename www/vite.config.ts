@@ -15,7 +15,7 @@ const docsPages = docsPagePaths(
 // Vercel routes run before its static files. Static HTML and negotiated markdown
 // share a URL, so caches must key on Accept, and a request for markdown goes to
 // the server function.
-const docsPath = "^/docs(?:/.*)?$";
+const docsPath = "^/(?:docs(?:/.*)?)?$";
 const docsRoutes = [
   { src: docsPath, headers: { Vary: "Accept" }, continue: true },
   {
