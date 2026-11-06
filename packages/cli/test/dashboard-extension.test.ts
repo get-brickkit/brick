@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  mergeExtensions,
   mergeNav,
   type DashboardExtension,
   type NavItem,
@@ -185,6 +186,38 @@ describe("themeCss", () => {
       (match) => match[1],
     );
     expect([...THEME_TOKENS].sort()).toEqual(tokens.sort());
+  });
+});
+
+describe("mergeExtensions", () => {
+  it("skips a page mergeNav would throw on, so the rest still merge", () => {
+    const original = console.error;
+    console.error = () => {};
+    try {
+      const merged = mergeExtensions([
+        {
+          name: "app",
+          plugin: false,
+          extension: { pages: [{ id: "ok", label: "Ok", component: Page }] },
+        },
+        {
+          name: "plugin",
+          plugin: true,
+          extension: {
+            pages: [
+              { id: "bad id", label: "A", component: Page },
+              { id: "overview", label: "B", component: Page },
+              { id: "both", label: "C", component: Page, url: "/x" },
+              { id: "lost", label: "D", component: Page, after: "nowhere" },
+            ],
+          },
+        },
+      ]);
+      expect(merged.pages?.map((page) => page.id)).toEqual(["ok"]);
+      expect(() => mergeNav(builtIn, merged, false)).not.toThrow();
+    } finally {
+      console.error = original;
+    }
   });
 });
 
@@ -433,11 +466,11 @@ describe("plugin dashboard extensions", () => {
         writeFileSync(join(folder, name), source);
       write(
         "app.js",
-        `export default { pages: [{ id: "queues", label: "Queues", after: "overview" }], slots: { "topbar.end": "app", "request.drawer.tabs": [{ id: "a" }] } };`,
+        `export default { pages: [{ id: "queues", label: "Queues", url: "/q", after: "overview" }], slots: { "topbar.end": "app", "request.drawer.tabs": [{ id: "a" }] } };`,
       );
       write(
         "plugin.js",
-        `export default { pages: [{ id: "comments", label: "Comments" }, { id: "queues", label: "Dup" }], slots: { "topbar.end": "plugin", "request.drawer.tabs": [{ id: "b" }] }, sidebar: [{ label: "Docs", href: "https://x" }] };`,
+        `export default { pages: [{ id: "comments", label: "Comments", url: "/c" }, { id: "queues", label: "Dup", url: "/d" }], slots: { "topbar.end": "plugin", "request.drawer.tabs": [{ id: "b" }] }, sidebar: [{ label: "Docs", href: "https://x" }] };`,
       );
       write("broken.js", `throw new Error("boom");`);
       const errors: unknown[][] = [];
