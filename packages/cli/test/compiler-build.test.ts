@@ -234,6 +234,9 @@ export default brick({ dashboard: { port: ${dashboardPort} } });
         "app.ts",
         // AOT needs elysia beside the entry; this test is about the dashboard.
         "--no-aot",
+        // The entry resolves the extension folder at start-up.
+        "--dashboard-extension",
+        join(root, "packages/cli/test/fixtures/dashboard-extension/index.tsx"),
       ],
       { cwd: dir, stdout: "pipe", stderr: "pipe" },
     );

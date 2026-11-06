@@ -90,7 +90,8 @@ export async function buildApplication(options: BuildApplicationOptions) {
       ? join(outdir, "dashboard")
       : undefined;
     const theme = JSON.stringify(options.dashboard?.theme);
-    const source = `import { loadCompiledBrickApp } from "@brickkit/core";
+    const source = `import { fileURLToPath } from "node:url";
+import { loadCompiledBrickApp } from "@brickkit/core";
 import { resolvePort } from ${JSON.stringify(ownModule("config"))};
 import { serveApp, shutdownOnSignal } from ${JSON.stringify(ownModule("serve"))};
 import { ir } from "./routes.js";
