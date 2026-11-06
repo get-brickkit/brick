@@ -340,7 +340,7 @@ export function startDevDashboard(
   ): Promise<void> {
     const body = await readBytes(request, MAX_INGEST_BYTES);
     if (!body) {
-      send(response, 413, "Payload too large");
+      tooLarge(response);
       return;
     }
     let payload: IngestPayload | null;
@@ -566,7 +566,7 @@ export function startDevDashboard(
     }
     const body = await readBytes(request, MAX_PROXY_BYTES);
     if (!body) {
-      send(response, 413, "Payload too large");
+      tooLarge(response);
       return;
     }
     const cookie = url.searchParams.get("cookie");
@@ -672,7 +672,7 @@ function readBytes(
     request.on("data", (chunk: Buffer) => {
       size += chunk.length;
       if (size > limit) {
-        // Stop reading; the caller answers, then the connection closes.
+        // Stop buffering; tooLarge() answers and closes the connection.
         request.removeAllListeners("data");
         request.resume();
         resolve(undefined);
@@ -762,6 +762,14 @@ function serveAsset(response: ServerResponse, name: string): void {
       }),
     () => send(response, 404, "Not found"),
   );
+}
+
+function tooLarge(response: ServerResponse): void {
+  // Closing after the 413 stops the rest of the upload being read.
+  send(response, 413, "Payload too large", {
+    "content-type": "text/plain; charset=utf-8",
+    connection: "close",
+  });
 }
 
 function send(

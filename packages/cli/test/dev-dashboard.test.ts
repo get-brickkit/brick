@@ -82,7 +82,9 @@ describe("startDevDashboard", () => {
       });
     try {
       expect((await post("null")).status).toBe(400);
-      expect((await post("x".repeat(6 * 1024 * 1024))).status).toBe(413);
+      const tooLarge = await post("x".repeat(6 * 1024 * 1024));
+      expect(tooLarge.status).toBe(413);
+      expect(tooLarge.headers.get("connection")).toBe("close");
     } finally {
       dashboard.stop();
     }
