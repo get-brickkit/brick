@@ -83,7 +83,7 @@ export function decodeHistoryQuery(
     const raw = params.get(name);
     if (raw === null || raw.trim() === "") return undefined;
     const value = Number(raw);
-    return Number.isFinite(value) ? value : undefined;
+    return Number.isFinite(value) ? Math.trunc(value) : undefined;
   };
   const all = (name: string): string[] | undefined => {
     const values = params.getAll(name).filter((value) => value !== "");

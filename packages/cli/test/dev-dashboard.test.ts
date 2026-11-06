@@ -72,6 +72,22 @@ describe("startDevDashboard", () => {
     }
   });
 
+  it("answers 413 to an oversized ingest body and 400 to a JSON null", async () => {
+    const { dashboard, base } = await setup();
+    const post = (body: string) =>
+      fetch(`${base}/api/ingest`, {
+        method: "POST",
+        headers: { "x-brick-dashboard": "1" },
+        body,
+      });
+    try {
+      expect((await post("null")).status).toBe(400);
+      expect((await post("x".repeat(6 * 1024 * 1024))).status).toBe(413);
+    } finally {
+      dashboard.stop();
+    }
+  });
+
   it("hides restart when the host cannot restart the application", async () => {
     const { dashboard, base } = await setup();
     try {

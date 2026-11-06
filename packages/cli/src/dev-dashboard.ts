@@ -343,10 +343,13 @@ export function startDevDashboard(
       send(response, 413, "Payload too large");
       return;
     }
-    let payload: IngestPayload;
+    let payload: IngestPayload | null;
     try {
       payload = JSON.parse(Buffer.from(body).toString("utf8")) as IngestPayload;
     } catch {
+      payload = null;
+    }
+    if (payload === null || typeof payload !== "object") {
       send(response, 400, "Bad request");
       return;
     }
@@ -669,8 +672,10 @@ function readBytes(
     request.on("data", (chunk: Buffer) => {
       size += chunk.length;
       if (size > limit) {
+        // Stop reading; the caller answers, then the connection closes.
+        request.removeAllListeners("data");
+        request.resume();
         resolve(undefined);
-        request.destroy();
         return;
       }
       chunks.push(chunk);

@@ -161,7 +161,7 @@ describe("brick dev dashboard on/off", () => {
   it("rejects an extension flag when the config turns the dashboard off", () => {
     expect(() =>
       resolveDevDashboard(false, { dashboardExtension: "x.ts" }),
-    ).toThrow("--dashboard-extension cannot be combined");
+    ).toThrow("needs the dashboard, which dev.dashboard: false");
   });
 });
 

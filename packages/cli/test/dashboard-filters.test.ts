@@ -328,3 +328,8 @@ describe("sparkGroups", () => {
     });
   });
 });
+
+it("reads a fractional limit or offset as a whole number, which SQLite needs", () => {
+  const query = decodeHistoryQuery(new URLSearchParams("limit=1.5&offset=2.5"));
+  expect([query.limit, query.offset]).toEqual([1, 2]);
+});

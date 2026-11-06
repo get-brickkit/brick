@@ -258,7 +258,9 @@ export function resolveDevDashboard(
       flags.historyDays === undefined);
   if (off && flags.dashboardExtension)
     throw new ConfigError(
-      "Brick: --dashboard-extension cannot be combined with --no-dashboard.",
+      flags.dashboard === false
+        ? "Brick: --dashboard-extension cannot be combined with --no-dashboard."
+        : "Brick: --dashboard-extension needs the dashboard, which dev.dashboard: false in the config turns off.",
     );
   if (off) return false;
   const settings = configured || undefined;
