@@ -16,7 +16,9 @@ import {
 import { writeServiceManifest } from "./manifest";
 
 const posix = (path: string) => path.split(sep).join("/");
-const SOURCE = new Bun.Glob(`**/*.{${DEFINITION_EXTENSIONS.join(",")}}`);
+const SOURCE = new Bun.Glob(
+  `**/*.{${[...DEFINITION_EXTENSIONS, "cts"].join(",")}}`,
+);
 
 interface AppCheck {
   root: string;
@@ -130,14 +132,8 @@ async function checkApp(check: AppCheck): Promise<LintMessage[]> {
   } catch (error) {
     // An app that cannot start fails lint, even with unique-names off.
     if ((error as Error).name === "DuplicateNameError") {
-      const severity = check.severity("unique-names");
       return [
-        message(
-          "unique-names",
-          severity === "off" ? "error" : severity,
-          check.entry,
-          (error as Error).message,
-        ),
+        message("unique-names", "error", check.entry, (error as Error).message),
       ];
     }
     throw error;

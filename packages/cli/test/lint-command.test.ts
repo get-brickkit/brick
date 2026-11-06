@@ -200,6 +200,30 @@ export default orders.action({ name: "get-summary", execute: () => null });
   expect(result.stdout).toMatch(/src\/app\.ts:1:1 {2}error .*"get-summary"/);
 });
 
+it("fails an app with duplicate names when unique-names is only a warning", async () => {
+  const root = await project({
+    ...BASE,
+    "brick.config.ts": `export default { lint: { presets: [], rules: { "brick/unique-names": "warn" } } };\n`,
+    [`${S}/orders/actions/get-summary-copy.action.ts`]: `import { orders } from "../orders.service";
+
+export default orders.action({ name: "get-summary", execute: () => null });
+`,
+  });
+  const result = await lint(root);
+  expect(result.code).toBe(1);
+  expect(result.stdout).toMatch(/src\/app\.ts:1:1 {2}error .*"get-summary"/);
+});
+
+it("scans .cts sources", async () => {
+  const root = await project({
+    ...BASE,
+    "brick.config.ts": `export default { lint: { presets: [] } };\n`,
+    [`${S}/billing/lib/schema.cts`]: `export { ordersTable as orders } from "../../orders/schema";\n`,
+  });
+  const result = await lint(root);
+  expect(result.stdout).toContain(`${S}/billing/lib/schema.cts:1:1`);
+});
+
 it("no-cross-service-tables sees tables re-exported from another service", async () => {
   const root = await project({
     ...BASE,
