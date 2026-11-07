@@ -12,6 +12,16 @@ type Step = {
 };
 type Job = {
   "runs-on": string;
+  services?: Record<
+    string,
+    {
+      image: string;
+      env?: Record<string, string>;
+      ports: string[];
+      options: string;
+    }
+  >;
+  env?: Record<string, string>;
   needs?: string | string[];
   if?: string;
   strategy?: { "fail-fast": boolean; matrix: { pkg: string } };
@@ -102,6 +112,15 @@ test("every published package has its own test script", async () => {
         await Bun.file(join(ROOT, "packages", pkg, "package.json")).json()
       ).scripts?.test,
     ]).toEqual([pkg, "string"]);
+});
+
+test("release validation provides the database and broker required by core tests", async () => {
+  const ci = await readWorkflow("ci.yml");
+  expect(validate!.services).toEqual(ci.jobs.packages!.services);
+  expect(validate!.env?.TEST_DATABASE_URL).toBe(
+    "postgres://brick:brick@localhost:5432/brick_test",
+  );
+  expect(validate!.env?.REDIS_URL).toBe("redis://localhost:6379/9");
 });
 
 test("candidate preparation cannot commit or publish, and dry runs stop after validation", () => {

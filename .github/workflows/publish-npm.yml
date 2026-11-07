@@ -92,6 +92,26 @@ jobs:
   validate:
     needs: prepare
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: brick
+          POSTGRES_PASSWORD: brick
+          POSTGRES_DB: brick_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U brick" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://brick:brick@localhost:5432/brick_test
+      REDIS_URL: redis://localhost:6379/9
     strategy:
       fail-fast: false
       matrix:
@@ -197,7 +217,7 @@ jobs:
         # needs core, so never publish one before the version it depends on.
         run: |
           for dep in $(node -p "Object.keys(require('./package.json').dependencies ?? {}).filter((name) => name.startsWith('@brickkit/')).join(' ')"); do
-            for attempt in $(seq 60); do
+            for _attempt in $(seq 60); do
               npm view "$dep@$PACKAGE_VERSION" version >/dev/null 2>&1 && continue 2
               sleep 10
             done
@@ -240,7 +260,7 @@ jobs:
           git add packages/*/package.json bun.lock
           git commit -m "chore(release): $RELEASE_TAG"
           git tag "$RELEASE_TAG"
-          for attempt in 1 2 3; do
+          for _attempt in 1 2 3; do
             git fetch origin "$RELEASE_BRANCH"
             git merge --no-edit FETCH_HEAD
             if git push --atomic origin "HEAD:refs/heads/$RELEASE_BRANCH" "$RELEASE_TAG"; then

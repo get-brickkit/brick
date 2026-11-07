@@ -70,12 +70,28 @@ export const ENTRY_POINTS: EntryPoint[] = [
       "The brick command's building blocks: the dev and production servers, contract generation, and the OpenAPI pages.",
   },
   {
+    slug: "cli-config",
+    specifier: "@brickkit/cli/config",
+    file: "packages/cli/src/config.ts",
+    tsconfig: "packages/cli/tsconfig.build.json",
+    description:
+      "Define and validate brick.config.ts, resolve project paths, and apply CLI flag defaults.",
+  },
+  {
     slug: "cli-compiler",
     specifier: "@brickkit/cli/compiler",
     file: "packages/cli/src/compiler.ts",
     tsconfig: "packages/cli/tsconfig.build.json",
     description:
       "Emit the JavaScript module of a compiled application's route handlers, and each handler factory, for an ahead-of-time build.",
+  },
+  {
+    slug: "cli-production-dashboard",
+    specifier: "@brickkit/cli/production-dashboard",
+    file: "packages/cli/src/production-dashboard.ts",
+    tsconfig: "packages/cli/tsconfig.build.json",
+    description:
+      "Serve the production dashboard with bearer authentication and database access controls.",
   },
   {
     slug: "cli-dashboard",
