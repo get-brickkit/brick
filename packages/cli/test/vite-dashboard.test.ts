@@ -1,10 +1,12 @@
 import { afterAll, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 import { context, propagation, trace } from "@opentelemetry/api";
 import { createServer } from "vite";
 import { brickClient } from "../src/vite";
+import { startViteDashboard } from "../src/dev-vite-dashboard";
+import { freePort, tempProject, waitFor } from "./helpers";
 
 afterAll(() => {
   // The tracer provider is process-wide; release it for other test files.
@@ -13,23 +15,13 @@ afterAll(() => {
   propagation.disable();
 });
 
-async function freePort() {
-  const listener = Bun.serve({ port: 0, fetch: () => new Response() });
-  const port = listener.port;
-  listener.stop(true);
-  return port;
-}
-
 async function eventually<T>(
   read: () => Promise<T>,
   done: (value: T) => boolean,
 ) {
-  const deadline = Date.now() + 5000;
-  let value = await read();
-  while (!done(value) && Date.now() < deadline) {
-    await Bun.sleep(50);
-    value = await read();
-  }
+  let value!: T;
+  // On timeout, return the last value so the assertion shows it.
+  await waitFor(async () => done((value = await read())), 5000).catch(() => {});
   return value;
 }
 
@@ -58,9 +50,7 @@ export default brick({ services: [service], requestLogging: false, telemetry: tr
 }
 
 it("serves the dashboard for the app's requests during vite dev", async () => {
-  const root = await mkdtemp(
-    resolve(import.meta.dir, "../.brick-vite-dashboard-"),
-  );
+  const root = await tempProject("vite-dashboard");
   await writeApp(root);
   const port = await freePort();
   const server = await createServer({
@@ -126,9 +116,7 @@ it("serves the dashboard for the app's requests during vite dev", async () => {
 }, 30000);
 
 it("keeps nothing on disk when history is turned off", async () => {
-  const root = await mkdtemp(
-    resolve(import.meta.dir, "../.brick-vite-dashboard-"),
-  );
+  const root = await tempProject("vite-dashboard");
   await writeApp(root);
   const port = await freePort();
   const server = await createServer({
@@ -157,9 +145,7 @@ it("keeps nothing on disk when history is turned off", async () => {
 }, 30000);
 
 it("gives the dashboard the app's API documents and where the server listens", async () => {
-  const root = await mkdtemp(
-    resolve(import.meta.dir, "../.brick-vite-dashboard-"),
-  );
+  const root = await tempProject("vite-dashboard");
   await writeApp(
     root,
     `, title: "Echo API", reference: { documents: [
@@ -215,9 +201,7 @@ it("gives the dashboard the app's API documents and where the server listens", a
 }, 30000);
 
 it("shows the app's developer documentation, relative to the app entry, and follows edits", async () => {
-  const root = await mkdtemp(
-    resolve(import.meta.dir, "../.brick-vite-dashboard-"),
-  );
+  const root = await tempProject("vite-dashboard");
   // The app lives in src/, the docs beside src/: "../docs" reads from app.ts.
   await writeApp(root, `, documentation: "../docs"`, "src");
   await Bun.write(
@@ -267,9 +251,7 @@ it("shows the app's developer documentation, relative to the app entry, and foll
 }, 30000);
 
 it("has no docs when the app sets no documentation", async () => {
-  const root = await mkdtemp(
-    resolve(import.meta.dir, "../.brick-vite-dashboard-"),
-  );
+  const root = await tempProject("vite-dashboard");
   await writeApp(root);
   const port = await freePort();
   const server = await createServer({
@@ -293,3 +275,26 @@ it("has no docs when the app sets no documentation", async () => {
     await rm(root, { recursive: true, force: true });
   }
 }, 30000);
+
+it("names the plugin's own option when the dashboard port is taken", async () => {
+  const taken = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => new Response(),
+  });
+  const warnings: string[] = [];
+  try {
+    const dashboard = await startViteDashboard({
+      port: taken.port,
+      directory: import.meta.dir,
+      entry: join(import.meta.dir, "app.ts"),
+      historyDays: 0,
+      logger: { info() {}, warn: (message) => warnings.push(message) },
+    });
+    expect(dashboard).toBeUndefined();
+    expect(warnings.join("\n")).toContain("dashboard.port in brickClient()");
+    expect(warnings.join("\n")).not.toContain("--dashboard-port");
+  } finally {
+    taken.stop(true);
+  }
+});

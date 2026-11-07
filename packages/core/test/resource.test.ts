@@ -7,6 +7,7 @@ import {
   text,
   integer,
 } from "../src";
+import { portOf } from "../src/service-port";
 import { defineElsewhere } from "./fixtures/define-elsewhere";
 const rows = sqliteTable("generic_rows", {
   key: text("key").primaryKey(),
@@ -60,6 +61,6 @@ describe("resource declarations", () => {
         }),
       ),
     ).toThrow("failed");
-    expect(service.listPreparations()).toEqual([]);
+    expect(portOf(service).listPreparations()).toEqual([]);
   });
 });

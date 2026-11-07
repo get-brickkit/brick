@@ -1,128 +1,33 @@
 import type { Attributes } from "@opentelemetry/api";
 import type { ApiDocument, ArchitectureSchema } from "@brickkit/core";
-import type { DevHistory } from "./dev-history";
-import type {
-  SerializedError,
-  SpanEndRecord,
-  SpanEventRecord,
-  SpanStartRecord,
-  TelemetryRecord,
-  WorkerErrorPhase,
-} from "./dev-telemetry";
+import {
+  ATTR,
+  LIVE_LIMITS,
+  type ApiSnapshot,
+  type ArchitectureSnapshot,
+  type DevTelemetryEvent,
+  type DevTelemetrySnapshot,
+  type DocsSnapshot,
+  type FailureSummary,
+  type ReloadSummary,
+  type SerializedError,
+  type SpanEndRecord,
+  type SpanOutcome,
+  type SpanStartRecord,
+  type TelemetryRecord,
+  type TraceSpan,
+  type TraceSummary,
+  type WorkerErrorPhase,
+} from "./dashboard-protocol";
+import {
+  actionSpan,
+  CLIENT_ERROR,
+  findException,
+  outcomeOf,
+  stringAttribute,
+} from "./dashboard-query";
 
-export type SpanOutcome = "running" | "ok" | "error" | "interrupted";
-
-export interface TraceSpan {
-  spanId: string;
-  parentSpanId?: string;
-  name: string;
-  startMs: number;
-  endMs?: number;
-  status: SpanOutcome;
-  statusMessage?: string;
-  attributes: Attributes;
-  events: SpanEventRecord[];
-}
-
-export interface TraceSummary {
-  traceId: string;
-  name: string;
-  method?: string;
-  route?: string;
-  /** The request's actual path, which differs from a wildcard route template. */
-  path?: string;
-  httpStatus?: number;
-  generation: number;
-  startMs: number;
-  endMs?: number;
-  durationMs?: number;
-  status: SpanOutcome;
-  truncated: boolean;
-  /** The service and action that handled the request, when it ran one. */
-  service?: string;
-  action?: string;
-  /** Why it failed, when it did. */
-  message?: string;
-  spans: TraceSpan[];
-}
-
-export interface FailureSummary {
-  id: number;
-  at: number;
-  phase: "request" | WorkerErrorPhase;
-  code: string;
-  message: string;
-  status?: number;
-  stack?: string;
-  traceId?: string;
-  route?: string;
-  service?: string;
-  action?: string;
-  generation: number;
-}
-
-export type ReloadKind = "started" | "restarting" | "exited" | "contract-ready";
-
-export interface ReloadSummary {
-  id: number;
-  at: number;
-  kind: ReloadKind;
-  generation: number;
-  detail?: string;
-}
-
-/** Services, actions, and routes of the application as last started. */
-export interface ArchitectureSnapshot {
-  generation: number;
-  schema: ArchitectureSchema;
-}
-
-/** The OpenAPI documents the app offers, for the dashboard's APIs view. */
-export interface ApiSnapshot {
-  /** Changes each time the documents are replaced, so views know to reload. */
-  revision: number;
-  /** Where the app listens; Try it in the APIs view sends requests here. */
-  appUrl?: string;
-  /** Names of the documents, in order. */
-  titles: string[];
-}
-
-/** What the dashboard knows about the app's developer documentation. */
-export interface DocsSnapshot {
-  /** Changes whenever the pages change, so the Docs tab reloads. */
-  revision: number;
-  status: "ready" | "missing" | "error";
-  title: string;
-  /** Whether the project supplied components of its own. */
-  components: boolean;
-  /** Why the docs cannot be shown, when `status` is not ready. */
-  message?: string;
-  /** Packages to install, when `status` is "missing". */
-  packages?: string[];
-}
-
-export type DevTelemetryEvent =
-  | { type: "trace"; trace: TraceSummary }
-  | { type: "failure"; failure: FailureSummary }
-  | { type: "reload"; reload: ReloadSummary }
-  | { type: "architecture"; architecture: ArchitectureSnapshot }
-  | { type: "api"; api: ApiSnapshot }
-  | { type: "docs"; docs: DocsSnapshot | null }
-  | { type: "inspector"; inspector: boolean };
-
-export interface DevTelemetrySnapshot {
-  traces: TraceSummary[];
-  failures: FailureSummary[];
-  reloads: ReloadSummary[];
-  architecture: ArchitectureSnapshot | null;
-  api: ApiSnapshot | null;
-  /** Null when the app has no `documentation`. */
-  docs: DocsSnapshot | null;
-  /** Whether the app serves the workflow inspector the dashboard can show. */
-  inspector: boolean;
-}
-
-const LIMITS = { traces: 200, spansPerTrace: 500, failures: 200, reloads: 100 };
+const LIMITS = { ...LIVE_LIMITS, spansPerTrace: 500 };
 
 const WORKER_FAILURE_CODES: Record<WorkerErrorPhase, string> = {
   startup: "STARTUP_FAILED",
@@ -157,7 +62,7 @@ export class DevTelemetryStore {
   readonly #failures: FailureSummary[] = [];
   readonly #reloads: ReloadSummary[] = [];
   readonly #listeners = new Set<(event: DevTelemetryEvent) => void>();
-  readonly #history: DevHistory | undefined;
+  readonly #history: { saveTrace(trace: TraceSummary): void } | undefined;
   #architecture: ArchitectureSnapshot | null = null;
   #api: ApiSnapshot | null = null;
   #docs: DocsSnapshot | null = null;
@@ -166,8 +71,10 @@ export class DevTelemetryStore {
   #sequence = 0;
   #generation = 0;
 
-  /** Finished requests and failures are also kept in `history`, when given. */
-  constructor(options: { history?: DevHistory } = {}) {
+  /** Finished requests are also kept in `history`, when given. */
+  constructor(
+    options: { history?: { saveTrace(trace: TraceSummary): void } } = {},
+  ) {
     this.#history = options.history;
   }
 
@@ -230,7 +137,7 @@ export class DevTelemetryStore {
   }
 
   /** Begin a generation when an application process loads, and record the reload. */
-  startGeneration(detail: string): number {
+  startGeneration(detail?: string): number {
     this.#generation += 1;
     this.recordReload({
       kind: "started",
@@ -348,9 +255,9 @@ export class DevTelemetryStore {
     if (!parentIsLocal && entry.rootSpanId === undefined) {
       entry.rootSpanId = record.spanId;
       entry.name = record.name;
-      entry.method = stringAttribute(record.attributes, "http.request.method");
-      entry.route = stringAttribute(record.attributes, "http.route");
-      entry.path = stringAttribute(record.attributes, "url.path");
+      entry.method = stringAttribute(record.attributes, ATTR.httpMethod);
+      entry.route = stringAttribute(record.attributes, ATTR.httpRoute);
+      entry.path = stringAttribute(record.attributes, ATTR.urlPath);
     }
     if (entry.spans.size >= LIMITS.spansPerTrace) {
       entry.truncated = true;
@@ -390,22 +297,22 @@ export class DevTelemetryStore {
     span.attributes = { ...span.attributes, ...record.attributes };
     span.events = record.events;
 
-    const code = stringAttribute(record.attributes, "brick.error.code");
+    const code = stringAttribute(record.attributes, ATTR.errorCode);
     if (code !== undefined) {
       const exception = findException(record.events);
       this.#pushFailure({
         phase: "request",
         code,
         message:
-          stringAttribute(exception, "exception.message") ??
-          stringAttribute(record.attributes, "brick.error.message") ??
+          stringAttribute(exception, ATTR.exceptionMessage) ??
+          stringAttribute(record.attributes, ATTR.errorMessage) ??
           code,
-        status: numberAttribute(record.attributes, "brick.error.status"),
-        stack: stringAttribute(exception, "exception.stacktrace"),
+        status: numberAttribute(record.attributes, ATTR.errorStatus),
+        stack: stringAttribute(exception, ATTR.exceptionStack),
         traceId: entry.traceId,
         route: entry.route,
-        service: stringAttribute(record.attributes, "brick.service"),
-        action: stringAttribute(record.attributes, "brick.action"),
+        service: stringAttribute(record.attributes, ATTR.service),
+        action: stringAttribute(record.attributes, ATTR.action),
         generation: entry.generation,
       });
       entry.failureRecorded = true;
@@ -413,27 +320,26 @@ export class DevTelemetryStore {
 
     if (record.spanId !== entry.rootSpanId) return;
     entry.endMs = record.endMs;
-    entry.httpStatus = numberAttribute(
-      record.attributes,
-      "http.response.status_code",
-    );
+    entry.httpStatus = numberAttribute(record.attributes, ATTR.httpStatus);
     // Server faults make the trace an error. Client errors still show in the
     // Errors tab, so a raw route's 401 is visible without a coded failure.
     const status = entry.httpStatus ?? 0;
-    const serverFault = status >= 500;
-    const failed = record.status === "error" || serverFault;
-    entry.status = failed ? "error" : "ok";
-    if ((failed || status >= 400) && !entry.failureRecorded) {
+    const outcome = outcomeOf({
+      status: record.status === "error" ? "error" : "ok",
+      httpStatus: entry.httpStatus,
+    });
+    entry.status = outcome === "server" ? "error" : "ok";
+    if (outcome !== "ok" && !entry.failureRecorded) {
       const exception = findException(record.events);
       this.#pushFailure({
         phase: "request",
-        code: status >= 400 ? `HTTP_${status}` : "UNHANDLED_ERROR",
+        code: status >= CLIENT_ERROR ? `HTTP_${status}` : "UNHANDLED_ERROR",
         message:
-          stringAttribute(exception, "exception.message") ??
+          stringAttribute(exception, ATTR.exceptionMessage) ??
           record.statusMessage ??
           describeResponse(entry, status),
         status: entry.httpStatus,
-        stack: stringAttribute(exception, "exception.stacktrace"),
+        stack: stringAttribute(exception, ATTR.exceptionStack),
         traceId: entry.traceId,
         route: entry.route,
         generation: entry.generation,
@@ -465,8 +371,12 @@ export class DevTelemetryStore {
     for (const listener of this.#listeners) {
       try {
         listener(event);
-      } catch {
+      } catch (error) {
         this.#listeners.delete(listener);
+        console.warn(
+          "[Brick-TS] A dashboard client stopped receiving updates:",
+          error,
+        );
       }
     }
   }
@@ -474,7 +384,7 @@ export class DevTelemetryStore {
 
 function summarize(entry: TraceEntry): TraceSummary {
   const spans = [...entry.spans.values()].sort((a, b) => a.startMs - b.startMs);
-  const actionSpan = spans.find((span) => span.name.startsWith("action "));
+  const action = actionSpan(spans);
   return {
     traceId: entry.traceId,
     name: entry.name || spans[0]?.name || entry.traceId,
@@ -489,8 +399,8 @@ function summarize(entry: TraceEntry): TraceSummary {
       entry.endMs === undefined ? undefined : entry.endMs - entry.startMs,
     status: entry.status,
     truncated: entry.truncated,
-    service: stringAttribute(actionSpan?.attributes, "brick.service"),
-    action: stringAttribute(actionSpan?.attributes, "brick.action"),
+    service: stringAttribute(action?.attributes, ATTR.service),
+    action: stringAttribute(action?.attributes, ATTR.action),
     message: entry.message,
     spans,
   };
@@ -500,18 +410,6 @@ function describeResponse(entry: TraceEntry, status: number): string {
   const target = entry.path ?? entry.route ?? entry.name;
   const request = entry.method ? `${entry.method} ${target}` : target;
   return status ? `${request} returned ${status}` : request;
-}
-
-function findException(events: SpanEventRecord[]): Attributes | undefined {
-  return events.find((event) => event.name === "exception")?.attributes;
-}
-
-function stringAttribute(
-  attributes: Attributes | undefined,
-  key: string,
-): string | undefined {
-  const value = attributes?.[key];
-  return typeof value === "string" ? value : undefined;
 }
 
 function numberAttribute(

@@ -2,121 +2,112 @@ import { expect, test, spyOn } from "bun:test";
 import {
   defineAction,
   defineError,
-  errorsOf,
   defineService,
   t,
   brick,
   generateOpenApiSpec,
   ActionExecutionError,
   ValidationError,
-  createEndpointHandler,
-  compileBrickApplication,
-  compileRoutePlan,
-  emitHandlerFactory,
-  compilerRuntime,
 } from "../src";
 import { createTestApp } from "../src/testing";
+import { postJson } from "./helpers";
 
-for (const compiler of [true, false]) {
-  for (const scenario of [
-    "declared",
-    "validation",
-    "anonymous",
-    "signed-in",
-    "unexpected",
-  ] as const) {
-    test(`error parity (${compiler ? "compiled" : "generic"}): ${scenario}`, async () => {
-      const action = defineAction({
-        name: "fail",
-        input: t.Object({ value: t.String() }),
-        errors: { TAKEN: { message: "Taken", status: 409 } },
-        authorize: () => scenario !== "anonymous" && scenario !== "signed-in",
-        execute: ({ error }) => {
-          if (scenario === "declared") error.TAKEN();
-          throw new Error("private database password", {
-            cause: new Error("root cause"),
-          });
-        },
-      });
-      const service = defineService(`errors_${scenario}`, {
-        context: () => ({
-          user: scenario === "signed-in" ? { id: "u" } : undefined,
-        }),
-      }).action(action);
-      const { app, client } = createTestApp({
-        services: [service],
-        compiler,
-        contract: { errors: { fail: action } },
-      });
-      const input = { value: scenario === "validation" ? 1 : "ok" };
-      const expected =
-        scenario === "declared"
-          ? { code: "TAKEN", status: 409 }
-          : scenario === "validation"
-            ? { code: "VALIDATION_FAILED", status: 400 }
-            : scenario === "anonymous"
-              ? { code: "UNAUTHORIZED", status: 401 }
-              : scenario === "signed-in"
-                ? { code: "FORBIDDEN", status: 403 }
-                : { code: "INTERNAL_SERVER_ERROR", status: 500 };
-      const log = spyOn(console, "error").mockImplementation(() => {});
-      try {
-        const local = await action
-          .execute({ input: input as never })
-          .catch((error) => error);
-        expect(local).toMatchObject(expected);
-        const response = await app.handle(
-          new Request(`http://localhost/api/${service.name}/fail`, {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              "x-request-id": "test-request",
-            },
-            body: JSON.stringify(input),
-          }),
-        );
-        const envelope = await response.json();
-        expect(response.status).toBe(expected.status);
-        expect(envelope).toMatchObject({
-          ...expected,
-          requestId: "test-request",
+for (const scenario of [
+  "declared",
+  "validation",
+  "anonymous",
+  "signed-in",
+  "unexpected",
+] as const) {
+  test(`error parity: ${scenario}`, async () => {
+    const action = defineAction({
+      name: "fail",
+      input: t.Object({ value: t.String() }),
+      errors: { TAKEN: { message: "Taken", status: 409 } },
+      authorize: () => scenario !== "anonymous" && scenario !== "signed-in",
+      execute: ({ error }) => {
+        if (scenario === "declared") error.TAKEN();
+        throw new Error("private database password", {
+          cause: new Error("root cause"),
         });
-        const remote = await client.errors
-          .fail(input as never)
-          .catch((error) => error);
-        expect(remote).toMatchObject(expected);
-        if (scenario === "validation")
-          expect(remote).toBeInstanceOf(ValidationError);
-        if (scenario === "unexpected") {
-          expect(JSON.stringify(envelope)).not.toContain(
-            "private database password",
-          );
-          expect(log).toHaveBeenCalled();
-        }
-      } finally {
-        log.mockRestore();
-      }
+      },
     });
-  }
+    const service = defineService(`errors_${scenario}`, {
+      context: () => ({
+        user: scenario === "signed-in" ? { id: "u" } : undefined,
+      }),
+    }).action(action);
+    const { app, client } = createTestApp({
+      services: [service],
+      contract: { errors: { fail: action } },
+    });
+    const input = { value: scenario === "validation" ? 1 : "ok" };
+    const expected =
+      scenario === "declared"
+        ? { code: "TAKEN", status: 409 }
+        : scenario === "validation"
+          ? { code: "VALIDATION_FAILED", status: 400 }
+          : scenario === "anonymous"
+            ? { code: "UNAUTHORIZED", status: 401 }
+            : scenario === "signed-in"
+              ? { code: "FORBIDDEN", status: 403 }
+              : { code: "INTERNAL_SERVER_ERROR", status: 500 };
+    const log = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const local = await action
+        .execute({ input: input as never })
+        .catch((error) => error);
+      expect(local).toMatchObject(expected);
+      const response = await postJson(app, `/api/${service.name}/fail`, input, {
+        "x-request-id": "test-request",
+      });
+      const envelope = await response.json();
+      expect(response.status).toBe(expected.status);
+      expect(envelope).toMatchObject({
+        ...expected,
+        requestId: "test-request",
+      });
+      const remote = await client.errors
+        .fail(input as never)
+        .catch((error) => error);
+      expect(remote).toMatchObject(expected);
+      if (scenario === "validation")
+        expect(remote).toBeInstanceOf(ValidationError);
+      if (scenario === "unexpected") {
+        expect(JSON.stringify(envelope)).not.toContain(
+          "private database password",
+        );
+        expect(log).toHaveBeenCalled();
+      }
+    } finally {
+      log.mockRestore();
+    }
+  });
 }
 test("endpoint errors redact internals and include request id", async () => {
   const log = spyOn(console, "error").mockImplementation(() => {});
   const cause = new Error("private failure");
   try {
-    const handler = createEndpointHandler(
-      {
-        method: "GET",
-        path: "/fail",
-        handler: () => {
-          throw cause;
+    const app = brick({
+      services: [],
+      requestLogging: false,
+      endpoints: [
+        {
+          method: "GET",
+          path: "/fail",
+          handler: () => {
+            throw cause;
+          },
         },
-      },
-      [],
-    );
-    const result = await handler({
-      set: { headers: {} },
-      headers: { "x-request-id": "endpoint-id" },
+      ],
     });
+    const result = await (
+      await app.handle(
+        new Request("http://localhost/fail", {
+          headers: { "x-request-id": "endpoint-id" },
+        }),
+      )
+    ).json();
     expect(result).toMatchObject({
       name: "InternalServerError",
       code: "INTERNAL_SERVER_ERROR",
@@ -162,36 +153,7 @@ test("OpenAPI groups declared errors and uses shared envelopes", () => {
   );
 });
 
-test("emitted handler authorization uses the shared envelope", async () => {
-  for (const user of [undefined, { id: "guest" }]) {
-    const action = defineAction({
-      name: "emitted",
-      authorize: () => false,
-      execute: () => "ok",
-    });
-    const service = defineService("emitted_errors", {
-      context: () => ({ user }),
-    }).action(action);
-    const route = compileBrickApplication({ services: [service] }).ir
-      .routes[0]!;
-    const bind = new Function("return (" + emitHandlerFactory(route) + ")")();
-    const handler = bind(
-      compileRoutePlan(service, action, route.path, route.method),
-      compilerRuntime,
-    );
-    const result = await handler({
-      set: { headers: {} },
-      headers: { "x-request-id": "emitted-id" },
-    });
-    expect(result).toMatchObject({
-      code: user == null ? "UNAUTHORIZED" : "FORBIDDEN",
-      status: user == null ? 401 : 403,
-      requestId: "emitted-id",
-    });
-  }
-});
-
-test("emitted handlers redact synchronous and asynchronous failures and log causes", async () => {
+test("actions redact synchronous and asynchronous failures and log causes", async () => {
   const log = spyOn(console, "error").mockImplementation(() => {});
   const cause = new Error("private root cause");
   try {
@@ -204,23 +166,20 @@ test("emitted handlers redact synchronous and asynchronous failures and log caus
           throw failure;
         },
       });
-      const service = defineService("emitted_failure").action(action);
-      const route = compileBrickApplication({ services: [service] }).ir
-        .routes[0]!;
-      const bind = new Function("return (" + emitHandlerFactory(route) + ")")();
-      const handler = bind(
-        compileRoutePlan(service, action, route.path, route.method),
-        compilerRuntime,
+      const service = defineService("route_failure").action(action);
+      const response = await postJson(
+        brick({ services: [service], requestLogging: false }),
+        "/api/route_failure/failure",
+        {},
+        { "x-request-id": "route-failure-id" },
       );
-      const result = await handler({
-        set: { headers: {} },
-        headers: { "x-request-id": "emitted-failure-id" },
-      });
+      expect(response.status).toBe(500);
+      const result = await response.json();
       expect(result).toMatchObject({
         code: "INTERNAL_SERVER_ERROR",
         status: 500,
         message: "Internal Server Error",
-        requestId: "emitted-failure-id",
+        requestId: "route-failure-id",
       });
       expect(JSON.stringify(result)).not.toContain("private");
       expect(log.mock.calls.flat()).toContain(failure);
@@ -296,48 +255,43 @@ test("raw endpoint rejects invalid statuses and redacts unexpected server failur
   }
 });
 
-for (const compiler of [true, false]) {
-  test(`output validation redacts failing values and logs diagnostics (${compiler})`, async () => {
-    const action = defineAction({
-      name: "invalidOutput",
-      output: t.Object({ token: t.Number() }),
-      execute: () => ({ token: "private-output-token" }),
-    });
-    const service = defineService(`output_redaction_${compiler}`).action(
-      action,
-    );
-    const log = spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const app = brick({
-        services: [service],
-        compiler,
-        requestLogging: false,
-      });
-      const response = await app.handle(
-        new Request(`http://localhost/api/${service.name}/invalid-output`, {
-          method: "POST",
-        }),
-      );
-      expect(response.status).toBe(500);
-      const body = await response.json();
-      expect(body).toMatchObject({
-        name: "ValidationError",
-        code: "VALIDATION_FAILED",
-        status: 500,
-      });
-      expect(body).not.toHaveProperty("errors");
-      expect(JSON.stringify(body)).not.toContain("private-output-token");
-      const diagnostic = log.mock.calls
-        .flat()
-        .find((item) => item instanceof ValidationError);
-      expect(diagnostic?.errors).toContainEqual(
-        expect.objectContaining({ value: "private-output-token" }),
-      );
-    } finally {
-      log.mockRestore();
-    }
+test("output validation redacts failing values and logs diagnostics", async () => {
+  const action = defineAction({
+    name: "invalidOutput",
+    output: t.Object({ token: t.Number() }),
+    execute: () => ({ token: "private-output-token" }) as any,
   });
-}
+  const service = defineService("output_redaction").action(action);
+  const log = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const app = brick({
+      services: [service],
+      requestLogging: false,
+    });
+    const response = await app.handle(
+      new Request(`http://localhost/api/${service.name}/invalid-output`, {
+        method: "POST",
+      }),
+    );
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      name: "ValidationError",
+      code: "VALIDATION_FAILED",
+      status: 500,
+    });
+    expect(body).not.toHaveProperty("errors");
+    expect(JSON.stringify(body)).not.toContain("private-output-token");
+    const diagnostic = log.mock.calls
+      .flat()
+      .find((item) => item instanceof ValidationError);
+    expect(diagnostic?.errors).toContainEqual(
+      expect.objectContaining({ value: "private-output-token" }),
+    );
+  } finally {
+    log.mockRestore();
+  }
+});
 
 test("input validation keeps caller-provided values and endpoint output validation redacts them", async () => {
   const log = spyOn(console, "error").mockImplementation(() => {});
@@ -421,7 +375,6 @@ test("defineError types details, keeps plain errors loose, and shows in OpenAPI"
     slug: 1,
   });
 
-  expect(errorsOf(create)).toEqual(create.config.errors!);
   const spec = generateOpenApiSpec({
     services: [defineService("detail_errors").action(create)],
   });

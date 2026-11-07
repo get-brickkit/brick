@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
 import {
   brick,
@@ -11,9 +11,7 @@ import {
 import { asc } from "drizzle-orm";
 import { pgTable, serial, text } from "drizzle-orm/pg-core";
 import { crud } from "../src";
-
-const url = process.env.TEST_DATABASE_URL;
-const suite = url ? describe : describe.skip;
+import { suite, url } from "./postgres";
 
 const databases: { close?(): void | Promise<void> }[] = [];
 afterAll(async () => {

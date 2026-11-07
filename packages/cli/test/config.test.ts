@@ -1,36 +1,28 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { findConfigFile, loadConfig, validateConfig } from "../src/config";
-import { resolveDevPort } from "../src/port-utils";
+import {
+  findConfigFile,
+  loadConfig,
+  resolveDevDashboard,
+  resolvePort,
+  resolveProject,
+  validateConfig,
+} from "../src/config";
+import { runCli, tempProject } from "./helpers";
 
-const cli = resolve(import.meta.dir, "../src/bin.ts");
 const roots: string[] = [];
 
 async function project(files: Record<string, string>) {
-  const root = await mkdtemp(
-    resolve(import.meta.dir, "../.brick-config-test-"),
-  );
+  const root = await tempProject("config-test");
   roots.push(root);
   for (const [file, source] of Object.entries(files))
     await Bun.write(join(root, file), source);
   return root;
 }
 
-async function run(cwd: string, ...args: string[]) {
-  const child = Bun.spawn([process.execPath, cli, ...args], {
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, PORT: undefined },
-  });
-  const [code, stdout, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
-  return { code, stdout, stderr };
-}
+const run = (cwd: string, ...args: string[]) =>
+  runCli(args, { cwd, env: { PORT: undefined } });
 
 const APP = `import { brick, defineService, t } from "@brickkit/core";
 export const notes = defineService("notes");
@@ -116,6 +108,76 @@ describe("brick.config.ts validation", () => {
   });
 });
 
+describe("brick dev dashboard on/off", () => {
+  it.each([
+    ["on by default", undefined, {}, {}],
+    [
+      "config settings",
+      { port: 9500, historyDays: 7 },
+      {},
+      { port: 9500, historyDays: 7 },
+    ],
+    [
+      "flags win over config",
+      { port: 9500 },
+      { dashboardPort: 9600 },
+      { port: 9600 },
+    ],
+    ["--no-dashboard", undefined, { dashboard: false }, false],
+    ["off in config", false, {}, false],
+    [
+      "a port flag turns it back on",
+      false,
+      { dashboardPort: 9600 },
+      { port: 9600 },
+    ],
+    [
+      "a history flag turns it back on",
+      false,
+      { historyDays: 1 },
+      { historyDays: 1 },
+    ],
+  ] as const)("%s", (_name, configured, flags, expected) => {
+    const result = resolveDevDashboard(configured, flags);
+    if (expected === false) expect(result).toBe(false);
+    else
+      expect(result).toEqual({
+        port: undefined,
+        historyDays: undefined,
+        ...expected,
+      });
+  });
+
+  it.each([
+    [{ dashboard: false, dashboardPort: 9600 }, "--dashboard-port"],
+    [{ dashboard: false, historyDays: 1 }, "--history-days"],
+    [{ dashboard: false, dashboardExtension: "x.ts" }, "--dashboard-extension"],
+  ] as const)("rejects %o", (flags, flag) => {
+    expect(() => resolveDevDashboard(undefined, flags)).toThrow(
+      `${flag} cannot be combined with --no-dashboard`,
+    );
+  });
+
+  it("rejects an extension flag when the config turns the dashboard off", () => {
+    expect(() =>
+      resolveDevDashboard(false, { dashboardExtension: "x.ts" }),
+    ).toThrow("needs the dashboard, which dev.dashboard: false");
+  });
+});
+
+it("the package root, which still exports defineConfig, loads under Node", () => {
+  // ESLint may read brick.config.ts under Node, so nothing index reaches may
+  // touch Bun at load time (see scanDefinitionFiles). Needs `bun run build`.
+  const result = Bun.spawnSync([
+    "node",
+    "--input-type=module",
+    "-e",
+    `const m = await import(${JSON.stringify(resolve(import.meta.dir, "../dist/index.js"))}); console.log(typeof m.defineConfig);`,
+  ]);
+  expect(result.stderr.toString()).toBe("");
+  expect(result.stdout.toString().trim()).toBe("function");
+});
+
 describe("loading brick.config.ts", () => {
   it("finds the nearest config in parents, resolves paths from its folder, and is optional", async () => {
     const root = await project({
@@ -132,14 +194,31 @@ describe("loading brick.config.ts", () => {
     expect(loaded.generated).toBe(join(root, "gen"));
     const bare = await project({});
     expect(await loadConfig(undefined, bare)).toBeUndefined();
+    expect(await resolveProject(undefined, bare)).toMatchObject({
+      file: undefined,
+      root: bare,
+      entry: join(bare, "src/app.ts"),
+      contract: join(bare, "_brick/contract.ts"),
+      outdir: join(bare, "dist/brick"),
+    });
     await expect(loadConfig("nope.ts", bare)).rejects.toThrow("not found");
   });
 
-  it("resolves the dev port: flag, then PORT, then config, then 4000", () => {
-    expect(resolveDevPort(5000, 6000, "7000")).toBe(5000);
-    expect(resolveDevPort(undefined, 6000, "7000")).toBe(7000);
-    expect(resolveDevPort(undefined, 6000, undefined)).toBe(6000);
-    expect(resolveDevPort(undefined, undefined, undefined)).toBe(4000);
+  it("resolves the port: flag, then PORT, then config, then 4000, within 1-65535", () => {
+    expect(resolvePort(5000, 6000, "7000")).toBe(5000);
+    expect(resolvePort("5000", undefined, "7000")).toBe(5000);
+    expect(resolvePort(undefined, 6000, "7000")).toBe(7000);
+    expect(resolvePort(undefined, 6000, "")).toBe(6000);
+    expect(resolvePort(undefined, undefined, undefined)).toBe(4000);
+    expect(resolvePort("1", undefined, undefined)).toBe(1);
+    expect(resolvePort("65535", undefined, undefined)).toBe(65535);
+    for (const bad of ["0", "-1", "65536", "abc", "3000.5", ""])
+      expect(() => resolvePort(bad, undefined, undefined)).toThrow(
+        /Invalid port/,
+      );
+    expect(() => resolvePort(undefined, undefined, "invalid")).toThrow(
+      /Invalid port/,
+    );
   });
 });
 

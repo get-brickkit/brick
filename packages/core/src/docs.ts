@@ -1,4 +1,5 @@
 import { Elysia, type Context } from "elysia";
+import { OPENAPI_DEFAULTS } from "./openapi";
 
 /** An OpenAPI document as plain JSON. */
 export type OpenApiDocument = Record<string, unknown>;
@@ -68,11 +69,15 @@ export function scalarDocsHTML(specUrl: string, title: string): string {
 </html>`;
 }
 
-/** Standalone Elysia plugin serving GET <path> with the Scalar HTML page. */
+/**
+ * Standalone Elysia plugin serving GET <path> with the Scalar HTML page.
+ *
+ * @deprecated Use `brick({ reference: true })` or `reference: { path }`.
+ */
 export function referencePlugin(opts: ReferenceOptions = {}): Elysia {
   const path = opts.path ?? "/reference";
-  const title = opts.title ?? "Brick-TS API Mesh";
-  const specUrl = opts.specUrl ?? "/openapi.json";
+  const title = opts.title ?? OPENAPI_DEFAULTS.title;
+  const specUrl = opts.specUrl ?? OPENAPI_DEFAULTS.path;
   const plugin = new Elysia();
   plugin.get(path, ({ set }: Context) => {
     set.headers["content-type"] = "text/html; charset=utf-8";
@@ -81,7 +86,11 @@ export function referencePlugin(opts: ReferenceOptions = {}): Elysia {
   return plugin;
 }
 
-/** Mounts the Scalar reference route onto an existing app. */
+/**
+ * Mounts the Scalar reference route onto an existing app.
+ *
+ * @deprecated Use `brick({ reference: true })` or `reference: { path }`.
+ */
 export function registerReferenceRoute(
   app: Elysia,
   opts: ReferenceOptions = {},

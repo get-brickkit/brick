@@ -1,19 +1,24 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
-import { getPluginActionRoute, kebabCase } from "@brickkit/core";
-import { loadBrickApp, type BrickApp } from "./app-entry";
-import { ConfigError, type LoadedConfig } from "./config";
-import {
-  ALWAYS_ERROR,
-  fileRules,
-  resolveRules,
-  type Severity,
-} from "./lint/presets";
+import { isCrudEvent } from "@brickkit/core";
+import type { BrickApp, DatabaseHandle } from "@brickkit/core";
+import { loadBrickApp } from "./app-entry";
+import type { LoadedConfig } from "./config";
+import { APP_RULES, type Severity } from "./lint/presets";
+import { projectRules } from "./lint/project";
+import { serviceFolders } from "./lint/ast";
 import { runFileRules, type LintMessage } from "./lint/run";
+import {
+  DEFINITION_EXTENSIONS,
+  DEFINITION_FILE,
+  TEST_FILE,
+} from "./definitions";
 import { writeServiceManifest } from "./manifest";
 
 const posix = (path: string) => path.split(sep).join("/");
-const SOURCE = new Bun.Glob("**/*.{ts,tsx,mts,cts}");
+const SOURCE = new Bun.Glob(
+  `**/*.{${[...DEFINITION_EXTENSIONS, "cts"].join(",")}}`,
+);
 
 interface AppCheck {
   root: string;
@@ -30,56 +35,28 @@ interface AppCheck {
  */
 export async function runLint(options: {
   entry?: string;
-  project?: LoadedConfig;
+  project: LoadedConfig;
 }): Promise<number> {
-  const { project } = options;
-  const root = project?.root ?? process.cwd();
-  const config = project?.config.lint ?? {};
-  let resolved: Record<string, Severity>;
-  try {
-    resolved = resolveRules(config.presets, config.rules);
-  } catch (error) {
-    throw new ConfigError(
-      `brick.config.ts: lint.rules: ${(error as Error).message}`,
-    );
-  }
-  const fromRoot = (path: string) => posix(relative(root, path)) || ".";
-  const services = project?.services ?? resolve(root, "src/services");
-  const generated = project?.generated ?? resolve(root, "_brick");
-  const entry = options.entry
-    ? resolve(options.entry)
-    : (project?.entry ?? resolve(root, "src/app.ts"));
-  const ignore = [...(config.ignore ?? []), `${fromRoot(generated)}/**`];
-  const messages = runFileRules({
-    root,
-    rules: fileRules(resolved),
-    settings: {
-      root,
-      services: fromRoot(services),
-      entry: fromRoot(entry),
-      generated: fromRoot(generated),
-      web: "web",
-    },
-    ignore,
-  });
+  const entry = options.entry ? resolve(options.entry) : options.project.entry;
+  const project = { ...options.project, entry };
+  const { root, services } = project;
+  const { resolved, rules, settings, ignore } = projectRules(project);
+  const messages = runFileRules({ root, rules, settings, ignore });
   const globs = ignore.map((pattern) => new Bun.Glob(pattern));
   if (existsSync(entry)) {
-    if (project) await writeServiceManifest(project);
+    if (project.file) await writeServiceManifest(project);
     messages.push(
       ...(await checkApp({
         root,
         entry,
         services,
-        severity: (rule) =>
-          rule === ALWAYS_ERROR
-            ? "error"
-            : (resolved[`brick/${rule}`] ?? "off"),
+        severity: (rule) => resolved[`brick/${rule}`] ?? "off",
         ignored: (rel) =>
           rel.split("/").includes("node_modules") ||
           globs.some((glob) => glob.match(rel)),
       })),
     );
-  } else if (options.entry || project)
+  } else if (options.entry || project.file)
     throw new Error(`Brick: entry not found: ${entry}`);
   return report(messages);
 }
@@ -111,9 +88,7 @@ function sourceFiles(check: AppCheck, under = check.root): string[] {
     .filter((file) => {
       const rel = posix(relative(check.root, file));
       return (
-        !check.ignored(rel) &&
-        !/\.(test|spec)\.[cm]?tsx?$/.test(rel) &&
-        !rel.startsWith("dist/")
+        !check.ignored(rel) && !TEST_FILE.test(rel) && !rel.startsWith("dist/")
       );
     });
 }
@@ -122,48 +97,60 @@ function lineOf(source: string, index: number) {
   return source.slice(0, index).split("\n").length;
 }
 
-/** The app rules: they need the loaded app, so only brick lint runs them. */
+type Add = (file: string, message: string, line?: number) => void;
+type AppRule = (check: AppCheck, app: BrickApp, add: Add) => unknown;
+
+/** Each app rule's check; a rule in APP_RULES without one fails to compile. */
+const APP_CHECKS: Record<(typeof APP_RULES)[number], AppRule> = {
+  "single-app-entry": singleAppEntry,
+  "no-cross-service-tables": noCrossServiceTables,
+  // Startup refuses duplicate names, so checkApp reports it when the app loads.
+  "unique-names": () => {},
+  "declared-events": declaredEvents,
+  "test-colocated": testColocated,
+};
+
 async function checkApp(check: AppCheck): Promise<LintMessage[]> {
   const messages: LintMessage[] = [];
-  const add = (rule: string, file: string, message: string, line = 1) => {
-    const severity = check.severity(rule);
-    if (severity === "off") return;
-    messages.push({
-      file: posix(relative(check.root, file)),
-      line,
-      column: 1,
-      rule: `brick/${rule}`,
-      severity,
-      message,
-    });
-  };
+  const message = (
+    rule: string,
+    severity: Exclude<Severity, "off">,
+    file: string,
+    text: string,
+    line = 1,
+  ): LintMessage => ({
+    file: posix(relative(check.root, file)),
+    line,
+    column: 1,
+    rule: `brick/${rule}`,
+    severity,
+    message: text,
+  });
   let app: BrickApp;
   try {
     app = await loadBrickApp(check.entry);
   } catch (error) {
-    const message = (error as Error).message;
-    // Startup refuses duplicate names; report it as the rule, not a crash.
-    if (/duplicate/i.test(message)) {
-      add("unique-names", check.entry, message);
-      return messages;
+    // An app that cannot start fails lint, even with unique-names off.
+    if ((error as Error).name === "DuplicateNameError") {
+      return [
+        message("unique-names", "error", check.entry, (error as Error).message),
+      ];
     }
     throw error;
   }
-  const files = sourceFiles(check);
-  singleAppEntry(check, files, add);
-  uniqueNames(check, app, add);
-  await noCrossServiceTables(check, app, add);
-  declaredEvents(check, app, add);
-  testColocated(check, add);
+  for (const [rule, run] of Object.entries(APP_CHECKS)) {
+    const severity = check.severity(rule);
+    if (severity === "off") continue;
+    await run(check, app, (file, text, line) =>
+      messages.push(message(rule, severity, file, text, line)),
+    );
+  }
   return messages;
 }
 
-type Add = (rule: string, file: string, message: string, line?: number) => void;
-
-function singleAppEntry(check: AppCheck, files: string[], add: Add) {
-  if (check.severity("single-app-entry") === "off") return;
+function singleAppEntry(check: AppCheck, _app: BrickApp, add: Add) {
   let calls = 0;
-  for (const file of files) {
+  for (const file of sourceFiles(check)) {
     const source = readFileSync(file, "utf8");
     // shortcut: a text search for brick( in files that import it from core.
     if (
@@ -175,7 +162,6 @@ function singleAppEntry(check: AppCheck, files: string[], add: Add) {
     for (const match of source.matchAll(/(?<![.\w])brick\s*\(/g)) {
       if (file === check.entry && ++calls === 1) continue;
       add(
-        "single-app-entry",
         file,
         file === check.entry
           ? "The entry calls brick() more than once; keep one app."
@@ -186,77 +172,33 @@ function singleAppEntry(check: AppCheck, files: string[], add: Add) {
   }
 }
 
-function uniqueNames(check: AppCheck, app: BrickApp, add: Add) {
-  const services = [...app.definition.services];
-  const seen = new Set<string>();
-  for (const service of services) {
-    if (seen.has(service.name))
-      add(
-        "unique-names",
-        check.entry,
-        `Two services are named "${service.name}".`,
-      );
-    seen.add(service.name);
-    // Actions, sockets and resources share the service's URL segments;
-    // an explicit path or a resource action takes no segment of its own.
-    const owners = new Map<string, string>();
-    const claim = (name: string, what: string) => {
-      const segment = kebabCase(name);
-      const other = owners.get(segment);
-      if (other)
-        add(
-          "unique-names",
-          check.entry,
-          `In service "${service.name}", ${what} and ${other} share the name "${segment}".`,
-        );
-      else owners.set(segment, what);
-    };
-    for (const action of service.listActions())
-      if (
-        action.config.path === undefined &&
-        !(action as { resourceAction?: unknown }).resourceAction &&
-        getPluginActionRoute(action) === undefined
-      )
-        claim(action.name, `action "${action.name}"`);
-    for (const socket of service.listSockets())
-      if (socket.schema.path === undefined)
-        claim(socket.schema.name, `socket "${socket.schema.name}"`);
-    for (const resource of service.listResources())
-      claim(resource.name, `resource "${resource.name}"`);
-  }
-}
-
 /** Which service owns each table: its resources' and registered tables, or a database it alone uses. */
 function tableOwners(app: BrickApp) {
   const owners = new Map<unknown, string>();
-  const users = new Map<unknown, string[]>();
+  const users = new Map<DatabaseHandle<unknown>, string[]>();
   for (const service of app.definition.services) {
-    for (const table of (
-      service as { tables?: Map<string, unknown> }
-    ).tables?.values() ?? [])
+    for (const table of service.tables.values())
       owners.set(table, service.name);
-    const database = (service.options as { database?: { tables?: object } })
-      .database;
+    const { database } = service.options;
     if (database)
       users.set(database, [...(users.get(database) ?? []), service.name]);
   }
   for (const [database, names] of users)
     if (names.length === 1)
-      for (const table of Object.values(
-        (database as { tables?: object }).tables ?? {},
-      ))
+      for (const table of Object.values(database.tables))
         if (!owners.has(table)) owners.set(table, names[0]!);
   return owners;
 }
 
 function serviceOfFolder(app: BrickApp, folder: string) {
-  return app.definition.services.find(
-    (service) => service.name === folder || kebabCase(service.name) === folder,
+  return app.definition.services.find((service) =>
+    serviceFolders(service.name).includes(folder),
   )?.name;
 }
 
+// shortcut: a text search for static imports and re-exports; misses `import()`.
 const IMPORT =
-  /import\s+(type\s+)?([\w$]+\s*,?\s*)?(\*\s+as\s+[\w$]+|\{[^}]*\})?\s*from\s*["']([^"']+)["']/g;
+  /(?:import|export)\s+(type\s+)?([\w$]+\s*,?\s*)?(\*(?:\s+as\s+[\w$]+)?|\{[^}]*\})?\s*from\s*["']([^"']+)["']/g;
 
 async function noCrossServiceTables(check: AppCheck, app: BrickApp, add: Add) {
   const owners = tableOwners(app);
@@ -281,10 +223,9 @@ async function noCrossServiceTables(check: AppCheck, app: BrickApp, add: Add) {
       if (
         otherFolder &&
         otherFolder !== folder &&
-        /\.table\.[cm]?tsx?$/.test(target)
+        DEFINITION_FILE.exec(basename(target))?.[2] === "table"
       ) {
         add(
-          "no-cross-service-tables",
           file,
           `Service "${service}" imports ${basename(target)} from ${otherFolder}/; call that service's actions or listen to its events instead.`,
           line,
@@ -306,7 +247,6 @@ async function noCrossServiceTables(check: AppCheck, app: BrickApp, add: Add) {
         const owner = owners.get(module[name]);
         if (owner && owner !== service)
           add(
-            "no-cross-service-tables",
             file,
             `Service "${service}" imports table ${name === "default" ? basename(target) : `"${name}"`} owned by "${owner}"; call ${owner}'s actions or listen to its events instead.`,
             line,
@@ -317,29 +257,20 @@ async function noCrossServiceTables(check: AppCheck, app: BrickApp, add: Add) {
 }
 
 function declaredEvents(check: AppCheck, app: BrickApp, add: Add) {
-  if (check.severity("declared-events") === "off") return;
   for (const service of app.definition.services) {
     if (!service.options.events) continue; // no catalog: any name goes
     const names = new Set(Object.values(service.events).map((e) => e.name));
     const resources = service.listResources().map((r) => r.name);
-    // Catalog events are <service>.<event>; CRUD writes still emit
-    // <resource>.create|update|delete.
-    const declared = (name: string) => {
-      const [owner, event] = name.split(".", 2);
-      return (
-        names.has(name) ||
-        (resources.includes(owner!) && /^(create|update|delete)$/.test(event!))
-      );
-    };
+    const declared = (name: string) =>
+      names.has(name) || isCrudEvent(name, resources);
     for (const action of service.listActions())
       for (const name of action.config.emits ?? [])
         if (!declared(name))
           add(
-            "declared-events",
             check.entry,
             `Action "${service.name}.${action.name}" emits "${name}", which is not in ${service.name}'s event catalog.`,
           );
-    const folder = [kebabCase(service.name), service.name]
+    const folder = serviceFolders(service.name)
       .map((name) => resolve(check.services, name))
       .find(existsSync);
     for (const file of folder ? sourceFiles(check, folder) : []) {
@@ -349,7 +280,6 @@ function declaredEvents(check: AppCheck, app: BrickApp, add: Add) {
       ))
         if (!declared(match[1]!))
           add(
-            "declared-events",
             file,
             `"${match[1]}" is not in ${service.name}'s event catalog.`,
             lineOf(source, match.index),
@@ -358,17 +288,15 @@ function declaredEvents(check: AppCheck, app: BrickApp, add: Add) {
   }
 }
 
-function testColocated(check: AppCheck, add: Add) {
-  if (check.severity("test-colocated") === "off") return;
+function testColocated(check: AppCheck, _app: BrickApp, add: Add) {
   for (const file of sourceFiles(check, check.services)) {
-    const match = /^(.*)\.(action|command)\.[cm]?tsx?$/.exec(basename(file));
-    if (!match) continue;
-    const test = resolve(dirname(file), `${match[1]}.test.ts`);
-    if (!existsSync(test) && !existsSync(`${test}x`))
-      add(
-        "test-colocated",
-        file,
-        `${basename(file)} has no ${match[1]}.test.ts beside it.`,
-      );
+    const match = DEFINITION_FILE.exec(basename(file));
+    if (match?.[2] !== "action" && match?.[2] !== "command") continue;
+    const tested = readdirSync(dirname(file)).some(
+      (sibling) =>
+        TEST_FILE.test(sibling) && sibling.replace(TEST_FILE, "") === match[1],
+    );
+    if (!tested)
+      add(file, `${basename(file)} has no ${match[1]}.test.ts beside it.`);
   }
 }

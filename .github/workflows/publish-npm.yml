@@ -10,6 +10,8 @@ on:
     paths:
       - "packages/**"
       - "scripts/release*"
+      - "scripts/published-packages.ts"
+      - ".bun-version"
       - ".github/workflows/publish-npm.yml"
   workflow_dispatch:
     inputs:
@@ -42,6 +44,7 @@ jobs:
     outputs:
       sha: ${{ steps.target.outputs.sha }}
       tag: ${{ steps.target.outputs.tag }}
+      packages: ${{ steps.target.outputs.packages }}
     steps:
       - name: Require a release branch for manual releases
         if: github.event_name == 'workflow_dispatch'
@@ -50,14 +53,14 @@ jobs:
             echo "::error::Run manual releases from main or beta"
             exit 1
           fi
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Freeze the dispatch SHA; a later branch edit must not enter this release.
           ref: ${{ github.sha }}
           fetch-depth: 0
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: latest
+          bun-version-file: .bun-version
       - run: bun install --frozen-lockfile
       - name: Test release tooling
         run: bun test scripts
@@ -74,77 +77,73 @@ jobs:
         id: target
         run: |
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          version="$(node -p "require('./packages/core/package.json').version")"
-          tag="v${version}"
-          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "$tag" ]]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version"
-            exit 1
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v7
+          # packages: every non-private packages/*/package.json directory, as a JSON
+          # array; tag: v<their one version>. Fails on a version or tag mismatch.
+          bun scripts/published-packages.ts >> "$GITHUB_OUTPUT"
+      # Private manifests ride along unchanged; only published ones were staged.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-manifests
           path: |
-            packages/core/package.json
-            packages/crud/package.json
-            packages/cli/package.json
-            packages/bullmq-world/package.json
-            packages/redis-world/package.json
+            packages/*/package.json
             bun.lock
           if-no-files-found: error
 
   validate:
     needs: prepare
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: brick
+          POSTGRES_PASSWORD: brick
+          POSTGRES_DB: brick_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U brick" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://brick:brick@localhost:5432/brick_test
+      REDIS_URL: redis://localhost:6379/9
     strategy:
       fail-fast: false
       matrix:
-        pkg: [core, crud, cli, bullmq-world, redis-world]
+        pkg: ${{ fromJSON(needs.prepare.outputs.packages) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.sha }}
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-manifests
           path: .
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: latest
-      - uses: actions/setup-node@v7
+          bun-version-file: .bun-version
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
       - run: bun install --frozen-lockfile
-      - name: Check synchronized package versions
-        env:
-          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          for pkg in core crud cli bullmq-world redis-world; do
-            version="$(node -p "require('./packages/$pkg/package.json').version")"
-            if [[ "v$version" != "$RELEASE_TAG" ]]; then
-              echo "::error::$pkg version does not match $RELEASE_TAG"
-              exit 1
-            fi
-          done
-      - name: Build packages and their workspace dependencies
+      - name: Build packages
         run: bun run build
-      - name: Build world packages
-        run: bun run build:worlds
       - name: Typecheck package
-        run: bun run --filter @brickkit/${{ matrix.pkg }} typecheck
+        run: bun run --cwd packages/${{ matrix.pkg }} typecheck
+      # Each package's own test script: bun test, or vitest for the worlds.
       - name: Test package
-        if: ${{ !endsWith(matrix.pkg, '-world') }}
-        run: bun test packages/${{ matrix.pkg }}
-      # Worlds use vitest (with Redis testcontainers), which bun test cannot run.
-      - name: Test world package
-        if: ${{ endsWith(matrix.pkg, '-world') }}
-        run: bun run --filter @brickkit/${{ matrix.pkg }} test
+        run: bun run --cwd packages/${{ matrix.pkg }} test
       - name: Pack the validated package
         working-directory: packages/${{ matrix.pkg }}
         run: |
           mkdir -p "$RUNNER_TEMP/package"
           npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/package"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: package-${{ matrix.pkg }}
           path: ${{ runner.temp }}/package/*.tgz
@@ -160,22 +159,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pkg: [core, crud, cli, bullmq-world, redis-world]
+        pkg: ${{ fromJSON(needs.prepare.outputs.packages) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.sha }}
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-manifests
           path: .
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           registry-url: "https://registry.npmjs.org"
       - name: Ensure npm supports trusted publishing
         run: npm install --global npm@11
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: package-${{ matrix.pkg }}
           path: ${{ runner.temp }}/package
@@ -218,7 +217,7 @@ jobs:
         # needs core, so never publish one before the version it depends on.
         run: |
           for dep in $(node -p "Object.keys(require('./package.json').dependencies ?? {}).filter((name) => name.startsWith('@brickkit/')).join(' ')"); do
-            for attempt in $(seq 60); do
+            for _attempt in $(seq 60); do
               npm view "$dep@$PACKAGE_VERSION" version >/dev/null 2>&1 && continue 2
               sleep 10
             done
@@ -242,11 +241,11 @@ jobs:
       sha: ${{ steps.target.outputs.sha }}
       tag: ${{ needs.prepare.outputs.tag }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-manifests
           path: .
@@ -258,10 +257,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/core/package.json packages/crud/package.json packages/cli/package.json packages/bullmq-world/package.json packages/redis-world/package.json bun.lock
+          git add packages/*/package.json bun.lock
           git commit -m "chore(release): $RELEASE_TAG"
           git tag "$RELEASE_TAG"
-          for attempt in 1 2 3; do
+          for _attempt in 1 2 3; do
             git fetch origin "$RELEASE_BRANCH"
             git merge --no-edit FETCH_HEAD
             if git push --atomic origin "HEAD:refs/heads/$RELEASE_BRANCH" "$RELEASE_TAG"; then
@@ -283,13 +282,15 @@ jobs:
       contents: write
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.commit.outputs.sha }}
           fetch-depth: 0
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: latest
+          bun-version-file: .bun-version
+          # This job holds a write token: never run a Bun restored from the cache.
+          no-cache: true
       - name: Create combined GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

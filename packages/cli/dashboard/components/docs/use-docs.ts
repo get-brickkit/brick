@@ -1,5 +1,10 @@
 import { useEffect, useState, type ComponentType } from "react";
-import type { DocsInfo, DocsPage } from "../../../src/dev-docs";
+import {
+  docsPageUrl,
+  DOCS_PATHS,
+  type DocsInfo,
+  type DocsPage,
+} from "../../../src/dashboard-protocol";
 
 async function getJson<T>(
   url: string,
@@ -16,7 +21,7 @@ export function useDocsInfo(revision: number): DocsInfo | undefined {
   const [info, setInfo] = useState<DocsInfo>();
   useEffect(() => {
     const controller = new AbortController();
-    getJson<DocsInfo>("/api/docs", controller.signal).then(
+    getJson<DocsInfo>(DOCS_PATHS.info, controller.signal).then(
       (next) => next && setInfo(next),
       () => {},
     );
@@ -37,7 +42,7 @@ export function useDocsPage(path: string[], revision: number): PageState {
   const [state, setState] = useState<{ key: string; value: PageState }>();
   useEffect(() => {
     const controller = new AbortController();
-    const url = `/api/docs/page/${path.map(encodeURIComponent).join("/")}`;
+    const url = docsPageUrl(path);
     getJson<DocsPage>(url, controller.signal).then(
       (page) =>
         setState({
@@ -82,7 +87,7 @@ export function useProjectComponents(
   useEffect(() => {
     if (!enabled) return;
     let current = true;
-    const url = `/api/docs/components.js?v=${revision}`;
+    const url = `${DOCS_PATHS.components}?v=${revision}`;
     // The address carries the revision, so each edit loads a fresh module.
     import(/* @vite-ignore */ url).then(
       (module: { components?: unknown; default?: unknown }) => {

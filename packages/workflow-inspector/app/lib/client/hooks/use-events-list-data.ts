@@ -8,22 +8,15 @@ import { hydrateResourceIOAsync } from "@workflow/web-shared";
 import type { Event } from "@workflow/world";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { unwrapServerActionResult } from "~/lib/client/workflow-errors";
-import {
-  fetchEvent,
-  fetchEvents,
-  fetchEventsByCorrelationId,
-} from "~/lib/rpc-client";
-import type { EnvMap } from "~/lib/types";
+import { rpc } from "~/lib/rpc-client";
 
 const INITIAL_PAGE_SIZE = 100;
 const LOAD_MORE_PAGE_SIZE = 100;
 /**
  * Max pages when fetching correlation ID search results (100 events/page).
  *
- * Kept low for the storage read path, which filters server-side and so can
- * cost considerably more to produce a page than the page returns. The
- * previous 30 was sized for the analytics path, where the same scan was
- * much cheaper.
+ * Kept low: the world filters server-side, so a page can cost considerably
+ * more to produce than it returns.
  */
 const MAX_CORRELATION_SEARCH_PAGES = 5;
 
@@ -33,7 +26,6 @@ const MAX_CORRELATION_SEARCH_PAGES = 5;
  * don't affect the trace viewer.
  */
 export function useEventsListData(
-  env: EnvMap,
   runId: string,
   options: {
     sortOrder?: "asc" | "desc";
@@ -71,7 +63,8 @@ export function useEventsListData(
 
     try {
       const { error: fetchError, result } = await unwrapServerActionResult(
-        fetchEvents(env, runId, {
+        rpc("fetchEvents", {
+          runId,
           sortOrder,
           limit: INITIAL_PAGE_SIZE,
           withData: false,
@@ -90,13 +83,12 @@ export function useEventsListData(
       setLoading(false);
       isFetchingRef.current = false;
     }
-  }, [env, runId, sortOrder, hydrateEvents]);
+  }, [runId, sortOrder, hydrateEvents]);
 
   useEffect(() => {
     if (enabled) fetchInitial();
   }, [fetchInitial, enabled]);
 
-  // Re-hydrate loaded events with decryption when encryption key becomes available
   useEffect(() => {
     if (!encryptionKey || events.length === 0) return;
     let cancelled = false;
@@ -116,7 +108,8 @@ export function useEventsListData(
     setLoadingMore(true);
     try {
       const { error: fetchError, result } = await unwrapServerActionResult(
-        fetchEvents(env, runId, {
+        rpc("fetchEvents", {
+          runId,
           cursor,
           sortOrder,
           limit: LOAD_MORE_PAGE_SIZE,
@@ -138,7 +131,7 @@ export function useEventsListData(
     } finally {
       setLoadingMore(false);
     }
-  }, [env, runId, sortOrder, cursor, loadingMore, hydrateEvents]);
+  }, [runId, sortOrder, cursor, loadingMore, hydrateEvents]);
 
   const searchByExactId = useCallback(
     async (
@@ -152,7 +145,7 @@ export function useEventsListData(
 
       if (kind === "event") {
         const { error: fetchError, result } = await unwrapServerActionResult(
-          fetchEvent(env, runId, id, "none"),
+          rpc("fetchEvent", { runId, eventId: id, resolveData: "none" }),
         );
         if (fetchError || signal?.aborted) {
           return fetchError
@@ -177,7 +170,8 @@ export function useEventsListData(
         }
 
         const { error: fetchError, result } = await unwrapServerActionResult(
-          fetchEventsByCorrelationId(env, id, {
+          rpc("fetchEventsByCorrelationId", {
+            correlationId: id,
             cursor: nextCursor,
             sortOrder,
             limit: 100,
@@ -209,7 +203,7 @@ export function useEventsListData(
         ? { status: "ok", events: matched, truncated: truncated || undefined }
         : { status: "not_found" };
     },
-    [env, runId, sortOrder, hydrateEvents],
+    [runId, sortOrder, hydrateEvents],
   );
 
   return {

@@ -1,13 +1,12 @@
-import type { Database } from "bun:sqlite";
-import { test, expect } from "bun:test";
+import { test, expect, spyOn } from "bun:test";
 
-import { defineService, defineDatabase, brick, t } from "@brickkit/core";
+import { brick, compileBrickApplication, t } from "@brickkit/core";
 import { eq } from "drizzle-orm";
 import { sqliteTable, integer, text } from "drizzle-orm/sqlite-core";
 
 import { crud } from "../src";
+import { clientContract, sqliteService } from "./helpers";
 import { createBrickClient } from "@brickkit/core/client";
-import { generateClientContract } from "../../cli/src/client-contract";
 
 const records = sqliteTable("records", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -16,7 +15,6 @@ const records = sqliteTable("records", {
   private: text("private"),
   active: integer("active", { mode: "boolean" }).default(true),
 });
-let sequence = 0;
 function fixture(
   options: Parameters<typeof crud>[0] = {
     access: "public",
@@ -38,13 +36,7 @@ function fixture(
     },
   },
 ) {
-  const database = defineDatabase({ tables: [records] });
-  const db = database.getDb();
-  const sqlite = (db as typeof db & { $client: Database }).$client;
-  sqlite.exec(
-    "CREATE TABLE records (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL UNIQUE,email TEXT,private TEXT,active INTEGER DEFAULT 1)",
-  );
-  const service = defineService(`test_${sequence++}`, { database });
+  const { db, sqlite, service } = sqliteService("test", [records]);
   const resource: any = service
     .resource({ name: "record", table: records, id: records.id })
     .use(crud(options));
@@ -84,7 +76,7 @@ test("defaults, explicit fields, scrubbing and writes use real database", async 
     sqlite.close();
   }
 });
-test("filter AST, selection, total opt-in and bounded prepared reuse", async () => {
+test("filter AST, selection, total opt-in and offset paging", async () => {
   const { resource: r, sqlite } = fixture();
   try {
     await r.create.run({ name: "A%" });
@@ -266,18 +258,23 @@ test("authorization and scoped-create rejection do not modify storage", async ()
     sqlite.close();
   }
 });
-test("preparation prewarming preserves projection and repeated IDs", async () => {
+test("preparation prewarming prepares the default list and get statements", async () => {
   const { resource: r, service, sqlite } = fixture();
   try {
-    service.prepareContributions();
     await r.create.run({ name: "A" });
     await r.create.run({ name: "B" });
+    compileBrickApplication({ services: [service] });
+    const prepare = spyOn(sqlite, "prepare");
     expect((await r.get.run({ id: 1 })).name).toBe("A");
     expect((await r.get.run({ id: 2 })).name).toBe("B");
     expect((await r.list.run({})).items).toHaveLength(2);
+    // Served by the warmed statements: nothing new is prepared.
+    expect(prepare).not.toHaveBeenCalled();
     expect(
       (await r.list.run({ select: ["name"], limit: 1, offset: 1 })).items,
     ).toEqual([{ name: "B" }]);
+    expect(prepare).toHaveBeenCalledTimes(1);
+    prepare.mockRestore();
   } finally {
     sqlite.close();
   }
@@ -298,7 +295,11 @@ test("unique database constraints return conflict without modifying the existing
 });
 
 test("deeply nested where rejects with 400 before validation recurses", async () => {
-  const { resource: r, sqlite } = fixture({
+  const {
+    resource: r,
+    sqlite,
+    service,
+  } = fixture({
     access: "public",
     fields: {
       id: { read: true },
@@ -323,6 +324,24 @@ test("deeply nested where rejects with 400 before validation recurses", async ()
     await expect(
       r.count.run({ where: deepWhere(20_000) as never }),
     ).rejects.toMatchObject({ status: 400 });
+    // Over HTTP too, as an input validation error, not only once the query is built.
+    const app = brick({
+      services: [service],
+      docs: false,
+      requestLogging: false,
+    });
+    const response = await app.handle(
+      new Request(`http://localhost/api/${service.name}/record/count`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ where: deepWhere(30) }),
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      code: "VALIDATION_FAILED",
+      errors: [{ path: "where", message: "Filter nesting exceeds 20 levels" }],
+    });
   } finally {
     sqlite.close();
   }
@@ -619,12 +638,7 @@ for (const compiler of [false, true]) {
       docs: false,
       requestLogging: false,
     });
-    const source = generateClientContract(app);
-    const serialized = source.match(
-      /export const contract: AppContract = JSON.parse\((.+)\);/,
-    )?.[1];
-    if (!serialized) throw new Error("Generated contract is missing");
-    const contract = JSON.parse(JSON.parse(serialized))[service.name];
+    const contract = clientContract(app).contract[service.name];
     const client = createBrickClient<{ named: typeof resource }>({
       baseUrl: "http://localhost",
       contract,
@@ -667,3 +681,59 @@ for (const compiler of [false, true]) {
     }
   });
 }
+
+test("a value its column can't hold is a bad request, also past a custom schema", async () => {
+  const events = sqliteTable("events", {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    at: integer("at", { mode: "timestamp_ms" }).notNull(),
+  });
+  const { sqlite, service } = sqliteService("test", [events]);
+  const r: any = service.resource({ name: "event", table: events }).use(
+    crud({
+      access: "public",
+      fields: {
+        id: { read: true },
+        at: { read: true, create: true, schema: t.String() },
+      },
+    }),
+  );
+  try {
+    await expect(r.create.run({ at: "not a date" })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      status: 400,
+    });
+    expect(
+      await r.create.run({ at: "2026-01-01T00:00:00.000Z" }),
+    ).toMatchObject({ id: 1 });
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("create takes columns named like query options as row data", async () => {
+  const notes = sqliteTable("notes", {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    where: text("where"),
+    select: text("select"),
+  });
+  const { sqlite, service } = sqliteService("test", [notes]);
+  const r: any = service.resource({ name: "note", table: notes }).use(
+    crud({
+      access: "public",
+      fields: {
+        id: { read: true },
+        where: { read: true, create: true },
+        select: { read: true, create: true },
+      },
+    }),
+  );
+  try {
+    expect(await r.create.run({ where: "home", select: "all" })).toEqual({
+      id: 1,
+      where: "home",
+      select: "all",
+    });
+  } finally {
+    sqlite.close();
+  }
+});

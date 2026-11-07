@@ -6,54 +6,14 @@ import {
   type ActionContext,
   type ActionErrorDefinition,
   type ErrorBuilder,
-  type BaseContext,
   ActionExecutionError,
-  ValidationError,
-  type Logger,
 } from "./types";
 import { normalizeActionError } from "./error-response";
+import { STANDARD_ERRORS } from "./protocol";
 import { validateWithSchema } from "./typebox";
-import { getGlobalRegistry } from "./registry";
-import { createLogger, DEFAULT_LOG_PREFIXES } from "./logger";
-
-const defaultLogger: Logger = createLogger(DEFAULT_LOG_PREFIXES);
-
-const DEFAULT_REQUEST = new Request("http://localhost");
-let _defaultCtxSeq = 0;
-
-// Symbol to tie context resolution to a specific service instance and invocation
-const RESOLVED_SYMBOL = Symbol("resolved");
-
-const standardErrorDefaults: Record<
-  string,
-  { status: number; message: string }
-> = {
-  BAD_REQUEST: { status: 400, message: "Bad Request" },
-  UNAUTHORIZED: { status: 401, message: "Unauthorized" },
-  FORBIDDEN: { status: 403, message: "Forbidden" },
-  NOT_FOUND: { status: 404, message: "Not Found" },
-  CONFLICT: { status: 409, message: "Conflict" },
-  INTERNAL_SERVER_ERROR: { status: 500, message: "Internal Server Error" },
-};
-
-function createDefaultContext(partial?: any): BaseContext & any {
-  // Only accept pre-resolved context with a service-specific marker or when service will handle resolution
-  if (partial?.[RESOLVED_SYMBOL]) return partial;
-  const seq = (++_defaultCtxSeq).toString(36);
-  const req = partial?.request ?? DEFAULT_REQUEST;
-  return {
-    request: req,
-    traceId: partial?.traceId || `tr_${seq}`,
-    requestId: partial?.requestId || `req_${seq}`,
-    db: partial?.db,
-    user: partial?.user,
-    logger: partial?.logger || defaultLogger,
-    services: partial?.services || {},
-    metadata: partial?.metadata || {},
-    ...partial,
-    [RESOLVED_SYMBOL]: true,
-  };
-}
+import { actionMeta } from "./action-meta";
+import { baseContext } from "./context";
+import { invalid, runStages, type Stages } from "./compiler/runtime";
 
 /**
  * The `error` helpers an action receives: one function per error code that
@@ -71,40 +31,27 @@ export function buildErrorHelpers<
   TErrors extends Record<string, ActionErrorDefinition>,
 >(errorsDef?: TErrors): ErrorBuilder<TErrors> {
   const helpers: Record<string, any> = {};
-
-  // 1. Populate standard HTTP error helpers
-  for (const [code, def] of Object.entries(standardErrorDefaults)) {
+  // An action's own errors override the standard ones of the same code.
+  for (const [code, def] of Object.entries({
+    ...STANDARD_ERRORS,
+    ...errorsDef,
+  }) as [string, ActionErrorDefinition][])
     helpers[code] = (
       overrideMessage?: string,
       details?: unknown,
       options?: ErrorOptions,
     ) => {
-      const message = overrideMessage || def.message;
-      const status = def.status;
-      throw new ActionExecutionError(code, message, status, details, options);
+      throw new ActionExecutionError(
+        code,
+        overrideMessage || def.message,
+        def.status || 400,
+        details,
+        options,
+      );
     };
-  }
-
-  // 2. Populate or override with user-defined action errors
-  if (errorsDef) {
-    for (const [code, def] of Object.entries(errorsDef)) {
-      helpers[code] = (
-        overrideMessage?: string,
-        details?: unknown,
-        options?: ErrorOptions,
-      ) => {
-        const message = overrideMessage || def.message;
-        const status = def.status || 400;
-        throw new ActionExecutionError(code, message, status, details, options);
-      };
-    }
-  }
 
   return helpers as ErrorBuilder<TErrors>;
 }
-
-// Lives with the step helpers, which workflow code imports without the server.
-export { defineError } from "./workflow";
 
 /** The `errors` map of an action, to re-declare in another action or listener: `errors: { ...errorsOf(charge) }`. */
 export function errorsOf<
@@ -201,91 +148,52 @@ export function defineAction(config: any): any {
   actionFn.errorHelpers = errorHelpers;
 
   actionFn.validateInput = (input: unknown) => {
-    return validateWithSchema(config.input, input);
+    const errors = actionMeta(actionFn).checkInput?.(input);
+    return errors
+      ? { success: false as const, errors }
+      : validateWithSchema(config.input, input);
   };
 
-  actionFn.validateOutput = (output: unknown) => {
-    const runtimeSchema =
-      (actionFn as { outputValidationSchema?: TSchema })
-        .outputValidationSchema ?? config.output;
-    return validateWithSchema(runtimeSchema, output);
-  };
+  actionFn.validateOutput = (output: unknown) =>
+    validateWithSchema(
+      actionMeta(actionFn).runtimeOutput ?? config.output,
+      output,
+    );
 
   actionFn.run = async (input?: any, ctx?: any) => {
     return actionFn.execute({ input, ctx });
   };
 
-  actionFn.execute = async (params: { input?: any; ctx?: any }) => {
-    const boundService = actionFn.service;
-    // The bound service resolves the context once per request, and recognizes
-    // one it already resolved.
-    const fullCtx: any = boundService?.resolveContext
-      ? await boundService.resolveContext(params?.ctx)
-      : createDefaultContext(params?.ctx);
-
-    try {
-      // Fill ctx.db from the bound service or the registry when the call has none.
-      if (!fullCtx.db) {
-        const service =
-          boundService ??
-          (actionFn.serviceName
-            ? getGlobalRegistry().get(actionFn.serviceName)
-            : undefined);
-        if (service?.getDb()) fullCtx.db = service.getDb();
-      }
-
-      // 1. Validate Input
-      if (config.input) {
-        const inputValidation = actionFn.validateInput(params?.input);
-        if (!inputValidation.success) {
-          throw new ValidationError(
-            `Validation failed for action '${config.name}' input` as string,
-            inputValidation.errors,
-          );
-        }
-      }
-
-      // 2. Authorize
-      if (config.authorize) {
-        const allowed = await config.authorize({
-          user: fullCtx.user,
-          input: params?.input,
-          ctx: fullCtx,
-        });
-        if (!allowed) {
-          throw new ActionExecutionError(
-            fullCtx.user == null ? "UNAUTHORIZED" : "FORBIDDEN",
-            `Access denied for action '${config.name}'`,
-            fullCtx.user == null ? 401 : 403,
-          );
-        }
-      }
-
-      // 3. Execute implementation
-      const result = await config.execute({
-        input: params?.input,
-        ctx: fullCtx,
-        error: errorHelpers,
-      });
-
-      // 4. Validate Output
-      const runtimeOutputSchema =
-        (actionFn as { outputValidationSchema?: TSchema })
-          .outputValidationSchema ?? config.output;
-      if (runtimeOutputSchema) {
-        const outputValidation = actionFn.validateOutput(result);
-        if (!outputValidation.success) {
-          throw new ValidationError(
-            `Validation failed for action '${config.name}' output` as string,
-            outputValidation.errors,
-            500,
-          );
-        }
-      }
-
+  const stages: Stages = {
+    name: config.name,
+    checkInput: (input) => {
+      if (!config.input) return;
+      const checked = actionFn.validateInput(input);
+      if (!checked.success) throw invalid(config.name, "input", checked.errors);
+    },
+    authorize: config.authorize,
+    execute: config.execute,
+    errorBuilder: errorHelpers,
+    checkOutput: (result) => {
+      if (!(actionMeta(actionFn).runtimeOutput ?? config.output)) return result;
+      const checked = actionFn.validateOutput(result);
+      if (!checked.success)
+        throw invalid(config.name, "output", checked.errors);
       return result;
+    },
+  };
+
+  actionFn.execute = async (params: { input?: any; ctx?: any }) => {
+    const meta = actionMeta(actionFn);
+    // The registered service resolves the context once per request, and
+    // recognizes one it already resolved.
+    const ctx: any = meta.service
+      ? await meta.service.resolveContext(params?.ctx, meta.deps?.values)
+      : { ...baseContext(params?.ctx ?? {}), ...params?.ctx };
+    try {
+      return await runStages(stages, params?.input, ctx);
     } catch (err) {
-      throw normalizeActionError(err, fullCtx);
+      throw normalizeActionError(err, ctx);
     }
   };
 

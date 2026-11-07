@@ -3,6 +3,7 @@ import {
   brick,
   defineDatabase,
   defineService,
+  DuplicateNameError,
   getGlobalRegistry,
   resetGlobalRegistry,
   sqliteTable,
@@ -43,7 +44,7 @@ it("lists a service's tools next to its actions", () => {
   ]);
 });
 
-it("exports only registered HTTP routes and keeps each app's route table", async () => {
+it("exports only an app's mounted HTTP routes", async () => {
   const service = defineService("records");
   service.action({
     name: "first",
@@ -80,7 +81,7 @@ it("exports only registered HTTP routes and keeps each app's route table", async
     ],
   });
   const registry = getGlobalRegistry();
-  const architecture = registry.exportArchitecture();
+  const architecture = registry.exportArchitecture(first.definition);
   expect(
     architecture.services[0]!.actions.find((action) => action.name === "save"),
   ).toMatchObject({ method: "POST", path: "/v2/records/save" });
@@ -103,10 +104,14 @@ it("exports only registered HTTP routes and keeps each app's route table", async
     expect(action).not.toHaveProperty("method");
     expect(action).not.toHaveProperty("path");
   }
-  brick({ services: [service], prefix: "/v3", requestLogging: false });
+  const second = brick({
+    services: [service],
+    prefix: "/v3",
+    requestLogging: false,
+  });
   expect(
     registry
-      .exportArchitecture()
+      .exportArchitecture(second.definition)
       .services[0]!.actions.find((action) => action.name === "save"),
   ).toMatchObject({ method: "POST", path: "/v3/records/save" });
   const response = await first.handle(
@@ -115,8 +120,8 @@ it("exports only registered HTTP routes and keeps each app's route table", async
   expect(await response.json()).toEqual(
     JSON.parse(JSON.stringify(architecture)),
   );
-  registry.clear();
-  expect(registry.exportArchitecture().services).toEqual([]);
+  resetGlobalRegistry();
+  expect(getGlobalRegistry().exportArchitecture().services).toEqual([]);
 });
 
 it("keeps declarations open when exporting before app construction", () => {
@@ -127,7 +132,11 @@ it("keeps declarations open when exporting before app construction", () => {
   const table = sqliteTable("later", { id: text("id").primaryKey() });
   expect(() => service.resource({ name: "later", table })).not.toThrow();
   expect(() =>
-    service.contributePreparation({ name: "later", prepare: () => undefined }),
+    service.contributePreparation({
+      name: "later",
+      describe: () => undefined,
+      prepare: () => undefined,
+    }),
   ).not.toThrow();
   service.action({ name: "second", method: "GET", execute: () => true });
   const architecture = getGlobalRegistry().exportArchitecture();
@@ -174,7 +183,7 @@ it("throws on a duplicate service name from another file", () => {
 it("throws on two services with the same name in one app", () => {
   const first = defineService("orders");
   const second = defineService("orders");
-  expect(() => brick({ services: [first, second] })).toThrow(
-    'Brick: duplicate service "orders" in brick()',
-  );
+  const create = () => brick({ services: [first, second] });
+  expect(create).toThrow('Brick: duplicate service "orders" in brick()');
+  expect(create).toThrow(DuplicateNameError);
 });

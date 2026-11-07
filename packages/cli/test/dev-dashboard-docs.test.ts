@@ -5,17 +5,13 @@ import { join } from "node:path";
 import { startDevDashboard } from "../src/dev-dashboard";
 import { DocsHost } from "../src/dev-docs";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
+import { PNG } from "./helpers";
 
 const roots: string[] = [];
 afterEach(async () => {
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
 });
-
-const PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
-  "base64",
-);
 
 async function setup(
   documentation?: { dir: string; components?: string },
@@ -36,7 +32,10 @@ async function setup(
     await writeFile(join(root, path), content);
   }
   const store = new DevTelemetryStore();
-  const host = new DocsHost(store, () => {});
+  const host = new DocsHost(
+    (docs) => store.setDocs(docs),
+    () => {},
+  );
   if (documentation) await host.configure(root, documentation);
   const dashboard = await startDevDashboard({
     port: 0,

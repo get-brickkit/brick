@@ -30,7 +30,7 @@ import {
 } from "@/logs";
 import { cn } from "@/lib/utils";
 import { routeHref, useNow } from "@/state";
-import type { TraceSummary } from "../../src/dev-telemetry-store";
+import type { TraceSummary } from "../../src/dashboard-protocol";
 
 /** The newest lines kept to search through. */
 const LIMIT = 2000;

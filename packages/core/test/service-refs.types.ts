@@ -58,7 +58,8 @@ brick({ services: [orders], deps: { carrier: {} as Carrier } });
 
 // --- useService ---------------------------------------------------------------
 
-const billingService = defineService("billing");
+// A name no other test file uses: the augmentation below is global to the typecheck.
+const billingService = defineService("typed_billing");
 const charge = billingService.action({
   name: "charge",
   input: t.Object({ orderId: t.String(), amountCents: t.Integer() }),
@@ -84,7 +85,7 @@ const closeInvoice = invoice.command("close", {
 // What the generated `_brick/contract.ts` declares for the app.
 declare module "../src/client" {
   interface BrickServices {
-    billing: {
+    typed_billing: {
       charge: typeof charge;
       invoice: { void: typeof voidInvoice; close: typeof closeInvoice };
     };

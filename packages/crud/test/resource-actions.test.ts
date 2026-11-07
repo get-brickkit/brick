@@ -1,4 +1,3 @@
-import type { Database } from "bun:sqlite";
 import { beforeEach, expect, test } from "bun:test";
 import {
   brick,
@@ -11,7 +10,7 @@ import {
 import { eq } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { crud } from "../src";
-import { generateClientContract } from "../../cli/src/client-contract";
+import { clientContract, sqliteDatabase } from "./helpers";
 
 beforeEach(resetGlobalRegistry);
 
@@ -23,12 +22,7 @@ const orders = sqliteTable("orders", {
 });
 
 function fixture() {
-  const database = defineDatabase({ tables: { orders } });
-  const db = database.getDb();
-  const sqlite = (db as typeof db & { $client: Database }).$client;
-  sqlite.exec(
-    "CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, status TEXT NOT NULL, secret TEXT)",
-  );
+  const { database, sqlite } = sqliteDatabase([orders]);
   sqlite.exec(
     "INSERT INTO orders (owner, status, secret) VALUES ('ada', 'paid', 's1'), ('bob', 'paid', 's2')",
   );
@@ -184,12 +178,7 @@ test("a record action loads its row through its own access and answers 404 for h
 });
 
 test("a record action needs its own access, with or without crud", async () => {
-  const database = defineDatabase({ tables: { orders } });
-  const db = database.getDb();
-  const sqlite = (db as typeof db & { $client: Database }).$client;
-  sqlite.exec(
-    "CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, status TEXT NOT NULL, secret TEXT)",
-  );
+  const { database, sqlite } = sqliteDatabase([orders]);
   sqlite.exec("INSERT INTO orders (owner, status) VALUES ('ada', 'paid')");
   try {
     const bare = defineService("bare", { database });
@@ -271,6 +260,17 @@ test("resource action names can't take a CRUD route or a CRUD action name", () =
   }
 });
 
+test("crud refuses to install over a resource action that took one of its segments", () => {
+  const service = defineService("shop", {
+    database: defineDatabase({ tables: { orders } }),
+  });
+  const order = service.resource({ name: "order", table: orders });
+  order.action({ name: "count", execute: () => null });
+  expect(() =>
+    order.use(crud({ access: "public", fields: { id: { read: true } } })),
+  ).toThrow(/duplicate name "order.count".*"count" is a @brickkit\/crud route/);
+});
+
 test("OpenAPI groups resource routes under service · resource; the client nests them", () => {
   const { sqlite, service } = fixture();
   try {
@@ -289,11 +289,8 @@ test("OpenAPI groups resource routes under service · resource; the client nests
       "orderBilling · order",
     ]);
 
-    const contract = generateClientContract(
+    const { source: contract, contract: parsed } = clientContract(
       brick({ services: [service], docs: false }),
-    );
-    const parsed = JSON.parse(
-      JSON.parse(contract.match(/JSON\.parse\((".*")\);/)![1]!),
     );
     expect(parsed.orderBilling.order.archive.config).toEqual({
       path: "/api/order-billing/order/:id/archive",
@@ -320,13 +317,8 @@ test("a record action finds a row whose id column holds dates", async () => {
     at: integer("at", { mode: "timestamp_ms" }).primaryKey(),
     name: text("name").notNull(),
   });
-  const database = defineDatabase({ tables: { events } });
-  const db = database.getDb();
-  const sqlite = (db as typeof db & { $client: Database }).$client;
+  const { database, db, sqlite } = sqliteDatabase([events]);
   try {
-    sqlite.exec(
-      "CREATE TABLE events (at INTEGER PRIMARY KEY, name TEXT NOT NULL)",
-    );
     const at = new Date("2026-01-01T00:00:00.000Z");
     await db.insert(events).values({ at, name: "launch" });
     const service = defineService("calendar", { database });
@@ -349,6 +341,43 @@ test("a record action finds a row whose id column holds dates", async () => {
     expect(
       (await call(app, "GET", "/api/calendar/event/not-a-date/show")).status,
     ).toBe(404);
+  } finally {
+    sqlite.close();
+  }
+});
+
+test("crud and record actions accept the same ids", async () => {
+  const events = sqliteTable("events", {
+    at: integer("at", { mode: "timestamp_ms" }).primaryKey(),
+    name: text("name").notNull(),
+  });
+  const { database, db, sqlite } = sqliteDatabase([events]);
+  try {
+    await db
+      .insert(events)
+      .values({ at: new Date("2026-01-01T00:00:00.000Z"), name: "launch" });
+    const service = defineService("calendar", { database });
+    const event = service
+      .resource({ name: "event", table: events, id: events.at })
+      .use(crud({ access: "public", fields: { name: { read: true } } }));
+    event.action({
+      name: "show",
+      record: true,
+      method: "GET",
+      access: "public",
+      output: t.Object({ name: t.String() }),
+      execute: ({ row }) => ({ name: row.name }),
+    });
+    const app = brick({ services: [service], docs: false });
+    for (const id of ["2026-01-01T00:00:00.000Z", "2026-01-01", "not-a-date"]) {
+      const viaCrud = await call(app, "GET", `/api/calendar/event/${id}`);
+      const viaAction = await call(
+        app,
+        "GET",
+        `/api/calendar/event/${id}/show`,
+      );
+      expect([id, viaCrud.status]).toEqual([id, viaAction.status]);
+    }
   } finally {
     sqlite.close();
   }

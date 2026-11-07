@@ -1,25 +1,23 @@
+import type { HttpMethod } from "./http";
 import type { RouteIR } from "./compiler/ir";
 import type { Elysia } from "elysia";
-import type { Service } from "./types";
+import type { Logger, Service } from "./types";
 import type { DatabaseHandle } from "./db/define";
 import type { ApiDocument, DocumentationOptions } from "./docs";
 import type { DashboardOptions } from "./dashboard";
 import type { EventsDefinition, EventsHub } from "./events/hub";
 import { toErrorResponse } from "./error-response";
+import { pathParamNames, toOpenApiPath } from "./routes";
 import { createLogger } from "./logger";
+import { requestIds } from "./context";
 import { ActionExecutionError, ValidationError } from "./types";
 import type { BrickSocketSchema } from "./socket-types";
-import type { InstalledPlugin } from "./define-plugin";
+import type { InstalledPlugin } from "./plugin-types";
 
-export type EndpointMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+export type EndpointMethod = HttpMethod;
 
-/** Logger subset handed to endpoint handlers (mirrors action context loggers). */
-export interface EndpointLogger {
-  info: (...args: any[]) => void;
-  warn: (...args: any[]) => void;
-  error: (...args: any[]) => void;
-  debug: (...args: any[]) => void;
-}
+/** The logger handed to endpoint handlers (the same one actions get). */
+export type EndpointLogger = Logger;
 
 /** Context for raw endpoint handlers: Elysia route fields + Brick extras. */
 export interface EndpointContext {
@@ -63,7 +61,7 @@ export function resolveEndpointDb(
       typeof service === "string"
         ? services.find((s) => s.name === service)
         : (service as Service<any, any>);
-    return svc?.getDb() ?? undefined;
+    return svc?.getDb();
   }
   for (const svc of services) {
     const db = svc.getDb();
@@ -80,13 +78,7 @@ export function createEndpointHandler(
   const tag = `endpoint:${def.method} ${def.path}`;
   const logger = createLogger(`[${tag}]`);
   return async ({ params, body, query, headers, request, set }: any) => {
-    const traceId = headers?.["x-trace-id"] || `tr_${crypto.randomUUID()}`;
-    const requestId = headers?.["x-request-id"] || `req_${crypto.randomUUID()}`;
-
-    if (set?.headers) {
-      set.headers["x-trace-id"] = traceId;
-      set.headers["x-request-id"] = requestId;
-    }
+    const { traceId, requestId } = requestIds(headers, set);
 
     const ctx: EndpointContext = {
       body,
@@ -143,16 +135,6 @@ export function createEndpointHandler(
   };
 }
 
-/** `/p/:slug` → `/p/{slug}` for OpenAPI. */
-export function toOpenApiPath(elysiaPath: string): string {
-  return elysiaPath.replace(/:([A-Za-z0-9_]+)/g, "{$1}");
-}
-
-/** Parameter names (`:slug`) extracted for the OpenAPI path item. */
-function pathParamNames(elysiaPath: string): string[] {
-  return [...elysiaPath.matchAll(/:([A-Za-z0-9_]+)/g)].map((m) => m[1]);
-}
-
 /** OpenAPI `paths` fragment for declared endpoints (raw HTML included). */
 export function endpointPaths(defs: EndpointDefinition[]): Record<string, any> {
   const paths: Record<string, any> = {};
@@ -204,18 +186,30 @@ export type BrickApp = Elysia<any, any, any, any, any, any, any> & {
    */
   start(): Promise<void>;
   /**
+   * Start the plugins, listen on `port`, then start event delivery. What
+   * `brick dev`, `brick start` and a built server run.
+   */
+  serve(options: { port: number }): Promise<BrickApp>;
+  /**
+   * Stop event delivery (finishing deliveries in flight), then the server, then
+   * the plugins. `closeActiveConnections` is passed to `stop()`.
+   */
+  shutdown(closeActiveConnections?: boolean): Promise<void>;
+  /**
    * The events of this app, when `events` is set: start and stop delivery, drain
    * what is due, and see or retry what is parked. `brick dev` and `brick start`
    * start it for you.
    */
   readonly events?: EventsHub;
-  /** Register a raw endpoint (outside the JSON action mesh). */
+  /** Register a raw endpoint (a plain route, not an action). */
   endpoint(def: EndpointDefinition): void;
   /**
    * The OpenAPI documents behind the dashboard's APIs view: this app's own
    * unless `docs` is false, then those from `reference.documents`.
    */
   referenceDocuments(): Promise<ApiDocument[]>;
+  /** This app's OpenAPI document, as `/openapi.json` serves it (also when `docs` is false). */
+  openApiDocument(): Record<string, any>;
   /** All endpoints registered via `endpoint()` (declaration order). */
   listEndpoints(): EndpointDefinition[];
 };

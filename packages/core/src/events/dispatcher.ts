@@ -1,15 +1,20 @@
 import { and, asc, eq, inArray, lt, lte, or, sql } from "drizzle-orm";
-import { type OutboxStatus, type OutboxTable, outboxEngine } from "./outbox";
+import {
+  deliveryOf,
+  OUTBOX_STATUSES,
+  outboxEngine,
+  type OutboxRow,
+  type OutboxStatus,
+  type OutboxTable,
+} from "./outbox";
 import { runInTransaction } from "./transaction";
 import type { Deliverable } from "./hub";
 import { ActionExecutionError } from "../types";
-import type { DispatchOptions, EventDelivery } from "./types";
+import type { DispatchOptions } from "./types";
 
-export type ResolvedDispatchOptions = Required<DispatchOptions>;
-
-export function resolveDispatchOptions(
-  options: DispatchOptions = {},
-): ResolvedDispatchOptions {
+function resolveDispatchOptions(
+  options: DispatchOptions,
+): Required<DispatchOptions> {
   return {
     timer: options.timer ?? true,
     intervalMs: options.intervalMs ?? 1_000,
@@ -24,25 +29,17 @@ export function resolveDispatchOptions(
 /** How many outbox rows are in each state. */
 export type OutboxCounts = Record<OutboxStatus, number>;
 
-interface OutboxRow {
-  seq: number;
-  id: string;
-  eventId: string;
-  listener: string;
-  name: string;
-  payload: unknown;
-  traceId: string | null;
-  source: string | null;
-  occurredAt: Date;
-  status: OutboxStatus;
-  attempts: number;
-  lastError: string | null;
-}
-
 const PURGE_INTERVAL_MS = 60_000;
 
-/** Asks the listener's `retry` what to do with a failure. A `retry` that throws counts as "retry". */
-function decideRetry(listener: Deliverable, error: unknown): "retry" | "dead" {
+/** Listeners whose `retry` threw, logged once each. */
+const brokenRetry = new WeakSet<Deliverable>();
+
+/** Asks the listener's `retry` what to do with a failure. A `retry` that throws counts as "retry", and is logged once. */
+function decideRetry(
+  name: string,
+  listener: Deliverable,
+  error: unknown,
+): "retry" | "dead" {
   if (!listener.retry) return "retry";
   try {
     return listener.retry(
@@ -54,7 +51,14 @@ function decideRetry(listener: Deliverable, error: unknown): "retry" | "dead" {
             cause: error,
           },
     );
-  } catch {
+  } catch (thrown) {
+    if (!brokenRetry.has(listener)) {
+      brokenRetry.add(listener);
+      console.error(
+        `[Brick-TS events] Listener '${name}': its retry() threw, so the failure is retried. Later throws are not logged.`,
+        thrown,
+      );
+    }
     return "retry";
   }
 }
@@ -76,7 +80,7 @@ export function backoffMs(attempt: number, maxBackoffMs: number): number {
  */
 export class Dispatcher {
   private readonly engine: "sqlite" | "postgres";
-  private readonly options: ResolvedDispatchOptions;
+  private readonly options: Required<DispatchOptions>;
   private readonly inFlight = new Set<Promise<void>>();
   private timer?: ReturnType<typeof setInterval>;
   private tickQueue?: Promise<number>;
@@ -87,16 +91,9 @@ export class Dispatcher {
     private readonly table: OutboxTable,
     private readonly listeners: (name: string) => Deliverable | undefined,
     options: DispatchOptions = {},
-    private readonly onError: (error: unknown) => void = (error) =>
-      console.error("[Brick-TS events]", error),
   ) {
     this.engine = outboxEngine(table);
     this.options = resolveDispatchOptions(options);
-  }
-
-  /** Whether the dispatcher is looking for work on a timer. */
-  get running(): boolean {
-    return this.timer !== undefined;
   }
 
   /** Start looking for due deliveries on a timer. Does nothing if it already is. */
@@ -107,9 +104,7 @@ export class Dispatcher {
     void this.tick();
   }
 
-  /**
-   * Stop the timer and wait for the deliveries that are running to finish.
-   */
+  /** Stop the timer and wait for the deliveries that are running to finish. */
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
@@ -123,13 +118,8 @@ export class Dispatcher {
     setTimeout(() => void this.tick(), 0).unref?.();
   }
 
-  /**
-   * Claim what is due and run it, once. Used by the timer, and by tests and
-   * workers that drive delivery themselves.
-   *
-   * @returns How many deliveries it started.
-   */
-  tick(): Promise<number> {
+  /** Claim what is due and run it, once. @returns How many deliveries it started. */
+  private tick(): Promise<number> {
     this.tickQueue = (this.tickQueue ?? Promise.resolve(0)).then(
       () => this.claimAndRun(),
       () => this.claimAndRun(),
@@ -153,21 +143,15 @@ export class Dispatcher {
     }
   }
 
-  /**
-   * How many rows are in each state.
-   */
   async counts(): Promise<OutboxCounts> {
     const t = this.table as any;
     const rows: { status: OutboxStatus; count: number }[] = await this.db
       .select({ status: t.status, count: sql<number>`count(*)` })
       .from(t)
       .groupBy(t.status);
-    const counts: OutboxCounts = {
-      pending: 0,
-      claimed: 0,
-      delivered: 0,
-      dead: 0,
-    };
+    const counts = Object.fromEntries(
+      OUTBOX_STATUSES.map((status) => [status, 0]),
+    ) as OutboxCounts;
     for (const row of rows) counts[row.status] = Number(row.count);
     return counts;
   }
@@ -207,7 +191,7 @@ export class Dispatcher {
       await this.purgeDelivered();
       return rows.length;
     } catch (error) {
-      this.onError(error);
+      this.logError(error);
       return 0;
     }
   }
@@ -257,25 +241,14 @@ export class Dispatcher {
       await this.park(row, `No listener named '${row.listener}' is registered`);
       return;
     }
-    const delivery: EventDelivery = {
-      id: row.eventId,
-      name: row.name,
-      payload: row.payload,
-      occurredAt: row.occurredAt.toISOString(),
-      ...(row.traceId ? { traceId: row.traceId } : {}),
-      ...(row.source ? { source: row.source } : {}),
-      listener: row.listener,
-      deliveryId: row.id,
-      attempt: row.attempts,
-    };
     try {
-      await listener.run(delivery);
+      await listener.run(deliveryOf(row));
     } catch (error) {
       await this.fail(
         row,
         error,
         listener.maxAttempts ?? this.options.maxAttempts,
-        decideRetry(listener, error),
+        decideRetry(row.listener, listener, error),
       );
       return;
     }
@@ -297,7 +270,7 @@ export class Dispatcher {
           })
           .where(eq(t.seq, row.seq));
     } catch (error) {
-      this.onError(error);
+      this.logError(error);
     }
   }
 
@@ -305,7 +278,7 @@ export class Dispatcher {
     row: OutboxRow,
     error: unknown,
     maxAttempts: number,
-    decision: "retry" | "dead" = "retry",
+    decision: "retry" | "dead",
   ): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     if (decision === "dead" || row.attempts >= maxAttempts) {
@@ -326,7 +299,7 @@ export class Dispatcher {
         })
         .where(eq(t.seq, row.seq));
     } catch (writeError) {
-      this.onError(writeError);
+      this.logError(writeError);
     }
   }
 
@@ -338,8 +311,12 @@ export class Dispatcher {
         .set({ status: "dead", lastError: message, claimedAt: null })
         .where(eq(t.seq, row.seq));
     } catch (error) {
-      this.onError(error);
+      this.logError(error);
     }
+  }
+
+  private logError(error: unknown): void {
+    console.error("[Brick-TS events]", error);
   }
 
   private async purgeDelivered(): Promise<void> {

@@ -11,15 +11,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  mergeExtensions,
   mergeNav,
   type DashboardExtension,
   type NavItem,
 } from "../dashboard/extension-registry";
+import { loadParts } from "../dashboard/extension";
 import { parseRoute } from "../dashboard/state";
 import { buildApplication } from "../src/build";
 import {
   buildDashboardExtension,
-  extensionLoader,
   THEME_TOKENS,
   themeCss,
 } from "../src/dashboard-extension";
@@ -188,13 +189,45 @@ describe("themeCss", () => {
   });
 });
 
+describe("mergeExtensions", () => {
+  it("skips a page mergeNav would throw on, so the rest still merge", () => {
+    const original = console.error;
+    console.error = () => {};
+    try {
+      const merged = mergeExtensions([
+        {
+          name: "app",
+          plugin: false,
+          extension: { pages: [{ id: "ok", label: "Ok", component: Page }] },
+        },
+        {
+          name: "plugin",
+          plugin: true,
+          extension: {
+            pages: [
+              { id: "bad id", label: "A", component: Page },
+              { id: "overview", label: "B", component: Page },
+              { id: "both", label: "C", component: Page, url: "/x" },
+              { id: "lost", label: "D", component: Page, after: "nowhere" },
+            ],
+          },
+        },
+      ]);
+      expect(merged.pages?.map((page) => page.id)).toEqual(["ok"]);
+      expect(() => mergeNav(builtIn, merged, false)).not.toThrow();
+    } finally {
+      console.error = original;
+    }
+  });
+});
+
 describe("the extension build", () => {
   it("leaves React and the UI kit to the page, and compiles its own classes", async () => {
     const built = await buildDashboardExtension(entry);
     expect(built.js).toContain('from "@brickkit/cli/dashboard"');
     expect(built.js).toMatch(/from "react\/jsx(-dev)?-runtime"/);
-    // No copy of React inside.
-    expect(built.js).not.toContain("__SECRET_INTERNALS");
+    // React's internals object: React 18 and 19 name it differently.
+    expect(built.js).not.toMatch(/__(SECRET|CLIENT)_INTERNALS/);
     expect(built.css).toContain(".bg-chart-3");
     expect(built.css).toContain("var(--chart-3)");
     expect(built.css).toContain(".p-7");
@@ -426,36 +459,33 @@ describe("the dashboard server with an extension", () => {
 });
 
 describe("plugin dashboard extensions", () => {
-  it("the loader merges extensions and isolates one that fails", async () => {
+  it("the page merges the listed parts and isolates one that fails", async () => {
     const folder = mkdtempSync(join(tmpdir(), "brick-plugin-ext-"));
     try {
-      const write = (name: string, source: string) => {
+      const write = (name: string, source: string) =>
         writeFileSync(join(folder, name), source);
-        return pathToFileURL(join(folder, name)).href;
-      };
-      const app = write(
+      write(
         "app.js",
-        `export default { pages: [{ id: "queues", label: "Queues", after: "overview" }], slots: { "topbar.end": "app", "request.drawer.tabs": [{ id: "a" }] } };`,
+        `export default { pages: [{ id: "queues", label: "Queues", url: "/q", after: "overview" }], slots: { "topbar.end": "app", "request.drawer.tabs": [{ id: "a" }] } };`,
       );
-      const plugin = write(
+      write(
         "plugin.js",
-        `export default { pages: [{ id: "comments", label: "Comments" }, { id: "queues", label: "Dup" }], slots: { "topbar.end": "plugin", "request.drawer.tabs": [{ id: "b" }] }, sidebar: [{ label: "Docs", href: "https://x" }] };`,
+        `export default { pages: [{ id: "comments", label: "Comments", url: "/c" }, { id: "queues", label: "Dup", url: "/d" }], slots: { "topbar.end": "plugin", "request.drawer.tabs": [{ id: "b" }] }, sidebar: [{ label: "Docs", href: "https://x" }] };`,
       );
-      const broken = write("broken.js", `throw new Error("boom");`);
-      const loader = write(
-        "loader.js",
-        extensionLoader([
-          { name: "app", src: app, plugin: false },
-          { name: "@acme/brick-comments", src: plugin, plugin: true },
-          { name: "@acme/broken", src: broken, plugin: true },
-        ]),
-      );
+      write("broken.js", `throw new Error("boom");`);
       const errors: unknown[][] = [];
       const original = console.error;
       console.error = (...args: unknown[]) => void errors.push(args);
       let merged: DashboardExtension;
       try {
-        merged = (await import(loader)).default;
+        merged = await loadParts(
+          [
+            { name: "app", src: "./app.js", plugin: false },
+            { name: "@acme/brick-comments", src: "./plugin.js", plugin: true },
+            { name: "@acme/broken", src: "./broken.js", plugin: true },
+          ],
+          pathToFileURL(join(folder, "extension.js")).href,
+        );
       } finally {
         console.error = original;
       }

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { context, propagation, trace } from "@opentelemetry/api";
+import { trace } from "@opentelemetry/api";
 import { createLogger } from "../../core/src/logger";
 import {
   collectLogs,
@@ -10,15 +10,10 @@ import {
   parseLogQuery,
   queryLogs,
 } from "../dashboard/logs";
-import {
-  captureConsole,
-  installTracing,
-  type TelemetryRecord,
-} from "../src/dev-telemetry";
-import {
-  DevTelemetryStore,
-  type TraceSummary,
-} from "../src/dev-telemetry-store";
+import { installTracing } from "../src/dev-telemetry";
+import type { TelemetryRecord, TraceSummary } from "../src/dashboard-protocol";
+import { DevTelemetryStore } from "../src/dev-telemetry-store";
+import { resetTracing, waitFor } from "./helpers";
 
 function traceWith(
   id: string,
@@ -216,23 +211,8 @@ describe("highlight", () => {
 });
 
 describe("from ctx.logger to the dashboard", () => {
-  // Another test file in the same run may have left a tracer provider
-  // registered, which would leave `installTracing` nothing to install.
-  beforeAll(() => {
-    captureConsole()();
-    trace.disable();
-    context.disable();
-    propagation.disable();
-  });
-
-  afterAll(() => {
-    captureConsole()();
-    (globalThis as Record<symbol, unknown>)[
-      Symbol.for("brickkit.logs.capture")
-    ] = undefined;
-    trace.disable();
-    context.disable();
-  });
+  beforeAll(resetTracing);
+  afterAll(resetTracing);
 
   it("shows a line logged in a traced request, as the dev server records it", async () => {
     const records: TelemetryRecord[] = [];
@@ -257,8 +237,12 @@ describe("from ctx.logger to the dashboard", () => {
         root.end();
       },
     );
-    // Records are sent in batches, a moment after the spans end.
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await waitFor(() =>
+      records.some(
+        (record) =>
+          record.phase === "end" && record.name === "POST /api/users/create",
+      ),
+    );
 
     const store = new DevTelemetryStore();
     store.ingest(records, 1);

@@ -1,67 +1,86 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  publishedPackages,
+  releaseVersion,
+  repositoryUrl,
+  workspacePackages,
+} from "./published-packages.ts";
 
 const root = join(import.meta.dir, "..");
-const version = JSON.parse(
-  readFileSync(join(root, "packages/core/package.json"), "utf8"),
-).version;
+const packages = publishedPackages(root);
+const version = releaseVersion(packages);
 const tag = `v${version}`;
-const repo = "https://github.com/brick-org/brick";
+const repo = repositoryUrl(root);
+const SECTIONS: Record<string, string> = {
+  feat: "Features",
+  fix: "Bug Fixes",
+  perf: "Performance",
+  refactor: "Refactors",
+};
+// type(scope)!: description. A breaking change keeps its marker in the notes.
+const CONVENTIONAL = /^(\w+)(?:\([^)]*\))?(!)?:\s*(.*)$/;
 const git = (...args: string[]) =>
   execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
-const previous =
-  git("tag", "--merged", "HEAD", "--list", "v*", "--sort=-version:refname")
-    .split("\n")
-    .find(
-      (candidate) =>
-        (version.includes("-")
-          ? /^v\d+\.\d+\.\d+(?:-beta\.\d+)?$/
-          : /^v\d+\.\d+\.\d+$/
-        ).test(candidate) && candidate !== tag,
-    ) ??
-  // The first combined release follows the former per-package releases.
-  git("tag", "--merged", "HEAD", "--list", "core-v*", "--sort=-version:refname")
-    .split("\n")
-    .find((candidate) => candidate !== `core-v${version}`);
+const previous = git(
+  "tag",
+  "--merged",
+  "HEAD",
+  "--list",
+  "v*",
+  "--sort=-version:refname",
+)
+  .split("\n")
+  .find(
+    (candidate) =>
+      (version.includes("-")
+        ? /^v\d+\.\d+\.\d+(?:-beta\.\d+)?$/
+        : /^v\d+\.\d+\.\d+$/
+      ).test(candidate) && candidate !== tag,
+  );
+
+// Private workspace packages a package depends on ship inside it (the inspector in the CLI).
+const privateDirs = new Map(
+  workspacePackages(root).flatMap((p) =>
+    p.data.private === true ? [[p.data.name as string, p.dir]] : [],
+  ),
+);
+const bundled = (data: Record<string, any>) =>
+  Object.keys({ ...data.dependencies, ...data.devDependencies }).flatMap(
+    (name) => {
+      const dir = privateDirs.get(name);
+      return dir ? [`packages/${dir}`] : [];
+    },
+  );
 
 let hasChanges = false;
-for (const pkg of ["core", "crud", "cli", "bullmq-world", "redis-world"]) {
+for (const { dir, data } of packages) {
   const commits = git(
     "log",
     "--format=%H\t%s",
     previous ? `${previous}..HEAD` : "HEAD",
     "--",
-    `packages/${pkg}`,
-    // The inspector ships inside the CLI.
-    ...(pkg === "cli" ? ["packages/workflow-inspector"] : []),
+    `packages/${dir}`,
+    ...bundled(data),
   )
     .split("\n")
-    .filter((line) =>
-      /^(?:feat|fix|perf|refactor)(?:\([^)]*\))?!?:/.test(line.split("\t")[1]),
-    );
+    .flatMap((line) => {
+      const [sha = "", subject = ""] = line.split("\t");
+      const [, type = "", breaking, description] =
+        CONVENTIONAL.exec(subject) ?? [];
+      return Object.hasOwn(SECTIONS, type)
+        ? [{ sha, type, text: breaking ? subject : description }]
+        : [];
+    });
   if (!commits.length) continue;
   hasChanges = true;
-  console.log(`## @brickkit/${pkg}\n`);
-  for (const [heading, pattern] of [
-    ["Features", /^feat(?:\([^)]*\))?!?:/],
-    ["Bug Fixes", /^fix(?:\([^)]*\))?!?:/],
-    ["Performance", /^perf(?:\([^)]*\))?!?:/],
-    ["Refactors", /^refactor(?:\([^)]*\))?!?:/],
-  ] as const) {
-    const entries = commits.filter((line) => pattern.test(line.split("\t")[1]));
+  console.log(`## ${data.name}\n`);
+  for (const [type, heading] of Object.entries(SECTIONS)) {
+    const entries = commits.filter((commit) => commit.type === type);
     if (!entries.length) continue;
     console.log(`### ${heading}\n`);
-    for (const entry of entries) {
-      const [sha, subject] = entry.split("\t");
-      const description = subject.replace(
-        /^(?:feat|fix|perf|refactor)(?:\([^)]*\))?:\s*/,
-        "",
-      );
-      console.log(
-        `- ${description} ([${sha.slice(0, 7)}](${repo}/commit/${sha}))`,
-      );
-    }
+    for (const { sha, text } of entries)
+      console.log(`- ${text} ([${sha.slice(0, 7)}](${repo}/commit/${sha}))`);
     console.log();
   }
 }

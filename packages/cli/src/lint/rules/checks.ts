@@ -1,4 +1,5 @@
 import {
+  defineRule,
   definitionOf,
   directivesOf,
   enclosingDefinition,
@@ -17,41 +18,34 @@ import {
   type Node,
   type Rule,
   type RuleContext,
+  WEB_DIR,
 } from "../ast";
+import { isControlEvent, STANDARD_ERRORS } from "@brickkit/core/client";
+import { MANIFEST_FILE } from "../../definitions";
+import { version } from "../../../package.json";
 
-function rule(
+const MANIFEST_STEM = MANIFEST_FILE.replace(/\.ts$/, "");
+/** This release's range, for the `brick` field example: `^0.12.0`. */
+const BRICK_RANGE = `^${version.split(".").slice(0, 2).join(".")}.0`;
+
+const rule = (
   description: string,
   create: Rule["create"],
-  options: { fixable?: "code"; schema?: unknown[] } = {},
-): Rule {
-  return {
-    meta: {
-      type: "problem",
-      docs: { description },
-      fixable: options.fixable,
-      schema: options.schema ?? [],
-    },
-    create,
-  };
-}
+  options?: { fixable?: "code"; schema?: unknown[] },
+) => defineRule("problem", description, create, options);
 
 /** Skip tests and generated files; local plugins are checked like app code. */
-function skip(context: RuleContext) {
-  const info = fileInfo(context);
-  return info.exempt && !info.rel.split("/").includes("plugins");
-}
+const skip = (context: RuleContext) => fileInfo(context).ignored;
 
 const HANDLERS: Definition["kind"][] = ["action", "command", "tool"];
-const BUILT_IN_ERRORS = new Set([
-  "BAD_REQUEST",
-  "UNAUTHORIZED",
-  "FORBIDDEN",
-  "NOT_FOUND",
-  "CONFLICT",
-  "INTERNAL_SERVER_ERROR",
-]);
+/** What clients call: described in OpenAPI, MCP and the dashboard. */
+const ENDPOINTS: Definition["kind"][] = [...HANDLERS, "socket"];
+/** What gets the error helpers. */
+const ERROR_KINDS: Definition["kind"][] = [...ENDPOINTS, "crud"];
+/** What runs with a request or delivery context. */
+const CTX_KINDS: Definition["kind"][] = [...ERROR_KINDS, "listener"];
+const BUILT_IN_ERRORS = new Set(Object.keys(STANDARD_ERRORS));
 
-/** `error.NAME(...)`, the error helper handlers receive. */
 function errorHelper(node: Node): string | undefined {
   const call = memberCall(node);
   return call?.object === "error" ? call.property : undefined;
@@ -68,6 +62,7 @@ function isEmit(node: Node): "emitEvent" | "emit" | undefined {
 }
 
 const WRITE_METHODS = new Set(["insert", "update", "delete"]);
+const WRITE_CALL = new RegExp(`\\.(${[...WRITE_METHODS].join("|")})\\s*\\(`);
 
 // Verbs an action name may start with (getUser, archive, importCsv).
 const VERBS = new Set(
@@ -103,19 +98,18 @@ export const checkRules: Record<string, Rule> = {
     "Browser code imports only @brickkit/core/client and the generated contract.",
     (context) => {
       const info = fileInfo(context);
-      const web = info.settings.web.replace(/\/$/, "");
-      if (!info.rel.startsWith(`${web}/`)) return {};
-      const generated = info.settings.generated.replace(/\/$/, "");
+      if (!info.rel.startsWith(`${WEB_DIR}/`)) return {};
+      const { generated } = info.settings;
       const check = (node: Node, source: unknown) => {
         if (typeof source !== "string") return;
         let allowed: boolean;
         if (source.startsWith(".")) {
           const path = resolveImport(info, context, source)!;
           allowed =
-            path.startsWith(`${web}/`) ||
+            path.startsWith(`${WEB_DIR}/`) ||
             (path.startsWith(`${generated}/`) &&
-              !path.endsWith("services.gen") &&
-              !path.endsWith("services.gen.ts"));
+              !path.endsWith(MANIFEST_STEM) &&
+              !path.endsWith(MANIFEST_FILE));
         } else
           allowed =
             !/^(@brickkit\/|bun:|node:)/.test(source) ||
@@ -180,7 +174,7 @@ export const checkRules: Record<string, Rule> = {
     (context) => {
       const info = fileInfo(context);
       if (
-        info.exempt ||
+        info.ignored ||
         /(^|\.)secrets\.[cm]?[jt]s$/.test(info.base) ||
         /\.config\.[cm]?[jt]s$/.test(info.base)
       )
@@ -257,8 +251,7 @@ export const checkRules: Record<string, Rule> = {
         CallExpression(node: Node) {
           const name = errorHelper(node);
           if (!name || node.parent?.type !== "ExpressionStatement") return;
-          if (!enclosingDefinition(node, [...HANDLERS, "crud", "socket"]))
-            return;
+          if (!enclosingDefinition(node, ERROR_KINDS)) return;
           context.report({
             node,
             message: `Return the error: return error.${name}(...).`,
@@ -436,7 +429,7 @@ export const checkRules: Record<string, Rule> = {
           if (definition?.kind !== "listener") return;
           const text = context.sourceCode.getText(definition.config);
           if (
-            /\.(insert|update|delete)\s*\(/.test(text) &&
+            WRITE_CALL.test(text) &&
             !/deliveryId|onConflictDo(Nothing|Update)/.test(text)
           )
             context.report({
@@ -462,7 +455,7 @@ export const checkRules: Record<string, Rule> = {
             if (schemas?.type !== "ObjectExpression") continue;
             for (const property of schemas.properties) {
               const name = propertyName(property);
-              if (name?.startsWith("$"))
+              if (name !== undefined && isControlEvent(name))
                 context.report({
                   node: property.key,
                   message: `Socket ${key} event "${name}" starts with $, which is reserved for control messages.`,
@@ -694,7 +687,7 @@ export const checkRules: Record<string, Rule> = {
           const definition = definitionOf(node);
           if (!definition) return;
           if (
-            ["action", "command", "tool", "socket"].includes(definition.kind) &&
+            ENDPOINTS.includes(definition.kind) &&
             !getProperty(definition.config, "description")
           )
             context.report({
@@ -803,15 +796,7 @@ export const checkRules: Record<string, Rule> = {
       return {
         CallExpression(node: Node) {
           if (memberCall(node)?.object !== "console") return;
-          if (
-            !enclosingDefinition(node, [
-              ...HANDLERS,
-              "socket",
-              "listener",
-              "crud",
-            ])
-          )
-            return;
+          if (!enclosingDefinition(node, CTX_KINDS)) return;
           context.report({
             node,
             message:
@@ -869,8 +854,7 @@ export const checkRules: Record<string, Rule> = {
           if (!stringValue(getProperty(config, "brick")?.value))
             context.report({
               node: node.callee,
-              message:
-                'Declare the Brick versions this plugin supports: brick: "^0.11.0".',
+              message: `Declare the Brick versions this plugin supports: brick: "${BRICK_RANGE}".`,
             });
           const options = getProperty(config, "options")?.value;
           if (!options)

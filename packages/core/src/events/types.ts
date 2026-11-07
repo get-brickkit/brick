@@ -79,12 +79,13 @@ export interface EventListener<TPayload = any> {
    * retries the delivery with a growing delay. A listener has this or `workflow`.
    */
   readonly run?: (delivery: EventDelivery<TPayload>) => void | Promise<void>;
+  /** The typed errors a handler can fail with; `retry` receives them as a `ListenerFailure`. */
+  readonly errors?: Record<string, ActionErrorDefinition>;
   /**
    * Decides what a failed delivery does next. Without it, every failure retries
    * until `maxAttempts`. It cannot extend the attempts: `"retry"` still parks the
    * delivery as dead once they run out.
    */
-  readonly errors?: Record<string, ActionErrorDefinition>;
   readonly retry?: (error: ListenerFailure<any>) => RetryDecision;
   /**
    * A durable workflow that runs for each delivery, on the app's `events.world`.

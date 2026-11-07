@@ -1,23 +1,16 @@
-import type { WorkflowRun, WorkflowRunStatus } from "@workflow/world";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   unwrapOrThrow,
   WorkflowWebAPIError,
 } from "~/lib/client/workflow-errors";
-import { fetchHooks, fetchRuns } from "~/lib/rpc-client";
-import type {
-  AnalyticsPageInfo,
-  EnvMap,
-  HookListItem,
-  PaginatedResult,
-} from "~/lib/types";
+import type { HookListItem, PaginatedResult } from "~/lib/types";
 import { getPaginationDisplay } from "~/lib/utils";
+import { rpc } from "~/lib/rpc-client";
 
 export interface PageResult<T> {
   data: T[] | null;
   isLoading: boolean;
   error: Error | null;
-  pageInfo?: AnalyticsPageInfo;
 }
 
 export interface PaginatedList<T> {
@@ -34,7 +27,6 @@ export interface PaginatedList<T> {
   reload: () => void;
   refresh: () => void;
   pageInfo: string;
-  analyticsPageInfo?: AnalyticsPageInfo;
 }
 
 /**
@@ -52,14 +44,12 @@ export function usePaginatedList<T>(
   ]);
   const [maxPagesVisited, setMaxPagesVisited] = useState(1);
 
-  // Store PageResult for each page.
   // Initial isLoading is false so SSR and client hydration agree; after mount,
   // the useEffect that triggers the first fetch will set it to true on the client.
   const [allPageResults, setAllPageResults] = useState<
     Map<number, PageResult<T>>
   >(new Map([[0, { data: null, isLoading: false, error: null }]]));
 
-  // Cache for fetched pages - key is cursor (or 'initial' for first page)
   const pageCache = useRef<
     Map<
       string,
@@ -67,7 +57,6 @@ export function usePaginatedList<T>(
         data: T[];
         cursor?: string;
         hasMore: boolean;
-        pageInfo?: AnalyticsPageInfo;
       }
     >
   >(new Map());
@@ -76,7 +65,6 @@ export function usePaginatedList<T>(
     async (pageIndex: number, pageCursor?: string, force: boolean = false) => {
       const cacheKey = pageCursor ?? "initial";
 
-      // Set loading state for this page
       setAllPageResults((prev) => {
         const newMap = new Map(prev);
         newMap.set(pageIndex, {
@@ -87,7 +75,6 @@ export function usePaginatedList<T>(
         return newMap;
       });
 
-      // Check cache first unless force reload
       if (!force && pageCache.current.has(cacheKey)) {
         const cached = pageCache.current.get(cacheKey);
         if (cached) {
@@ -97,7 +84,6 @@ export function usePaginatedList<T>(
               data: cached.data,
               isLoading: false,
               error: null,
-              pageInfo: cached.pageInfo,
             });
             return newMap;
           });
@@ -110,12 +96,10 @@ export function usePaginatedList<T>(
       try {
         const result = await fetchFn(pageCursor);
 
-        // Cache the result
         pageCache.current.set(cacheKey, {
           data: result.data,
           cursor: result.cursor,
           hasMore: result.hasMore,
-          pageInfo: result.pageInfo,
         });
 
         setAllPageResults((prev) => {
@@ -124,7 +108,6 @@ export function usePaginatedList<T>(
             data: result.data,
             isLoading: false,
             error: null,
-            pageInfo: result.pageInfo,
           });
           return newMap;
         });
@@ -149,7 +132,6 @@ export function usePaginatedList<T>(
     [fetchFn],
   );
 
-  // Initial load - force fetch when fetchFn changes (i.e., when caller params change)
   useEffect(() => {
     fetchPage(0, undefined, true);
   }, [fetchPage]);
@@ -162,7 +144,6 @@ export function usePaginatedList<T>(
       setCurrentPage(newPage);
       setMaxPagesVisited((prev) => Math.max(prev, newPage + 1));
 
-      // Initialize next page if not already loaded
       if (!allPageResults.has(newPage)) {
         setAllPageResults((prev) => {
           const newMap = new Map(prev);
@@ -186,16 +167,13 @@ export function usePaginatedList<T>(
   }, [currentPage, pageHistory, fetchPage]);
 
   const reload = useCallback(() => {
-    // Clear cache and results
     pageCache.current.clear();
     setAllPageResults(
       new Map([[0, { data: null, isLoading: true, error: null }]]),
     );
-    // Reset to first page
     setCurrentPage(0);
     setPageHistory([undefined]);
     setMaxPagesVisited(1);
-    // Force fetch first page
     fetchPage(0, undefined, true);
   }, [fetchPage]);
 
@@ -203,10 +181,8 @@ export function usePaginatedList<T>(
     // Refetch current page without resetting state
     // This preserves the existing data while loading, preventing flicker
     const currentCursor = pageHistory[currentPage];
-    // Clear cache for current page to ensure fresh data
     const cacheKey = currentCursor ?? "initial";
     pageCache.current.delete(cacheKey);
-    // Force fetch current page
     fetchPage(currentPage, currentCursor, true);
   }, [fetchPage, currentPage, pageHistory]);
 
@@ -216,11 +192,9 @@ export function usePaginatedList<T>(
     error: null,
   };
 
-  // Compute global error (any page has error)
   const globalError =
     Array.from(allPageResults.values()).find((p) => p.error)?.error ?? null;
 
-  // Compute global loading (any page is loading)
   const globalLoading = Array.from(allPageResults.values()).some(
     (p) => p.isLoading,
   );
@@ -251,52 +225,23 @@ export function usePaginatedList<T>(
     reload,
     refresh,
     pageInfo,
-    analyticsPageInfo: currentPageResult.pageInfo,
   };
-}
-
-/**
- * Returns a list of runs with pagination control
- */
-export function useWorkflowRuns(
-  env: EnvMap,
-  params: {
-    workflowName?: string;
-    status?: WorkflowRunStatus;
-    limit?: number;
-    sortOrder?: "asc" | "desc";
-  },
-): PaginatedList<WorkflowRun> {
-  const { workflowName, status, limit = 10, sortOrder = "desc" } = params;
-
-  const fetchFn = useCallback(
-    (cursor?: string) =>
-      unwrapOrThrow(
-        fetchRuns(env, { cursor, sortOrder, limit, workflowName, status }),
-      ),
-    [env, workflowName, limit, sortOrder, status],
-  );
-
-  return usePaginatedList(fetchFn);
 }
 
 /**
  * Returns a list of hooks with pagination control
  */
-export function useWorkflowHooks(
-  env: EnvMap,
-  params: {
-    runId?: string;
-    limit?: number;
-    sortOrder?: "asc" | "desc";
-  },
-): PaginatedList<HookListItem> {
+export function useWorkflowHooks(params: {
+  runId?: string;
+  limit?: number;
+  sortOrder?: "asc" | "desc";
+}): PaginatedList<HookListItem> {
   const { runId, limit = 10, sortOrder = "desc" } = params;
 
   const fetchFn = useCallback(
     (cursor?: string) =>
-      unwrapOrThrow(fetchHooks(env, { runId, cursor, sortOrder, limit })),
-    [env, runId, limit, sortOrder],
+      unwrapOrThrow(rpc("fetchHooks", { runId, cursor, sortOrder, limit })),
+    [runId, limit, sortOrder],
   );
 
   return usePaginatedList(fetchFn);

@@ -1,8 +1,7 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { getTableConfig as pgTableConfig } from "drizzle-orm/pg-core";
 import {
   brick,
-  brickVersion,
   defineAction,
   defineDatabase,
   defineListener,
@@ -14,12 +13,14 @@ import {
   generateOpenApiSpec,
   getTableName,
   resetGlobalRegistry,
-  satisfiesRange,
   sqliteTable,
   syncSchema,
   t,
   text,
 } from "../src";
+import { satisfiesRange } from "../src/version";
+import { version } from "../package.json";
+import { postJson, waitFor } from "./helpers";
 
 beforeEach(resetGlobalRegistry);
 
@@ -93,9 +94,8 @@ describe("definePlugin manifest", () => {
       resource: () => ({}),
     });
     expect(() => old()).toThrow(
-      `@acme/brick-old supports Brick ^0.0.1; this app runs ${brickVersion()}`,
+      `@acme/brick-old supports Brick ^0.0.1; this app runs ${version}`,
     );
-    expect(brickVersion()).toMatch(/^\d+\.\d+\.\d+/);
   });
 
   it("fills option defaults and names the plugin and option on bad values", () => {
@@ -311,37 +311,6 @@ describe("app part and lifecycle", () => {
     await app.events?.stop();
   });
 
-  it("adds a workflow listener, tagged with the plugin's deps for its steps", () => {
-    const sync = Object.assign(async () => {}, { workflowId: "flows/sync" });
-    const flows = definePlugin({
-      name: "@acme/flows",
-      deps: { mailer: port<string>() },
-      app: ({ listeners }) => {
-        listeners(
-          defineListener({
-            name: "flow-listener",
-            on: "pages.*",
-            workflow: sync,
-          }),
-        );
-      },
-    });
-    const app = brick({
-      services: [],
-      requestLogging: false,
-      plugins: [flows({}, { deps: { mailer: "plugin" } })],
-      events: { world: { createRunId: () => "run" } },
-    });
-    expect(app.events?.describe().listeners).toEqual([
-      { name: "flow-listener", on: ["pages.*"], kind: "workflow" },
-    ]);
-    // The workflow runtime reads this tag to run the steps with the plugin's deps.
-    const listener = (app.events as any).byName.get("flow-listener");
-    expect(listener[Symbol.for("brickkit.plugin.deps")]).toEqual({
-      mailer: "plugin",
-    });
-  });
-
   it("refuses a plugin passed to brick() that a resource already installed", () => {
     const audit = definePlugin({
       name: "@acme/audit",
@@ -389,6 +358,68 @@ describe("app part and lifecycle", () => {
     await expect(app.start()).rejects.toThrow("no connection");
     expect(calls).toEqual(["start ok", "stop ok"]);
   });
+  it("serve and listen both refuse to serve when a plugin fails to start", async () => {
+    const broken = definePlugin({
+      name: "@acme/broken",
+      app: ({ on }) =>
+        on("start", () => {
+          throw new Error("no connection");
+        }),
+    });
+    const create = () =>
+      brick({ services: [], requestLogging: false, plugins: [broken()] });
+    await expect(create().serve({ port: 0 })).rejects.toThrow("no connection");
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    const app = create().listen(0);
+    const url = `http://localhost:${app.server!.port}/openapi.json`;
+    try {
+      await waitFor(() => !app.server);
+      await expect(fetch(url)).rejects.toThrow();
+      expect(logged).toHaveBeenCalled();
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it("serve starts plugins, listens, then delivers events; shutdown reverses it", async () => {
+    const calls: string[] = [];
+    const state = () => (app.server ? "listening" : "not listening");
+    const order = definePlugin({
+      name: "@acme/order",
+      app: ({ on, listeners }) => {
+        on("start", () => void calls.push(`plugins start, ${state()}`));
+        on("stop", () => void calls.push(`plugins stop, ${state()}`));
+        listeners(
+          defineListener({ name: "order-listener", on: "pages.*", run() {} }),
+        );
+      },
+    });
+    const { service } = host();
+    const app = brick({
+      services: [service],
+      requestLogging: false,
+      plugins: [order()],
+    });
+    const events = app.events!;
+    const start = events.start.bind(events);
+    const stop = events.stop.bind(events);
+    events.start = () => {
+      calls.push(`events start, ${state()}`);
+      start();
+    };
+    events.stop = async () => {
+      calls.push(`events stop, ${state()}`);
+      await stop();
+    };
+    await app.serve({ port: 0 });
+    await app.shutdown(true);
+    expect(calls).toEqual([
+      "plugins start, not listening",
+      "events start, listening",
+      "events stop, listening",
+      "plugins stop, not listening",
+    ]);
+  });
 
   it("resolves the dashboard extension next to the plugin's file", () => {
     const plugin = definePlugin({
@@ -416,16 +447,7 @@ describe("plugin deps", () => {
     app: { handle(request: Request): Promise<Response> },
     path: string,
     body: unknown = {},
-  ) =>
-    (
-      await app.handle(
-        new Request(`http://localhost${path}`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        }),
-      )
-    ).json();
+  ) => (await postJson(app, path, body)).json();
 
   const seen: Record<string, unknown> = {};
   const notify = definePlugin({
@@ -468,42 +490,40 @@ describe("plugin deps", () => {
     },
   });
 
-  for (const compiler of [true, false])
-    it(`gives the plugin's actions the deps passed at install, never the host's (compiler: ${compiler})`, async () => {
-      const service = defineService("mail", {
-        deps: { carrier: port<string>() },
-      });
-      service.action({
-        name: "own",
-        execute: ({ ctx }) => ({ keys: Object.keys(ctx.deps) }),
-      });
-      const passed = mailer("plugin");
-      service.use(notify({}, { deps: { mailer: passed } }));
-      const app = brick({
-        services: [service],
-        deps: { carrier: "host" },
-        compiler,
-        requestLogging: false,
-        docs: false,
-      });
-      expect(seen.service).toBe(passed);
-      expect(await post(app, "/api/mail/notify-send", { to: "a" })).toEqual({
-        sent: "plugin:a",
-        keys: ["mailer"],
-      });
-      expect(await post(app, "/api/mail/own")).toEqual({ keys: ["carrier"] });
-      // A direct call too.
-      expect(
-        await (service.getAction("notifySend") as any).run({ to: "b" }),
-      ).toEqual({ sent: "plugin:b", keys: ["mailer"] });
-      expect(await (service.getAction("relay") as any).run()).toEqual({
-        keys: ["carrier"],
-      });
-      await app.start();
-      expect(seen.app).toBe(passed);
-      expect(seen.start).toBe(passed);
-      await app.stop();
+  it("gives the plugin's actions the deps passed at install, never the host's", async () => {
+    const service = defineService("mail", {
+      deps: { carrier: port<string>() },
     });
+    service.action({
+      name: "own",
+      execute: ({ ctx }) => ({ keys: Object.keys(ctx.deps) }),
+    });
+    const passed = mailer("plugin");
+    service.use(notify({}, { deps: { mailer: passed } }));
+    const app = brick({
+      services: [service],
+      deps: { carrier: "host" },
+      requestLogging: false,
+      docs: false,
+    });
+    expect(seen.service).toBe(passed);
+    expect(await post(app, "/api/mail/notify-send", { to: "a" })).toEqual({
+      sent: "plugin:a",
+      keys: ["mailer"],
+    });
+    expect(await post(app, "/api/mail/own")).toEqual({ keys: ["carrier"] });
+    // A direct call too.
+    expect(
+      await (service.getAction("notifySend") as any).run({ to: "b" }),
+    ).toEqual({ sent: "plugin:b", keys: ["mailer"] });
+    expect(await (service.getAction("relay") as any).run()).toEqual({
+      keys: ["carrier"],
+    });
+    await app.start();
+    expect(seen.app).toBe(passed);
+    expect(seen.start).toBe(passed);
+    await app.stop();
+  });
 
   it("reaches resource actions, endpoints and the setup's deps", async () => {
     const { service, page } = host();
@@ -629,6 +649,38 @@ describe("plugin deps", () => {
     service.use(relay({}, { deps: { mailer: mailer("x") } }));
     expect(await (service.getAction("relayOwn") as any).run()).toEqual({
       keys: [],
+    });
+  });
+
+  it("keeps a nested install's deps on its own actions, and the outer's on the rest", async () => {
+    const inner = definePlugin({
+      name: "@acme/inner",
+      deps: { mailer: port<Mailer>() },
+      service: ({ service }) => {
+        service.action({
+          name: "innerSend",
+          execute: ({ ctx }) => ({ sent: ctx.deps.mailer.send("i") }),
+        });
+      },
+    });
+    const outer = definePlugin({
+      name: "@acme/outer",
+      deps: { mailer: port<Mailer>() },
+      service: ({ service }) => {
+        service.use(inner({}, { deps: { mailer: mailer("inner") } }));
+        service.action({
+          name: "outerSend",
+          execute: ({ ctx }) => ({ sent: ctx.deps.mailer.send("o") }),
+        });
+      },
+    });
+    const service = defineService("nested_deps");
+    service.use(outer({}, { deps: { mailer: mailer("outer") } }));
+    expect(await (service.getAction("innerSend") as any).run()).toEqual({
+      sent: "inner:i",
+    });
+    expect(await (service.getAction("outerSend") as any).run()).toEqual({
+      sent: "outer:o",
     });
   });
 

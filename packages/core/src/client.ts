@@ -1,14 +1,21 @@
+import type { HttpMethod } from "./http";
 import type { Static, TSchema } from "@sinclair/typebox";
 import type { Action, ActionErrorDefinition } from "./types";
-import { ActionExecutionError, ValidationError } from "./types";
+import type { ActionExecutionError } from "./types";
+import { decodeError, type StandardErrorCode } from "./protocol";
 import { connectSocket } from "./socket-client";
 import { kebabCase } from "./kebab";
+import { DEFAULT_PREFIX, actionRoute, inputSource } from "./routes";
 import type {
   BrickClientSocket,
   BrickSocketClient,
   BrickSocketConnectOptions,
 } from "./socket-types";
 export { BrickSocketError } from "./socket-types";
+export { kebabCase };
+export { STANDARD_ERRORS, isControlEvent } from "./protocol";
+// For the dev dashboard page, which reads traces in the browser.
+export { SPAN, ATTR } from "./telemetry-names";
 export type {
   BrickClientSocket,
   BrickSocketClient,
@@ -65,18 +72,13 @@ export type {
  *
  * ## URL mapping
  *
- * A client path is a namespace walk ending in an action call. The leaf segment
- * decides the route, matching the server compiler (`packages/cli/src/compiler`):
- *
- * | Client call | HTTP request |
- * |---|---|
- * Generated browser contracts carry each action's HTTP method and path,
- * including plugin routes, resource routes and consumer overrides. Without
+ * A client path is a namespace walk ending in an action call. Generated
+ * browser contracts carry each action's HTTP method and path, including
+ * plugin routes, resource routes and consumer overrides. Without
  * runtime metadata, callers use `POST /api/<service>/<action>` with the names
  * in kebab-case (`getSummary` → `get-summary`); resource and plugin routes
  * need the contract.
  * GET/DELETE input is serialized as a query string; other methods send JSON.
-
  */
 
 export interface BrickClientOptions {
@@ -125,9 +127,9 @@ export interface BrickClientAction<
   serviceName: string;
   /** Owning plugin descriptor name for plugin actions (e.g. `@brickkit/crud`). */
   plugin?: string;
-  /** Owning resource name for resource-plugin actions (e.g. `page`). */
+  /** Owning resource name for resource actions (e.g. `page`). */
   resource?: string;
-  config: { path: string; method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" };
+  config: { path: string; method: HttpMethod };
   /** Type information only; never emitted at runtime. */
   readonly __types?: { input: TInput; output: TOutput; errors: TErrors };
 }
@@ -267,15 +269,7 @@ export type InferActionErrorCodes<A> =
  * (Standard framework codes are always possible alongside declared ones.)
  */
 export type InferActionFailure<A> = ActionExecutionError & {
-  code:
-    | InferActionErrorCodes<A>
-    | "BAD_REQUEST"
-    | "UNAUTHORIZED"
-    | "FORBIDDEN"
-    | "NOT_FOUND"
-    | "CONFLICT"
-    | "INTERNAL_SERVER_ERROR"
-    | "VALIDATION_FAILED";
+  code: InferActionErrorCodes<A> | StandardErrorCode | "VALIDATION_FAILED";
 };
 
 /**
@@ -326,7 +320,7 @@ function normalizeBaseUrl(baseUrl: string): string {
 }
 
 function normalizePrefix(prefix: string | undefined): string {
-  if (!prefix) return "/api";
+  if (!prefix) return DEFAULT_PREFIX;
   const withLeading = prefix.startsWith("/") ? prefix : `/${prefix}`;
   return withLeading.length > 1 ? withLeading.replace(/\/+$/, "") : withLeading;
 }
@@ -412,8 +406,16 @@ function planRequest(
     typeof actionTarget?.name === "string" && actionTarget.name
       ? actionTarget.name
       : path.slice(1).join(".");
-  const method = actionConfig?.method ?? "POST";
-  const configuredPath = actionConfig?.path;
+  // A raw server action's path is relative to its service: route it as the server does.
+  const route = isActionValue(actionTarget)
+    ? actionRoute(actionTarget as unknown as Action, service, prefix)
+    : actionConfig;
+  if (route === false)
+    throw new Error(
+      `[Brick-TS client] '${path.join(".")}' has no HTTP route: its plugin switched it off.`,
+    );
+  const method = route?.method ?? "POST";
+  const configuredPath = route?.path;
   let actionPath =
     configuredPath ??
     `${prefix}/${encodeURIComponent(kebabCase(service))}/${action
@@ -437,7 +439,7 @@ function planRequest(
     });
     remaining = input === undefined ? undefined : record;
   }
-  const queryOnly = method === "GET" || method === "DELETE";
+  const queryOnly = inputSource(method) === "query";
   return {
     method,
     url: `${baseUrl}${actionPath}${queryOnly ? toQueryString(remaining) : ""}`,
@@ -447,26 +449,8 @@ function planRequest(
 }
 
 function toActionError(status: number, body: unknown, url: string): Error {
-  if (body !== null && typeof body === "object") {
-    const record = body as Record<string, unknown>;
-    if (record.name === "ValidationError") {
-      return new ValidationError(
-        typeof record.message === "string"
-          ? record.message
-          : "Validation failed",
-        Array.isArray(record.errors) ? (record.errors as any) : [],
-        typeof record.status === "number" ? record.status : status,
-      );
-    }
-    if (typeof record.code === "string") {
-      return new ActionExecutionError(
-        record.code,
-        typeof record.message === "string" ? record.message : record.code,
-        typeof record.status === "number" ? record.status : status,
-        (record.details ?? undefined) as unknown,
-      );
-    }
-  }
+  const decoded = decodeError(body, status);
+  if (decoded) return decoded;
   if (status >= 500) {
     return new BrickServerError(
       `Unexpected server error (status ${status}) for ${url}.`,

@@ -7,6 +7,7 @@ import {
 } from "@tanstack/query-core";
 import type { BrickClientAction } from "../src/client";
 import { createBrickQueryClient } from "../src/tanstack-query";
+import { waitFor } from "./helpers";
 
 function action(
   method: BrickClientAction["config"]["method"],
@@ -133,7 +134,7 @@ test("QueryClient cancellation reaches fetch and combines per-request cancellati
     request: { signal: request.signal },
   });
   const pending = client.fetchQuery(options).catch((error: unknown) => error);
-  await Bun.sleep(0);
+  await waitFor(() => received !== undefined);
   await client.cancelQueries({ queryKey: options.queryKey });
   await pending;
   expect(received?.aborted).toBe(true);
@@ -215,7 +216,7 @@ test("request and client signals remain active alongside Query cancellation", as
           }),
         )
         .catch((error: unknown) => error);
-      await Bun.sleep(0);
+      await waitFor(() => received !== undefined);
       controller.abort();
       expect(await pending).toBeInstanceOf(DOMException);
       expect(received?.aborted).toBe(true);

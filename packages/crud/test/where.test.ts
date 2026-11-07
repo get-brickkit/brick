@@ -1,9 +1,9 @@
 import { test, expect } from "bun:test";
-import type { Database } from "bun:sqlite";
 import { sqliteTable, integer, text } from "drizzle-orm/sqlite-core";
-import { defineService, defineDatabase } from "@brickkit/core";
+import { brick, defineService, defineDatabase } from "@brickkit/core";
 import { TypeCompiler } from "@sinclair/typebox/compiler";
 import { crud } from "../src";
+import { clientContract, sqliteService } from "./helpers";
 
 const records = sqliteTable("where_records", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -12,15 +12,8 @@ const records = sqliteTable("where_records", {
   active: integer("active", { mode: "boolean" }).default(true),
 });
 
-let sequence = 0;
 function fixture() {
-  const database = defineDatabase({ tables: [records] });
-  const db = database.getDb();
-  const sqlite = (db as typeof db & { $client: Database }).$client;
-  sqlite.exec(
-    "CREATE TABLE where_records (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,email TEXT,active INTEGER DEFAULT 1)",
-  );
-  const service = defineService(`where_test_${sequence++}`, { database });
+  const { sqlite, service } = sqliteService("where_test", [records]);
   const resource: any = service
     .resource({ name: "record", table: records, id: records.id })
     .use(
@@ -72,7 +65,7 @@ function fixture() {
         },
       }),
     );
-  return { sqlite, resource };
+  return { sqlite, resource, service };
 }
 
 async function seed(resource: any) {
@@ -81,58 +74,19 @@ async function seed(resource: any) {
   await resource.create.run({ name: "Carol", email: "carol@example.com" });
 }
 
-test("where schema groups leaves into named per-field unions", () => {
-  const { resource, sqlite } = fixture();
+test("the typed client names each where leaf, and the where schema compiles in linear size", () => {
+  const { service, resource, sqlite } = fixture();
   try {
-    const where = resource.list.config.input.properties.where;
-    expect(where.$id).toBe("CrudWhere:record");
-    // Every top-level member is a named $ref: no anonymous inline leaves.
-    const memberRefs = where.anyOf.map((member: any) => member.$ref);
-    expect(memberRefs).toEqual([
-      "CrudWhere:record:id",
-      "CrudWhere:record:name",
-      "CrudWhere:record:email",
-      "CrudWhere:record:active",
-      "CrudWhere:record:and",
-      "CrudWhere:record:or",
-    ]);
-    const defs = where.anyOf[0].$defs;
-    expect(defs["CrudWhere:record:name"].title).toBe("Where:record:name");
-    expect(defs["CrudWhere:record:and"].title).toBe("Where:record:and");
-    expect(defs["CrudWhere:record:or"].title).toBe("Where:record:or");
-    // Exact per-op value shapes survive the grouping.
-    const byOp = Object.fromEntries(
-      defs["CrudWhere:record:id"].anyOf.map((leaf: any) => [
-        leaf.properties.op.const,
-        leaf,
-      ]),
+    const { source } = clientContract(
+      brick({ services: [service], docs: false }),
     );
-    expect(Object.keys(byOp).sort()).toEqual([
-      "between",
-      "eq",
-      "gt",
-      "gte",
-      "in",
-      "isNotNull",
-      "isNull",
-      "lt",
-      "lte",
-      "ne",
-      "notIn",
-    ]);
-    expect(byOp.in.properties.value).toMatchObject({
-      type: "array",
-      minItems: 1,
-      maxItems: 1000,
-    });
-    expect(byOp.between.properties.value.items).toHaveLength(2);
-    expect(byOp.isNull.required).toEqual(["field", "op"]);
-    expect(byOp.isNull.properties.value).toBeUndefined();
-    expect(byOp.eq.properties.value).toMatchObject({ type: "number" });
-    // Compiles without blowup and stays shared: one function per $id.
-    const compiled = TypeCompiler.Compile(where);
+    expect(source).toContain(
+      "export type BrickCrudWhere_record = (BrickWhere_record_id | BrickWhere_record_name | BrickWhere_record_email | BrickWhere_record_active | BrickWhere_record_and | BrickWhere_record_or);",
+    );
+    const compiled = TypeCompiler.Compile(
+      resource.list.config.input.properties.where,
+    );
     expect(compiled.Code().match(/function check_/g)?.length).toBeLessThan(40);
-    expect(compiled.Check({ field: "id", op: "eq", value: 1 })).toBe(true);
   } finally {
     sqlite.close();
   }
@@ -237,6 +191,7 @@ test("malformed where shapes reject with 400", async () => {
     for (const where of [
       { field: "id", op: "eq", value: "1" },
       { field: "id", op: "in", value: [] },
+      { field: "id", op: "in", value: Array.from({ length: 1001 }, () => 1) },
       { field: "id", op: "between", value: [1] },
       { field: "id", op: "isNull", value: 1 },
       { field: "email", op: "eq", value: null },
@@ -257,34 +212,23 @@ test("malformed where shapes reject with 400", async () => {
 });
 
 test("filter fields colliding with branch names fail fast", () => {
-  const odd = sqliteTable("where_odd", {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    and: text("and"),
-  });
-  const database = defineDatabase({ tables: [odd] });
-  const service = defineService("where_collision", { database });
-  expect(() =>
-    service.resource({ name: "record", table: odd, id: odd.id }).use(
-      crud({
-        access: "public",
-        fields: { id: { read: true }, and: { read: true, filter: ["eq"] } },
-      }),
-    ),
-  ).toThrow("collides with the 'and' branch");
-  const oddOr = sqliteTable("where_odd_or", {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    or: text("or"),
-  });
-  const databaseOr = defineDatabase({ tables: [oddOr] });
-  const serviceOr = defineService("where_collision_or", {
-    database: databaseOr,
-  });
-  expect(() =>
-    serviceOr.resource({ name: "record", table: oddOr, id: oddOr.id }).use(
-      crud({
-        access: "public",
-        fields: { id: { read: true }, or: { read: true, filter: ["eq"] } },
-      }),
-    ),
-  ).toThrow("collides with the 'or' branch");
+  for (const branch of ["and", "or"]) {
+    const odd = sqliteTable(`where_odd_${branch}`, {
+      id: integer("id").primaryKey({ autoIncrement: true }),
+      [branch]: text(branch),
+    });
+    const database = defineDatabase({ tables: [odd] });
+    const service = defineService(`where_collision_${branch}`, { database });
+    expect(() =>
+      service.resource({ name: "record", table: odd, id: odd.id }).use(
+        crud({
+          access: "public",
+          fields: {
+            id: { read: true },
+            [branch]: { read: true, filter: ["eq"] },
+          },
+        }),
+      ),
+    ).toThrow(`collides with the '${branch}' branch`);
+  }
 });

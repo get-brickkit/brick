@@ -1,51 +1,23 @@
 /**
- * Shared types that are used by both server and client code.
+ * Types shared by the server's RPC methods and the browser.
  * This file should NOT import any server-only modules.
  */
 
 import type { Hook } from "@workflow/world";
 
-/**
- * Public configuration info that is safe to send to the client.
- *
- * IMPORTANT:
- * - The web UI must not be able to read arbitrary server env vars.
- * - The only env-derived data we expose is from a strict per-world allowlist.
- */
-export interface PublicServerConfig {
-  /** Human-readable backend name for display (e.g., "PostgreSQL", "Local", "Vercel") */
-  backendDisplayName: string;
-  /** The raw backend identifier (e.g., "@workflow/world-postgres", "local", "vercel") */
-  backendId: string;
-  /**
-   * Safe, whitelisted, env-derived values.
-   *
-   * Keys MUST match the canonical environment variable names (e.g. "WORKFLOW_VERCEL_PROJECT").
-   * This keeps configuration naming consistent across CLI + web + docs.
-   */
-  publicEnv: Record<string, string>;
-  /**
-   * Keys for env vars that are allowed/known but considered sensitive.
-   * The server will NOT return their values; UIs should display `*****`.
-   */
-  sensitiveEnvKeys: string[];
-  /**
-   * Additional safe, derived info for display (never contains secrets).
-   * These keys are not env var names; they are UI-friendly derived fields.
-   */
-  displayInfo?: Record<string, string>;
-}
+/** The API routes, relative to the base path (see routes.ts). */
+export const API_PATHS = { rpc: "api/rpc", stream: "api/stream/" } as const;
 
-/**
- * Environment variable map for world configuration.
- */
-export type EnvMap = Record<string, string | undefined>;
+/** Stream response headers: the cursor for the next request, and "true" once the stream is closed. */
+export const STREAM_CURSOR_HEADER = "X-Stream-Cursor";
+export const STREAM_DONE_HEADER = "X-Stream-Done";
 
 /**
  * Structured error information that can be sent to the client
  */
 export interface ServerActionError {
   message: string;
+  // "server" if the error originates in the inspector, "API" if it originates in the World
   layer: "server" | "API";
   cause?: string;
   request?: {
@@ -64,33 +36,10 @@ export type ServerActionResult<T> =
   | { success: true; data: T }
   | { success: false; error: ServerActionError };
 
-export interface AnalyticsPageInfo {
-  currentLookbackDays: number;
-  maxLookbackDays: number;
-  currentWindowStart: Date | string;
-  maxWindowStart: Date | string;
-  upgradeAvailable: boolean;
-}
-
 export interface PaginatedResult<T> {
   data: T[];
   cursor?: string;
   hasMore: boolean;
-  pageInfo?: AnalyticsPageInfo;
-}
-
-export interface StopSleepResult {
-  /** Number of pending sleeps that were stopped */
-  stoppedCount: number;
-}
-
-export interface StopSleepOptions {
-  correlationIds?: string[];
-}
-
-export interface ResumeHookResult {
-  hookId: string;
-  runId: string;
 }
 
 /**
@@ -99,8 +48,3 @@ export interface ResumeHookResult {
  * `fetchHookToken`) for the copy-token and resume affordances.
  */
 export type HookListItem = Omit<Hook, "token">;
-
-/** Result of a lazy per-hook token fetch. */
-export interface HookTokenResult {
-  token: string;
-}

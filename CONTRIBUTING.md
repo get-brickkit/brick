@@ -62,7 +62,7 @@ Format with `bun run format` from the package directory or the root. Shared conf
 
 ## Know what the hooks run
 
-The hooks are defined in `lefthook.yml` and run on pre-commit. They check staged whitespace, run Oxlint and Oxfmt on staged files, run `bun run check`, and, when site files change, run the site lint and type checks. There is no pre-push hook. Run `bunx --no-install lefthook run pre-push --all-files` only when you want the website checks on demand from the root.
+The hooks are defined in `lefthook.yml` and run on pre-commit. They check staged whitespace, run `bun run check` (lint, format check, build, typecheck and tests, the same pipeline CI runs), and, when site files change, run `bun run check:www`. There is no pre-push hook. To run the site checks on demand, run `bun run check:www` from the root.
 
 ## Send the pull request
 

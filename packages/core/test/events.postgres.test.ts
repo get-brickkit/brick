@@ -3,20 +3,28 @@ import { randomUUID } from "node:crypto";
 import { integer, pgTable, serial, text } from "drizzle-orm/pg-core";
 import postgres from "postgres";
 import {
+  brick,
   defineDatabase,
   defineListener,
   defineService,
   Dispatcher,
-  EventsHub,
   outboxTable,
+  syncSchema,
   type EventDelivery,
 } from "../src";
+import type { Deliverable } from "../src/events/hub";
+import { requireService, track, waitFor } from "./helpers";
 
-const url = process.env.TEST_DATABASE_URL;
+const url = requireService("TEST_DATABASE_URL", "events.postgres");
 const suite = url ? describe : describe.skip;
 
 const clients: ReturnType<typeof postgres>[] = [];
+const tables: string[] = [];
 afterAll(async () => {
+  if (tables.length)
+    await clients[0]!.unsafe(
+      `DROP TABLE IF EXISTS ${tables.map((name) => `"${name}"`).join(", ")}`,
+    );
   await Promise.all(clients.map((client) => client.end()));
 });
 
@@ -35,28 +43,28 @@ async function setup(
     label: text("label").notNull(),
     count: integer("count").notNull().default(0),
   });
-  const client = postgres(url!, { max: 10 });
+  const client = postgres(url!, { max: 10, onnotice: () => {} });
   clients.push(client);
-  await client.unsafe(`
-    CREATE TABLE ${outboxName} (
-      seq bigserial PRIMARY KEY, id text NOT NULL UNIQUE, event_id text NOT NULL,
-      listener text NOT NULL, name text NOT NULL, payload jsonb NOT NULL,
-      trace_id text, source text, occurred_at timestamptz NOT NULL, status text NOT NULL,
-      attempts integer NOT NULL DEFAULT 0, last_error text,
-      available_at timestamptz NOT NULL, claimed_at timestamptz, delivered_at timestamptz
-    );
-    CREATE TABLE ${itemsName} (id serial PRIMARY KEY, label text NOT NULL, count integer NOT NULL DEFAULT 0);`);
   const database = defineDatabase({
     engine: "postgres",
     client,
     tables: { [itemsName]: items, [outboxName]: outbox },
   });
   const db: any = database.getDb();
+  tables.push(outboxName, itemsName);
+  await syncSchema([outbox, items], db);
   const service = defineService(`events_pg_${suffix}`, { database });
-  const hub = new EventsHub({
-    listeners: listeners.map(defineListener),
-    dispatch: { timer: false, maxBackoffMs: 5, ...dispatch },
-  }).attach([service]);
+  const hub = track(
+    brick({
+      services: [service],
+      events: {
+        listeners: listeners.map(defineListener),
+        dispatch: { timer: false, maxBackoffMs: 5, ...dispatch },
+      },
+      requestLogging: false,
+      docs: false,
+    }),
+  ).events!;
   const rows = () => db.select().from(outbox);
   return {
     db,
@@ -65,7 +73,6 @@ async function setup(
     events: service.recorder!,
     items,
     outbox,
-    client,
     rows,
   };
 }
@@ -165,11 +172,12 @@ suite("events on Postgres", () => {
       client: otherClient,
       tables: {},
     }).getDb();
-    const first = new Dispatcher(ctx.db, ctx.outbox, () => listener, {
+    const deliverable = listener as unknown as Deliverable;
+    const first = new Dispatcher(ctx.db, ctx.outbox, () => deliverable, {
       timer: false,
       batchSize: 20,
     });
-    const second = new Dispatcher(otherDb, ctx.outbox, () => listener, {
+    const second = new Dispatcher(otherDb, ctx.outbox, () => deliverable, {
       timer: false,
       batchSize: 20,
     });
@@ -207,10 +215,9 @@ suite("events on Postgres", () => {
     await ctx.events.transaction(ctx.db, {}, async (_tx, record) =>
       record("item.create", {}),
     );
-    for (let round = 0; round < 4; round++) {
-      await ctx.hub.drain();
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    await waitFor(
+      async () => (await ctx.hub.drain(), (await ctx.hub.counts()).dead === 1),
+    );
     expect(calls).toBe(2);
     expect(await ctx.hub.counts()).toEqual({
       pending: 0,
@@ -236,10 +243,9 @@ suite("events on Postgres", () => {
     await ctx.events.transaction(ctx.db, {}, async (_tx, record) =>
       record("item.create", {}),
     );
-    const table = (ctx.outbox as any)[Symbol.for("drizzle:Name")];
-    await ctx.client.unsafe(
-      `UPDATE ${table} SET status = 'claimed', claimed_at = now() - interval '1 minute'`,
-    );
+    await ctx.db
+      .update(ctx.outbox)
+      .set({ status: "claimed", claimedAt: new Date(Date.now() - 60_000) });
     await ctx.hub.drain();
     expect(calls).toBe(1);
     expect(await ctx.hub.counts()).toEqual({

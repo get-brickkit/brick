@@ -1,11 +1,16 @@
 import { describe, it, expect } from "bun:test";
-import { defineAction, t, ActionExecutionError, ValidationError } from "../src";
+import {
+  brick,
+  defineAction,
+  defineService,
+  t,
+  ActionExecutionError,
+  ValidationError,
+} from "../src";
 import {
   createBrickClient,
   BrickTransportError,
   BrickServerError,
-  type InferActionInput,
-  type InferActionErrorCodes,
 } from "../src/client";
 
 const listPages = defineAction({
@@ -80,7 +85,8 @@ describe("createBrickClient (typed HTTP client)", () => {
         return Promise.resolve(new Response("ok"));
       } as unknown as typeof fetch,
     });
-    expect(await api.billing.charge({ amount: 1 })).toBe("ok");
+    // The fake server answers with a string, whatever the contract says.
+    expect((await api.billing.charge({ amount: 1 })) as unknown).toBe("ok");
   });
 
   it("reads plain strings with or without a content type and rejects malformed JSON", async () => {
@@ -95,7 +101,9 @@ describe("createBrickClient (typed HTTP client)", () => {
         baseUrl: "http://localhost:4000",
         fetch: fetchImpl,
       });
-      expect(await api.billing.charge({ amount: 1 })).toBe("Echo: local");
+      expect((await api.billing.charge({ amount: 1 })) as unknown).toBe(
+        "Echo: local",
+      );
     }
     const api = createBrickClient<AppServer>({
       baseUrl: "http://localhost:4000",
@@ -262,10 +270,37 @@ describe("createBrickClient (typed HTTP client)", () => {
     expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ amount: 500 });
   });
 
+  it("calls a raw action's custom path where the server mounts it: under the prefix and service", async () => {
+    const service = defineService("customRecords");
+    const lookup = service.action({
+      name: "lookup",
+      method: "GET",
+      path: "/:id/value",
+      input: t.Object({ id: t.String(), field: t.String() }),
+      execute: ({ input }) => ({ value: `${input.id}:${input.field}` }),
+    });
+    const app = brick({ services: [service], prefix: "/v2", docs: false });
+    // The server mounts a custom path relative to its service.
+    const direct = await app.handle(
+      new Request("http://localhost/v2/custom-records/a/value?field=x"),
+    );
+    expect(await direct.json()).toEqual({ value: "a:x" });
+    const contract = { customRecords: { lookup } };
+    const api = createBrickClient<typeof contract>({
+      baseUrl: "http://localhost",
+      prefix: "/v2",
+      contract,
+      fetch: (input, init) => app.handle(new Request(input, init)),
+    });
+    expect(await api.customRecords.lookup({ id: "a", field: "x" })).toEqual({
+      value: "a:x",
+    });
+  });
+
   it("interpolates custom paths without duplicating the prefix or mutating input", async () => {
     const action = defineAction({
       name: "get_value",
-      path: "/v2/records/:doctype/value/:doctype",
+      path: "/:doctype/value/:doctype",
       method: "POST",
       input: t.Object({ doctype: t.String(), fields: t.Array(t.String()) }),
       execute: ({ input }) => input.doctype,
@@ -324,7 +359,7 @@ describe("createBrickClient (typed HTTP client)", () => {
   it("sends remaining custom GET input as query parameters", async () => {
     const action = defineAction({
       name: "lookup",
-      path: "/v2/:id",
+      path: "/:id",
       method: "GET",
       input: t.Object({ id: t.String(), fields: t.Array(t.String()) }),
       execute: () => "ok",
@@ -338,7 +373,7 @@ describe("createBrickClient (typed HTTP client)", () => {
     });
     await api.records.lookup({ id: "a/b", fields: ["name", "title"] });
     expect(calls[0]!.url).toBe(
-      "http://localhost:4000/v2/a%2Fb?fields=name&fields=title",
+      "http://localhost:4000/api/records/a%2Fb?fields=name&fields=title",
     );
     expect(calls[0]!.init.method).toBe("GET");
     expect(calls[0]!.init.body).toBeUndefined();
@@ -472,7 +507,7 @@ describe("createBrickClient (typed HTTP client)", () => {
       output: t.Object({ ok: t.Boolean() }),
       execute: async () => ({ ok: true }),
     });
-    (chargeAction as any).serviceName = "payments";
+    defineService("payments").action(chargeAction);
     const runtimeContract = {
       money: { settle: chargeAction },
       posts: {
@@ -500,27 +535,5 @@ describe("createBrickClient (typed HTTP client)", () => {
     await api.posts.list({ limit: 3 } as any);
     expect(calls[1]!.init.method).toBe("GET");
     expect(calls[1]!.url).toBe("http://localhost:4000/api/article?limit=3");
-  });
-
-  it("infers inputs, outputs, and declared error codes at the type level", () => {
-    type ListInput = InferActionInput<typeof listPages>;
-    const valid: ListInput = { limit: 10, sort: "-createdAt" };
-    expect(valid.limit).toBe(10);
-
-    type Codes = InferActionErrorCodes<typeof createPage>;
-    const code: Codes = "SLUG_EXISTS";
-    expect(code).toBe("SLUG_EXISTS");
-
-    // Compile-time payload checking (never invoked at runtime): wrong shapes
-    // must not typecheck.
-    function _typeChecks(api: import("../src/client").BrickClient<AppServer>) {
-      // @ts-expect-error title must be a string
-      void api.page.create({ title: 123, content: "World" });
-      // @ts-expect-error amount is required
-      void api.billing.charge({});
-      // @ts-expect-error unknown namespaces do not exist
-      void api.unknownNamespace.action({});
-    }
-    expect(typeof _typeChecks).toBe("function");
   });
 });

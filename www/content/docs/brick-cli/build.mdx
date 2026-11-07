@@ -70,7 +70,7 @@ The compilation produces four artifacts in the output directory:
 ```text
 dist/brick/
 ├── server.js          # Standalone Bun server entry with graceful shutdown
-├── routes.js          # Precompiled route dispatcher and IR bindings
+├── routes.js          # The route IR the server checks the app against
 ├── server.js.map      # Source map for debugging
 └── brick-ir.json      # Serialized intermediate representation of all routes
 ```
@@ -81,4 +81,5 @@ The generated `server.js` includes:
 
 - Production `PORT` environment variable resolution with numeric validation (1-65535).
 - Graceful shutdown listeners for `SIGINT` and `SIGTERM` signals.
+- The [monitoring dashboard](/docs/brick-cli/dev-and-start#monitoring-dashboard) when the app sets `dashboard`, as `brick start` serves it, with the extension built into `dashboard/` beside it. It is loaded from `@brickkit/cli` at run time, so only then does the server need the package installed.
 - Ahead-of-time compiled Elysia route plans (when `--no-aot` is not passed), reducing startup compilation work on cold boots.

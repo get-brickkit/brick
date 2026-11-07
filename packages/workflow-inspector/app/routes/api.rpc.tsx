@@ -1,5 +1,5 @@
 /**
- * Resource route that exposes server functions as an RPC-style API.
+ * Resource route that serves the server's `rpcMethods`.
  *
  * Client code calls these via fetch POST to /api/rpc with a CBOR-encoded
  * body containing { method, params }. Responses are CBOR-encoded, which
@@ -7,61 +7,8 @@
  */
 
 import { decode, encode } from "cbor-x";
-import {
-  bulkCancelRuns,
-  cancelRun,
-  fetchEvent,
-  fetchEvents,
-  fetchEventsByCorrelationId,
-  fetchHook,
-  fetchHooks,
-  fetchHookToken,
-  fetchRun,
-  fetchRuns,
-  fetchStep,
-  fetchStreams,
-  getEncryptionKeyForRun,
-  getPublicServerConfig,
-  recreateRun,
-  reenqueueRun,
-  resumeHook,
-  wakeUpRun,
-} from "~/server/workflow-server-actions.server";
+import { rpcMethods } from "~/server/workflow-server-actions.server";
 import type { Route } from "./+types/api.rpc";
-
-type RpcMethod = keyof typeof handlers;
-
-const handlers = {
-  fetchRuns: (p: any) => fetchRuns(p.worldEnv ?? {}, p.params ?? {}),
-  fetchRun: (p: any) => fetchRun(p.worldEnv ?? {}, p.runId, p.resolveData),
-  fetchStep: (p: any) =>
-    fetchStep(p.worldEnv ?? {}, p.runId, p.stepId, p.resolveData),
-  fetchEvents: (p: any) =>
-    fetchEvents(p.worldEnv ?? {}, p.runId, p.params ?? {}),
-  fetchEvent: (p: any) =>
-    fetchEvent(p.worldEnv ?? {}, p.runId, p.eventId, p.resolveData),
-  fetchEventsByCorrelationId: (p: any) =>
-    fetchEventsByCorrelationId(
-      p.worldEnv ?? {},
-      p.correlationId,
-      p.params ?? {},
-    ),
-  fetchHooks: (p: any) => fetchHooks(p.worldEnv ?? {}, p.params ?? {}),
-  fetchHookToken: (p: any) =>
-    fetchHookToken(p.worldEnv ?? {}, p.runId, p.hookId),
-  fetchHook: (p: any) => fetchHook(p.worldEnv ?? {}, p.hookId, p.resolveData),
-  cancelRun: (p: any) => cancelRun(p.worldEnv ?? {}, p.runId),
-  bulkCancelRuns: (p: any) => bulkCancelRuns(p.worldEnv ?? {}, p.runIds ?? []),
-  recreateRun: (p: any) =>
-    recreateRun(p.worldEnv ?? {}, p.runId, p.deploymentId),
-  reenqueueRun: (p: any) => reenqueueRun(p.worldEnv ?? {}, p.runId),
-  wakeUpRun: (p: any) => wakeUpRun(p.worldEnv ?? {}, p.runId, p.options),
-  resumeHook: (p: any) => resumeHook(p.worldEnv ?? {}, p.token, p.payload),
-  fetchStreams: (p: any) => fetchStreams(p.worldEnv ?? {}, p.runId),
-  getEncryptionKeyForRun: (p: any) =>
-    getEncryptionKeyForRun(p.worldEnv ?? {}, p.runId),
-  getPublicServerConfig: () => getPublicServerConfig(),
-} as const;
 
 function cborResponse(data: unknown, status = 200): Response {
   const encoded = encode(data);
@@ -71,9 +18,8 @@ function cborResponse(data: unknown, status = 200): Response {
   });
 }
 
-export async function action({ request }: Route.ActionArgs) {
-  // Decode request body — accept both CBOR and JSON
-  let body: { method: string; params: any };
+export async function action({ request, context }: Route.ActionArgs) {
+  let body: { method: unknown; params: unknown };
   const contentType = request.headers.get("content-type") || "";
   try {
     if (contentType.includes("application/cbor")) {
@@ -94,7 +40,7 @@ export async function action({ request }: Route.ActionArgs) {
 
   const { method, params } = body;
 
-  if (!method || !(method in handlers)) {
+  if (typeof method !== "string" || !Object.hasOwn(rpcMethods, method)) {
     return cborResponse(
       {
         success: false,
@@ -104,27 +50,11 @@ export async function action({ request }: Route.ActionArgs) {
     );
   }
 
-  try {
-    const result = await handlers[method as RpcMethod](params ?? {});
-    return cborResponse(result);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return cborResponse(
-      { success: false, error: { message, layer: "server" } },
-      500,
-    );
-  }
-}
-
-// Also support GET for read operations (JSON — no binary data needed)
-export async function loader({ request }: Route.LoaderArgs) {
-  const url = new URL(request.url);
-  const method = url.searchParams.get("method");
-
-  if (method === "getPublicServerConfig") {
-    const result = await getPublicServerConfig();
-    return Response.json(result);
-  }
-
-  return Response.json({ error: "Use POST for RPC calls" }, { status: 405 });
+  // The client's `rpc()` is typed against `rpcMethods`; the body itself is not checked.
+  // Each method catches its own errors and returns them.
+  const handler = rpcMethods[method as keyof typeof rpcMethods] as (
+    world: typeof context.world,
+    params: object,
+  ) => Promise<unknown>;
+  return cborResponse(await handler(context.world, params ?? {}));
 }

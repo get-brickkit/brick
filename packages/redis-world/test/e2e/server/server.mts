@@ -1,6 +1,6 @@
 /**
  * One e2e worker: a small HTTP server that mounts the generated workflow flow
- * route (so the world's Redis queue worker can deliver jobs back to it), plus the
+ * route (so the world's queue worker can deliver jobs back to it), plus the
  * control endpoints the tests drive. Modeled on world-testing's src/server.mts.
  *
  * Run with node (type stripping), from the package root:
@@ -65,7 +65,7 @@ const workerName = process.env.E2E_WORKER_NAME ?? `w${process.pid}`;
 
 /** Deliveries of a workflow job this process has accepted (the flow route hits). */
 let flowHits = 0;
-/** Deliveries that Redis queue says are not a message's first (delivery-count > 1) or retry (attempt > 1). */
+/** Deliveries that the queue says are not a message's first (delivery-count > 1) or retry (attempt > 1). */
 const redeliveries: Array<{
   messageId: string | null;
   attempt: string | null;
@@ -99,24 +99,6 @@ const app = new Hono()
           at: Date.now(),
         });
       }
-    }
-    if (
-      process.env.E2E_ATTEMPT_FROM_DELIVERY === "1" &&
-      deliveryCount &&
-      Number(deliveryCount) > Number(attempt ?? 1)
-    ) {
-      // Diagnosis knob (off by default): report a crash/stall redelivery to the
-      // SDK as attempt >= 2, i.e. what Redis queue's stalledCounter would give it.
-      const headers = new Headers(h);
-      headers.set("x-vqs-message-attempt", deliveryCount);
-      return (async () =>
-        flowPOST(
-          new Request(ctx.req.raw.url, {
-            method: "POST",
-            headers,
-            body: await ctx.req.raw.arrayBuffer(),
-          }),
-        ))();
     }
     return flowPOST(ctx.req.raw);
   })

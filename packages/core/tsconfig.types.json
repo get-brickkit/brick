@@ -3,19 +3,5 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": [
-    "test/socket.types.ts",
-    "test/commands.types.ts",
-    "test/commands.test.ts",
-    "test/service-refs.types.ts",
-    "test/resource-types.test.ts",
-    "test/tool.test.ts",
-    "test/typed-errors.types.ts",
-    "test/plugin-deps.types.ts",
-    "test/plugin.test.ts",
-    "test/define-plugin.test.ts",
-    "test/database-handle.test.ts",
-    "test/tanstack-query.test.ts",
-    "test/tanstack-query-vue.types.ts"
-  ]
+  "include": ["test/**/*.ts"]
 }

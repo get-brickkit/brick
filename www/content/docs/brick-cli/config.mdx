@@ -8,7 +8,7 @@ description: Set the entry, paths and the dev, build, gen and lint settings once
 The file is optional. Without one, every command behaves as it did before the file existed.
 
 ```ts title="brick.config.ts"
-import { defineConfig } from "@brickkit/cli";
+import { defineConfig } from "@brickkit/cli/config";
 
 export default defineConfig({
   entry: "src/app.ts", // default export is the BrickApp
@@ -94,7 +94,7 @@ Paths are relative to the folder that holds `brick.config.ts`.
 brick.config.ts: dev.dashboard.port must be a port number
 ```
 
-**Dev dependency.** `defineConfig` comes from `@brickkit/cli`, a dev dependency, so the config never ends up in the server bundle.
+**Dev dependency.** `defineConfig` comes from `@brickkit/cli/config`, which loads only the config types and checks, not the dev server or the build. `@brickkit/cli` exports it too.
 
 **Lint reads the same file.** `brick lint` uses `lint` and the paths above. The ESLint and oxlint plugin reads it through `brick.configs.fromProject()`, so presets and paths are set in one place. See [Lint](/docs/brick-cli/lint).
 

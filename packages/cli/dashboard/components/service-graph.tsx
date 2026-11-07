@@ -16,7 +16,7 @@ import { formatDuration } from "@/format";
 import type {
   ArchitectureSnapshot,
   TraceSummary,
-} from "../../src/dev-telemetry-store";
+} from "../../src/dashboard-protocol";
 
 // Edges use the same colors as the span types they come from.
 const EDGE_STROKE: Record<EdgeKind, string> = {

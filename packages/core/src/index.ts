@@ -2,7 +2,6 @@
 export {
   defineServicePlugin,
   defineResourcePlugin,
-  getPluginActionRoute,
   getPluginEndpoints,
 } from "./plugin";
 export type {
@@ -17,13 +16,16 @@ export type {
   PluginRouteScope,
   PluginRouteMethod,
   PluginEndpointContext,
-} from "./plugin";
+  InstalledPlugin,
+} from "./plugin-types";
+export { definePlugin } from "./define-plugin";
 export {
-  definePlugin,
-  satisfiesRange,
-  brickVersion,
-  isPluginInstance,
-} from "./define-plugin";
+  getHostHooks,
+  type HostHooks,
+  type PluginHooks,
+  type PluginHookArgs,
+} from "./plugin-hooks";
+export type { PluginTableBuilders } from "./plugin-tables";
 export type {
   PluginManifest,
   PluginFactory,
@@ -35,9 +37,6 @@ export type {
   PluginSetupContext,
   PluginAppContext,
   PluginLifecycleContext,
-  PluginHooks,
-  PluginTableBuilders,
-  InstalledPlugin,
 } from "./define-plugin";
 // HTTP Runtime (Elysia app): bundled to user apps, never the CLI.
 export { brick, type CreateServerOptions } from "./server";
@@ -48,26 +47,18 @@ export {
   type EndpointDefinition,
   type EndpointLogger,
   type EndpointMethod,
-  resolveEndpointDb,
-  createEndpointHandler,
-  toOpenApiPath,
-  endpointPaths,
 } from "./endpoints";
-export {
-  compileRoutePlan,
-  executeCompiledRoute,
-  createActionHandler,
-} from "./action-handler";
+export { createActionHandler } from "./action-handler";
 export { isBrickApp, requireBrickApp } from "./app-entry";
 export {
   requestLoggingPlugin,
   type RequestLoggingOptions,
 } from "./request-logger";
 export { traceRoute } from "./telemetry";
+export { SPAN, ATTR, GLOBAL_SYMBOL } from "./telemetry-names";
 export type { DashboardAuth, DashboardOptions } from "./dashboard";
 export {
   scalarDocsHTML,
-  swaggerDocsHTML,
   referencePlugin,
   registerReferenceRoute,
   type ApiDocument,
@@ -86,13 +77,12 @@ export {
   type CompiledApplication,
   type CompiledRoute,
   type CompiledHandler,
+  type CompiledRoutePlan,
   type HandlerFactory,
 } from "./compiler";
-export { emitHandlerFactory } from "./compiler/emit";
-export { compilerRuntime } from "./compiler/runtime";
+export { deny } from "./compiler/runtime";
 
-// Core Primitives
-export { defineService, ServiceImpl } from "./service";
+export { defineService } from "./service";
 export type {
   BrickSocketConfig,
   BrickSocketHandle,
@@ -109,21 +99,19 @@ export type {
 } from "./socket-types";
 export { serializeSocketSchema } from "./socket-schema";
 export { redisBroker, type RedisBrokerOptions } from "./socket-redis";
-export { getActionAccess, setActionAccess, ACTION_ACCESS_KEY } from "./access";
+export { getActionAccess, setActionAccess } from "./access";
 export type { ActionAccessInfo } from "./access";
-export {
-  defineAction,
-  defineError,
-  errorsOf,
-  buildErrorHelpers,
-} from "./action";
-export { defineResource, loadRecord } from "./resource";
+export type { HttpMethod } from "./http";
+export { defineAction, errorsOf, buildErrorHelpers } from "./action";
+export { defineResource, idSchema, loadRecord } from "./resource";
 export {
   getActionRoute,
-  kebabCase,
+  getPluginActionRoute,
+  actionOwners,
   type ActionRoute,
   type ResourceActionInfo,
 } from "./routes";
+export { kebabCase } from "./kebab";
 export {
   useService,
   type ServiceClient,
@@ -131,44 +119,55 @@ export {
   type UntypedServiceClient,
 } from "./rpc";
 export { port, useDeps, type Port, type Ports, type DepsOf } from "./deps";
-export { stepErrors, stepFailure, type StepErrorBuilder } from "./workflow";
-
 export {
-  defineListener,
-  emitEvent,
-  isEventRef,
-  outboxTable,
-  isOutboxTable,
-  runInTransaction,
-  onTransactionCommit,
-  resolveWorkflowPaths,
-  EventsHub,
-  stopAllEvents,
-  Dispatcher,
-  type CrudEventPayload,
-  type DispatchOptions,
+  defineError,
+  stepErrors,
+  stepFailure,
+  type StepErrorBuilder,
+} from "./workflow";
+
+export { defineListener } from "./events/listener";
+export { emitEvent } from "./events/emit";
+export {
+  crudEventName,
+  crudEventSource,
+  isCrudEvent,
+  type CrudEventOperation,
   type EventCatalog,
   type EventRef,
   type EventRefs,
-  type EventDelivery,
-  type EventEnvelope,
-  type EventListener,
-  type ListenerFailure,
-  type RetryDecision,
-  type EventRecorder,
-  type EventWorkflow,
-  type EventsDefinition,
-  type EventsOptions,
-  type EventsWorld,
-  type OutboxCounts,
+} from "./events/catalog";
+export {
+  outboxTable,
   type OutboxStatus,
   type OutboxTable,
   type PostgresOutboxTable,
   type SQLiteOutboxTable,
-  type ServiceEvents,
-  type WorkflowEvent,
-  type WorkflowsOptions,
-} from "./events";
+} from "./events/outbox";
+export { runInTransaction, onTransactionCommit } from "./events/transaction";
+export { resolveWorkflowPaths, WORKFLOW_BUNDLE } from "./events/workflows";
+export {
+  stopAllEvents,
+  type EventsHub,
+  type EventsDefinition,
+} from "./events/hub";
+export { Dispatcher, type OutboxCounts } from "./events/dispatcher";
+export type {
+  CrudEventPayload,
+  DispatchOptions,
+  EventDelivery,
+  EventEnvelope,
+  EventListener,
+  ListenerFailure,
+  RetryDecision,
+  EventRecorder,
+  EventWorkflow,
+  EventsOptions,
+  EventsWorld,
+  ServiceEvents,
+  WorkflowEvent,
+  WorkflowsOptions,
+} from "./events/types";
 
 // Typed HTTP Client (also importable as `@brickkit/core/client` for frontends)
 export {
@@ -191,26 +190,21 @@ export type {
   InferActionFailure,
 } from "./client";
 export {
-  ServiceRegistry,
+  type ServiceRegistry,
   getGlobalRegistry,
   resetGlobalRegistry,
 } from "./registry";
 
-// TypeBox Schema Builders & Validators
-export { Type, t, getCompiledCheck, validateWithSchema } from "./typebox";
+export { Type, t, validateWithSchema } from "./typebox";
 export type { TSchema, Static } from "./typebox";
 
-// OpenAPI 3.1 Specification Generation
-export { generateOpenApiSpec, hoistAnchoredSchemas } from "./openapi";
+export { generateOpenApiSpec } from "./openapi";
 export type { OpenApiGeneratorOptions } from "./openapi";
 
-// Database Integration
 export * from "./db";
 
-// Types & Errors
 export * from "./types";
 
-// Secrets & Environment Variables
 export {
   defineSecret,
   SecretRef,
@@ -218,7 +212,6 @@ export {
   resolveSecrets,
   listSecrets,
   overrideSecret,
-  overrideSecrets,
   resetSecrets,
 } from "./secrets";
 export type { SecretSource, SecretOptions } from "./secrets";
@@ -232,5 +225,4 @@ export type {
   McpHandlerOptions,
 } from "./mcp";
 
-export { toErrorResponse } from "./error-response";
 export type { ErrorEnvelope } from "./error-response";

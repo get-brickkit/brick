@@ -12,8 +12,6 @@ export interface UseTableSelectionReturn<T> {
   isSelected: (item: T) => boolean;
   /** Toggle selection of a single item */
   toggleSelection: (item: T) => void;
-  /** Select all items in the provided list */
-  selectAll: (items: T[]) => void;
   /** Clear all selections */
   clearSelection: () => void;
   /** Toggle all items (select all if not all selected, otherwise clear) */
@@ -24,8 +22,6 @@ export interface UseTableSelectionReturn<T> {
   isAllSelected: (items: T[]) => boolean;
   /** Whether some but not all items are selected (for indeterminate state) */
   isSomeSelected: (items: T[]) => boolean;
-  /** Select a specific item by ID */
-  selectById: (id: string) => void;
   /** Deselect a specific item by ID */
   deselectById: (id: string) => void;
 }
@@ -104,14 +100,6 @@ export function useTableSelection<T>({
     [isAllSelected, clearSelection, selectAll],
   );
 
-  const selectById = useCallback((id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      next.add(id);
-      return next;
-    });
-  }, []);
-
   const deselectById = useCallback((id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -127,26 +115,22 @@ export function useTableSelection<T>({
       selectedIds,
       isSelected,
       toggleSelection,
-      selectAll,
       clearSelection,
       toggleSelectAll,
       selectionCount,
       isAllSelected,
       isSomeSelected,
-      selectById,
       deselectById,
     }),
     [
       selectedIds,
       isSelected,
       toggleSelection,
-      selectAll,
       clearSelection,
       toggleSelectAll,
       selectionCount,
       isAllSelected,
       isSomeSelected,
-      selectById,
       deselectById,
     ],
   );

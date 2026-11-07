@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Attributes } from "@opentelemetry/api";
 import { openHistory, type DevHistory } from "../src/dev-history";
-import type { TelemetryRecord } from "../src/dev-telemetry";
+import type { TelemetryRecord } from "../src/dashboard-protocol";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
 
 function start(

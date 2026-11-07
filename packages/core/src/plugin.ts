@@ -1,142 +1,30 @@
-import type { TSchema } from "@sinclair/typebox";
-import type {
-  Action,
-  ActionConfigWithAuthorize,
-  ActionConfigWithoutAuthorize,
-  ActionContext,
-  ActionErrorDefinition,
-  BaseContext,
-  Resource,
-  Service,
+import {
+  DuplicateNameError,
+  type Action,
+  type Resource,
+  type Service,
 } from "./types";
-import { getGlobalRegistry } from "./registry";
+import {
+  PLUGIN_KIND,
+  PLUGIN_COMMIT,
+  type PluginEndpointContext,
+  type PluginRouteMethod,
+  type PluginRouteRegistrar,
+  type PluginRoutes,
+  type PluginRouteScope,
+  PLUGIN_ROUTE_SCOPES,
+  type ContextOf,
+  type ResourcePlugin,
+  type ResourcePluginContext,
+  type ServicePlugin,
+  type ServicePluginContext,
+} from "./plugin-types";
 import { defineAction } from "./action";
-import { joinRoute, ownerPath } from "./routes";
-
-export type PluginRouteMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-export type PluginRouteScope = "app" | "service" | "resource";
-export type PluginRoutes<S extends PluginRouteScope = PluginRouteScope> =
-  | false
-  | Readonly<Record<string, false | { path?: string; scope?: S }>>;
-
-type ContextOf<S> =
-  S extends Service<infer D, infer C> ? BaseContext<D> & C : never;
-
-export interface PluginEndpointContext<
-  C extends ActionContext = ActionContext,
-> {
-  params: Record<string, string>;
-  query: Record<string, string | undefined>;
-  body: unknown;
-  headers: Record<string, string>;
-  request: Request;
-  set: { status?: number; headers: Record<string, string> };
-  ctx: C;
-}
-
-export interface PluginRouteRegistrar<
-  C extends ActionContext = ActionContext,
-  S extends PluginRouteScope = PluginRouteScope,
-> {
-  action<
-    I extends TSchema | undefined = undefined,
-    O extends TSchema | undefined = undefined,
-    E extends Record<string, ActionErrorDefinition> = Record<
-      string,
-      ActionErrorDefinition
-    >,
-  >(
-    config: ActionConfigWithAuthorize<I, O, E, C> & {
-      path: string;
-      method: PluginRouteMethod;
-      scope?: S;
-    },
-  ): Action<I, O, E, C>;
-  action<
-    I extends TSchema | undefined = undefined,
-    O extends TSchema | undefined = undefined,
-    E extends Record<string, ActionErrorDefinition> = Record<
-      string,
-      ActionErrorDefinition
-    >,
-  >(
-    config: ActionConfigWithoutAuthorize<I, O, E, C> & {
-      path: string;
-      method: PluginRouteMethod;
-      scope?: S;
-    },
-  ): Action<I, O, E, C>;
-  endpoint(config: {
-    name: string;
-    path: string;
-    method: PluginRouteMethod;
-    scope?: S;
-    handler: (context: PluginEndpointContext<C>) => unknown | Promise<unknown>;
-    summary?: string;
-    description?: string;
-    tags?: string[];
-  }): void;
-}
-
-export interface ServicePluginContext<
-  S extends Service<any, any> = Service<any, any>,
-> {
-  service: S;
-  routes: PluginRouteRegistrar<ContextOf<S>, "app" | "service">;
-}
-export interface ResourcePluginContext<
-  S extends Service<any, any> = Service<any, any>,
-  R extends Resource<any, any, any> = Resource<any, ContextOf<S>, any>,
-> {
-  service: S;
-  resource: R;
-  routes: PluginRouteRegistrar<ContextOf<S>>;
-}
-
-/** Plugins may specialize their returned API for the installation host. */
-export interface ResourcePluginTypes {
-  readonly table: unknown;
-  readonly context: unknown;
-  readonly resource: unknown;
-  readonly api: object;
-}
-export type ResourcePluginAPI<P, T, C, R = unknown> = P extends {
-  readonly types: infer H extends ResourcePluginTypes;
-}
-  ? (H & {
-      readonly table: T;
-      readonly context: C;
-      readonly resource: R;
-    })["api"]
-  : P extends import("./define-plugin").PluginInstance<
-        infer A extends object,
-        any
-      >
-    ? A
-    : P extends ResourcePlugin<any, any, infer A>
-      ? A
-      : never;
-
-// Process-global like actionBindingKey, so descriptors survive a second core copy.
-const pluginKind: unique symbol = Symbol.for("brickkit.plugin.kind");
-/** `definePlugin` instances install on either host; see `define-plugin.ts`. */
-export const pluginFinish: unique symbol = Symbol.for("brickkit.plugin.finish");
-export interface ServicePlugin<S extends Service<any, any>, A> {
-  readonly [pluginKind]: "service" | "plugin";
-  readonly name: string;
-  readonly routes?: PluginRoutes<"app" | "service">;
-  readonly setup: (context: ServicePluginContext<S>) => A;
-}
-export interface ResourcePlugin<
-  S extends Service<any, any>,
-  R extends Resource<any, any, any>,
-  A extends object,
-> {
-  readonly [pluginKind]: "resource" | "plugin";
-  readonly name: string;
-  readonly routes?: PluginRoutes;
-  readonly setup: (context: ResourcePluginContext<S, R>) => A;
-}
+import { actionMeta, type PluginRouteBinding } from "./action-meta";
+import { kebabCase } from "./kebab";
+import { DEFAULT_PREFIX, pathParamNames, pluginRoutePath } from "./routes";
+import { HTTP_METHODS } from "./http";
+import { portOf } from "./service-port";
 
 /**
  * Define a plugin that installs onto a service with `service.use(plugin)`. Its
@@ -172,7 +60,7 @@ export function defineServicePlugin<
   S extends Service<any, any> = Service<any, any>,
   A = unknown,
 >(
-  definition: Omit<ServicePlugin<S, A>, typeof pluginKind> & {
+  definition: Omit<ServicePlugin<S, A>, typeof PLUGIN_KIND> & {
     setup: (
       context: ServicePluginContext<S>,
     ) => A & (A extends PromiseLike<unknown> ? never : unknown);
@@ -182,7 +70,7 @@ export function defineServicePlugin<
   return Object.freeze({
     ...definition,
     routes: copyControls(definition.routes),
-    [pluginKind]: "service" as const,
+    [PLUGIN_KIND]: "service" as const,
   });
 }
 /**
@@ -201,7 +89,7 @@ export function defineResourcePlugin<
   R extends Resource<any, any, any> = Resource<any, ContextOf<S>, any>,
   A extends object = object,
 >(
-  definition: Omit<ResourcePlugin<S, R, A>, typeof pluginKind> & {
+  definition: Omit<ResourcePlugin<S, R, A>, typeof PLUGIN_KIND> & {
     setup: (
       context: ResourcePluginContext<S, R>,
     ) => A & (A extends PromiseLike<unknown> ? never : unknown);
@@ -211,11 +99,11 @@ export function defineResourcePlugin<
   return Object.freeze({
     ...definition,
     routes: copyControls(definition.routes),
-    [pluginKind]: "resource" as const,
+    [PLUGIN_KIND]: "resource" as const,
   });
 }
 
-function validateName(name: string) {
+export function validateName(name: string) {
   if (!name || name.trim() !== name)
     throw new Error(
       "Plugin and route names must be nonempty and have no surrounding whitespace",
@@ -245,27 +133,14 @@ function copyControls<S extends PluginRouteScope>(
       continue;
     }
     if (value.path !== undefined) validatePath(value.path);
-    if (
-      value.scope !== undefined &&
-      !["app", "service", "resource"].includes(value.scope)
-    )
+    if (value.scope !== undefined && !PLUGIN_ROUTE_SCOPES.includes(value.scope))
       throw new Error(`Invalid plugin route scope '${value.scope}'`);
     result[name] = Object.freeze({ ...value });
   }
   return Object.freeze(result);
 }
 
-interface Binding {
-  service: Service<any, any>;
-  resource?: Resource<any, any, any>;
-  /** Owning plugin descriptor name (e.g. `@brickkit/crud`). Kept separate from the public action name. */
-  plugin: string;
-  path: string;
-  method: PluginRouteMethod;
-  scope: PluginRouteScope;
-  enabled: boolean;
-  clientPath?: string[];
-}
+type Binding = PluginRouteBinding;
 interface RawBinding extends Binding {
   handler: (context: PluginEndpointContext<any>) => unknown | Promise<unknown>;
   summary?: string;
@@ -281,21 +156,37 @@ interface PluginState {
   hosts: Map<object, Map<string, Installation>>;
   actions: Map<Action<any, any, any, any>, Binding>;
   endpoints: RawBinding[];
+  /** The URL segments under each resource that its plugins claim, and which plugin. */
+  claims: Map<object, Map<string, string>>;
 }
 const states = new WeakMap<object, PluginState>();
-const actionBindings = new WeakMap<Action<any, any, any, any>, Binding>();
-/**
- * Cross-copy binding protocol. Bundler SSR runtimes (Vite, Nitro, Vitest)
- * may load a second copy of core that owns a different WeakMap, while the
- * action objects themselves cross the boundary by reference. The binding
- * travels on the action under a process-global symbol so route lookups
- * (including disabled-route suppression) keep working there.
- */
-const actionBindingKey = Symbol.for("brickkit.plugin.actionBinding");
+
+/** Records the plugin state; the returned function puts all of it back (a failed install's rollback). */
+function snapshotState(state: PluginState): () => void {
+  const copy = <V>(maps: Map<object, Map<string, V>>) =>
+    new Map([...maps].map(([key, inner]) => [key, new Map(inner)]));
+  const saved: PluginState = {
+    hosts: copy(state.hosts),
+    actions: new Map(state.actions),
+    endpoints: [...state.endpoints],
+    claims: copy(state.claims),
+  };
+  return () => {
+    // Actions the failed install bound lose their route too.
+    for (const action of state.actions.keys())
+      if (!saved.actions.has(action)) delete actionMeta(action).route;
+    Object.assign(state, saved);
+  };
+}
 function stateOf(service: Service<any, any>): PluginState {
   let state = states.get(service);
   if (!state) {
-    state = { hosts: new Map(), actions: new Map(), endpoints: [] };
+    state = {
+      hosts: new Map(),
+      actions: new Map(),
+      endpoints: [],
+      claims: new Map(),
+    };
     states.set(service, state);
   }
   return state;
@@ -307,47 +198,6 @@ export function isInstallingPlugin(service: Service<any, any>): boolean {
   );
 }
 
-function pathOf(binding: Binding, prefix: string) {
-  return joinRoute(
-    binding.scope === "app"
-      ? ownerPath(prefix)
-      : ownerPath(
-          prefix,
-          binding.service.name,
-          binding.scope === "resource" ? binding.resource!.name : undefined,
-        ),
-    binding.path,
-  );
-}
-/**
- * Where a plugin mounted an action over HTTP, for the OpenAPI generator, the
- * compiler, and the typed client.
- *
- * @param action - An action.
- * @param prefix - The application's route prefix (default `/api`).
- * @returns `undefined` when no plugin bound the action (it uses its own route),
- * `false` when the plugin's route was switched off, otherwise the route's
- * `path`, `method`, the `clientPath` the typed client uses, and the owning
- * `plugin` and `resource`.
- */
-export function getPluginActionRoute(
-  action: Action<any, any, any, any>,
-  prefix = "/api",
-) {
-  const binding =
-    (action as unknown as Record<symbol, Binding | undefined>)[
-      actionBindingKey
-    ] ?? actionBindings.get(action);
-  if (!binding) return undefined;
-  if (!binding.enabled) return false;
-  return {
-    path: pathOf(binding, prefix),
-    method: binding.method,
-    clientPath: binding.clientPath,
-    plugin: binding.plugin,
-    resource: binding.resource?.name,
-  };
-}
 /**
  * The raw HTTP endpoints plugins registered on a service, ready to mount on the
  * application. Each handler resolves the service's context before it runs.
@@ -359,12 +209,12 @@ export function getPluginActionRoute(
  */
 export function getPluginEndpoints(
   service: Service<any, any>,
-  prefix = "/api",
+  prefix = DEFAULT_PREFIX,
 ) {
   return stateOf(service)
     .endpoints.filter((binding) => binding.enabled)
     .map((binding) => ({
-      path: pathOf(binding, prefix),
+      path: pluginRoutePath(binding, prefix),
       method: binding.method,
       service,
       plugin: binding.plugin,
@@ -379,6 +229,15 @@ export function getPluginEndpoints(
     }));
 }
 
+/** The plugin that claimed `segment` under `resource`, if one did. */
+export function segmentClaimant(
+  service: Service<any, any>,
+  resource: object,
+  segment: string,
+): string | undefined {
+  return states.get(service)?.claims.get(resource)?.get(segment);
+}
+
 /** Descriptor identity is scoped to the service or resource installation host. */
 export function installPlugin(
   service: Service<any, any>,
@@ -388,8 +247,8 @@ export function installPlugin(
   if (service.isBuilt)
     throw new Error("Plugins must be installed before service build");
   if (
-    descriptor[pluginKind] !== (resource ? "resource" : "service") &&
-    descriptor[pluginKind] !== "plugin"
+    descriptor[PLUGIN_KIND] !== (resource ? "resource" : "service") &&
+    descriptor[PLUGIN_KIND] !== "plugin"
   )
     throw new Error("Plugin does not support this installation host");
   const state = stateOf(service);
@@ -404,34 +263,33 @@ export function installPlugin(
       );
     return resource ?? existing.api;
   }
-  const snapshots = {
-    actions: new Map(service.actions),
-    tools: new Map(service.tools),
-    tables: new Map(service.tables),
-    resources: new Map(service.resources),
-    preparations: new Map(service.preparations),
-    hosts: new Map(
-      [...state.hosts].map(([key, installations]) => [
-        key,
-        new Map(installations),
-      ]),
-    ),
-    bindings: new Map(state.actions),
-    endpoints: [...state.endpoints],
-    properties: new Map(
-      [...service.resources.values()].map((item) => [
-        item,
-        Object.getOwnPropertyDescriptors(item),
-      ]),
-    ),
-  };
+  const restoreService = portOf(service).snapshot();
+  const restoreState = snapshotState(state);
   const installations =
     state.hosts.get(host) ?? new Map<string, Installation>();
   state.hosts.set(host, installations);
   installations.set(descriptor.name, { descriptor, status: "installing" });
   const names = new Set<string>();
+  const commits: (() => void)[] = [];
   const ownedActions = new Set<Action<any, any, any, any>>();
   let active = true;
+  const claim = (segment: string) => {
+    if (!resource) throw new Error("Only resource plugins claim URL segments");
+    const claims = state.claims.get(resource) ?? new Map<string, string>();
+    state.claims.set(resource, claims);
+    if (claims.has(segment)) return;
+    const taken = service.listActions().find((action) => {
+      const info = actionMeta(action).resourceAction;
+      return (
+        info?.resource === resource.name && kebabCase(info.name) === segment
+      );
+    });
+    if (taken)
+      throw new DuplicateNameError(
+        `Brick: duplicate name "${taken.name}" in service "${service.name}": "${segment}" is a ${descriptor.name} route`,
+      );
+    claims.set(segment, descriptor.name);
+  };
   const bindingFor = (config: {
     name: string;
     path: string;
@@ -443,7 +301,9 @@ export function installPlugin(
     validateName(config.name);
     validatePath(config.path);
     if (names.has(config.name))
-      throw new Error(`Duplicate plugin route name '${config.name}'`);
+      throw new DuplicateNameError(
+        `Duplicate plugin route name '${config.name}'`,
+      );
     names.add(config.name);
     const control =
       descriptor.routes === false ? false : descriptor.routes?.[config.name];
@@ -453,15 +313,18 @@ export function installPlugin(
       (resource ? "resource" : "service");
     if (scope === "resource" && !resource)
       throw new Error("Service plugin routes cannot use resource scope");
-    if (!["app", "service", "resource"].includes(scope))
+    if (!PLUGIN_ROUTE_SCOPES.includes(scope))
       throw new Error(`Invalid plugin route scope '${scope}'`);
-    if (!["GET", "POST", "PUT", "PATCH", "DELETE"].includes(config.method))
+    if (!HTTP_METHODS.includes(config.method))
       throw new Error(`Invalid plugin route method '${config.method}'`);
     const path = (control && control.path) || config.path;
     validatePath(path);
+    const segment = path.split("/")[1]!;
+    if (scope === "resource" && segment && !segment.startsWith(":"))
+      claim(segment);
     return {
-      service,
-      resource,
+      service: service.name,
+      resource: resource?.name,
       plugin: descriptor.name,
       path,
       method: config.method,
@@ -472,13 +335,13 @@ export function installPlugin(
   const routes: PluginRouteRegistrar<any> = {
     action(config: any) {
       const binding = bindingFor(config);
-      for (const match of binding.path.matchAll(/:([A-Za-z0-9_]+)/g)) {
+      for (const name of pathParamNames(binding.path)) {
         if (
           !config.input?.properties ||
-          !Object.hasOwn(config.input.properties, match[1]!)
+          !Object.hasOwn(config.input.properties, name)
         )
           throw new Error(
-            `Plugin action path parameter '${match[1]}' must be declared in its input schema`,
+            `Plugin action path parameter '${name}' must be declared in its input schema`,
           );
       }
       // Public contract name: resource/operation only (e.g. `page.list`).
@@ -486,22 +349,25 @@ export function installPlugin(
       // action (`plugin`/`resource`) so it never leaks into exported names,
       // OpenAPI, or client contracts.
       const name = `${resource ? `${resource.name}.` : ""}${config.name}`;
-      if (service.actions.has(name))
-        throw new Error(
+      if (service.getAction(name))
+        throw new DuplicateNameError(
           `Duplicate plugin action '${name}' (from plugin '${descriptor.name}')`,
         );
-      const { scope: _scope, ...actionConfig } = config;
+      const {
+        scope: _scope,
+        runtimeOutput,
+        checkInput,
+        ...actionConfig
+      } = config;
       const action = defineAction({ ...actionConfig, name });
-      (action as unknown as Record<string, unknown>).plugin = descriptor.name;
-      if (resource)
-        (action as unknown as Record<string, unknown>).resource = resource.name;
+      Object.assign(actionMeta(action), {
+        route: binding,
+        runtimeOutput,
+        checkInput,
+      });
       service.action(action);
       ownedActions.add(action);
       state.actions.set(action, binding);
-      actionBindings.set(action, binding);
-      // Same object travels across bundler module copies; see actionBindingKey.
-      (action as unknown as Record<symbol, Binding>)[actionBindingKey] =
-        binding;
       return action;
     },
     endpoint(config) {
@@ -514,15 +380,20 @@ export function installPlugin(
         tags: config.tags,
       });
     },
+    claim,
   };
   try {
+    const context = {
+      service,
+      ...(resource ? { resource } : {}),
+      routes,
+      [PLUGIN_COMMIT]: (commit: () => void) => commits.push(commit),
+    };
     const api = resource
-      ? (descriptor as ResourcePlugin<any, any, any>).setup({
-          service,
-          resource,
-          routes,
-        })
-      : (descriptor as ServicePlugin<any, any>).setup({ service, routes });
+      ? (descriptor as ResourcePlugin<any, any, any>).setup(
+          context as typeof context & { resource: Resource<any, any, any> },
+        )
+      : (descriptor as ServicePlugin<any, any>).setup(context);
     if (api && typeof api === "object" && "then" in api)
       throw new Error("Plugin setup must be synchronous");
     if (
@@ -568,39 +439,15 @@ export function installPlugin(
       status: "installed",
       api,
     });
-    finish(descriptor, true);
-    getGlobalRegistry().touch();
+    for (const commit of commits) commit();
     return resource ?? api;
   } catch (error) {
-    finish(descriptor, false);
-    for (const action of state.actions.keys())
-      if (!snapshots.bindings.has(action)) {
-        actionBindings.delete(action);
-        delete (action as unknown as Record<symbol, unknown>)[actionBindingKey];
-      }
-    restoreMap(service.actions, snapshots.actions);
-    restoreMap(service.tools, snapshots.tools);
-    restoreMap(service.tables, snapshots.tables);
-    restoreMap(service.resources, snapshots.resources);
-    restoreMap(service.preparations, snapshots.preparations);
-    state.hosts = snapshots.hosts;
-    state.actions = snapshots.bindings;
-    state.endpoints = snapshots.endpoints;
-    for (const [item, properties] of snapshots.properties) {
-      for (const key of Reflect.ownKeys(item))
-        if (!Object.hasOwn(properties, key)) Reflect.deleteProperty(item, key);
-      Object.defineProperties(item, properties);
-    }
-    getGlobalRegistry().touch();
+    restoreService();
+    restoreState();
     throw error;
   } finally {
     active = false;
   }
-}
-function finish(descriptor: object, installed: boolean) {
-  (descriptor as { [pluginFinish]?: (installed: boolean) => void })[
-    pluginFinish
-  ]?.(installed);
 }
 /** Whether a plugin named `name` is installed on `host` (the service or a resource). */
 export function hasPlugin(
@@ -620,8 +467,4 @@ export function installedPlugins(service: Service<any, any>): object[] {
         .filter((item) => item.status === "installed")
         .map((item) => item.descriptor),
   );
-}
-function restoreMap<K, V>(target: Map<K, V>, snapshot: Map<K, V>) {
-  target.clear();
-  for (const [key, value] of snapshot) target.set(key, value);
 }

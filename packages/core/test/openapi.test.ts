@@ -9,6 +9,7 @@ import {
   resetGlobalRegistry,
   generateOpenApiSpec,
 } from "../src";
+import { postJson } from "./helpers";
 
 describe("OpenAPI 3.1 Specification Generator", () => {
   beforeEach(() => {
@@ -18,7 +19,6 @@ describe("OpenAPI 3.1 Specification Generator", () => {
   it("should generate a complete OpenAPI 3.1.0 specification from service registry", () => {
     const pagesService = defineService("pages", { database: defineDatabase() });
 
-    // 1. Action with input, output, errors, tags
     const createPage = defineAction({
       name: "createPage",
       description: "Create a new page",
@@ -47,7 +47,6 @@ describe("OpenAPI 3.1 Specification Generator", () => {
       }),
     });
 
-    // 2. Read-like GET action with query parameters
     const getPage = defineAction({
       name: "getPage",
       method: "GET",
@@ -73,17 +72,14 @@ describe("OpenAPI 3.1 Specification Generator", () => {
       description: "Production API specification",
     });
 
-    // 1. Root Metadata
     expect(spec.openapi).toBe("3.1.0");
     expect(spec.info.title).toBe("Pages Publishing Mesh");
     expect(spec.info.version).toBe("1.2.0");
     expect(spec.info.description).toBe("Production API specification");
 
-    // 2. Tags
     expect(spec.tags).toBeDefined();
     expect(spec.tags.some((t: any) => t.name === "pages")).toBe(true);
 
-    // 3. POST /api/pages/create-page
     const createPath = spec.paths["/api/pages/create-page"];
     expect(createPath).toBeDefined();
     expect(createPath.post).toBeDefined();
@@ -92,7 +88,6 @@ describe("OpenAPI 3.1 Specification Generator", () => {
     expect(createPath.post.summary).toBe("pages.createPage");
     expect(createPath.post.description).toBe("Create a new page");
 
-    // Request Body
     expect(createPath.post.requestBody.required).toBe(true);
     expect(
       createPath.post.requestBody.content["application/json"].schema.properties
@@ -103,7 +98,6 @@ describe("OpenAPI 3.1 Specification Generator", () => {
         .slug,
     ).toBeDefined();
 
-    // Responses (200, 400, 403, 409, 500)
     expect(
       createPath.post.responses["200"].content["application/json"].schema
         .properties.id,
@@ -116,13 +110,11 @@ describe("OpenAPI 3.1 Specification Generator", () => {
     );
     expect(createPath.post.responses["500"]).toBeDefined();
 
-    // Security
     expect(createPath.post.security).toEqual([{ bearerAuth: [] }]);
     expect(spec.components.securitySchemes.bearerAuth).toBeDefined();
     expect(spec.components.securitySchemes.bearerAuth.type).toBe("http");
     expect(spec.components.securitySchemes.bearerAuth.scheme).toBe("bearer");
 
-    // 4. GET only /api/pages/get-page
     const getPath = spec.paths["/api/pages/get-page"];
     expect(getPath).toBeDefined();
     expect(getPath.post).toBeUndefined();
@@ -234,8 +226,8 @@ it("hoists TypeBox $id/$ref anchors into components.schemas", () => {
 
   const spec = generateOpenApiSpec();
   const raw = JSON.stringify(spec);
-  expect(raw).not.toContain('"$ref": "T0"');
-  expect(raw).not.toContain('"$ref": "CrudWhere:lead"');
+  expect(raw).not.toContain('"$ref":"T0"');
+  expect(raw).not.toContain('"$ref":"CrudWhere:lead"');
   expect(raw).not.toContain('"$id"');
 
   // Anchors land in components under sanitized keys (`:` is not a
@@ -279,21 +271,11 @@ it("keeps runtime schemas intact when hoisting OpenAPI anchors", async () => {
   const body = {
     tree: { label: "root", children: [{ label: "leaf", children: [] }] },
   };
-  const response = await app.fetch(
-    new Request("http://localhost/api/schema-isolation/echo", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }),
-  );
+  const response = await postJson(app, "/api/schema-isolation/echo", body);
   expect(response.status).toBe(200);
   expect(await response.json()).toEqual(body);
-  const invalid = await app.fetch(
-    new Request("http://localhost/api/schema-isolation/echo", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ tree: { label: 123, children: [] } }),
-    }),
-  );
+  const invalid = await postJson(app, "/api/schema-isolation/echo", {
+    tree: { label: 123, children: [] },
+  });
   expect(invalid.status).toBe(400);
 });

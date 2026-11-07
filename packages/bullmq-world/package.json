@@ -45,28 +45,18 @@
     "clean": "rm -rf dist",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
-    "test:e2e": "bun run build && vitest run --config vitest.e2e.config.ts"
+    "test:e2e": "bun run build && bun run --cwd ../redis-world build && E2E_WORLD=bullmq-world vitest run --root ../redis-world --config ../redis-world/vitest.e2e.config.ts"
   },
   "dependencies": {
     "@brickkit/redis-world": "0.12.0",
-    "@workflow/errors": "5.1.0",
-    "@workflow/utils": "5.0.2",
     "@workflow/world": "5.1.0",
     "bullmq": "^6.5.4",
-    "ioredis": "^6.0.0",
-    "ulid": "^3.0.2"
+    "ioredis": "^6.0.0"
   },
   "devDependencies": {
-    "@hono/node-server": "^2.1.6",
-    "@testcontainers/redis": "^12.2.1",
     "@types/node": "^26.6.6",
-    "@workflow/cli": "5.0.7",
-    "@workflow/core": "5.3.0",
-    "@workflow/world-testing": "5.0.7",
-    "hono": "^4.13.16",
     "tsdown": "^0.23.5",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.12",
-    "workflow": "5.3.0"
+    "vitest": "^4.1.12"
   }
 }

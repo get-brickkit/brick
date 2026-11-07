@@ -8,6 +8,7 @@ import {
   resetGlobalRegistry,
   runInTransaction,
   t,
+  type Service,
 } from "../src";
 import { defineElsewhere } from "./fixtures/define-elsewhere";
 import {
@@ -16,39 +17,37 @@ import {
   type BrickClientSocket,
 } from "../src/client";
 import { serializeSocketSchema } from "../src/socket-schema";
-import { restoreSocketSchema } from "../src/socket-schema";
-import { Check } from "@sinclair/typebox/value";
-import { replayScenario } from "./socket-replay";
+import { openSocket as open, track, waitFor } from "./helpers";
+import { chatContract, replayScenario } from "./socket-replay";
 
-const apps: ReturnType<typeof brick>[] = [];
-const peers: WebSocket[] = [];
-afterEach(async () => {
-  for (const peer of peers.splice(0)) peer.close();
-  for (const app of apps.splice(0)) await app.stop(true);
-  resetGlobalRegistry();
-});
+afterEach(resetGlobalRegistry);
 
-function start(service: ReturnType<typeof defineService>, compiler = true) {
-  const app = brick({
-    services: [service],
-    prefix: "/v2",
-    compiler,
-    docs: false,
-    requestLogging: false,
-  }).listen(0);
-  apps.push(app);
+function start(service: Service<any, any>) {
+  const app = track(
+    brick({
+      services: [service],
+      prefix: "/v2",
+      docs: false,
+      requestLogging: false,
+    }).listen(0),
+  );
   return `http://localhost:${app.server!.port}`;
 }
-function open(url: string, headers?: Record<string, string>) {
-  const ws = new WebSocket(
-    url.replace(/^http/, "ws"),
-    headers ? { headers } : undefined,
-  );
-  peers.push(ws);
-  return new Promise<WebSocket>((resolve, reject) => {
-    ws.onopen = () => resolve(ws);
-    ws.onerror = reject;
+/** The HTTP status a WebSocket upgrade of `url` is answered with. */
+async function upgradeStatus(
+  url: string,
+  headers: Record<string, string> = {},
+) {
+  const response = await fetch(url, {
+    headers: {
+      connection: "Upgrade",
+      upgrade: "websocket",
+      "sec-websocket-version": "13",
+      "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+      ...headers,
+    },
   });
+  return response.status;
 }
 function message(ws: WebSocket): Promise<unknown> {
   return new Promise((resolve) =>
@@ -64,7 +63,7 @@ function closed(ws: WebSocket): Promise<number> {
     ws.addEventListener("close", ({ code }) => resolve(code), { once: true }),
   );
 }
-function echo(compiler = true) {
+function echo() {
   const service = defineService("chat");
   service.socket({
     name: "live",
@@ -73,35 +72,22 @@ function echo(compiler = true) {
     allowMissingOrigin: true,
     handlers: { say: ({ input, socket }) => socket.send("message", input) },
   });
-  return start(service, compiler);
+  return start(service);
 }
-const contract: {
-  chat: { live: BrickClientSocket<{ say: string }, { message: string }> };
-} = {
-  chat: {
-    live: {
-      kind: "socket",
-      name: "live",
-      serviceName: "chat",
-      config: { path: "/v2/chat/live" },
-      output: { message: serializeSocketSchema(t.String()) },
-    },
-  },
-};
+const contract = chatContract<{ say: string }>("/v2/chat/live");
 
-for (const compiler of [true, false])
-  it(`round trips through a real listener with compiler=${compiler}`, async () => {
-    const api = createBrickClient({ baseUrl: echo(compiler), contract });
-    const live = api.chat.live.connect();
-    const received = new Promise<string>((resolve) =>
-      live.on("message", resolve),
-    );
-    await live.ready;
-    live.send("say", "hello");
-    expect(await received).toBe("hello");
-    live.close();
-    expect(() => live.send("say", "again")).toThrow(BrickSocketError);
-  });
+it("round trips through a real listener", async () => {
+  const api = createBrickClient({ baseUrl: echo(), contract });
+  const live = api.chat.live.connect();
+  const received = new Promise<string>((resolve) =>
+    live.on("message", resolve),
+  );
+  await live.ready;
+  live.send("say", "hello");
+  expect(await received).toBe("hello");
+  live.close();
+  expect(() => live.send("say", "again")).toThrow(BrickSocketError);
+});
 
 it("sends a declared handler error to the client and keeps the connection open", async () => {
   const service = defineService("chat");
@@ -252,7 +238,7 @@ it("resolves fresh context and rechecks authorization before every message", asy
     },
   });
   const url = start(service) + "/v2/chat/live";
-  await expect(open(url)).rejects.toBeDefined();
+  expect(await upgradeStatus(url)).toBe(403);
   const ws = await open(url, { cookie: "session=yes" });
   const response = message(ws);
   ws.send(JSON.stringify({ event: "say", data: "allowed" }));
@@ -274,32 +260,32 @@ it("checks same-origin, configured origins, and missing origins separately", asy
     handlers: {},
   });
   const url = start(service) + "/v2/chat/live";
-  await expect(open(url)).rejects.toBeDefined();
-  await expect(
-    open(url, { origin: "https://attacker.test" }),
-  ).rejects.toBeDefined();
+  expect(await upgradeStatus(url)).toBe(403);
+  expect(await upgradeStatus(url, { origin: "https://attacker.test" })).toBe(
+    403,
+  );
   const ws = await open(url, { origin: "https://frontend.test" });
   expect(ws.readyState).toBe(1);
 });
 
 it("accepts same-origin browsers behind a TLS-terminating proxy", async () => {
   const url = echoSameOrigin() + "/v2/chat/live";
-  await expect(
-    open(url, { origin: "https://chat.example.com" }),
-  ).rejects.toBeDefined();
+  expect(await upgradeStatus(url, { origin: "https://chat.example.com" })).toBe(
+    403,
+  );
   const ws = await open(url, {
     origin: "https://chat.example.com",
     "x-forwarded-proto": "https",
     "x-forwarded-host": "chat.example.com",
   });
   expect(ws.readyState).toBe(1);
-  await expect(
-    open(url, {
+  expect(
+    await upgradeStatus(url, {
       origin: "https://attacker.test",
       "x-forwarded-proto": "https",
       "x-forwarded-host": "chat.example.com",
     }),
-  ).rejects.toBeDefined();
+  ).toBe(403);
 });
 
 function echoSameOrigin() {
@@ -347,7 +333,12 @@ it("serializes async handlers and cleans up once", async () => {
       cleanups++;
     },
   });
-  const ws = await open(start(service) + "/v2/chat/live");
+  const app = track(
+    brick({ services: [service], docs: false, requestLogging: false }).listen(
+      0,
+    ),
+  );
+  const ws = await open(`http://localhost:${app.server!.port}/api/chat/live`);
   const result = message(ws);
   ws.send(JSON.stringify({ event: "say", data: 1 }));
   ws.send(JSON.stringify({ event: "say", data: 2 }));
@@ -355,8 +346,7 @@ it("serializes async handlers and cleans up once", async () => {
   const ended = closed(ws);
   ws.close();
   await ended;
-  await apps[0]!.stop(true);
-  apps.length = 0;
+  await app.stop(true);
   expect(cleanups).toBe(1);
 });
 
@@ -463,7 +453,26 @@ it("handles already aborted connections and unsubscribes listeners", async () =>
   live.close();
 });
 
-it("validates recursive and record schemas after contract serialization", () => {
+it("validates recursive and record schemas after contract serialization", async () => {
+  const tree = (name: unknown) => ({
+    name: "root",
+    labels: { count: 1 },
+    children: [{ name, labels: {}, children: [] }],
+  });
+  const server = Bun.serve({
+    port: 0,
+    fetch(request, server) {
+      if (server.upgrade(request)) return;
+      return new Response("bad", { status: 400 });
+    },
+    websocket: {
+      open(ws) {
+        ws.send(JSON.stringify({ event: "tree", data: tree("child") }));
+        ws.send(JSON.stringify({ event: "tree", data: tree(42) }));
+      },
+      message() {},
+    },
+  });
   const schema = t.Recursive((Self) =>
     t.Object({
       name: t.String(),
@@ -471,23 +480,35 @@ it("validates recursive and record schemas after contract serialization", () => 
       children: t.Array(Self),
     }),
   );
-  const restored = restoreSocketSchema(
-    JSON.parse(JSON.stringify(serializeSocketSchema(schema))),
-  );
-  expect(
-    Check(restored, {
-      name: "root",
-      labels: { count: 1 },
-      children: [{ name: "child", labels: {}, children: [] }],
-    }),
-  ).toBe(true);
-  expect(
-    Check(restored, {
-      name: "root",
-      labels: {},
-      children: [{ name: 42, labels: {}, children: [] }],
-    }),
-  ).toBe(false);
+  try {
+    const live = createBrickClient({
+      baseUrl: `http://localhost:${server.port}`,
+      contract: {
+        chat: {
+          live: {
+            kind: "socket",
+            name: "live",
+            serviceName: "chat",
+            config: { path: "/api/chat/live" },
+            // A JSON round trip, as a generated contract file carries it.
+            output: {
+              tree: JSON.parse(JSON.stringify(serializeSocketSchema(schema))),
+            },
+          } as BrickClientSocket<{}, { tree: unknown }>,
+        },
+      },
+    }).chat.live.connect({ reconnect: false });
+    const received: unknown[] = [];
+    live.on("tree", (data) => received.push(data));
+    const failed = new Promise<BrickSocketError>((resolve) =>
+      live.onError(resolve),
+    );
+    await live.ready;
+    expect((await failed).kind).toBe("protocol");
+    expect(received).toEqual([tree("child")]);
+  } finally {
+    await server.stop(true);
+  }
 });
 
 it("does not start a handler when context resolves after closure", async () => {
@@ -529,6 +550,7 @@ it("does not start a handler when context resolves after closure", async () => {
   await ended;
   await cleaned.promise;
   resume.resolve();
+  // Asserts nothing runs: one turn lets a wrongly started handler show up.
   await Bun.sleep(0);
   expect(handled).toBe(0);
   expect(cleanups).toBe(1);
@@ -584,10 +606,7 @@ it("cancels an open connection once", async () => {
 it("times out a pending handshake", async () => {
   const server = Bun.serve({
     port: 0,
-    async fetch() {
-      await Bun.sleep(50);
-      return new Response("refused", { status: 403 });
-    },
+    fetch: () => new Promise<Response>(() => {}),
   });
   try {
     const live = createBrickClient({
@@ -666,7 +685,7 @@ it("joins, emits to, leaves and kicks rooms through the client", async () => {
   expect(await left).toEqual(["doc:2", "removed"]);
   live.emit("doc:2", "message", "after kick");
   live.emit("user:anon", "message", "end");
-  await Bun.sleep(20);
+  await waitFor(() => received.at(-1) === "end");
   expect(received).toEqual(["doc", "user", "end"]);
   socket.close();
 });
@@ -749,6 +768,7 @@ it("emits { after: tx } on commit and drops it on rollback", async () => {
   const db = drizzle(new Database(":memory:"));
   await runInTransaction(db, async (tx) => {
     live.emit("user:anon", "message", "committed", { after: tx });
+    // Asserts nothing is sent before commit: give a premature emit time to arrive.
     await Bun.sleep(10);
     expect(received).toEqual([]);
   });
@@ -770,7 +790,7 @@ it("emits { after: tx } on commit and drops it on rollback", async () => {
     "runInTransaction",
   );
   live.emit("user:anon", "message", "last");
-  await Bun.sleep(20);
+  await waitFor(() => received.at(-1) === "last");
   expect(received).toEqual(["committed", "last"]);
 });
 
@@ -821,15 +841,15 @@ it("moves a subprotocol token into a bearer header and echoes brick.v1", async (
     "brick.v1",
     "brick.token.abc",
   ]);
-  peers.push(ws);
   await new Promise((resolve, reject) => {
     ws.onopen = resolve;
     ws.onerror = reject;
   });
   expect(ws.protocol).toBe("brick.v1");
   expect(seen[0]).toEqual({ auth: "Bearer abc", protocol: "brick.v1" });
+  ws.close();
   // Without a token, a missing Origin keeps the strict default.
-  await expect(open(url + "/v2/chat/live")).rejects.toBeDefined();
+  expect(await upgradeStatus(url + "/v2/chat/live")).toBe(403);
 
   const live = api.chat.live.connect({ token: () => "eyJ.part-1_x" });
   const reply = new Promise((resolve) => live.on("message", resolve));
@@ -888,7 +908,7 @@ it("reconnects with a fresh token, keeps listeners and rejoins requested rooms",
   live.emit("doc:1", "message", "doc1");
   live.emit("doc:2", "message", "doc2");
   live.emit("user:u1", "message", "end");
-  await Bun.sleep(30);
+  await waitFor(() => received.at(-1) === "end");
   expect(received).toEqual(["u1:after", "doc1", "end"]);
   expect(tokens).toBe(2);
   expect(statuses).toEqual(["open", "reconnecting", "open"]);
@@ -919,7 +939,7 @@ it("stops on policy closes and when reconnect is off", async () => {
 });
 
 it("replays what a reconnecting client missed and reports gaps", () =>
-  replayScenario((app) => apps.push(app)));
+  replayScenario(track));
 
 it("checks replay settings and broker support", () => {
   const service = defineService("chat");
@@ -941,6 +961,7 @@ it("doesn't replay a room's messages from before the client could join it", asyn
   let allowed = false;
   const live = service.socket({
     name: "live",
+    input: {},
     output: { message: t.String() },
     allowMissingOrigin: true,
     replay: { keep: 10, maxAgeMs: 60_000 },
@@ -952,21 +973,17 @@ it("doesn't replay a room's messages from before the client could join it", asyn
     "brick.v1",
     "brick.token.x",
   ]);
-  peers.push(ws);
   const frames: any[] = [];
   ws.onmessage = ({ data }) => frames.push(JSON.parse(String(data)));
   await new Promise((resolve, reject) => {
     ws.onopen = resolve;
     ws.onerror = reject;
   });
+  const joined = (room: string) =>
+    frames.find((f) => f.event === "$join" && f.data.room === room)?.data;
   const ack = async (room: string) => {
-    for (let i = 0; i < 100; i++) {
-      const found = frames.find(
-        (f) => f.event === "$join" && f.data.room === room,
-      );
-      if (found) return found.data;
-      await Bun.sleep(5);
-    }
+    await waitFor(() => joined(room) !== undefined);
+    return joined(room);
   };
   // Any room the client may join tells it the current sequence.
   ws.send(JSON.stringify({ event: "$join", data: { room: "doc:public" } }));
@@ -991,8 +1008,35 @@ it("doesn't replay a room's messages from before the client could join it", asyn
     );
   }
   live.emit("doc:private", "message", "after");
-  await Bun.sleep(30);
+  await waitFor(() => frames.some((f) => f.event === "message"));
+  ws.close();
   expect(
     frames.filter((f) => f.event === "message").map((f) => f.data),
   ).toEqual(["after"]);
+});
+
+it("refuses a replayed emit that its room and sequence would push past the frame limit", () => {
+  const service = defineService("chat");
+  const live = service.socket({
+    name: "live",
+    input: {},
+    output: { message: t.String() },
+    handlers: {},
+    replay: { keep: 10, maxAgeMs: 60_000 },
+  });
+  // The frame a client receives, with the longest signed sequence there is.
+  const seq = `${"9".repeat(20)}-${"9".repeat(20)}.${"x".repeat(22)}`;
+  const delivered = (room: string, data: string) =>
+    `{"event":"message","data":"${data}","room":${JSON.stringify(room)},"seq":"${seq}"}`;
+  const fitting = (room: string) =>
+    "a".repeat(
+      64 * 1024 - new TextEncoder().encode(delivered(room, "")).length,
+    );
+  // Each `"` doubles when the room is written into the frame as JSON.
+  for (const room of [`doc:${'"'.repeat(196)}`, "doc:1"]) {
+    expect(() => live.emit(room, "message", fitting(room))).not.toThrow();
+    expect(() => live.emit(room, "message", fitting(room) + "a")).toThrow(
+      "too large",
+    );
+  }
 });

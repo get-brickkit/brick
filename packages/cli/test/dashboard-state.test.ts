@@ -1,11 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import {
-  docsHref,
-  initialState,
-  parseRoute,
-  reduce,
-  routeHref,
-} from "../dashboard/state";
+import { parseRoute, routeHref } from "../dashboard/state";
+import { docsHref } from "../src/dashboard-protocol";
+import { apiHref } from "../dashboard/api-operations";
+import { pageHref } from "../dashboard/extension-registry";
 
 describe("parseRoute", () => {
   it("reads a view and a selected request", () => {
@@ -85,13 +82,20 @@ describe("docsHref", () => {
   });
 });
 
-describe("reduce", () => {
-  it("follows the workflow inspector as the app restarts", () => {
-    expect(initialState.inspector).toBe(false);
-    const up = reduce(initialState, { type: "inspector", inspector: true });
-    expect(up.inspector).toBe(true);
-    expect(reduce(up, { type: "inspector", inspector: false }).inspector).toBe(
-      false,
-    );
+describe("every link builder", () => {
+  it("writes what parseRoute reads back", () => {
+    expect(parseRoute(routeHref("requests", "a/b c"))).toMatchObject({
+      view: "requests",
+      traceId: "a/b c",
+    });
+    expect(parseRoute(pageHref("my page"))).toMatchObject({
+      view: "x",
+      page: "my page",
+      path: [],
+    });
+    expect(parseRoute(apiHref("pages api", "get", "/a/{id}"))).toMatchObject({
+      view: "apis",
+      path: ["pages api", "get", "a", "{id}"],
+    });
   });
 });

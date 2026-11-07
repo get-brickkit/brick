@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { historyParams, type LogFilters, type LogRow } from "@/filters";
-import type {
-  HistoryFacets,
-  HistorySummary,
-  VolumeBucket,
-} from "../src/dev-history";
-import type { TraceSummary } from "../src/dev-telemetry-store";
+import {
+  HISTORY_PAGE_SIZE,
+  historyTraceUrl,
+  historyUrl,
+  type HistoryFacets,
+  type HistoryResponses,
+  type HistorySummary,
+  type TraceSummary,
+  type VolumeBucket,
+} from "../src/dashboard-protocol";
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -28,6 +32,13 @@ async function getJson<T>(url: string, signal: AbortSignal): Promise<T> {
   if (!response.ok) throw new Error(`${response.status}`);
   return (await response.json()) as T;
 }
+
+/** A history query, typed by what its endpoint answers. */
+const getHistory = <K extends keyof HistoryResponses>(
+  endpoint: K,
+  params: URLSearchParams,
+  signal: AbortSignal,
+) => getJson<HistoryResponses[K]>(historyUrl(endpoint, params), signal);
 
 /** A choice kept across visits, limited to the values this view offers. */
 export function useStoredChoice<T extends string>(
@@ -96,8 +107,6 @@ export interface RequestLog {
   refresh: () => void;
 }
 
-const PAGE = 100;
-
 /**
  * The stored requests in a window that match the filters: a page of rows with
  * a total, the counts for each filter, and volume over time. It follows the
@@ -131,8 +140,9 @@ export function useRequestLog(
     setLoading(true);
     offset.current = 0;
     const query = historyParams(window, filters);
-    getJson<{ traces: LogRow[]; total: number }>(
-      `/api/history/traces?${historyParams(window, filters, { offset: 0 })}`,
+    getHistory(
+      "traces",
+      historyParams(window, filters, { offset: 0 }),
       signal,
     ).then(
       (next) => {
@@ -148,28 +158,20 @@ export function useRequestLog(
       },
     );
     // Counts and volume are secondary; a miss leaves the last ones showing.
-    getJson<HistoryFacets>(`/api/history/facets?${query}`, signal).then(
-      setFacets,
-      () => {},
-    );
-    getJson<VolumeBucket[]>(`/api/history/volume?${query}`, signal).then(
-      setVolume,
-      () => {},
-    );
-    getJson<HistorySummary>(`/api/history/summary?${query}`, signal).then(
-      setSummary,
-      () => {},
-    );
+    getHistory("facets", query, signal).then(setFacets, () => {});
+    getHistory("volume", query, signal).then(setVolume, () => {});
+    getHistory("summary", query, signal).then(setSummary, () => {});
     return () => controller.abort();
     // `filters` is compared by value through `filterKey`.
   }, [enabled, window, filterKey]);
 
   const more = useCallback(() => {
     const { window, filters, key } = latest.current;
-    const next = offset.current + PAGE;
+    const next = offset.current + HISTORY_PAGE_SIZE;
     offset.current = next;
-    void getJson<{ traces: LogRow[] }>(
-      `/api/history/traces?${historyParams(window, filters, { offset: next })}`,
+    void getHistory(
+      "traces",
+      historyParams(window, filters, { offset: next }),
       new AbortController().signal,
     ).then(
       // Drop a page that arrives after the filters or window have changed.
@@ -211,10 +213,7 @@ export function useHistoryTrace(
   useEffect(() => {
     if (!traceId || !enabled) return;
     const controller = new AbortController();
-    getJson<TraceSummary>(
-      `/api/history/traces/${encodeURIComponent(traceId)}`,
-      controller.signal,
-    ).then(
+    getJson<TraceSummary>(historyTraceUrl(traceId), controller.signal).then(
       (trace) => setState({ id: traceId, trace, missing: false }),
       () => {
         if (!controller.signal.aborted)

@@ -1,16 +1,18 @@
-import { apiBase } from "~/lib/api-base";
-import { fetchStreams } from "~/lib/rpc-client";
-import type { EnvMap, ServerActionError } from "~/lib/types";
+import {
+  API_PATHS,
+  STREAM_CURSOR_HEADER,
+  STREAM_DONE_HEADER,
+  type ServerActionError,
+} from "~/lib/types";
 import { unwrapOrThrow, WorkflowWebAPIError } from "./workflow-errors";
+import { rpc } from "~/lib/rpc-client";
 
 function isServerActionError(value: unknown): value is ServerActionError {
   return (
     typeof value === "object" &&
     value !== null &&
     "message" in value &&
-    "layer" in value &&
-    "cause" in value &&
-    "request" in value
+    "layer" in value
   );
 }
 
@@ -23,7 +25,6 @@ export interface StreamResponse {
 }
 
 export async function readStream(
-  _env: EnvMap,
   streamId: string,
   runId: string,
   signal?: AbortSignal,
@@ -34,7 +35,7 @@ export async function readStream(
     if (cursor) {
       params.set("cursor", cursor);
     }
-    const url = `${apiBase()}/api/stream/${encodeURIComponent(streamId)}?${params.toString()}`;
+    const url = `${import.meta.env.BASE_URL}${API_PATHS.stream}${encodeURIComponent(streamId)}?${params.toString()}`;
     const response = await fetch(url, { signal });
     if (!response.ok) {
       const errorData = await response.json().catch(() => null);
@@ -58,8 +59,8 @@ export async function readStream(
       });
     }
 
-    const responseCursor = response.headers.get("X-Stream-Cursor");
-    const streamDone = response.headers.get("X-Stream-Done") === "true";
+    const responseCursor = response.headers.get(STREAM_CURSOR_HEADER);
+    const streamDone = response.headers.get(STREAM_DONE_HEADER) === "true";
 
     return {
       body: response.body,
@@ -78,9 +79,6 @@ export async function readStream(
 }
 
 /** List all stream IDs for a run */
-export async function listStreams(
-  env: EnvMap,
-  runId: string,
-): Promise<string[]> {
-  return unwrapOrThrow(fetchStreams(env, runId));
+export async function listStreams(runId: string): Promise<string[]> {
+  return unwrapOrThrow(rpc("fetchStreams", { runId }));
 }

@@ -1,30 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { context, propagation, trace } from "@opentelemetry/api";
-// Loads core's logger, which the console capture calls into.
-import "../../core/src/logger";
-import {
-  captureConsole,
-  installTracing,
-  type SpanEndRecord,
-  type TelemetryRecord,
-} from "../src/dev-telemetry";
+import { trace } from "@opentelemetry/api";
+import { GLOBAL_SYMBOL } from "@brickkit/core";
+import { captureConsole, installTracing } from "../src/dev-telemetry";
+import type { SpanEndRecord, TelemetryRecord } from "../src/dashboard-protocol";
+import { resetTracing, waitFor } from "./helpers";
 
-const CAPTURE = Symbol.for("brickkit.logs.capture");
+const CAPTURE = Symbol.for(GLOBAL_SYMBOL.logsCapture);
 
-/**
- * Start and end each test with no tracing and an untouched console. Another
- * test file in the same run may have left a tracer provider registered, and
- * then `installTracing` would find the slot taken and record nothing.
- */
-function reset() {
-  captureConsole()();
-  (globalThis as Record<symbol, unknown>)[CAPTURE] = undefined;
-  trace.disable();
-  context.disable();
-  propagation.disable();
-}
-beforeEach(reset);
-afterEach(reset);
+beforeEach(resetTracing);
+afterEach(resetTracing);
 
 /** The log events of the spans a run of `work` produced. */
 async function logsFrom(work: () => void) {
@@ -34,7 +18,7 @@ async function logsFrom(work: () => void) {
     work();
     span.end();
   });
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  await waitFor(() => records.some((record) => record.phase === "end"));
   return records
     .filter((record): record is SpanEndRecord => record.phase === "end")
     .flatMap((record) => record.events)

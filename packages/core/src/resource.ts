@@ -1,15 +1,19 @@
 import { and, eq, getTableColumns, inArray, type Column } from "drizzle-orm";
 import type { TObject, TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { installPlugin } from "./plugin";
+import { installPlugin, segmentClaimant } from "./plugin";
+import { columnValue } from "./db/column";
+import type { ResourcePlugin } from "./plugin-types";
 import { buildErrorHelpers, defineAction } from "./action";
-import { kebabCase, type ResourceActionInfo } from "./routes";
+import { kebabCase } from "./kebab";
+import { actionMeta, type ResourceActionInfo } from "./action-meta";
+import { portOf } from "./service-port";
 import { Type } from "./typebox";
 import { runInTransaction } from "./events/transaction";
-import type { EventRef } from "./events/catalog";
-import type { ServiceEvents } from "./events/types";
+import { checkPayload, crudEventSource, type EventRef } from "./events/catalog";
 import {
   ActionExecutionError,
+  DuplicateNameError,
   type ActionContext,
   type ActionErrorDefinition,
   type CommandConfig,
@@ -23,17 +27,6 @@ import {
   type ResourceIdentity,
   type Service,
 } from "./types";
-
-/** Resource actions can't take a CRUD route segment. */
-const CRUD_SEGMENTS = new Set([
-  "query",
-  "count",
-  "exists",
-  "find-one",
-  "bulk-create",
-  "bulk-update",
-  "bulk-delete",
-]);
 
 /**
  * Load the row a record action (or command) works on, through its `access`.
@@ -56,7 +49,7 @@ export async function loadRecord(
     );
   const db = args.db ?? args.ctx?.db;
   // An id its column can't hold names no row.
-  const id = idValue(resource.id, args.id);
+  const id = columnValue(resource.id, args.id);
   if (id === undefined) return undefined;
   if (!db) throw new Error("Record actions require a configured database");
   const scope =
@@ -83,19 +76,16 @@ export function checkRecordAccess(
     );
 }
 
-/** The id from the path as its column stores it: a Date or BigInt for those columns, undefined when it can't be one. */
-function idValue(column: Column, id: unknown): unknown {
-  if (typeof id !== "string") return id;
-  if (column.dataType === "date") {
-    const date = new Date(id);
-    return Number.isNaN(date.getTime()) ? undefined : date;
-  }
-  if (column.dataType === "bigint")
-    return /^-?\d+$/.test(id) ? BigInt(id) : undefined;
-  return id;
+function notFound(
+  resource: Resource<any, any, any>,
+  id: unknown,
+  error: { NOT_FOUND(message: string): never },
+): never {
+  error.NOT_FOUND(`${resource.name} '${String(id)}' not found`);
 }
 
-function idSchema(column: Column): TSchema {
+/** The schema of a resource's `:id`. */
+export function idSchema(column: Column): TSchema {
   return column.dataType === "number" ? Type.Number() : Type.String();
 }
 
@@ -111,12 +101,15 @@ function defineResourceAction(
     throw new Error(`Invalid resource action name '${config.name}'`);
   const name = `${resource.name}.${config.name}`;
   const segment = kebabCase(config.name);
-  if (CRUD_SEGMENTS.has(segment))
-    throw new Error(
-      `Brick: duplicate name "${name}" in service "${service.name}": "${segment}" is a CRUD route`,
+  // A plugin route on this resource (crud's `/count`) owns its first segment.
+  const claimant = segmentClaimant(service, resource, segment);
+  if (claimant)
+    throw new DuplicateNameError(
+      `Brick: duplicate name "${name}" in service "${service.name}": "${segment}" is a ${claimant} route`,
     );
-  if ((service.getAction(name) as { plugin?: string } | undefined)?.plugin)
-    throw new Error(
+  const existing = service.getAction(name);
+  if (existing && actionMeta(existing).route)
+    throw new DuplicateNameError(
       `Brick: duplicate name "${name}" in service "${service.name}"`,
     );
   if (!record && access !== undefined)
@@ -144,8 +137,7 @@ function defineResourceAction(
       const row = record
         ? await loadRecord(resource, { id: input.id, ctx, access })
         : undefined;
-      if (record && row === undefined)
-        error.NOT_FOUND(`${resource.name} '${String(input.id)}' not found`);
+      if (record && row === undefined) notFound(resource, input.id, error);
       return execute({ input, ctx, error, row } as any);
     },
   } as any);
@@ -155,7 +147,7 @@ function defineResourceAction(
     record,
     ...(access === undefined ? {} : { access }),
   };
-  Object.assign(action, { resource: resource.name, resourceAction: info });
+  actionMeta(action).resourceAction = info;
   service.action(action);
   return action;
 }
@@ -241,10 +233,18 @@ function defineCommand(
     config.decide(row, input, { error } as any);
   const events = service.events as Record<string, EventRef>;
 
-  const run = async ({ input, ctx }: { input: any; ctx: any }) => {
+  const run = async ({
+    input,
+    ctx,
+    error: helpers,
+  }: {
+    input: any;
+    ctx: any;
+    error: any;
+  }) => {
     const db = ctx.db;
     if (!db) throw new Error(`${where} requires a configured database`);
-    const recorder = (service as { recorder?: ServiceEvents }).recorder;
+    const recorder = service.recorder;
     const body = async (
       tx: any,
       record?: (name: string, payload: unknown) => Promise<void>,
@@ -255,12 +255,7 @@ function defineCommand(
         db: tx,
         access: config.access,
       });
-      if (row === undefined)
-        throw new ActionExecutionError(
-          "NOT_FOUND",
-          `${resource.name} '${String(input.id)}' not found`,
-          404,
-        );
+      if (row === undefined) notFound(resource, input.id, helpers);
       const id = row[resource.idField];
       for (const child of loaded)
         row[child.name] = await tx
@@ -283,9 +278,7 @@ function defineCommand(
             throw new Error(
               `${where} emits '${key}', which is not in the event catalog of service '${service.name}'`,
             );
-          (
-            service as { checkEvent?(n: string, p: unknown): void }
-          ).checkEvent?.(ref.name, payload);
+          checkPayload(ref, payload);
           return [ref.name, payload] as const;
         });
       if (emits.length && !record)
@@ -345,7 +338,10 @@ function defineCommand(
     return recorder
       ? recorder.transaction(
           db,
-          { traceId: ctx.traceId, source: `${service.name}.${resource.name}` },
+          {
+            traceId: ctx.traceId,
+            source: crudEventSource(service.name, resource.name),
+          },
           body,
         )
       : runInTransaction(db, (tx) => body(tx));
@@ -368,11 +364,11 @@ function defineCommand(
     } as ResourceActionConfig<any, any, any, any, any, boolean>,
     run,
   );
-  Object.assign(action, { decide, command: true });
+  Object.assign(action, { decide });
   return action;
 }
 
-/** Declares a plugin host without registering actions or changing the schema. */
+/** Declares a resource: a plugin host over a table, with its own `action()` and `command()`. */
 export function defineResource<
   TTable = any,
   TCtx extends ActionContext = ActionContext,
@@ -384,11 +380,7 @@ export function defineResource<
   const columns = getTableColumns(
     config.table as Parameters<typeof getTableColumns>[0],
   );
-  const primary = Object.entries(columns).filter(
-    ([, column]) => column.primary,
-  );
-  const id: Column | undefined =
-    config.id ?? (primary.length === 1 ? primary[0]?.[1] : undefined);
+  const id: Column | undefined = config.id ?? primaryColumn(config.table)?.[1];
   const entry = Object.entries(columns).find(([, column]) => column === id);
   if (!entry || !id)
     throw new Error(
@@ -400,7 +392,7 @@ export function defineResource<
     ["__proto__", "constructor", "prototype"].includes(config.name)
   )
     throw new Error(`Invalid resource name '${config.name}'`);
-  service.registerTable(config.table);
+  portOf(service).registerTable(config.table);
   const resource = {
     name: config.name,
     serviceName: service.name,
@@ -408,7 +400,7 @@ export function defineResource<
     id,
     idField: entry[0],
     config: Object.freeze({ ...config, id }),
-    use(plugin: import("./plugin").ResourcePlugin<any, any, any>) {
+    use(plugin: ResourcePlugin<any, any, any>) {
       return installPlugin(
         service,
         resource as unknown as Resource<

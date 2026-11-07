@@ -11,6 +11,7 @@ import { BUILT_IN_NAV, Sidebar, Topbar } from "@/shell";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import {
+  type View,
   routeHref,
   useDashboard,
   useMediaQuery,
@@ -35,6 +36,12 @@ import { OverviewView } from "@/views/overview";
 import { ReloadsView } from "@/views/reloads";
 import { RequestsView } from "@/views/requests";
 import { WorkflowsView } from "@/views/workflows";
+import {
+  CSRF_HEADER,
+  CSRF_VALUE,
+  PRODUCTION_HIDDEN_VIEWS,
+  ROUTES,
+} from "../src/dashboard-protocol";
 
 // Fumadocs' components and Shiki's styles are only needed for the Docs tab.
 const DocsView = lazy(() => import("@/views/docs"));
@@ -55,8 +62,12 @@ export function App({ loaded = {} }: { loaded?: LoadedExtension }) {
   const sidebar = useSidebar();
   const filterRef = useRef<HTMLInputElement>(null);
   const [seenFailure, setSeenFailure] = useState(0);
-  // The API reference loads on first visit, then stays alive in the background.
   const production = state.mode === "production";
+  const shown = useCallback(
+    (view: View) => !(production && PRODUCTION_HIDDEN_VIEWS.has(view)),
+    [production],
+  );
+  // The API reference loads on first visit, then stays alive in the background.
   const [apisOpened, setApisOpened] = useState(route.view === "apis");
   // The inspector loads on first visit too, then keeps the run you were reading.
   const [workflowsOpened, setWorkflowsOpened] = useState(
@@ -65,20 +76,22 @@ export function App({ loaded = {} }: { loaded?: LoadedExtension }) {
   // The extension's pages and links join the sidebar; a mistake in them (a
   // duplicate id, say) drops the extension and says why.
   const { nav, extension, extensionError } = useMemo(() => {
+    const visible = (items: typeof BUILT_IN_NAV) =>
+      items.filter((item) => !item.view || shown(item.view));
     try {
       return {
-        nav: mergeNav(BUILT_IN_NAV, loaded.extension, production),
+        nav: visible(mergeNav(BUILT_IN_NAV, loaded.extension, production)),
         extension: loaded.extension,
         extensionError: loaded.error ?? state.extension?.error,
       };
     } catch (error) {
       return {
-        nav: BUILT_IN_NAV,
+        nav: visible(BUILT_IN_NAV),
         extension: undefined,
         extensionError: error instanceof Error ? error.message : String(error),
       };
     }
-  }, [loaded, production, state.extension?.error]);
+  }, [loaded, production, shown, state.extension?.error]);
   const current = nav.find((item) => item.key === routeKey(route));
   const slotContext = useMemo<SlotContext>(
     () => ({
@@ -97,21 +110,15 @@ export function App({ loaded = {} }: { loaded?: LoadedExtension }) {
   const activity = `${state.traces.length}:${state.traces[0]?.traceId}:${state.traces[0]?.status}`;
 
   useEffect(() => {
-    if (route.view === "apis" && !production) setApisOpened(true);
-    if (route.view === "workflows" && !production) setWorkflowsOpened(true);
-  }, [route.view, production]);
+    if (route.view === "apis" && shown("apis")) setApisOpened(true);
+    if (route.view === "workflows" && shown("workflows"))
+      setWorkflowsOpened(true);
+  }, [route.view, shown]);
 
-  // The monitoring dashboard has no APIs, Docs or Workflows; an old link lands on Requests.
+  // A link to a view this dashboard hides lands on Requests.
   useEffect(() => {
-    document.title = production ? "Brick" : "Brick dev";
-    if (
-      production &&
-      (route.view === "apis" ||
-        route.view === "docs" ||
-        route.view === "workflows")
-    )
-      location.replace(routeHref("requests"));
-  }, [production, route.view]);
+    if (!shown(route.view)) location.replace(routeHref("requests"));
+  }, [production, route.view, shown]);
 
   // The errors dot clears once the Errors view has shown the newest failure.
   useEffect(() => {
@@ -160,9 +167,9 @@ export function App({ loaded = {} }: { loaded?: LoadedExtension }) {
   }, [focusSearch, toggleSidebar]);
 
   const restart = useCallback(() => {
-    void fetch("/api/restart", {
+    void fetch(ROUTES.restart.path, {
       method: "POST",
-      headers: { "x-brick-dashboard": "1" },
+      headers: { [CSRF_HEADER]: CSRF_VALUE },
     });
   }, []);
 
@@ -237,7 +244,7 @@ export function App({ loaded = {} }: { loaded?: LoadedExtension }) {
                 traces={state.traces}
               />
             )}
-            {apisOpened && !production && (
+            {apisOpened && shown("apis") && (
               <ApisView
                 api={state.api}
                 route={route}
@@ -246,13 +253,13 @@ export function App({ loaded = {} }: { loaded?: LoadedExtension }) {
                 hidden={route.view !== "apis"}
               />
             )}
-            {workflowsOpened && !production && (
+            {workflowsOpened && shown("workflows") && (
               <WorkflowsView
                 available={state.inspector}
                 hidden={route.view !== "workflows"}
               />
             )}
-            {route.view === "docs" && !production && (
+            {route.view === "docs" && shown("docs") && (
               <Suspense fallback={<Empty title="Loading docs" />}>
                 <DocsView docs={state.docs} route={route} />
               </Suspense>

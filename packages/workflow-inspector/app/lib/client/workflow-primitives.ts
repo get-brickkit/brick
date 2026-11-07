@@ -1,8 +1,6 @@
 import type { PaginatedResult } from "~/lib/types";
 import type { WorkflowWebAPIError } from "./workflow-errors";
 
-export const MAX_ITEMS = 1000;
-
 /**
  * Merges two arrays by a unique ID key, with later items overriding earlier ones.
  */
@@ -12,30 +10,6 @@ export function mergeById<T>(prev: T[], next: T[], idKey: string): T[] {
     combined.map((item) => [(item as any)[idKey], item]),
   );
   return Array.from(uniqueById.values());
-}
-
-/**
- * Exhaustively fetches all pages of a paginated resource.
- */
-export async function fetchAllPaginated<T>(
-  fetchPage: (
-    cursor?: string,
-  ) => Promise<
-    | { error: WorkflowWebAPIError; result: null }
-    | { error: null; result: PaginatedResult<T> }
-  >,
-): Promise<{ data: T[]; cursor?: string }> {
-  let allData: T[] = [];
-  let currentCursor: string | undefined;
-  while (true) {
-    const { error, result } = await fetchPage(currentCursor);
-    // TODO: We're not handling errors well for infinite fetches
-    if (error) break;
-    allData = [...allData, ...result.data];
-    if (!result.hasMore || !result.cursor || allData.length >= MAX_ITEMS) break;
-    currentCursor = result.cursor;
-  }
-  return { data: allData, cursor: currentCursor };
 }
 
 /**

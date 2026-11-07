@@ -1,15 +1,5 @@
 import type { Service } from "../types";
 import type { DatabaseHandle } from "./define";
-import {
-  createSQLiteDatabase,
-  type SQLiteDatabaseConfig,
-  type BunSQLiteDatabase,
-} from "./sqlite";
-import {
-  createPostgresDatabase,
-  type PostgresDatabaseConfig,
-  type PostgresDatabase,
-} from "./postgres";
 import { getTableColumns, getTableName, sql, type Table } from "drizzle-orm";
 import { getTableConfig, isPgEnum, pgSchema } from "drizzle-orm/pg-core";
 import { migrate as migratePostgres } from "drizzle-orm/postgres-js/migrator";
@@ -18,8 +8,8 @@ import { migrate as migrateSQLite } from "drizzle-orm/bun-sqlite/migrator";
 export * from "./sqlite";
 export * from "./postgres";
 export * from "./define";
+export { columnValue } from "./column";
 
-// Re-export core Drizzle SQL expressions & operators for convenience
 export {
   sql,
   eq,
@@ -45,52 +35,6 @@ export {
   Table,
   is,
 } from "drizzle-orm";
-
-export interface DatabaseConfig<
-  TSchema extends Record<string, unknown> = Record<string, unknown>,
->
-  extends
-    Omit<SQLiteDatabaseConfig<TSchema>, "client">,
-    Omit<PostgresDatabaseConfig<TSchema>, "client"> {
-  client?:
-    | SQLiteDatabaseConfig<TSchema>["client"]
-    | PostgresDatabaseConfig<TSchema>["client"];
-  /** Database engine. Default: 'sqlite' */
-  engine?: "sqlite" | "postgres" | "clickhouse";
-  /** Optional service name associated with this database */
-  name?: string;
-}
-
-export type BrickDatabase<
-  TSchema extends Record<string, unknown> = Record<string, unknown>,
-> = BunSQLiteDatabase<TSchema> | PostgresDatabase<TSchema>;
-
-/**
- * Creates a database instance based on the provided configuration.
- * Zero-config: calling `createDatabase()` returns an ultra-fast Bun-native SQLite
- * database in `:memory:` mode wrapped with Drizzle ORM.
- */
-export function createDatabase<
-  TSchema extends Record<string, unknown> = Record<string, unknown>,
->(
-  config: DatabaseConfig<TSchema> = {},
-): BunSQLiteDatabase<TSchema> | PostgresDatabase<TSchema> {
-  const engine = config.engine ?? "sqlite";
-
-  if (engine === "sqlite") {
-    return createSQLiteDatabase<TSchema>(
-      config as SQLiteDatabaseConfig<TSchema>,
-    );
-  }
-
-  if (engine === "postgres") {
-    return createPostgresDatabase<TSchema>(
-      config as PostgresDatabaseConfig<TSchema>,
-    );
-  }
-
-  throw new Error(`[Brick-TS DB] Unsupported database engine: '${engine}'`);
-}
 
 /**
  * Apply the migrations in a folder that have not run yet, in order, and record
@@ -221,10 +165,13 @@ export function generateSQLiteIndexDdl(
 /**
  * Ensures secondary indexes exist for a resource table.
  * SQLite: B-tree indexes for owner scope + sort + composite hot path.
- * Postgres: same B-trees plus pg_trgm GIN indexes for substring search.
- * Best-effort: failures warn and continue (e.g. read-only replicas).
+ * Postgres: same B-trees plus pg_trgm GIN indexes for substring search,
+ * created one after another (each GIN index needs the extension).
+ * Best-effort: a failed statement warns and the rest still run (e.g. a
+ * read-only replica, or no right to create pg_trgm); queries still work, only
+ * slower. On SQLite every statement has run when it returns.
  */
-export function ensureResourceIndexes(
+export async function ensureResourceIndexes(
   db: any,
   table: any,
   opts: {
@@ -232,13 +179,11 @@ export function ensureResourceIndexes(
     sortFields?: string[];
     searchFields?: string[];
   } = {},
-): void {
+): Promise<void> {
   if (!db) return;
   const isPostgres =
     typeof (db as any).execute === "function" && !(db as any).$client?.run;
   const stmts = generateSQLiteIndexDdl(table, opts);
-  // Postgres trigram support for LIKE %term% (requires superuser for extension;
-  // failure is silently ignored — LIKE still works, just slower).
   if (isPostgres && opts.searchFields && opts.searchFields.length > 0) {
     const tableName = getTableName(table);
     const columns = getTableColumns(table);
@@ -259,23 +204,18 @@ export function ensureResourceIndexes(
     }
   }
   if (stmts.length === 0) return;
-  const run = (stmt: string) => {
+  if (isPostgres) stmts.unshift(`CREATE EXTENSION IF NOT EXISTS pg_trgm;`);
+  for (const stmt of stmts) {
     try {
-      if ((db as any).$client?.run) {
-        (db as any).$client.run(stmt);
-      } else if (typeof (db as any).execute === "function") {
-        void (db as any).execute(sql.raw(stmt)).catch(() => {});
-      } else if ((db as any).run) {
-        (db as any).run(stmt);
-      }
-    } catch {
-      // best-effort
+      if ((db as any).$client?.run) (db as any).$client.run(stmt);
+      else if (isPostgres) await (db as any).execute(sql.raw(stmt));
+      else (db as any).run?.(stmt);
+    } catch (error) {
+      console.warn(
+        `[Brick-TS DB] Skipped an index: ${stmt} (${error instanceof Error ? error.message : String(error)})`,
+      );
     }
-  };
-  if (isPostgres) {
-    run(`CREATE EXTENSION IF NOT EXISTS pg_trgm;`);
   }
-  for (const s of stmts) run(s);
 }
 
 /**
@@ -352,8 +292,11 @@ export function ensureSQLiteFts(
     run(
       `INSERT INTO ${quoteIdent(fts)}("id", ${colList}) SELECT ${quoteIdent(idCol)}, ${colList} FROM ${quoteIdent(tableName)} WHERE ${quoteIdent(idCol)} NOT IN (SELECT "id" FROM ${quoteIdent(fts)});`,
     );
-  } catch {
-    // best-effort: LIKE fallback in the list path covers FTS absence.
+  } catch (error) {
+    // Best effort, as for indexes: search without FTS still works, but say why it is missing.
+    console.warn(
+      `[Brick-TS DB] Skipped full-text search for ${getTableName(table)}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -472,7 +415,6 @@ export function syncSchema(
 
   if (!db || tables.length === 0) return;
 
-  // Bun SQLite
   if ((db as any).$client?.run || (db as any).run) {
     for (const table of tables) {
       try {

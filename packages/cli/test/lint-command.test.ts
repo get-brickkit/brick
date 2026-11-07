@@ -2,7 +2,6 @@ import { afterEach, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-// Runs oxlint with the built lint/oxlint plugin (bun run build first).
 const cli = resolve(import.meta.dir, "../src/bin.ts");
 const roots: string[] = [];
 
@@ -143,16 +142,21 @@ it("declared-events checks emitted names against the service's catalog", async (
   const root = await project({
     ...BASE,
     "brick.config.ts": `export default { lint: { presets: [], rules: { "brick/declared-events": "error" } } };\n`,
-    [`${S}/billing/billing.service.ts`]: `import { defineService, t } from "@brickkit/core";
+    [`${S}/billing/billing.service.ts`]: `import { defineDatabase, defineService, sqliteTable, text, t } from "@brickkit/core";
 
+const invoices = sqliteTable("invoices", { id: text("id").primaryKey() });
 export const billing = defineService("billing", {
+  database: defineDatabase({ tables: { invoices } }),
   events: { charged: t.Object({ id: t.String() }) },
 });
+billing.resource({ name: "invoice", table: invoices });
 `,
     [`${S}/billing/listeners/emit.ts`]: `import { emitEvent } from "@brickkit/core";
 
 export const ok = (ctx: any) => emitEvent(ctx, "billing.charged", { id: "1" });
 export const bad = (ctx: any) => emitEvent(ctx, "billing.refunded", {});
+export const crud = (ctx: any) => emitEvent(ctx, "invoice.create", {});
+export const notCrud = (ctx: any) => emitEvent(ctx, "invoice.archive", {});
 `,
   });
   const result = await lint(root);
@@ -160,7 +164,91 @@ export const bad = (ctx: any) => emitEvent(ctx, "billing.refunded", {});
   const problems = result.stdout
     .split("\n")
     .filter((line) => line.endsWith("brick/declared-events"));
-  expect(problems).toHaveLength(1);
+  expect(problems).toHaveLength(2);
   expect(problems[0]).toStartWith(`${S}/billing/listeners/emit.ts:4:`);
   expect(problems[0]).toContain(`"billing.refunded"`);
+  expect(problems[1]).toStartWith(`${S}/billing/listeners/emit.ts:6:`);
+  expect(problems[1]).toContain(`"invoice.archive"`);
+});
+
+it("unique-names reports two declarations that share a URL segment", async () => {
+  const root = await project({
+    ...BASE,
+    "brick.config.ts": `export default { lint: { presets: [], rules: { "brick/unique-names": "error" } } };\n`,
+    [`${S}/orders/actions/get-summary-copy.action.ts`]: `import { orders } from "../orders.service";
+
+export default orders.action({ name: "get-summary", execute: () => null });
+`,
+  });
+  const result = await lint(root);
+  expect(result.code).toBe(1);
+  expect(result.stdout).toMatch(/src\/app\.ts:1:1 {2}error .*"get-summary"/);
+  expect(result.stdout).toContain("brick/unique-names");
+});
+
+it("fails an app with duplicate names even when unique-names is off", async () => {
+  const root = await project({
+    ...BASE,
+    "brick.config.ts": `export default { lint: { presets: [] } };\n`,
+    [`${S}/orders/actions/get-summary-copy.action.ts`]: `import { orders } from "../orders.service";
+
+export default orders.action({ name: "get-summary", execute: () => null });
+`,
+  });
+  const result = await lint(root);
+  expect(result.code).toBe(1);
+  expect(result.stdout).toMatch(/src\/app\.ts:1:1 {2}error .*"get-summary"/);
+});
+
+it("fails an app with duplicate names when unique-names is only a warning", async () => {
+  const root = await project({
+    ...BASE,
+    "brick.config.ts": `export default { lint: { presets: [], rules: { "brick/unique-names": "warn" } } };\n`,
+    [`${S}/orders/actions/get-summary-copy.action.ts`]: `import { orders } from "../orders.service";
+
+export default orders.action({ name: "get-summary", execute: () => null });
+`,
+  });
+  const result = await lint(root);
+  expect(result.code).toBe(1);
+  expect(result.stdout).toMatch(/src\/app\.ts:1:1 {2}error .*"get-summary"/);
+});
+
+it("scans .cts sources", async () => {
+  const root = await project({
+    ...BASE,
+    "brick.config.ts": `export default { lint: { presets: [] } };\n`,
+    [`${S}/billing/lib/schema.cts`]: `export { ordersTable as orders } from "../../orders/schema";\n`,
+  });
+  const result = await lint(root);
+  expect(result.stdout).toContain(`${S}/billing/lib/schema.cts:1:1`);
+});
+
+it("no-cross-service-tables sees tables re-exported from another service", async () => {
+  const root = await project({
+    ...BASE,
+    "brick.config.ts": `export default { lint: { presets: [] } };\n`,
+    [`${S}/billing/lib/tables.ts`]: `export { ordersTable } from "../../orders/tables/orders.table";\n`,
+    [`${S}/billing/lib/schema.ts`]: `export { ordersTable as orders } from "../../orders/schema";\n`,
+  });
+  const result = await lint(root);
+  expect(result.stdout).toContain(
+    `${S}/billing/lib/tables.ts:1:1  error  Service "billing" imports orders.table.ts from orders/`,
+  );
+  expect(result.stdout).toContain(
+    `${S}/billing/lib/schema.ts:1:1  error  Service "billing" imports table "ordersTable" owned by "orders"`,
+  );
+  expect(result.code).toBe(1);
+});
+
+it("test-colocated accepts any test file name beside the action", async () => {
+  const { [`${S}/orders/actions/get-summary.test.ts`]: _, ...base } = BASE;
+  const root = await project({
+    ...base,
+    "brick.config.ts": `export default { lint: { presets: [], rules: { "brick/test-colocated": "error" } } };\n`,
+    [`${S}/orders/actions/get-summary.spec.mts`]: "export {};\n",
+  });
+  const result = await lint(root);
+  expect(result.stdout).toContain("✔ No lint problems");
+  expect(result.code).toBe(0);
 });

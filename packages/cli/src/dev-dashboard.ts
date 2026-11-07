@@ -7,17 +7,32 @@ import {
 import { extname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { ConfigError } from "./config";
 import type { DevDocs } from "./dev-docs";
-import { INSPECTOR_PATH, INSPECTOR_TOKEN_HEADER } from "./dev-inspector";
-import { parseHistoryQuery, type DevHistory } from "./dev-history";
-import type { TelemetryRecord } from "./dev-telemetry";
-import type {
-  DevTelemetryEvent,
-  DevTelemetryStore,
-} from "./dev-telemetry-store";
+import type { DevHistory } from "./dev-history";
+import { decodeHistoryQuery, type HistoryQuery } from "./dashboard-query";
+import type { DevTelemetryStore } from "./dev-telemetry-store";
 import { dashboardShell } from "./dev-dashboard-shell";
 import type { DashboardAuth } from "@brickkit/core";
-import { createAccess, isLoopbackHost } from "./dashboard-access";
+import {
+  createAccess,
+  isLoopbackHost,
+  requestProtocol,
+} from "./dashboard-access";
+import {
+  ASSETS,
+  CSRF_HEADER,
+  CSRF_VALUE,
+  DOCS_PATHS,
+  INSPECTOR_TOKEN_HEADER,
+  matchRoute,
+  ROUTES,
+  type DashboardEvents,
+  type DashboardSnapshot,
+  type HistoryResponses,
+  type IngestPayload,
+  type RouteName,
+} from "./dashboard-protocol";
 import {
   assetsDirectory,
   DashboardExtensions,
@@ -26,7 +41,6 @@ import {
   type DashboardExtensionOptions,
 } from "./dashboard-extension";
 
-export const DEFAULT_DASHBOARD_PORT = 9400;
 const KEEPALIVE_MS = 15_000;
 const MAX_INGEST_BYTES = 5 * 1024 * 1024;
 const MAX_PROXY_BYTES = 10 * 1024 * 1024;
@@ -56,31 +70,6 @@ const NOT_RETURNED = new Set([
   "set-cookie",
 ]);
 
-/**
- * What a production dashboard may show: the shell and its assets, the live
- * state and its event stream, and stored history. Nothing that changes the app
- * or reaches into it (restart, the API proxy, ingest) and nothing from the
- * project's source (documentation, OpenAPI documents). With an extension, the
- * `/app` proxy its pages read the app through.
- */
-const isMonitoringRoute = (
-  method: string | undefined,
-  pathname: string,
-  extension: boolean,
-) =>
-  (extension && isAppRoute(pathname)) ||
-  (method === "GET" &&
-    (pathname === "/" ||
-      pathname.startsWith("/assets/") ||
-      pathname === "/api/state" ||
-      pathname === "/api/events" ||
-      pathname.startsWith("/api/history")));
-
-/** `/app/*` reaches the app itself, for the extension's `useAppFetch`. */
-const APP_PATH = "/app";
-const isAppRoute = (pathname: string) =>
-  pathname === APP_PATH || pathname.startsWith(`${APP_PATH}/`);
-
 const PRODUCTION_HEADERS = {
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
@@ -105,7 +94,7 @@ export interface DevDashboardOptions {
   host?: string;
   /**
    * `"production"` is the read-only monitoring dashboard of `brick start`: it
-   * serves only what `isMonitoringRoute` lists, with security headers, and
+   * serves only the routes marked `production`, with security headers, and
    * tells its page to hide the tabs that need a developer's machine.
    */
   mode?: "dev" | "production";
@@ -132,6 +121,8 @@ export interface DevDashboardOptions {
   plugins?: readonly PluginDashboard[];
   /** Where `/app/*` goes; the app the store's API documents name otherwise. */
   appUrl?: string;
+  /** How the host's user picks another port, added when the port is taken. */
+  portHint?: string;
 }
 
 export interface DevDashboard {
@@ -156,7 +147,7 @@ export function startDevDashboard(
   const production = options.mode === "production";
   if (!loopback && !options.auth) {
     return Promise.reject(
-      new Error(
+      new ConfigError(
         `Brick: the dashboard would listen on ${host}, where others can reach it, so it needs access control. Set dashboard.auth with a token or an authorize function.`,
       ),
     );
@@ -202,12 +193,8 @@ export function startDevDashboard(
       return;
     }
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
-    const { pathname } = url;
-    // The one route open to everyone: uptime monitors cannot sign in.
-    if (
-      pathname === "/_health" &&
-      (request.method === "GET" || request.method === "HEAD")
-    ) {
+    const route = matchRoute(request.method, url.pathname);
+    if (route === "health") {
       await health(response);
       return;
     }
@@ -218,14 +205,23 @@ export function startDevDashboard(
         return;
       }
     }
-    if (
-      production &&
-      !isMonitoringRoute(request.method, pathname, Boolean(extension?.active))
-    ) {
+    if (!route || (production && !servedInProduction(route))) {
       send(response, 404, "Not found");
       return;
     }
-    handle(request, response, url);
+    if (
+      "csrf" in ROUTES[route] &&
+      request.headers[CSRF_HEADER] !== CSRF_VALUE
+    ) {
+      send(response, 403, "Forbidden");
+      return;
+    }
+    await handlers[route](request, response, url);
+  }
+
+  function servedInProduction(route: RouteName): boolean {
+    const served: boolean | "extension" = ROUTES[route].production;
+    return served === "extension" ? Boolean(extension?.active) : served;
   }
 
   /** 200 while the app answers its own health check, 503 when it does not. */
@@ -253,13 +249,14 @@ export function startDevDashboard(
     );
   }
 
-  function handle(
+  type Handler = (
     request: IncomingMessage,
     response: ServerResponse,
     url: URL,
-  ): void {
-    const { pathname } = url;
-    if (request.method === "GET" && pathname === "/") {
+  ) => void | Promise<void>;
+
+  const handlers: Record<Exclude<RouteName, "health">, Handler> = {
+    shell: (_request, response) =>
       send(
         response,
         200,
@@ -272,95 +269,55 @@ export function startDevDashboard(
               }
             : undefined,
           theme: theme !== "",
+          mode: production ? "production" : "dev",
         }),
         {
           "content-type": "text/html; charset=utf-8",
           "cache-control": "no-store",
         },
-      );
-      return;
-    }
-    if (request.method === "GET" && pathname.startsWith("/assets/")) {
-      const name = pathname.slice("/assets/".length);
+      ),
+    assets(_request, response, url) {
+      const name = url.pathname.slice(ROUTES.assets.path.length + 1);
       // The project's own files, kept in memory beside the dashboard's.
-      const own = name === "brick-theme.css" ? theme : extension?.asset(name);
+      const own = name === ASSETS.theme ? theme : extension?.asset(name);
       if (own !== undefined)
         send(response, 200, own, {
-          "content-type": ASSET_TYPES[extname(name)]!,
+          "content-type": assetType(name),
           "cache-control": "no-store",
         });
       else serveAsset(response, name);
-      return;
-    }
-    if (isAppRoute(pathname)) {
-      void app(request, response, url);
-      return;
-    }
-    if (request.method === "GET" && pathname === "/api/state") {
-      send(response, 200, JSON.stringify(snapshot()), {
-        "content-type": "application/json",
-      });
-      return;
-    }
-    if (request.method === "GET" && pathname === "/api/events") {
-      eventStream(request, response);
-      return;
-    }
-    if (
-      request.method === "GET" &&
-      pathname.startsWith("/api/history") &&
-      options.history
-    ) {
-      history(options.history, pathname, url.searchParams, response);
-      return;
-    }
-    if (request.method === "GET" && pathname.startsWith("/api/docs")) {
-      void docsRoute(response, pathname, url.searchParams);
-      return;
-    }
-    if (request.method === "GET" && pathname === "/api/openapi") {
-      send(response, 200, JSON.stringify(options.store.apiDocuments()), {
-        "content-type": "application/json",
-        "cache-control": "no-store",
-      });
-      return;
-    }
-    if (pathname === "/api/proxy") {
-      void proxy(request, response, url);
-      return;
-    }
-    if (
-      pathname === INSPECTOR_PATH ||
-      pathname.startsWith(`${INSPECTOR_PATH}/`)
-    ) {
+    },
+    app,
+    state: (_request, response) => json(response, snapshot()),
+    events: eventStream,
+    history(_request, response, url) {
+      if (options.history)
+        history(options.history, url.pathname, url.searchParams, response);
+      else send(response, 404, "Not found");
+    },
+    docs: (_request, response, url) =>
+      docsRoute(response, url.pathname, url.searchParams),
+    openapi: (_request, response) =>
+      json(response, options.store.apiDocuments()),
+    proxy,
+    workflows(request, response, url) {
       // Only the dashboard may frame it: framed by another site, a click could
       // land on Cancel or Replay. The rest of the dashboard may be embedded.
-      response.setHeader("content-security-policy", "frame-ancestors 'self'");
-      response.setHeader("x-frame-options", "SAMEORIGIN");
-      void inspector(request, response, url);
-      return;
-    }
-    if (request.method === "POST" && pathname === "/api/ingest") {
-      ingest(request, response);
-      return;
-    }
-    if (
-      request.method === "POST" &&
-      pathname === "/api/restart" &&
-      options.restart
-    ) {
-      if (request.headers["x-brick-dashboard"] !== "1") {
-        send(response, 403, "Forbidden");
+      frameOnlyHere(response);
+      return inspector(request, response, url);
+    },
+    ingest,
+    restart(request, response) {
+      if (!options.restart) {
+        send(response, 404, "Not found");
         return;
       }
       options.restart();
       send(response, 202, "");
-      return;
-    }
-    send(response, 404, "Not found");
-  }
+    },
+  };
 
-  function snapshot() {
+  function snapshot(): DashboardSnapshot {
     return {
       ...options.store.snapshot(),
       canRestart: Boolean(options.restart),
@@ -377,44 +334,34 @@ export function startDevDashboard(
    * the dashboard, such as a dev server worker: span batches, and a notice when
    * the app loads.
    */
-  function ingest(request: IncomingMessage, response: ServerResponse) {
-    if (request.headers["x-brick-dashboard"] !== "1") {
-      send(response, 403, "Forbidden");
+  async function ingest(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    const body = await readBytes(request, MAX_INGEST_BYTES);
+    if (!body) {
+      tooLarge(response);
       return;
     }
-    let body = "";
-    let rejected = false;
-    request.setEncoding("utf8");
-    request.on("data", (chunk: string) => {
-      if (rejected) return;
-      body += chunk;
-      if (body.length > MAX_INGEST_BYTES) {
-        rejected = true;
-        send(response, 413, "Payload too large");
-        request.destroy();
-      }
-    });
-    request.on("end", () => {
-      if (rejected) return;
-      try {
-        const payload = JSON.parse(body) as {
-          records?: TelemetryRecord[];
-          worker?: string;
-        };
-        if (Array.isArray(payload.records)) {
-          options.store.ingest(payload.records, options.store.latestGeneration);
-        }
-        if (typeof payload.worker === "string") {
-          options.store.startGeneration(payload.worker);
-        }
-        send(response, 204, "");
-      } catch {
-        send(response, 400, "Bad request");
-      }
-    });
+    let payload: IngestPayload | null;
+    try {
+      payload = JSON.parse(Buffer.from(body).toString("utf8")) as IngestPayload;
+    } catch {
+      payload = null;
+    }
+    if (payload === null || typeof payload !== "object") {
+      send(response, 400, "Bad request");
+      return;
+    }
+    if (Array.isArray(payload.records)) {
+      options.store.ingest(payload.records, options.store.latestGeneration);
+    }
+    if (typeof payload.worker === "string") {
+      options.store.startGeneration(payload.worker);
+    }
+    send(response, 204, "");
   }
 
-  /** The Docs tab's data: tree, compiled pages, search, images, components. */
   async function docsRoute(
     response: ServerResponse,
     pathname: string,
@@ -425,16 +372,11 @@ export function startDevDashboard(
       send(response, 404, "The app has no documentation.");
       return;
     }
-    const json = (body: unknown) =>
-      send(response, 200, JSON.stringify(body), {
-        "content-type": "application/json",
-        "cache-control": "no-store",
-      });
     try {
-      if (pathname === "/api/docs") return json(docs.info());
-      if (pathname === "/api/docs/search")
-        return json(await docs.search(params.get("q") ?? ""));
-      if (pathname === "/api/docs/components.js") {
+      if (pathname === DOCS_PATHS.info) return json(response, docs.info());
+      if (pathname === DOCS_PATHS.search)
+        return json(response, await docs.search(params.get("q") ?? ""));
+      if (pathname === DOCS_PATHS.components) {
         const code = await docs.components();
         if (code === undefined) return send(response, 404, "No components.");
         return send(response, 200, code, {
@@ -442,7 +384,7 @@ export function startDevDashboard(
           "cache-control": "no-store",
         });
       }
-      const pagePrefix = "/api/docs/page";
+      const pagePrefix = DOCS_PATHS.page;
       if (pathname === pagePrefix || pathname.startsWith(`${pagePrefix}/`)) {
         const slugs = pathname
           .slice(pagePrefix.length)
@@ -450,9 +392,11 @@ export function startDevDashboard(
           .filter(Boolean)
           .map(decodeURIComponent);
         const page = await docs.page(slugs);
-        return page ? json(page) : send(response, 404, "No such page.");
+        return page
+          ? json(response, page)
+          : send(response, 404, "No such page.");
       }
-      const filePrefix = "/api/docs/files/";
+      const filePrefix = `${DOCS_PATHS.files}/`;
       if (pathname.startsWith(filePrefix)) {
         const file = await docs.file(
           pathname
@@ -480,13 +424,6 @@ export function startDevDashboard(
   }
 
   /**
-   * Send a request on to the app for the APIs view, which cannot call the app
-   * directly: it is another origin. Only the dashboard's own page may use this,
-   * and only to reach the app being shown. The address to call is `?url=`; a
-   * `?cookie=` is the cookie parameters the reader typed into Try it, and the
-   * only cookie the app is sent (the dashboard's own are never forwarded).
-   */
-  /**
    * Pass a request to the workflow inspector, which the app serves on a port of
    * its own, and stream its answer back (it follows a run's output as it
    * grows). Anyone who can open the dashboard may look, but a change must come
@@ -508,14 +445,7 @@ export function startDevDashboard(
       );
       return;
     }
-    const bodyless = request.method === "GET" || request.method === "HEAD";
-    const site = request.headers["sec-fetch-site"];
-    const origin = request.headers.origin;
-    if (
-      !bodyless &&
-      ((site !== undefined && site !== "same-origin") ||
-        (origin !== undefined && origin !== `http://${request.headers.host}`))
-    ) {
+    if (!isBodyless(request) && !fromOwnPage(request)) {
       send(response, 403, "Forbidden");
       return;
     }
@@ -538,12 +468,7 @@ export function startDevDashboard(
     response: ServerResponse,
     url: URL,
   ): Promise<void> {
-    const site = request.headers["sec-fetch-site"];
-    const origin = request.headers.origin;
-    if (
-      (site !== undefined && site !== "same-origin") ||
-      (origin !== undefined && origin !== `http://${request.headers.host}`)
-    ) {
+    if (!fromOwnPage(request)) {
       send(response, 403, "Forbidden");
       return;
     }
@@ -553,12 +478,11 @@ export function startDevDashboard(
       return;
     }
     // Framed by an extension's iframe page, and by nothing else.
-    response.setHeader("content-security-policy", "frame-ancestors 'self'");
-    response.setHeader("x-frame-options", "SAMEORIGIN");
+    frameOnlyHere(response);
     await forward(
       request,
       response,
-      `${new URL(appUrl).origin}${url.pathname.slice(APP_PATH.length) || "/"}${url.search}`,
+      `${new URL(appUrl).origin}${url.pathname.slice(ROUTES.app.path.length) || "/"}${url.search}`,
       (headers) => {
         if (access) headers.delete("authorization");
       },
@@ -566,21 +490,19 @@ export function startDevDashboard(
     );
   }
 
-  /** Send the request on to `target` and stream its answer back. */
+  /**
+   * Send the request on to `target` and stream its answer back. `body`: the
+   * request's body when the caller already read it; else it is streamed.
+   */
   async function forward(
     request: IncomingMessage,
     response: ServerResponse,
     target: string,
     adjust: (headers: Headers) => void,
     unreachable: string,
+    body?: Uint8Array,
   ): Promise<void> {
-    const bodyless = request.method === "GET" || request.method === "HEAD";
-    const headers = new Headers();
-    for (const [name, value] of Object.entries(request.headers)) {
-      if (value === undefined || NOT_FORWARDED.has(name)) continue;
-      if (name.startsWith("sec-")) continue;
-      headers.set(name, Array.isArray(value) ? value.join(", ") : value);
-    }
+    const headers = forwardedHeaders(request);
     adjust(headers);
     const abort = new AbortController();
     response.on("close", () => abort.abort());
@@ -590,18 +512,16 @@ export function startDevDashboard(
         headers,
         redirect: "manual",
         signal: abort.signal,
-        ...(bodyless
+        ...(isBodyless(request)
           ? {}
-          : {
-              body: Readable.toWeb(request) as unknown as BodyInit,
-              duplex: "half",
-            }),
+          : body
+            ? { body: body as BodyInit }
+            : {
+                body: Readable.toWeb(request) as unknown as BodyInit,
+                duplex: "half",
+              }),
       } as RequestInit);
-      const returned: Record<string, string> = {};
-      upstream.headers.forEach((value, name) => {
-        if (!NOT_RETURNED.has(name)) returned[name] = value;
-      });
-      response.writeHead(upstream.status, returned);
+      response.writeHead(upstream.status, returnedHeaders(upstream));
       if (!upstream.body || request.method === "HEAD") {
         response.end();
         return;
@@ -613,17 +533,19 @@ export function startDevDashboard(
     }
   }
 
+  /**
+   * Send a request on to the app for the APIs view, which cannot call the app
+   * directly: it is another origin. Only the dashboard's own page may use this,
+   * and only to reach the app being shown. The address to call is `?url=`; a
+   * `?cookie=` is the cookie parameters the reader typed into Try it, and the
+   * only cookie the app is sent (the dashboard's own are never forwarded).
+   */
   async function proxy(
     request: IncomingMessage,
     response: ServerResponse,
     url: URL,
   ): Promise<void> {
-    const site = request.headers["sec-fetch-site"];
-    const origin = request.headers.origin;
-    if (
-      (site !== undefined && site !== "same-origin") ||
-      (origin !== undefined && origin !== `http://${request.headers.host}`)
-    ) {
+    if (!fromOwnPage(request)) {
       send(response, 403, "Forbidden");
       return;
     }
@@ -644,38 +566,20 @@ export function startDevDashboard(
     }
     const body = await readBytes(request, MAX_PROXY_BYTES);
     if (!body) {
-      send(response, 413, "Payload too large");
+      tooLarge(response);
       return;
     }
-    const headers = new Headers();
-    for (const [name, value] of Object.entries(request.headers)) {
-      if (value === undefined || NOT_FORWARDED.has(name)) continue;
-      if (name.startsWith("sec-")) continue;
-      headers.set(name, Array.isArray(value) ? value.join(", ") : value);
-    }
     const cookie = url.searchParams.get("cookie");
-    if (cookie) headers.set("cookie", cookie);
-    const bodyless = request.method === "GET" || request.method === "HEAD";
-    try {
-      const upstream = await fetch(target, {
-        method: request.method,
-        headers,
-        body: bodyless ? undefined : (body as BodyInit),
-        redirect: "manual",
-      });
-      const returned: Record<string, string> = {};
-      upstream.headers.forEach((value, name) => {
-        if (!NOT_RETURNED.has(name)) returned[name] = value;
-      });
-      send(
-        response,
-        upstream.status,
-        new Uint8Array(await upstream.arrayBuffer()),
-        returned,
-      );
-    } catch {
-      send(response, 502, "Could not reach the app.");
-    }
+    await forward(
+      request,
+      response,
+      target.href,
+      (headers) => {
+        if (cookie) headers.set("cookie", cookie);
+      },
+      "Could not reach the app.",
+      body,
+    );
   }
 
   function eventStream(request: IncomingMessage, response: ServerResponse) {
@@ -690,15 +594,16 @@ export function startDevDashboard(
       if (response.writableEnded || response.destroyed) return;
       response.write(chunk);
     };
-    write(`event: snapshot\ndata: ${JSON.stringify(snapshot())}\n\n`);
-    const unsubscribe = options.store.subscribe((event: DevTelemetryEvent) =>
-      write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`),
+    const emit = <K extends keyof DashboardEvents>(
+      name: K,
+      data: DashboardEvents[K],
+    ) => write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
+    emit("snapshot", snapshot());
+    const unsubscribe = options.store.subscribe((event) =>
+      emit(event.type, event),
     );
-    // A rebuilt extension: the page reloads to run it.
     const unwatch = extension?.onChange(() =>
-      write(
-        `event: extension\ndata: ${JSON.stringify(snapshot().extension)}\n\n`,
-      ),
+      emit("extension", snapshot().extension),
     );
     const keepalive = setInterval(() => write(": keepalive\n\n"), KEEPALIVE_MS);
     request.on("close", () => {
@@ -724,9 +629,7 @@ export function startDevDashboard(
         extension?.close();
         reject(
           new Error(
-            production
-              ? `Brick: dashboard port ${options.port} is unavailable. Set dashboard.port in brick() to another.`
-              : `Brick: dashboard port ${options.port} is unavailable. Use --dashboard-port <number> or --no-dashboard.`,
+            `Brick: dashboard port ${options.port} is unavailable.${options.portHint ? ` ${options.portHint}` : ""}`,
             { cause: error },
           ),
         );
@@ -769,8 +672,10 @@ function readBytes(
     request.on("data", (chunk: Buffer) => {
       size += chunk.length;
       if (size > limit) {
+        // Stop buffering; tooLarge() answers and closes the connection.
+        request.removeAllListeners("data");
+        request.resume();
         resolve(undefined);
-        request.destroy();
         return;
       }
       chunks.push(chunk);
@@ -786,40 +691,41 @@ function history(
   params: URLSearchParams,
   response: ServerResponse,
 ): void {
-  const json = (body: unknown) =>
-    send(response, 200, JSON.stringify(body), {
-      "content-type": "application/json",
-    });
+  const queries: {
+    [K in keyof HistoryResponses]: (query: HistoryQuery) => HistoryResponses[K];
+  } = {
+    summary: (query) => store.summary(query),
+    traces: (query) => store.traces(query),
+    facets: (query) => store.facets(query),
+    volume: (query) => store.volume(query),
+  };
   try {
-    if (pathname === "/api/history") return json(store.info());
-    if (pathname === "/api/history/summary") {
-      return json(store.summary(parseHistoryQuery(params)));
-    }
-    if (pathname === "/api/history/traces") {
-      return json(store.traces(parseHistoryQuery(params)));
-    }
-    if (pathname === "/api/history/facets") {
-      return json(store.facets(parseHistoryQuery(params)));
-    }
-    if (pathname === "/api/history/volume") {
-      return json(store.volume(parseHistoryQuery(params)));
-    }
-    if (pathname === "/api/history/export") {
-      return send(response, 200, store.exportCsv(parseHistoryQuery(params)), {
+    const endpoint = pathname.slice(ROUTES.history.path.length + 1);
+    if (endpoint === "") return json(response, store.info());
+    if (endpoint === "export") {
+      return send(response, 200, store.exportCsv(decodeHistoryQuery(params)), {
         "content-type": "text/csv; charset=utf-8",
         "content-disposition": 'attachment; filename="brick-requests.csv"',
         "cache-control": "no-store",
       });
     }
-    const prefix = "/api/history/traces/";
-    if (pathname.startsWith(prefix)) {
-      const trace = store.trace(
-        decodeURIComponent(pathname.slice(prefix.length)),
+    if (Object.hasOwn(queries, endpoint))
+      return json(
+        response,
+        queries[endpoint as keyof typeof queries](decodeHistoryQuery(params)),
       );
-      if (trace) return json(trace);
+    const prefix = "traces/";
+    if (endpoint.startsWith(prefix)) {
+      const trace = store.trace(
+        decodeURIComponent(endpoint.slice(prefix.length)),
+      );
+      if (trace) return json(response, trace);
     }
     send(response, 404, "Not found");
-  } catch {
+  } catch (error) {
+    // A malformed `%` in the trace id is the caller's mistake.
+    if (error instanceof URIError) return send(response, 400, error.message);
+    console.error("[Brick-TS] A dashboard history query failed:", error);
     send(response, 500, "History query failed");
   }
 }
@@ -829,6 +735,9 @@ const ASSET_TYPES: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".woff2": "font/woff2",
 };
+
+const assetType = (name: string): string =>
+  ASSET_TYPES[extname(name)] ?? "application/octet-stream";
 
 function serveAsset(response: ServerResponse, name: string): void {
   // Plain file names only: no separators, so a request cannot leave the folder.
@@ -848,12 +757,19 @@ function serveAsset(response: ServerResponse, name: string): void {
   readFile(join(directory, name)).then(
     (body) =>
       send(response, 200, body, {
-        "content-type":
-          ASSET_TYPES[extname(name)] ?? "application/octet-stream",
+        "content-type": assetType(name),
         "cache-control": "no-store",
       }),
     () => send(response, 404, "Not found"),
   );
+}
+
+function tooLarge(response: ServerResponse): void {
+  // Closing after the 413 stops the rest of the upload being read.
+  send(response, 413, "Payload too large", {
+    "content-type": "text/plain; charset=utf-8",
+    connection: "close",
+  });
 }
 
 function send(
@@ -866,4 +782,53 @@ function send(
 ): void {
   response.writeHead(status, headers);
   response.end(body);
+}
+
+function json(response: ServerResponse, body: unknown): void {
+  send(response, 200, JSON.stringify(body), {
+    "content-type": "application/json",
+    "cache-control": "no-store",
+  });
+}
+
+const isBodyless = (request: IncomingMessage) =>
+  request.method === "GET" || request.method === "HEAD";
+
+/**
+ * Whether a request comes from the dashboard's own page, as far as the browser
+ * says: the same site, and the same origin as the address it was sent to.
+ * Behind a proxy that terminates TLS that address is https.
+ */
+function fromOwnPage(request: IncomingMessage): boolean {
+  const site = request.headers["sec-fetch-site"];
+  const origin = request.headers.origin;
+  return (
+    (site === undefined || site === "same-origin") &&
+    (origin === undefined ||
+      origin === `${requestProtocol(request)}://${request.headers.host}`)
+  );
+}
+
+function frameOnlyHere(response: ServerResponse): void {
+  response.setHeader("content-security-policy", "frame-ancestors 'self'");
+  response.setHeader("x-frame-options", "SAMEORIGIN");
+}
+
+/** The request's headers to send on, without those of this hop or this page. */
+function forwardedHeaders(request: IncomingMessage): Headers {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(request.headers)) {
+    if (value === undefined || NOT_FORWARDED.has(name)) continue;
+    if (name.startsWith("sec-")) continue;
+    headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+  }
+  return headers;
+}
+
+function returnedHeaders(upstream: Response): Record<string, string> {
+  const returned: Record<string, string> = {};
+  upstream.headers.forEach((value, name) => {
+    if (!NOT_RETURNED.has(name)) returned[name] = value;
+  });
+  return returned;
 }

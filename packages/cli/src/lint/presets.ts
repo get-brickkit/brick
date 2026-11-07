@@ -1,8 +1,9 @@
 import { checkRules } from "./rules/checks";
 import { layoutRules } from "./rules/layout";
+import type { LintPreset, LintSeverity } from "../config";
 
-export type Severity = "error" | "warn" | "off";
-export type PresetName = "recommended" | "layout" | "strict" | "plugin";
+export type Severity = LintSeverity;
+export type PresetName = LintPreset;
 
 /** Rules that check one file at a time, in ESLint, oxlint or brick lint. */
 export const rules = { ...layoutRules, ...checkRules };
@@ -96,6 +97,7 @@ export function resolveRules(
       );
     resolved[`brick/${name}`] = severity;
   }
+  resolved[`brick/${ALWAYS_ERROR}`] = "error";
   return resolved;
 }
 

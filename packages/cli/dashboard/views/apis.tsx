@@ -10,11 +10,12 @@ import { Empty } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import type { Route } from "@/state";
 import type { ApiDocument } from "@brickkit/core";
-import type {
-  ApiSnapshot,
-  FailureSummary,
-  TraceSummary,
-} from "../../src/dev-telemetry-store";
+import {
+  ROUTES,
+  type ApiSnapshot,
+  type FailureSummary,
+  type TraceSummary,
+} from "../../src/dashboard-protocol";
 
 // The reference is most of the dashboard's size, so it loads when this view first opens.
 const ApiReference = lazy(() => import("@/components/api-reference"));
@@ -25,7 +26,7 @@ function useApiDocuments(revision: number | undefined): ApiDocument[] {
   useEffect(() => {
     if (revision === undefined) return;
     const controller = new AbortController();
-    fetch("/api/openapi", { signal: controller.signal })
+    fetch(ROUTES.openapi.path, { signal: controller.signal })
       .then((response) => response.json() as Promise<ApiDocument[]>)
       .then(setDocuments, () => {});
     return () => controller.abort();

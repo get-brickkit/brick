@@ -1,30 +1,60 @@
 import {
   ValidationError,
   ActionExecutionError,
-  type CompiledRoutePlan,
+  type Action,
+  type ActionContext,
+  type Logger,
+  type ValidationErrorItem,
 } from "../types";
-
 import { toErrorResponse } from "../error-response";
-import type { Logger } from "../types";
+import { baseContext, requestIds } from "../context";
+import type { ServicePort } from "../service-port";
+import type { RouteIR } from "./ir";
+
+/*
+ * The action pipeline, as stages: request ids → read input → validate →
+ * authorize → execute → validate output → map error. `bindRoute` runs them
+ * for an HTTP route; `action.execute` runs the same stages in-process.
+ */
 
 export type CompiledHandler = (context: any) => unknown | Promise<unknown>;
+/** @deprecated `brick build` no longer emits handler factories; see `bindCompiledApplication`. */
 export type HandlerFactory = (
   binding: CompiledRoutePlan,
   runtime: typeof compilerRuntime,
 ) => CompiledHandler;
 
-const EMPTY_SERVICES = Object.freeze({});
-const DEFAULT_REQUEST = new Request("http://localhost");
-let sequence = 0;
+interface Checker {
+  Check(value: unknown): boolean;
+  Errors(value: unknown): Iterable<any>;
+}
+
+/** Everything one route needs to answer a request, worked out once at startup. */
+export interface CompiledRoutePlan {
+  readonly route: RouteIR;
+  readonly service: ServicePort;
+  readonly action: Action<any, any, any, any>;
+  readonly execute: (params: any) => unknown;
+  readonly authorize?: (params: any) => boolean | Promise<boolean>;
+  readonly contextHook?: (baseCtx: any) => unknown;
+  readonly inputChecker?: Checker;
+  readonly outputChecker?: Checker;
+  /** A plugin's check that runs before `inputChecker`. */
+  readonly checkInput?: (input: unknown) => ValidationErrorItem[] | undefined;
+  readonly errorBuilder: unknown;
+  readonly logger: Logger;
+  readonly cachedDb: unknown;
+  /** The deps of the plugin install that created the action; else the service's. */
+  readonly deps?: Readonly<Record<string, unknown>>;
+}
 
 function isNonEmpty(value: any): boolean {
   if (value == null) return false;
-  // Early return on the first key: an allocation-free emptiness check.
   for (const _ in value) return true; // NOSONAR
   return false;
 }
 
-/** Retains Brick's existing source precedence and treatment of empty bodies. */
+/** One source alone is the input as it is; several merge, later ones winning. */
 function mergeInput(first: any, second: any, third: any) {
   const a = isNonEmpty(first),
     b = isNonEmpty(second),
@@ -34,6 +64,57 @@ function mergeInput(first: any, second: any, third: any) {
   if (c && !a && !b) return third;
   if (a || b || c) return Object.assign({}, first, second, third);
   return undefined;
+}
+
+function coerceQueryValue(
+  value: unknown,
+  type: RouteIR["coercions"][number]["type"],
+  request: Request | undefined,
+  key: string,
+) {
+  if (type === "number") {
+    const number = Number(value);
+    return Number.isNaN(number) ? value : number;
+  }
+  if (type === "array") {
+    const values = request ? new URL(request.url).searchParams.getAll(key) : [];
+    return values.length ? values : Array.isArray(value) ? value : [value];
+  }
+  if (value === "true" || value === "1") return true;
+  if (value === "false" || value === "0") return false;
+  return value;
+}
+
+/** The action's input from the path, query and body, coerced by its schema. */
+export function readInput(
+  route: RouteIR,
+  { params, body, query, request }: any,
+): unknown {
+  if (!route.input) return undefined;
+  let coercedQuery = query;
+  let coercedParams = params;
+  if (route.coercions.length) {
+    if (query) {
+      coercedQuery = { ...query };
+      for (const { key, type } of route.coercions)
+        if (query[key] !== undefined)
+          coercedQuery[key] = coerceQueryValue(query[key], type, request, key);
+    }
+    for (const { key, type } of route.coercions) {
+      if (type !== "number" || typeof params?.[key] !== "string") continue;
+      const value = Number(params[key]);
+      if (Number.isNaN(value)) continue;
+      if (coercedParams === params) coercedParams = { ...params };
+      coercedParams[key] = value;
+    }
+  }
+  const input = route.readLike
+    ? mergeInput(coercedQuery, coercedParams, body)
+    : mergeInput(coercedParams, body, coercedQuery);
+  return input === undefined &&
+    (route.inputSchema as { type?: string } | undefined)?.type === "object"
+    ? {}
+    : input;
 }
 
 // Generic pre-validation nesting cap for parsed HTTP input. Compiled input
@@ -58,29 +139,94 @@ export function inputTooDeep(value: unknown): boolean {
   return false;
 }
 
-function checkDepth(value: unknown, action: string) {
-  if (!inputTooDeep(value)) return;
-  throw new ValidationError(`Validation failed for action '${action}' input`, [
-    { path: "", message: "Input exceeds maximum nesting depth" },
-  ]);
+/** The error for input (400) or output (500) that fails its schema. */
+export function invalid(
+  action: string,
+  stage: "input" | "output",
+  errors: ValidationErrorItem[],
+): ValidationError {
+  return new ValidationError(
+    `Validation failed for action '${action}' ${stage}`,
+    errors,
+    stage === "output" ? 500 : 400,
+  );
 }
 
 function validate(
-  check: NonNullable<CompiledRoutePlan["inputChecker"]>,
+  check: Checker,
   value: unknown,
   action: string,
   stage: "input" | "output",
 ) {
   if (check.Check(value)) return;
-  const errors = Array.from(check.Errors(value)).map((err: any) => ({
-    path: err.path,
-    message: err.message,
-    value: err.value,
-  }));
-  throw new ValidationError(
-    `Validation failed for action '${action}' ${stage}`,
-    errors,
-    stage === "output" ? 500 : 400,
+  throw invalid(
+    action,
+    stage,
+    Array.from(check.Errors(value)).map((err: any) => ({
+      path: err.path,
+      message: err.message,
+      value: err.value,
+    })),
+  );
+}
+
+function validateInput(
+  check: Checker,
+  input: unknown,
+  action: string,
+  checkInput: CompiledRoutePlan["checkInput"],
+) {
+  const errors = checkInput?.(input);
+  if (errors) throw invalid(action, "input", errors);
+  if (inputTooDeep(input))
+    throw invalid(action, "input", [
+      { path: "", message: "Input exceeds maximum nesting depth" },
+    ]);
+  validate(check, input, action, "input");
+}
+
+/** A refused `authorize`: 401 without a user, 403 with one. */
+export function deny(action: string, user: unknown): never {
+  throw new ActionExecutionError(
+    user == null ? "UNAUTHORIZED" : "FORBIDDEN",
+    `Access denied for action '${action}'`,
+    user == null ? 401 : 403,
+  );
+}
+
+/** Runs `authorize`, if any, and denies the call when it refuses. */
+async function authorizeCall(
+  authorize: ((params: any) => unknown) | undefined,
+  ctx: { user?: unknown },
+  input: unknown,
+  action: string,
+): Promise<void> {
+  if (authorize && !(await authorize({ ctx, input, user: ctx.user })))
+    deny(action, ctx.user);
+}
+
+/** What a call runs once its context is ready. */
+export interface Stages {
+  readonly name: string;
+  /** @throws The input's validation error. */
+  readonly checkInput: (input: unknown) => void;
+  readonly authorize?: (params: any) => unknown;
+  readonly execute: (params: any) => unknown;
+  readonly errorBuilder: unknown;
+  /** @throws The output's validation error; else returns the output. */
+  readonly checkOutput: (result: unknown) => unknown;
+}
+
+/** The stage order of every call, over HTTP and in-process: check input → authorize → execute → check output. */
+export async function runStages(
+  stages: Stages,
+  input: unknown,
+  ctx: { user?: unknown },
+): Promise<unknown> {
+  stages.checkInput(input);
+  await authorizeCall(stages.authorize, ctx, input, stages.name);
+  return stages.checkOutput(
+    await stages.execute({ input, ctx, error: stages.errorBuilder }),
   );
 }
 
@@ -94,21 +240,86 @@ function mapError(
   return response;
 }
 
-export const compilerRuntime = Object.freeze({
-  emptyServices: EMPTY_SERVICES,
-  defaultRequest: DEFAULT_REQUEST,
-  nextSequence: () => (++sequence).toString(36),
-  mergeInput,
-  checkDepth,
-  validate,
-  mapError,
-  isThenable: (value: any): boolean =>
-    value != null && typeof value.then === "function",
-  deny: (action: string, user: unknown): never => {
-    throw new ActionExecutionError(
-      user == null ? "UNAUTHORIZED" : "FORBIDDEN",
-      `Access denied for action '${action}'`,
-      user == null ? 401 : 403,
-    );
-  },
-});
+const isThenable = (value: any): value is PromiseLike<unknown> =>
+  value != null && typeof value.then === "function";
+
+/** The context of one HTTP request, with the trace and request id headers set. */
+function requestContext(
+  plan: CompiledRoutePlan,
+  { headers, request, set }: any,
+): ActionContext & { requestId: string } {
+  return baseContext({
+    ...requestIds(headers, set),
+    request: request instanceof Request ? request : undefined,
+    db: plan.cachedDb ?? plan.service.getDb(),
+    logger: plan.logger,
+    metadata: { headers },
+    // resolveServiceContext's rule: the hook sees the service's deps; a plugin's action then gets its own.
+    deps: plan.contextHook
+      ? plan.service.deps
+      : (plan.deps ?? plan.service.deps),
+  }) as ActionContext & { requestId: string };
+}
+
+/** The HTTP handler of one route: the pipeline's stages, synchronous when no stage needs to wait. */
+export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
+  const {
+    route,
+    execute,
+    contextHook,
+    authorize,
+    inputChecker,
+    outputChecker,
+    checkInput,
+    errorBuilder,
+  } = plan;
+  const name = route.action;
+  const stages: Stages = {
+    name,
+    checkInput: (input) => {
+      if (inputChecker) validateInput(inputChecker, input, name, checkInput);
+    },
+    authorize,
+    execute,
+    errorBuilder,
+    checkOutput: (result) => {
+      if (outputChecker) validate(outputChecker, result, name, "output");
+      return result;
+    },
+  };
+  if (contextHook || authorize) {
+    return async function brickAction(context) {
+      const input = readInput(route, context);
+      const ctx = requestContext(plan, context);
+      try {
+        if (contextHook) {
+          const extra = await contextHook(ctx);
+          if (extra) Object.assign(ctx, extra);
+          if (plan.deps) ctx.deps = plan.deps;
+        }
+        return await runStages(stages, input, ctx);
+      } catch (err) {
+        return mapError(err, context.set, ctx);
+      }
+    };
+  }
+  // Nothing to wait for before `execute`: the same stages, without `authorize`, synchronously.
+  return function brickAction(context) {
+    const input = readInput(route, context);
+    const ctx = requestContext(plan, context);
+    try {
+      stages.checkInput(input);
+      const result = execute({ input, ctx, error: errorBuilder });
+      if (isThenable(result))
+        return Promise.resolve(result)
+          .then(stages.checkOutput)
+          .catch((err) => mapError(err, context.set, ctx));
+      return stages.checkOutput(result);
+    } catch (err) {
+      return mapError(err, context.set, ctx);
+    }
+  };
+}
+
+/** What `bindCompiledApplication`'s handler factories receive. */
+export const compilerRuntime = Object.freeze({ bindRoute });

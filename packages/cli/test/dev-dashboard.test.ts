@@ -1,33 +1,17 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
-import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startDevDashboard } from "../src/dev-dashboard";
 import { openHistory } from "../src/dev-history";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
-import type { TraceSummary } from "../src/dev-telemetry-store";
+import { historyUrl, type TraceSummary } from "../src/dashboard-protocol";
+import { raw } from "./helpers";
 
 async function setup(restart?: () => void) {
   const store = new DevTelemetryStore();
   const dashboard = await startDevDashboard({ port: 0, store, restart });
   return { store, dashboard, base: `http://localhost:${dashboard.port}` };
-}
-
-function rawStatusLine(port: number, host: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const socket = connect(port, "127.0.0.1", () => {
-      socket.write(
-        `GET /api/state HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`,
-      );
-    });
-    let data = "";
-    socket.on("data", (chunk) => {
-      data += chunk.toString();
-    });
-    socket.on("end", () => resolve(data.split("\r\n")[0]));
-    socket.on("error", reject);
-  });
 }
 
 describe("startDevDashboard", () => {
@@ -56,12 +40,12 @@ describe("startDevDashboard", () => {
   it("rejects requests that do not name a local host", async () => {
     const { dashboard } = await setup();
     try {
-      expect(await rawStatusLine(dashboard.port, "evil.example")).toBe(
+      expect(await raw(dashboard.port, "evil.example")).toBe(
         "HTTP/1.1 403 Forbidden",
       );
-      expect(
-        await rawStatusLine(dashboard.port, `localhost:${dashboard.port}`),
-      ).toBe("HTTP/1.1 200 OK");
+      expect(await raw(dashboard.port, `localhost:${dashboard.port}`)).toBe(
+        "HTTP/1.1 200 OK",
+      );
     } finally {
       dashboard.stop();
     }
@@ -83,6 +67,24 @@ describe("startDevDashboard", () => {
       });
       expect(accepted.status).toBe(202);
       expect(restarts).toBe(1);
+    } finally {
+      dashboard.stop();
+    }
+  });
+
+  it("answers 413 to an oversized ingest body and 400 to a JSON null", async () => {
+    const { dashboard, base } = await setup();
+    const post = (body: string) =>
+      fetch(`${base}/api/ingest`, {
+        method: "POST",
+        headers: { "x-brick-dashboard": "1" },
+        body,
+      });
+    try {
+      expect((await post("null")).status).toBe(400);
+      const tooLarge = await post("x".repeat(6 * 1024 * 1024));
+      expect(tooLarge.status).toBe(413);
+      expect(tooLarge.headers.get("connection")).toBe("close");
     } finally {
       dashboard.stop();
     }
@@ -238,7 +240,9 @@ describe("startDevDashboard", () => {
     try {
       const state = await (await fetch(`${off.base}/api/state`)).json();
       expect(state.historyDays).toBe(0);
-      expect((await fetch(`${off.base}/api/history/stats`)).status).toBe(404);
+      expect((await fetch(`${off.base}${historyUrl("summary")}`)).status).toBe(
+        404,
+      );
     } finally {
       off.dashboard.stop();
     }
@@ -335,6 +339,32 @@ describe("startDevDashboard", () => {
       expect(detail.status).toBe(200);
       expect((await detail.json()).httpStatus).toBe(404);
       expect((await fetch(`${base}/api/history/traces/nope`)).status).toBe(404);
+      // A malformed escape is the caller's mistake, not a failed query.
+      expect((await fetch(`${base}/api/history/traces/%E0%A4%A`)).status).toBe(
+        400,
+      );
+
+      // A query that fails is logged, not swallowed.
+      const { Database } = (await import("bun:sqlite")) as {
+        Database: new (file: string) => {
+          exec(sql: string): void;
+          close(): void;
+        };
+      };
+      const raw = new Database(join(directory, ".brick", "telemetry.sqlite"));
+      raw.exec("DROP TABLE traces");
+      raw.close();
+      const logged = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        expect(
+          (await fetch(`${base}/api/history/summary?${window}`)).status,
+        ).toBe(500);
+        expect(String(logged.mock.calls[0]?.[0])).toContain(
+          "history query failed",
+        );
+      } finally {
+        logged.mockRestore();
+      }
     } finally {
       dashboard.stop();
       history.close();
@@ -641,6 +671,20 @@ describe("startDevDashboard", () => {
           method: "POST",
           body: '{"method":"cancelRun"}',
         });
+      });
+    });
+
+    it("takes the page's own changes behind a proxy that terminates TLS", async () => {
+      await withInspector(async ({ base }) => {
+        const post = (headers: Record<string, string>) =>
+          fetch(`${base}/workflows/api/rpc`, {
+            method: "POST",
+            body: '{"method":"cancelRun"}',
+            headers: { origin: base.replace(/^http:/, "https:"), ...headers },
+          });
+        expect((await post({ "x-forwarded-proto": "https" })).status).toBe(201);
+        // Without the proxy's word, an https page is another origin.
+        expect((await post({})).status).toBe(403);
       });
     });
 

@@ -1,5 +1,5 @@
 import type { Redis } from "ioredis";
-import { debug } from "./util.js";
+import { keys as redisKeys } from "./keys.js";
 
 /** How long finished runs are kept, using `age` and `count` limits. */
 export interface KeepRuns {
@@ -78,16 +78,12 @@ export function createReaper(options: {
   redis: Redis;
   keyPrefix: string;
   retention: RunRetention;
-  /** Logs sweep failures; each world passes its own debug namespace. */
-  log?: (...args: unknown[]) => void;
 }): Reaper {
-  const { redis, keyPrefix, retention, log = debug } = options;
+  const { redis, keyPrefix, retention } = options;
   const intervalMs = retention.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS;
   const batchSize = retention.batchSize ?? DEFAULT_BATCH_SIZE;
-  const lockKey = `${keyPrefix}reaper:lock`;
-
-  const byStatusKey = (status: string) =>
-    `${keyPrefix}runs:by_status:${status}`;
+  const k = redisKeys(keyPrefix);
+  const byStatusKey = k.runsByStatusKey;
   let timer: NodeJS.Timeout | undefined;
   let running: Promise<unknown> = Promise.resolve();
 
@@ -149,7 +145,7 @@ export function createReaper(options: {
 
   /** Delete one run if it is still finished. Returns whether it was deleted. */
   async function deleteRun(runId: string, listedAs: string): Promise<boolean> {
-    const metaKey = `${keyPrefix}run:meta:${runId}`;
+    const metaKey = k.runMetaKey(runId);
     const meta = await redis.get(metaKey);
     const status = meta?.split("|")[0];
     if (!status || !(TERMINAL as readonly string[]).includes(status)) {
@@ -158,13 +154,13 @@ export function createReaper(options: {
       return false;
     }
 
-    const runKey = `${keyPrefix}run:${runId}`;
+    const runKey = k.runKey(runId);
     const runJson = await redis.get(runKey);
     const workflowName = runJson
       ? (JSON.parse(runJson) as { workflowName?: string }).workflowName
       : undefined;
 
-    const eventsKey = `${keyPrefix}events:data:${runId}`;
+    const eventsKey = k.eventsKey(runId);
     const correlationIds = new Set<string>();
     let hasResume = false;
     for (const raw of await redis.hvals(eventsKey)) {
@@ -180,49 +176,26 @@ export function createReaper(options: {
       }
     }
 
-    const stepIds = await redis.zrange(
-      `${keyPrefix}steps:by_run:${runId}`,
-      "0",
-      "-1",
-    );
-    const hookIds = await redis.zrange(
-      `${keyPrefix}hooks:by_run:${runId}`,
-      "0",
-      "-1",
-    );
-    const streamNames = await redis.smembers(
-      `${keyPrefix}streams:by_run:${runId}`,
-    );
+    const stepIds = await redis.zrange(k.stepsIndexKey(runId), "0", "-1");
+    const hookIds = await redis.zrange(k.hooksIndexKey(runId), "0", "-1");
+    const streamNames = await redis.smembers(k.streamsByRunKey(runId));
 
-    const keys = [
-      eventsKey,
-      `${keyPrefix}run:attrs:${runId}`,
-      `${keyPrefix}steps:by_run:${runId}`,
-      `${keyPrefix}hooks:by_run:${runId}`,
-      `${keyPrefix}hooks:tokens:${runId}`,
-      `${keyPrefix}streams:by_run:${runId}`,
-      ...[...correlationIds].map(
-        (id) => `${keyPrefix}events:by_correlation:${runId}:${id}`,
-      ),
-      ...stepIds.flatMap((id) => [
-        `${keyPrefix}step:${runId}:${id}`,
-        `${keyPrefix}step:status:${runId}:${id}`,
-      ]),
-      ...hookIds.map((id) => `${keyPrefix}hook:${id}`),
-      ...streamNames.map((name) => `${keyPrefix}stream:${runId}:${name}`),
-    ];
+    const keys = k.ownedByRun(runId, {
+      correlationIds,
+      stepIds,
+      hookIds,
+      streamNames,
+    });
     // Resume claims are not indexed; only a run that received a hook payload can have one.
-    if (hasResume)
-      keys.push(...(await scan(`${keyPrefix}events:resume:${runId}:*`)));
+    if (hasResume) keys.push(...(await scan(k.resumeClaimKey(runId, "*"))));
     await unlink(keys);
 
     const tx = redis
       .multi()
-      .zrem(`${keyPrefix}runs:index`, runId)
+      .zrem(k.runsIndexKey(), runId)
       .zrem(byStatusKey(status), runId)
       .unlink(metaKey, runKey);
-    if (workflowName)
-      tx.zrem(`${keyPrefix}runs:by_name:${workflowName}`, runId);
+    if (workflowName) tx.zrem(k.runsByNameKey(workflowName), runId);
     await tx.exec();
     return true;
   }
@@ -230,7 +203,7 @@ export function createReaper(options: {
   async function sweep(): Promise<number> {
     // One sweeper per interval; the lock simply expires.
     const locked = await redis.set(
-      lockKey,
+      k.reaperLockKey,
       "1",
       "PX",
       Math.max(1000, Math.floor(intervalMs / 2)),
@@ -243,7 +216,7 @@ export function createReaper(options: {
         try {
           if (await deleteRun(runId, status)) deleted++;
         } catch (err) {
-          log("reaper failed to delete run", runId, err);
+          console.warn(`Retention: could not delete run ${runId}:`, err);
         }
       }
     }
@@ -255,7 +228,9 @@ export function createReaper(options: {
     start() {
       if (timer) return;
       const tick = () => {
-        running = sweep().catch((err) => log("reaper sweep failed", err));
+        running = sweep().catch((err) =>
+          console.warn("Retention sweep failed:", err),
+        );
       };
       timer = setInterval(tick, intervalMs);
       timer.unref();

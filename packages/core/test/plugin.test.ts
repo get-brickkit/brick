@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import {
+  brick,
   defineDatabase,
   defineService,
   defineServicePlugin,
@@ -177,24 +178,21 @@ describe("plugin installation", () => {
   it("stores bindings on the action for bundler-duplicated core copies", async () => {
     // SSR runtimes (Vite, Nitro) may load a second copy of core whose
     // WeakMaps miss; the binding travels on the action via a global symbol.
-    const key = Symbol.for("brickkit.plugin.actionBinding");
+    const key = Symbol.for("brickkit.action.meta");
+    type Meta = Record<symbol, { route?: { enabled: boolean } }>;
     const service = makeHost();
     const api = service.use(greeting());
-    const stored = (
-      api.hello as unknown as Record<symbol, { enabled: boolean }>
-    )[key];
-    expect(stored?.enabled).toBe(true);
+    expect((api.hello as unknown as Meta)[key]?.route?.enabled).toBe(true);
     const disabled = defineService("muted").use(greeting({ hello: false }));
-    expect(
-      (disabled.hello as unknown as Record<symbol, { enabled: boolean }>)[key]
-        ?.enabled,
-    ).toBe(false);
+    expect((disabled.hello as unknown as Meta)[key]?.route?.enabled).toBe(
+      false,
+    );
     expect(getPluginActionRoute(disabled.hello)).toBe(false);
   });
   it("rolls back registrations, dependencies, and resource contributions when setup fails", () => {
     const service = makeHost();
     const resource = service.resource({ name: "page", table: pages });
-    const baseline = new Map(service.actions);
+    const baseline = service.listActions();
     const label = defineResourcePlugin({
       name: "label",
       setup: () => ({ labels: "ok" }),
@@ -215,7 +213,7 @@ describe("plugin installation", () => {
       },
     });
     expect(() => service.use(broken)).toThrow("failed setup");
-    expect(service.actions).toEqual(baseline);
+    expect(service.listActions()).toEqual(baseline);
     expect("labels" in resource).toBe(false);
     expect(getPluginEndpoints(service)).toEqual([]);
     expect(service.use(dependency).hello).toBeDefined();
@@ -291,17 +289,11 @@ describe("plugin installation", () => {
         },
       }),
     );
-    const [endpoint] = getPluginEndpoints(service);
-    expect(
-      await endpoint!.handler({
-        request: new Request("http://localhost"),
-        params: {},
-        query: {},
-        body: undefined,
-        headers: {},
-        set: { headers: {} },
-      }),
-    ).toBe("alice");
+    const app = brick({ services: [service], requestLogging: false });
+    const response = await app.handle(
+      new Request("http://localhost/api/pages/who"),
+    );
+    expect(await response.text()).toBe("alice");
     expect(() =>
       saved!.endpoint({
         name: "late",
@@ -338,15 +330,18 @@ describe("plugin installation", () => {
         },
       }),
     );
-    // Public names, no plugin package leak.
     expect(api.list.name).toBe("page.list");
     expect(api.get.name).toBe("page.get");
-    expect([...service.actions.keys()].sort()).toEqual([
-      "page.get",
-      "page.list",
-    ]);
-    expect((api.list as { plugin?: string }).plugin).toBe("@brickkit/crud");
-    expect((api.list as { resource?: string }).resource).toBe("page");
+    expect(
+      service
+        .listActions()
+        .map((action) => action.name)
+        .sort(),
+    ).toEqual(["page.get", "page.list"]);
+    expect(getPluginActionRoute(api.list)).toMatchObject({
+      plugin: "@brickkit/crud",
+      resource: "page",
+    });
     const architecture = getGlobalRegistry().exportArchitecture();
     const names = architecture.services.flatMap((s) =>
       s.actions.map((a) => a.name),
@@ -359,7 +354,6 @@ describe("plugin installation", () => {
       .filter((a) => a.name === "page.list");
     expect(listed[0]?.plugin).toBe("@brickkit/crud");
     expect(listed[0]?.resource).toBe("page");
-    // Service-plugin scoped names are public too (no descriptor prefix).
     const svc = makeHost();
     const helloApi = svc.use(
       defineServicePlugin({
@@ -378,9 +372,8 @@ describe("plugin installation", () => {
     );
     expect(helloApi.hello.name).toBe("hello");
     expect(
-      [...svc.actions.keys()].some((n) => n.includes("@brickkit/greeting")),
+      svc.listActions().some((n) => n.name.includes("@brickkit/greeting")),
     ).toBe(false);
-    // OpenAPI operationIds/summaries use public names.
     const spec = generateOpenApiSpec({ services: [service] });
     const ops = Object.values(spec.paths).flatMap((p) =>
       Object.values(p as Record<string, any>),

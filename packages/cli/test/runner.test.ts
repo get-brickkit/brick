@@ -1,78 +1,92 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { resetGlobalRegistry } from "@brickkit/core";
+import { describe, it, expect, beforeEach, spyOn } from "bun:test";
+import { brick, defineService, resetGlobalRegistry } from "@brickkit/core";
 import { startDevServer } from "../src/runner";
-import { existsSync } from "fs";
+import { printBanner } from "../src/serve";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
 import path from "path";
+import { freePort } from "./helpers";
 
 describe("startDevServer", () => {
-  let exitCode: number | null = null;
-  let errorOutput: string[] = [];
-  let originalExit: any;
-  let originalError: any;
-
   beforeEach(() => {
     resetGlobalRegistry();
-    exitCode = null;
-    errorOutput = [];
-
-    // Mock process.exit to prevent actual exit
-    originalExit = process.exit;
-    (process.exit as any) = (code: number) => {
-      exitCode = code;
-      throw new Error(`process.exit(${code})`);
-    };
-
-    // Mock console.error to capture error messages
-    originalError = console.error;
-    console.error = (...args: any[]) => {
-      errorOutput.push(args.join(" "));
-      originalError(...args);
-    };
   });
 
-  afterEach(() => {
-    // Restore original functions
-    process.exit = originalExit;
-    console.error = originalError;
-  });
-
-  it("should start server without entry when no entry is provided", async () => {
-    const app = await startDevServer({ port: 45111 });
-    expect(app).toBeDefined();
-    expect(exitCode).toBeNull();
-    app.stop();
-  });
-
-  it("should fail with non-zero exit code when entry is provided but not found", async () => {
+  it("serves the registered services in this process without an entry", async () => {
+    const port = freePort();
+    const app = await startDevServer({ port });
     try {
-      await startDevServer({ entry: "does-not-exist.ts", port: 45112 });
-    } catch {
-      // Expected to throw due to mocked process.exit
-    }
-
-    expect(exitCode).toBe(1);
-    expect(errorOutput.length).toBeGreaterThan(0);
-    expect(errorOutput[0]).toContain("Entry file not found");
-    expect(errorOutput[0]).toContain("does-not-exist.ts");
-  });
-
-  it("should load valid entry file successfully", async () => {
-    const timestamp = Date.now();
-    const filename = `.test-entry-${timestamp}.ts`;
-    const entryPath = path.join(process.cwd(), filename);
-    const content = "console.log('Entry loaded');";
-
-    await Bun.write(entryPath, content);
-
-    try {
-      const app = await startDevServer({ entry: filename, port: 45113 });
-      expect(app).toBeDefined();
-      expect(exitCode).toBeNull();
-      app.stop();
+      expect((await fetch(`http://localhost:${port}/_health`)).status).toBe(
+        200,
+      );
     } finally {
-      if (existsSync(entryPath)) {
-        Bun.file(entryPath).delete();
-      }
+      await (app as { shutdown(): Promise<void> }).shutdown();
     }
   });
+
+  it("should fail when entry is provided but not found", async () => {
+    await expect(
+      startDevServer({ entry: "does-not-exist.ts", port: freePort() }),
+    ).rejects.toThrow(/Entry file not found: .*does-not-exist\.ts/);
+  });
+
+  it("watches the entry's folder, not folders named after the working directory", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "brick-watch-"));
+    const entry = path.join(root, "server", "app.ts");
+    await Bun.write(entry, "export {};");
+    const lines: string[] = [];
+    const log = spyOn(console, "log").mockImplementation((line) => {
+      lines.push(String(line));
+    });
+    try {
+      const dev = (await startDevServer({ entry, port: freePort() })) as {
+        stop(): void;
+      };
+      dev.stop();
+    } finally {
+      log.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+    // The working directory here has a src folder of its own.
+    expect(lines.find((line) => line.includes("Watching"))).toEndWith(
+      `Watching for changes in: ${path.join(root, "server")}`,
+    );
+  });
+
+  it("refuses a dashboard on the app's port, when PORT sets it too", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "brick-port-"));
+    const filename = path.join(root, "app.ts");
+    await Bun.write(filename, "export {};");
+    const previous = process.env.PORT;
+    process.env.PORT = "9400";
+    try {
+      await expect(
+        startDevServer({ entry: filename, dashboard: {} }),
+      ).rejects.toThrow("dashboard port must differ from the API port");
+    } finally {
+      if (previous === undefined) delete process.env.PORT;
+      else process.env.PORT = previous;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+it("the banner lists the routes the server mounts, not shadowed ones", () => {
+  resetGlobalRegistry();
+  const service = defineService("banner");
+  for (const name of ["first", "shadowed"])
+    service.action({ name, method: "GET", path: "/same", execute: () => name });
+  const app = brick({ services: [service], requestLogging: false });
+  const lines: string[] = [];
+  const log = spyOn(console, "log").mockImplementation((line) => {
+    lines.push(String(line));
+  });
+  try {
+    printBanner(app, { label: "Test", port: 4000 });
+  } finally {
+    log.mockRestore();
+  }
+  expect(lines.filter((line) => line.includes("/same"))).toEqual([
+    "     -> GET    /api/banner/same",
+  ]);
 });

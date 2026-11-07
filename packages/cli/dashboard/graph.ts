@@ -1,8 +1,10 @@
-import type {
-  ArchitectureSnapshot,
-  TraceSpan,
-  TraceSummary,
-} from "../src/dev-telemetry-store";
+import {
+  ATTR,
+  type ArchitectureSnapshot,
+  type TraceSpan,
+  type TraceSummary,
+} from "../src/dashboard-protocol";
+import { stringAttribute } from "../src/dashboard-query";
 import { formatCount, formatDuration, spanKind } from "./format";
 
 export type GraphKind =
@@ -87,11 +89,6 @@ const average = (activity: Activity): number | undefined =>
 const healthOf = (activity: Activity): Health =>
   activity.calls === 0 ? "idle" : activity.lastFailed ? "failing" : "ok";
 
-function text(span: TraceSpan, key: string): string | undefined {
-  const value = span.attributes[key];
-  return typeof value === "string" ? value : undefined;
-}
-
 /** The service whose action or service call encloses this span, if any. */
 function owner(
   span: TraceSpan,
@@ -102,7 +99,7 @@ function owner(
   for (let steps = 0; current && steps < 64; steps++) {
     const kind = spanKind(current);
     if (kind === "action" || kind === "rpc")
-      return text(current, "brick.service");
+      return stringAttribute(current.attributes, ATTR.service);
     current =
       current.parentSpanId === undefined
         ? undefined
@@ -215,7 +212,7 @@ export function buildServiceGraph(
       const kind = spanKind(span);
       const failed = span.status === "error";
       if (kind === "action") {
-        const service = text(span, "brick.service");
+        const service = stringAttribute(span.attributes, ATTR.service);
         if (!service) continue;
         if (!serviceNames.includes(service)) serviceNames.push(service);
         record(
@@ -231,7 +228,7 @@ export function buildServiceGraph(
           failed,
         );
       } else if (kind === "rpc") {
-        const callee = text(span, "brick.service");
+        const callee = stringAttribute(span.attributes, ATTR.service);
         if (!callee) continue;
         if (!serviceNames.includes(callee)) serviceNames.push(callee);
         record(
@@ -259,7 +256,8 @@ export function buildServiceGraph(
           databases.set(database, {
             id: database,
             label: `${service} db`,
-            engine: text(span, "db.system") ?? "database",
+            engine:
+              stringAttribute(span.attributes, ATTR.dbSystem) ?? "database",
             tables: 0,
           });
         }

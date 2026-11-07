@@ -1,4 +1,12 @@
-import { publicOrigin } from "./socket";
+/** The origin a browser saw, so TLS-terminating proxies still pass the same-origin check. */
+export function publicOrigin(request: Request): string {
+  // Browsers cannot set X-Forwarded-* on a WebSocket handshake, so a cross-site page cannot forge a match.
+  const forwarded = (name: string) =>
+    request.headers.get(name)?.split(",")[0]?.trim() || undefined;
+  const url = new URL(request.url);
+  const proto = forwarded("x-forwarded-proto");
+  return `${proto ? `${proto}:` : url.protocol}//${forwarded("x-forwarded-host") ?? url.host}`;
+}
 
 /**
  * Which origins may call the app: an exact origin (`"https://app.example.com"`),

@@ -1,4 +1,10 @@
-import type { ActionContext, Service, Tool, ToolAnnotations } from "./types";
+import {
+  DuplicateNameError,
+  type ActionContext,
+  type Service,
+  type Tool,
+  type ToolAnnotations,
+} from "./types";
 
 export interface McpToolDefinition {
   name: string;
@@ -41,7 +47,7 @@ export function createMcpRegistry(options: McpRegistryOptions): McpRegistry {
     ]) {
       const existing = tools.get(tool.name);
       if (existing && existing !== tool)
-        throw new Error(`Duplicate MCP tool: ${tool.name}`);
+        throw new DuplicateNameError(`Duplicate MCP tool: ${tool.name}`);
       tools.set(tool.name, tool);
     }
     return tools;

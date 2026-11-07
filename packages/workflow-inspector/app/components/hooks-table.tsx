@@ -15,7 +15,7 @@ import {
   MoreHorizontal,
   RefreshCw,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Card, CardContent } from "~/components/ui/card";
 import { DocsLink } from "~/components/ui/docs-link";
@@ -33,22 +33,18 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
-import { fetchEvents } from "~/lib/rpc-client";
-import type { EnvMap, HookListItem } from "~/lib/types";
-import {
-  fetchHookToken,
-  getErrorMessage,
-  getErrorTitle,
-  resumeHook,
-  useWorkflowHooks,
-} from "~/lib/workflow-api-client";
+import type { HookListItem } from "~/lib/types";
 import { CopyableText } from "./display-utils/copyable-text";
 import { HookTokenCell } from "./display-utils/hook-token-cell";
 import { RelativeTime } from "./display-utils/relative-time";
 import { TableSkeleton } from "./display-utils/table-skeleton";
+import { useWorkflowHooks } from "~/lib/client/hooks/use-paginated-list";
+import { getErrorMessage, unwrapOrThrow } from "~/lib/client/workflow-errors";
+import { rpc } from "~/lib/rpc-client";
+
+const INVOCATION_EVENTS_LIMIT = 100;
 
 interface HooksTableProps {
-  runId?: string;
   onHookClick: (hookId: string, runId?: string) => void;
   selectedHookId?: string;
 }
@@ -60,23 +56,13 @@ interface InvocationData {
 }
 
 /**
- * HooksTable - Displays hooks with server-side pagination.
- * Uses the PaginatingTable pattern similar to RunsTable.
- * Fetches invocation counts in the background for each hook.
- *
- * World configuration is read from server-side environment variables.
- * The env object passed to server actions is empty - the server uses process.env.
+ * Hooks with server-side pagination. Fetches invocation counts in the
+ * background for each hook.
  */
-export function HooksTable({
-  runId,
-  onHookClick,
-  selectedHookId,
-}: HooksTableProps) {
+export function HooksTable({ onHookClick, selectedHookId }: HooksTableProps) {
   const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(
     () => new Date(),
   );
-  // Empty env object - server actions read from process.env
-  const env: EnvMap = useMemo(() => ({}), []);
 
   const {
     data,
@@ -87,18 +73,16 @@ export function HooksTable({
     hasPreviousPage,
     refresh,
     pageInfo,
-  } = useWorkflowHooks(env, {
-    runId,
-    sortOrder: "desc",
-  });
+  } = useWorkflowHooks({ sortOrder: "desc" });
 
-  // Hook actions for resolve functionality
   const hookActions = useHookActions({
     onResolve: async (hook, payload) => {
       // List rows are metadata-only; fetch the secret token on demand just
       // before resuming, keyed by the hook's run/hook id.
-      const token = await fetchHookToken(env, hook.runId, hook.hookId);
-      await resumeHook(env, token, payload);
+      const { token } = await unwrapOrThrow(
+        rpc("fetchHookToken", { runId: hook.runId, hookId: hook.hookId }),
+      );
+      await unwrapOrThrow(rpc("resumeHook", { token, payload }));
     },
     callbacks: {
       onSuccess: refresh,
@@ -114,97 +98,51 @@ export function HooksTable({
     refresh();
   };
 
-  // Track invocation counts per hook (fetched in background)
   const [invocationData, setInvocationData] = useState<
     Map<string, InvocationData>
   >(new Map());
 
-  // Fetch invocation counts for hooks by loading all events for the run
+  // Count each hook's invocations from its own run's events, at most
+  // INVOCATION_EVENTS_LIMIT of them.
   useEffect(() => {
-    if (!hooks.length || !runId) return;
-
-    const fetchInvocations = async () => {
-      // Initialize all hooks as loading
-      const initialData = new Map<string, InvocationData>();
-      for (const hook of hooks) {
-        initialData.set(hook.hookId, {
-          count: 0,
-          hasMore: false,
-          loading: true,
-        });
-      }
-      setInvocationData(initialData);
-
-      try {
-        const serverResult = await fetchEvents(env, runId, {
-          sortOrder: "asc",
-          limit: 1000,
-        });
-
-        if (!serverResult.success) {
-          // Mark all as not loading with 0 counts
-          setInvocationData((prev) => {
-            const updated = new Map(prev);
-            for (const hook of hooks) {
-              updated.set(hook.hookId, {
-                count: 0,
-                hasMore: false,
-                loading: false,
-              });
-            }
-            return updated;
-          });
-          return;
-        }
-
-        const allEvents = serverResult.data.data;
-        const hookIds = new Set(hooks.map((h) => h.hookId));
-
-        // Count hook_received events per hook
-        const counts = new Map<string, number>();
-        for (const event of allEvents) {
-          if (
-            event.eventType === "hook_received" &&
-            event.correlationId &&
-            hookIds.has(event.correlationId)
-          ) {
-            counts.set(
-              event.correlationId,
-              (counts.get(event.correlationId) ?? 0) + 1,
-            );
-          }
-        }
-
-        setInvocationData((prev) => {
-          const updated = new Map(prev);
-          for (const hook of hooks) {
-            updated.set(hook.hookId, {
-              count: counts.get(hook.hookId) ?? 0,
-              hasMore: serverResult.data.hasMore,
-              loading: false,
-            });
-          }
-          return updated;
-        });
-      } catch {
-        setInvocationData((prev) => {
-          const updated = new Map(prev);
-          for (const hook of hooks) {
-            updated.set(hook.hookId, {
-              count: 0,
-              hasMore: false,
-              loading: false,
-            });
-          }
-          return updated;
-        });
-      }
+    if (!hooks.length) return;
+    let ignore = false;
+    setInvocationData(
+      new Map(
+        hooks.map((hook) => [
+          hook.hookId,
+          { count: 0, hasMore: false, loading: true },
+        ]),
+      ),
+    );
+    const settle = (hookId: string, data: InvocationData) => {
+      if (ignore) return;
+      setInvocationData((prev) => new Map(prev).set(hookId, data));
     };
+    for (const hook of hooks) {
+      unwrapOrThrow(
+        rpc("fetchEventsByCorrelationId", {
+          correlationId: hook.hookId,
+          runId: hook.runId,
+          limit: INVOCATION_EVENTS_LIMIT,
+        }),
+      ).then(
+        ({ data: events, hasMore }) =>
+          settle(hook.hookId, {
+            count: events.filter((event) => event.eventType === "hook_received")
+              .length,
+            hasMore,
+            loading: false,
+          }),
+        (error: Error) =>
+          settle(hook.hookId, { count: error, hasMore: false, loading: false }),
+      );
+    }
+    return () => {
+      ignore = true;
+    };
+  }, [hooks]);
 
-    fetchInvocations();
-  }, [hooks, env, runId]);
-
-  // Render invocation count for a hook
   const renderInvocationCount = (hook: HookListItem) => {
     const data = invocationData.get(hook.hookId);
 
@@ -230,7 +168,8 @@ export function HooksTable({
           </TooltipTrigger>
           <TooltipContent className="max-w-xs">
             <div className="text-xs">
-              Showing first 100 invocations. There may be more.
+              Counted from the first {INVOCATION_EVENTS_LIMIT} events. There may
+              be more.
             </div>
           </TooltipContent>
         </Tooltip>
@@ -242,7 +181,6 @@ export function HooksTable({
 
   return (
     <div>
-      {/* Modal for resolving hooks - rendered at top level */}
       <HookResolveModalWrapper hookActions={hookActions} />
 
       <div className="flex items-center justify-between">
@@ -276,7 +214,7 @@ export function HooksTable({
       {error ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>{getErrorTitle(error, "Error loading hooks")}</AlertTitle>
+          <AlertTitle>Error loading hooks</AlertTitle>
           <AlertDescription>{getErrorMessage(error)}</AlertDescription>
         </Alert>
       ) : !loading && (!hooks || hooks.length === 0) ? (
@@ -287,7 +225,7 @@ export function HooksTable({
           </DocsLink>
         </div>
       ) : loading && !data?.data ? (
-        <TableSkeleton variant="hooks" />
+        <TableSkeleton />
       ) : (
         <>
           <Card className="overflow-hidden mt-4 bg-background">
@@ -333,7 +271,6 @@ export function HooksTable({
                       </TableCell>
                       <TableCell className="font-mono text-xs py-2">
                         <HookTokenCell
-                          env={env}
                           runId={hook.runId}
                           hookId={hook.hookId}
                         />

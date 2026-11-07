@@ -11,7 +11,19 @@ import {
   sep,
 } from "node:path";
 import type { DocumentationOptions } from "@brickkit/core";
-import type { DevTelemetryStore, DocsSnapshot } from "./dev-telemetry-store";
+import { bundleComponents } from "./dashboard-extension";
+import {
+  decode,
+  docsFileUrl,
+  docsHref,
+  isExternalHref,
+  type DocsInfo,
+  type DocsNode,
+  type DocsPage,
+  type DocsSearchHit,
+  type DocsSnapshot,
+  type DocsTree,
+} from "./dashboard-protocol";
 
 /*
  * Developer documentation for the dashboard's Docs tab. The folder follows
@@ -23,64 +35,14 @@ import type { DevTelemetryStore, DocsSnapshot } from "./dev-telemetry-store";
  * sets `documentation`, so projects without docs do not install them.
  */
 
-/** One entry of the docs sidebar. */
-export type DocsNode =
-  | { type: "page"; name: string; url: string; description?: string }
-  | {
-      type: "folder";
-      name: string;
-      index?: { name: string; url: string };
-      children: DocsNode[];
-      defaultOpen?: boolean;
-    }
-  | { type: "separator"; name?: string };
-
-export interface DocsTree {
-  name: string;
-  children: DocsNode[];
-}
-
-export interface DocsHeading {
-  title: string;
-  url: string;
-  depth: number;
-}
-
-/** A page ready to run in the browser. */
-export interface DocsPage {
-  title: string;
-  description?: string;
-  /** The file, relative to the docs folder. */
-  path: string;
-  slugs: string[];
-  toc: DocsHeading[];
-  /** MDX compiled to a function body; see `runMdx` in the dashboard. */
-  code: string;
-  /** Set instead of `code` when the page does not compile. */
-  error?: string;
-}
-
-export interface DocsSearchHit {
-  id: string;
-  type: "page" | "heading" | "text";
-  content: string;
-  /** Route within the docs, with a `#heading` when the hit is inside a page. */
-  url: string;
-}
-
-export interface DocsInfo {
-  tree: DocsTree;
-  /** Whether the project supplied components of its own. */
-  components: boolean;
-  revision: number;
-}
-
 export type OpenedDocs =
   | { status: "ready"; docs: DevDocs }
   | { status: "missing"; packages: string[] }
   | { status: "error"; message: string };
 
 const PACKAGES = ["fumadocs-core", "@mdx-js/mdx"] as const;
+/** What the docs are called when their folder does not name them. */
+const DEFAULT_TITLE = "Docs";
 const PAGE_EXTENSIONS = new Set([".md", ".mdx"]);
 const IMAGE_TYPES: Record<string, string> = {
   ".png": "image/png",
@@ -171,7 +133,6 @@ function firstHeading(
       const match = H1.exec(line);
       if (match) {
         const rest = [...lines.slice(0, index), ...lines.slice(index + 1)];
-        // Drop the blank line that followed it as well.
         if (rest[index]?.trim() === "") rest.splice(index, 1);
         return { text: match[1]!, rest: rest.join("\n"), leading: !seenText };
       }
@@ -262,8 +223,7 @@ function walk(node: MdastNode, visit: (node: MdastNode) => void): void {
 
 /** Ways a link inside a page can point at another page or a local image. */
 function resolveInside(from: string, href: string): string | undefined {
-  if (/^[a-z][a-z\d+.-]*:/i.test(href) || href.startsWith("#"))
-    return undefined;
+  if (isExternalHref(href) || href.startsWith("#")) return undefined;
   if (href.startsWith("/")) return undefined;
   const [target] = href.split(/[?#]/);
   if (!target) return undefined;
@@ -278,7 +238,6 @@ function resolveInside(from: string, href: string): string | undefined {
 export class DevDocs {
   readonly #root: string;
   readonly #documentation: DocumentationOptions;
-  /** Relative paths in `documentation` start here: the app entry's folder. */
   readonly #base: string;
   readonly #fumadocs: Fumadocs;
   readonly #warn: (message: string) => void;
@@ -294,7 +253,7 @@ export class DevDocs {
   #timer: ReturnType<typeof setTimeout> | undefined;
   #refreshing: Promise<void> = Promise.resolve();
   #closed = false;
-  #title = "Docs";
+  #title = DEFAULT_TITLE;
   revision = 0;
 
   constructor(
@@ -310,7 +269,6 @@ export class DevDocs {
     this.#warn = warn;
   }
 
-  /** Read the folder again and tell listeners. */
   async refresh(): Promise<void> {
     // Refreshes run one at a time, so a slow scan cannot overwrite a newer one.
     this.#refreshing = this.#refreshing.then(() => this.#scan());
@@ -354,12 +312,11 @@ export class DevDocs {
     this.#compiled.clear();
     this.#search = undefined;
     const tree = this.#loader.getPageTree();
-    this.#title = typeof tree.name === "string" ? tree.name : "Docs";
+    this.#title = typeof tree.name === "string" ? tree.name : DEFAULT_TITLE;
     this.revision++;
     for (const listener of this.#listeners) listener();
   }
 
-  /** Start watching the folder, and the project's components module. */
   watch(): void {
     const changed = () => {
       clearTimeout(this.#timer);
@@ -476,14 +433,12 @@ export class DevDocs {
    * This covers markdown links and the `href` of components such as `<Card>`.
    */
   #rewriteLinks(tree: MdastNode, from: string): void {
-    const file = (resolved: string) =>
-      `/api/docs/files/${resolved.split("/").map(encodeURIComponent).join("/")}`;
     walk(tree, (node) => {
       if (node.type === "link" && node.url !== undefined) {
         node.url = this.#route(from, node.url) ?? node.url;
       } else if (node.type === "image" && node.url !== undefined) {
         const resolved = resolveInside(from, node.url);
-        if (resolved !== undefined) node.url = file(resolved);
+        if (resolved !== undefined) node.url = docsFileUrl(resolved);
       } else if (
         node.type === "mdxJsxFlowElement" ||
         node.type === "mdxJsxTextElement"
@@ -496,7 +451,7 @@ export class DevDocs {
               this.#route(from, attribute.value) ?? attribute.value;
           else if (attribute.name === "src" && node.name === "img") {
             const resolved = resolveInside(from, attribute.value);
-            if (resolved !== undefined) attribute.value = file(resolved);
+            if (resolved !== undefined) attribute.value = docsFileUrl(resolved);
           }
         }
       }
@@ -511,12 +466,12 @@ export class DevDocs {
    */
   #route(from: string, href: string): string | undefined {
     const hashAt = href.indexOf("#");
-    const hash = hashAt >= 0 ? href.slice(hashAt) : "";
+    const anchor = hashAt >= 0 ? decode(href.slice(hashAt + 1)) : undefined;
     const target =
       (hashAt >= 0 ? href.slice(0, hashAt) : href).split("?")[0] ?? "";
-    const route = (slug: string) => `#/docs${slug ? `/${slug}` : ""}${hash}`;
-    if (/^[a-z][a-z\d+.-]*:/i.test(href) || href.startsWith("#") || !target)
-      return undefined;
+    const route = (slug: string) =>
+      docsHref(slug ? slug.split("/") : [], anchor);
+    if (isExternalHref(href) || !target) return undefined;
     if (target.startsWith("/")) {
       // A docs site links by address (/guide/setup); so can these pages.
       const slug = target.replace(/^\/+|\/+$/g, "");
@@ -594,67 +549,6 @@ export class DevDocs {
   }
 }
 
-// What the dashboard supplies to the project's components and its extension
-// itself, so there is one copy of React and of the UI kit on the page. See the
-// import map in the page shell.
-const SHARED = [
-  "react",
-  "react/jsx-runtime",
-  "react/jsx-dev-runtime",
-  "react-dom",
-  "react-dom/client",
-  "@brickkit/cli/dashboard",
-];
-
-/** Bundle a module of React components for the dashboard to import. */
-export async function bundleComponents(entry: string): Promise<string> {
-  if (typeof Bun !== "undefined") {
-    const result = await Bun.build({
-      entrypoints: [entry],
-      target: "browser",
-      format: "esm",
-      external: SHARED,
-      minify: false,
-      // Report what went wrong, not only that something did.
-      throw: false,
-    });
-    if (!result.success)
-      throw new Error(result.logs.map((log) => log.message).join("\n"));
-    // A CSS import adds a stylesheet output; the module is the entry point.
-    const output =
-      result.outputs.find((item) => item.kind === "entry-point") ??
-      result.outputs[0]!;
-    return output.text();
-  }
-  // Under Node the dev server's own bundler does the work. The name is not
-  // written as a literal so the CLI's Bun bundle, which never gets here,
-  // stays free of a Vite import.
-  const bundler = "vite";
-  const { build } = (await import(bundler)) as typeof import("vite");
-  const output = await build({
-    configFile: false,
-    logLevel: "silent",
-    root: dirname(entry),
-    oxc: { jsx: { runtime: "automatic" } },
-    esbuild: { jsx: "automatic" },
-    define: { "process.env.NODE_ENV": '"development"' },
-    build: {
-      write: false,
-      minify: false,
-      lib: { entry, formats: ["es"], fileName: "components" },
-      rollupOptions: { external: SHARED },
-    },
-  } as never);
-  const bundles = Array.isArray(output) ? output : [output];
-  for (const bundle of bundles) {
-    const chunk = ("output" in bundle ? bundle.output : []).find(
-      (item) => item.type === "chunk" && item.isEntry,
-    );
-    if (chunk && "code" in chunk) return chunk.code;
-  }
-  throw new Error("Brick: the docs components module produced no output.");
-}
-
 /** Flatten what MDX gives for a heading to text. */
 function plainText(value: unknown): string {
   if (typeof value === "string") return value;
@@ -722,14 +616,13 @@ function simplify(tree: RawTree | undefined): DocsTree {
     return undefined;
   };
   return {
-    name: text(tree?.name) || "Docs",
+    name: text(tree?.name) || DEFAULT_TITLE,
     children: (tree?.children ?? []).flatMap((child) => convert(child) ?? []),
   };
 }
 
 /** Open a docs folder; says what is missing when it cannot be shown. */
 export async function openDocs(options: {
-  /** Where relative paths in `documentation` start: the app entry's folder. */
   base: string;
   documentation: DocumentationOptions;
   warn: (message: string) => void;
@@ -764,15 +657,18 @@ export async function openDocs(options: {
  * are, replaced when that changes, and closed when it stops asking for them.
  */
 export class DocsHost {
-  readonly #store: DevTelemetryStore;
+  readonly #publish: (docs: DocsSnapshot | null) => void;
   readonly #warn: (message: string) => void;
   #docs: DevDocs | undefined;
   #stopListening: (() => void) | undefined;
   #key: string | undefined;
   #pending: Promise<void> = Promise.resolve();
 
-  constructor(store: DevTelemetryStore, warn: (message: string) => void) {
-    this.#store = store;
+  constructor(
+    publish: (docs: DocsSnapshot | null) => void,
+    warn: (message: string) => void,
+  ) {
+    this.#publish = publish;
     this.#warn = warn;
   }
 
@@ -803,7 +699,7 @@ export class DocsHost {
     this.#key = key;
     this.#release();
     if (!documentation) {
-      this.#store.setDocs(null);
+      this.#publish(null);
       return;
     }
     const opened = await openDocs({
@@ -817,21 +713,18 @@ export class DocsHost {
           ? `The docs need ${opened.packages.join(" and ")}. Install with: bun add -d ${opened.packages.join(" ")}`
           : opened.message;
       this.#warn(`[Brick-TS] Docs are off. ${message}`);
-      this.#store.setDocs({
-        revision: 1,
-        status: opened.status,
-        title: "Docs",
-        components: false,
-        message,
-        ...(opened.status === "missing" ? { packages: opened.packages } : {}),
-      });
+      this.#publish(
+        opened.status === "missing"
+          ? { status: "missing", packages: opened.packages, message }
+          : { status: "error", message },
+      );
       return;
     }
     this.#docs = opened.docs;
     this.#stopListening = opened.docs.onChange(() =>
-      this.#store.setDocs(opened.docs.snapshot()),
+      this.#publish(opened.docs.snapshot()),
     );
-    this.#store.setDocs(opened.docs.snapshot());
+    this.#publish(opened.docs.snapshot());
   }
 
   #release(): void {

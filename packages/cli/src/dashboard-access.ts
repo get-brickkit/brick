@@ -13,9 +13,8 @@ export type Access =
     };
 
 /** How long the app's `authorize` may take before the request is refused. */
-export const AUTHORIZE_TIMEOUT_MS = 5000;
+const AUTHORIZE_TIMEOUT_MS = 5000;
 
-/** Whether `host` can only be reached from the machine it runs on. */
 export function isLoopbackHost(host: string): boolean {
   const name = host.toLowerCase();
   return (
@@ -65,6 +64,16 @@ function credential(request: IncomingMessage): string | undefined {
   return undefined;
 }
 
+/** The protocol the client used: https when a proxy in front terminated TLS and says so. */
+export function requestProtocol(request: IncomingMessage): "http" | "https" {
+  const forwarded = request.headers["x-forwarded-proto"];
+  return (Array.isArray(forwarded) ? forwarded[0] : forwarded)
+    ?.split(",")[0]
+    ?.trim() === "https"
+    ? "https"
+    : "http";
+}
+
 /** The request as the app's `authorize` sees it: standard, with no body. */
 function webRequest(request: IncomingMessage): Request {
   const headers = new Headers();
@@ -76,13 +85,7 @@ function webRequest(request: IncomingMessage): Request {
       // A header the platform will not take cannot matter to a check.
     }
   }
-  const forwarded = request.headers["x-forwarded-proto"];
-  const protocol =
-    (Array.isArray(forwarded) ? forwarded[0] : forwarded)
-      ?.split(",")[0]
-      ?.trim() === "https"
-      ? "https"
-      : "http";
+  const protocol = requestProtocol(request);
   const host = request.headers.host ?? "localhost";
   let url: string;
   try {

@@ -16,6 +16,7 @@ import {
   type BrickApp,
 } from "../src";
 import { createTestApp } from "../src/testing";
+import { postJson } from "./helpers";
 
 interface Carrier {
   book(orderId: string): string;
@@ -44,37 +45,47 @@ function ordersService(name: string) {
 }
 
 const call = async (app: BrickApp, path: string, body: unknown) =>
-  (
-    await app.handle(
-      new Request(`http://localhost${path}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      }),
-    )
-  )
-    .json()
-    .then((body: any) => body.tracking);
+  ((await (await postJson(app, path, body)).json()) as any).tracking;
 
 describe("declared deps", () => {
-  for (const compiler of [true, false])
-    it(`gives actions the app's deps as ctx.deps (compiler: ${compiler})`, async () => {
-      const { client, cleanup } = createTestApp(() => {
-        const orders = ordersService("orders");
-        const ship = orders.getAction("ship")!;
-        return {
-          services: [orders],
-          deps: { carrier: carrier("trk") },
-          compiler,
-          docs: false,
-          contract: { orders: { ship } },
-        };
-      });
-      expect(await client.orders.ship({ id: "o1" })).toEqual({
-        tracking: "trk_o1",
-      });
-      await cleanup();
+  it("gives actions the app's deps as ctx.deps", async () => {
+    const { client, cleanup } = createTestApp(() => {
+      const orders = ordersService("orders");
+      const ship = orders.getAction("ship")!;
+      return {
+        services: [orders],
+        deps: { carrier: carrier("trk") },
+        docs: false,
+        contract: { orders: { ship } },
+      };
     });
+    expect(await client.orders.ship({ id: "o1" })).toEqual({
+      tracking: "trk_o1",
+    });
+    await cleanup();
+  });
+
+  it("gives the service's context hook its deps, over HTTP and in-process alike", async () => {
+    const seen: unknown[] = [];
+    const orders = defineService("hooked", {
+      deps: { carrier: port<Carrier>() },
+      context: (ctx: any) => {
+        seen.push(ctx.deps?.carrier);
+        return {};
+      },
+    });
+    orders.action({ name: "ping", execute: () => ({ tracking: "ok" }) });
+    const booked = carrier("trk");
+    const app = brick({
+      services: [orders],
+      deps: { carrier: booked },
+      requestLogging: false,
+      docs: false,
+    });
+    await call(app, "/api/hooked/ping", {});
+    await orders.getAction("ping")!.run();
+    expect(seen).toEqual([booked, booked]);
+  });
 
   it("fails at brick() when a dep is missing or extra", () => {
     const orders = ordersService("orders");

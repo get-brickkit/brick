@@ -13,11 +13,19 @@ import {
   sqliteTable,
   text as sqliteText,
 } from "drizzle-orm/sqlite-core";
+import { deliveryId } from "./id";
+import type { EventDelivery, EventEnvelope } from "./types";
 
 const OUTBOX = Symbol.for("brick.outbox");
 
+export const OUTBOX_STATUSES = [
+  "pending",
+  "claimed",
+  "delivered",
+  "dead",
+] as const;
 /** What the outbox rows are in, by state. */
-export type OutboxStatus = "pending" | "claimed" | "delivered" | "dead";
+export type OutboxStatus = (typeof OUTBOX_STATUSES)[number];
 
 function sqliteOutbox(name: string) {
   const timestampMs = (column: string) =>
@@ -132,6 +140,43 @@ export function outboxTable(
  */
 export function isOutboxTable(value: unknown): value is OutboxTable {
   return typeof value === "object" && value !== null && OUTBOX in value;
+}
+
+export type OutboxRow = OutboxTable["$inferSelect"];
+
+/** The rows that record an event: one per listener, due now. */
+export function outboxRows(
+  event: Omit<EventEnvelope, "occurredAt"> & { occurredAt: Date },
+  listeners: readonly string[],
+) {
+  return listeners.map((listener) => ({
+    id: deliveryId(event.id, listener),
+    eventId: event.id,
+    listener,
+    name: event.name,
+    payload: event.payload,
+    traceId: event.traceId ?? null,
+    source: event.source ?? null,
+    occurredAt: event.occurredAt,
+    status: "pending" as const,
+    attempts: 0,
+    availableAt: event.occurredAt,
+  }));
+}
+
+/** The delivery a row of `outboxRows` is. */
+export function deliveryOf(row: OutboxRow): EventDelivery {
+  return {
+    id: row.eventId,
+    name: row.name,
+    payload: row.payload,
+    occurredAt: row.occurredAt.toISOString(),
+    ...(row.traceId ? { traceId: row.traceId } : {}),
+    ...(row.source ? { source: row.source } : {}),
+    listener: row.listener,
+    deliveryId: row.id,
+    attempt: row.attempts,
+  };
 }
 
 export function outboxEngine(table: OutboxTable): "sqlite" | "postgres" {

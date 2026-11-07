@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { toRow } from "../dashboard/filters";
+import { toRow } from "../src/dashboard-query";
 import { requestReport } from "../dashboard/request-report";
-import type { TraceSummary } from "../src/dev-telemetry-store";
+import type { TraceSummary } from "../src/dashboard-protocol";
 
 const start = Date.UTC(2026, 9, 17, 4, 37, 52, 853);
 

@@ -32,6 +32,12 @@ import {
   traceRoute,
   useService,
 } from "../src";
+import { postJson, requireService } from "./helpers";
+
+const pgUrl = requireService(
+  "TEST_DATABASE_URL",
+  "telemetry: postgres statement spans",
+);
 
 const exporter = new InMemorySpanExporter();
 
@@ -101,16 +107,6 @@ function buildApp(telemetry?: boolean) {
   });
 }
 
-function post(app: ReturnType<typeof buildApp>, path: string, body: object) {
-  return app.handle(
-    new Request(`http://localhost${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }),
-  );
-}
-
 function spanNamed(name: string) {
   const span = exporter.getFinishedSpans().find((item) => item.name === name);
   if (!span) throw new Error(`No finished span named ${name}`);
@@ -120,7 +116,9 @@ function spanNamed(name: string) {
 describe("telemetry spans", () => {
   it("records an HTTP span with the action span as its child", async () => {
     const app = buildApp(true);
-    const response = await post(app, "/api/users/get-user", { id: "usr_42" });
+    const response = await postJson(app, "/api/users/get-user", {
+      id: "usr_42",
+    });
 
     expect(response.status).toBe(200);
     const root = spanNamed("POST /api/users/get-user");
@@ -133,7 +131,7 @@ describe("telemetry spans", () => {
 
   it("marks server faults on the action and request spans with the code and exception", async () => {
     const app = buildApp(true);
-    const response = await post(app, "/api/users/explode", {});
+    const response = await postJson(app, "/api/users/explode", {});
 
     expect(response.status).toBe(500);
     const action = spanNamed("action users.explode");
@@ -148,7 +146,7 @@ describe("telemetry spans", () => {
 
   it("keeps client errors as attributes rather than span errors", async () => {
     const app = buildApp(true);
-    const response = await post(app, "/api/users/get-user", { id: "nope" });
+    const response = await postJson(app, "/api/users/get-user", { id: "nope" });
 
     expect(response.status).toBe(404);
     const action = spanNamed("action users.getUser");
@@ -162,7 +160,9 @@ describe("telemetry spans", () => {
 
   it("records remote service calls as children of the calling action", async () => {
     const app = buildApp(true);
-    const response = await post(app, "/api/orders/checkout", { id: "usr_42" });
+    const response = await postJson(app, "/api/orders/checkout", {
+      id: "usr_42",
+    });
 
     expect(response.status).toBe(200);
     const caller = spanNamed("action orders.checkout");
@@ -186,10 +186,11 @@ describe("telemetry spans", () => {
     const disabled = buildApp(false);
 
     expect(
-      (await post(omitted, "/api/users/get-user", { id: "usr_42" })).status,
+      (await postJson(omitted, "/api/users/get-user", { id: "usr_42" })).status,
     ).toBe(200);
     expect(
-      (await post(disabled, "/api/users/get-user", { id: "usr_42" })).status,
+      (await postJson(disabled, "/api/users/get-user", { id: "usr_42" }))
+        .status,
     ).toBe(200);
     expect(exporter.getFinishedSpans()).toHaveLength(0);
   });
@@ -231,7 +232,9 @@ describe("trace context and database spans", () => {
 
   it("returns the request's trace id as x-trace-id when the caller sends none", async () => {
     const app = buildApp(true);
-    const response = await post(app, "/api/users/get-user", { id: "usr_42" });
+    const response = await postJson(app, "/api/users/get-user", {
+      id: "usr_42",
+    });
 
     const root = spanNamed("POST /api/users/get-user");
     expect(response.headers.get("x-trace-id")).toBe(root.spanContext().traceId);
@@ -268,7 +271,7 @@ describe("trace context and database spans", () => {
       telemetry: true,
     });
 
-    expect((await post(app, "/api/notes/count", {})).status).toBe(200);
+    expect((await postJson(app, "/api/notes/count", {})).status).toBe(200);
     const action = spanNamed("action notes.count");
     const statement = exporter
       .getFinishedSpans()
@@ -329,10 +332,10 @@ describe("trace context and database spans", () => {
     expect(root.status.code).toBe(SpanStatusCode.UNSET);
   });
 
-  test.skipIf(!process.env.TEST_DATABASE_URL)(
+  test.skipIf(!pgUrl)(
     "records postgres statements as children of the action that ran them",
     async () => {
-      const client = postgres(process.env.TEST_DATABASE_URL!, { max: 1 });
+      const client = postgres(pgUrl!, { max: 1 });
       try {
         const pg = defineService("pgnotes", {
           database: defineDatabase({ engine: "postgres", client }),
@@ -347,7 +350,7 @@ describe("trace context and database spans", () => {
           telemetry: true,
         });
 
-        expect((await post(app, "/api/pgnotes/ping", {})).status).toBe(200);
+        expect((await postJson(app, "/api/pgnotes/ping", {})).status).toBe(200);
         const action = spanNamed("action pgnotes.ping");
         const statement = exporter
           .getFinishedSpans()

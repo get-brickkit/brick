@@ -2,7 +2,7 @@ import { Empty, PageHeader } from "@/components/page-header";
 import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
 import { formatClock } from "@/format";
-import type { ReloadSummary } from "../../src/dev-telemetry-store";
+import type { ReloadSummary } from "../../src/dashboard-protocol";
 
 export function ReloadsView({ reloads }: { reloads: ReloadSummary[] }) {
   return (

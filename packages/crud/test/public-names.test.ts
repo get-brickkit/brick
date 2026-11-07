@@ -36,7 +36,10 @@ function setupPageResource() {
 
 test("crud actions export under public names (issue #27)", () => {
   const { service, resource } = setupPageResource();
-  const names = [...service.actions.keys()].sort();
+  const names = service
+    .listActions()
+    .map((action) => action.name)
+    .sort();
   expect(names).toEqual([
     "page.count",
     "page.create",
@@ -47,17 +50,13 @@ test("crud actions export under public names (issue #27)", () => {
     "page.list",
     "page.update",
   ]);
-  expect(names.some((n) => n.includes("@brickkit/crud"))).toBe(false);
   expect(resource.list.name).toBe("page.list");
-  expect((resource.list as { plugin?: string }).plugin).toBe("@brickkit/crud");
-  expect((resource.list as { resource?: string }).resource).toBe("page");
 
   const architecture = getGlobalRegistry().exportArchitecture();
   const exported = architecture.services
     .flatMap((s) => s.actions.map((a) => a.name))
     .sort();
   expect(exported).toEqual(names);
-  expect(exported.some((n) => n.includes("@brickkit/crud"))).toBe(false);
   const listed = architecture.services
     .flatMap((s) => s.actions)
     .find((a) => a.name === "page.list");

@@ -304,7 +304,7 @@ With `record: true`, Brick:
 
 A record action must declare `access`, or startup fails: `{ scope }` returns a condition that limits which rows it can load, and `"public"` loads any row by id. `access` is only for record actions.
 
-A resource action can't be named after a CRUD route segment (`query`, `count`, `exists`, `find-one`, `bulk-create`, `bulk-update`, `bulk-delete`, compared in kebab-case, so `findOne` is refused too) or after a CRUD action on that resource, such as `list`. Startup fails with `Brick: duplicate name "<name>" in service "<service>"`.
+On a resource with `crud()`, a resource action can't be named after a CRUD route segment (`query`, `count`, `exists`, `find-one`, `bulk-create`, `bulk-update`, `bulk-delete`, reserved even when the operation is off, compared in kebab-case, so `findOne` is refused too) or after a CRUD action on that resource, such as `list`, whichever is declared first. Startup fails with `Brick: duplicate name "<name>" in service "<service>"`.
 
 For a state change with rules and events, such as shipping an order, declare a [command](/docs/commands) instead: a record action whose body is a pure `decide` function, run in one transaction with the events it emits.
 

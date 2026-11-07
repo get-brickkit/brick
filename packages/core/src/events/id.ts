@@ -13,3 +13,10 @@ export function newEventId(now: number = Date.now()): string {
   }
   return `evt_${time}${random}`;
 }
+
+/**
+ * A delivery's id: `<event id>:<listener>`, which is why a listener name cannot
+ * contain `:`.
+ */
+export const deliveryId = (eventId: string, listener: string) =>
+  `${eventId}:${listener}`;

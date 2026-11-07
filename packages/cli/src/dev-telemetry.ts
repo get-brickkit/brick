@@ -14,16 +14,18 @@ import {
   type Span,
   type SpanProcessor,
 } from "@opentelemetry/sdk-trace";
+import { GLOBAL_SYMBOL } from "@brickkit/core";
 import type {
-  ApiDocument,
-  ArchitectureSchema,
-  DocumentationOptions,
-} from "@brickkit/core";
+  SerializedError,
+  TelemetryRecord,
+  WorkerErrorPhase,
+} from "./dashboard-protocol";
+import { sendToSupervisor } from "./dev-protocol";
 
 /** Read by @brickkit/core's logger; see `createLogger` there. */
-const LOG_CAPTURE = Symbol.for("brickkit.logs.capture");
+const LOG_CAPTURE = Symbol.for(GLOBAL_SYMBOL.logsCapture);
 /** Core's function that records a line on the running span; see `recordActive` there. */
-const LOG_RECORD = Symbol.for("brickkit.logs.record");
+const LOG_RECORD = Symbol.for(GLOBAL_SYMBOL.logsRecord);
 const CONSOLE_CAPTURED = Symbol.for("brickkit.console.captured");
 
 const CONSOLE_LEVELS = {
@@ -38,64 +40,6 @@ const MAX_TEXT_LENGTH = 500;
 const MAX_STACK_LENGTH = 4000;
 const FLUSH_DELAY_MS = 20;
 const MAX_BATCH_SIZE = 200;
-const SEND_TIMEOUT_MS = 1000;
-
-export interface SpanEventRecord {
-  name: string;
-  timeMs: number;
-  attributes: Attributes;
-}
-
-export interface SpanStartRecord {
-  phase: "start";
-  traceId: string;
-  spanId: string;
-  parentSpanId?: string;
-  name: string;
-  startMs: number;
-  attributes: Attributes;
-}
-
-export interface SpanEndRecord {
-  phase: "end";
-  traceId: string;
-  spanId: string;
-  name: string;
-  endMs: number;
-  status: "unset" | "ok" | "error";
-  statusMessage?: string;
-  attributes: Attributes;
-  events: SpanEventRecord[];
-}
-
-export type TelemetryRecord = SpanStartRecord | SpanEndRecord;
-
-export type WorkerErrorPhase = "startup" | "uncaught" | "unhandled-rejection";
-
-export interface SerializedError {
-  name: string;
-  message: string;
-  stack?: string;
-}
-
-/** Messages the dev worker sends to the supervisor over the IPC channel. */
-export type WorkerMessage =
-  | { type: "brick:telemetry"; records: TelemetryRecord[] }
-  | { type: "brick:error"; phase: WorkerErrorPhase; error: SerializedError }
-  | { type: "brick:architecture"; architecture: ArchitectureSchema }
-  | { type: "brick:api-documents"; documents: ApiDocument[] }
-  | {
-      type: "brick:inspector";
-      /** The loopback port the workflow inspector listens on. */
-      port: number;
-      /** What the dashboard sends with each request to prove who it is. */
-      token: string;
-    }
-  | {
-      type: "brick:documentation";
-      /** The app's `documentation` option; absent when it has none. */
-      documentation?: DocumentationOptions;
-    };
 
 /**
  * Register the tracer provider, context manager, and W3C trace context
@@ -176,23 +120,6 @@ export function installWorkerTelemetry(): void {
   });
 }
 
-/** Resolves once the message is written, or after a short timeout if the channel is gone. */
-export function sendToSupervisor(message: WorkerMessage): Promise<void> {
-  if (!process.send) return Promise.resolve();
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, SEND_TIMEOUT_MS);
-    try {
-      process.send!(message, () => {
-        clearTimeout(timer);
-        resolve();
-      });
-    } catch {
-      clearTimeout(timer);
-      resolve();
-    }
-  });
-}
-
 export function reportWorkerError(
   phase: WorkerErrorPhase,
   error: unknown,
@@ -204,7 +131,7 @@ export function reportWorkerError(
   });
 }
 
-export function serializeError(error: unknown): SerializedError {
+function serializeError(error: unknown): SerializedError {
   if (error instanceof Error) {
     return {
       name: error.name,

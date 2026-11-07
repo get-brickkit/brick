@@ -1,4 +1,47 @@
-import type { BaseContext } from "./types";
+import type { BaseContext, Logger } from "./types";
+import { createLogger, DEFAULT_LOG_PREFIXES } from "./logger";
+
+const DEFAULT_REQUEST = new Request("http://localhost");
+const EMPTY = Object.freeze({});
+const defaultLogger: Logger = createLogger(DEFAULT_LOG_PREFIXES);
+/** Random, so ids never repeat across restarts or processes. */
+const newId = (kind: "tr" | "req") => `${kind}_${crypto.randomUUID()}`;
+
+/**
+ * The trace and request ids of an HTTP request: the caller's `x-trace-id` and
+ * `x-request-id` headers, else fresh ones. Both are echoed on the response.
+ */
+export function requestIds(
+  headers: Record<string, string | undefined> | undefined,
+  set: { headers?: Record<string, unknown> } | undefined,
+): { traceId: string; requestId: string } {
+  const traceId = headers?.["x-trace-id"] || newId("tr");
+  const requestId = headers?.["x-request-id"] || newId("req");
+  if (set?.headers) {
+    set.headers["x-trace-id"] = traceId;
+    set.headers["x-request-id"] = requestId;
+  }
+  return { traceId, requestId };
+}
+
+/**
+ * The framework fields of an action context: what the caller gave, the rest
+ * defaulted. A missing trace or request id gets a fresh `tr_`/`req_` one.
+ */
+export function baseContext(
+  fields: Partial<BaseContext> & { deps?: Readonly<Record<string, unknown>> },
+): BaseContext & { deps: Readonly<Record<string, unknown>> } {
+  return {
+    request: fields.request ?? DEFAULT_REQUEST,
+    db: fields.db,
+    logger: fields.logger ?? defaultLogger,
+    traceId: fields.traceId ?? newId("tr"),
+    requestId: fields.requestId ?? newId("req"),
+    services: fields.services ?? EMPTY,
+    metadata: fields.metadata ?? EMPTY,
+    deps: fields.deps ?? EMPTY,
+  };
+}
 
 type ContextEnvelope = Pick<
   BaseContext,

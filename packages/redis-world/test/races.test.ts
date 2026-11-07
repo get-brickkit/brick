@@ -1,78 +1,30 @@
-import { RedisContainer } from "@testcontainers/redis";
 import { randomUUID } from "node:crypto";
 import { Redis } from "ioredis";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
+import { keys } from "../src/keys.js";
 import {
   createEventsStorage,
   createHooksStorage,
   createRunsStorage,
   createStepsStorage,
 } from "../src/storage.js";
+import { describeRedis, gate, pauseAfter, redisUrl } from "./helpers.js";
 
-// Review repros: check-then-act windows and multi-round-trip writes in
-// events.create. Each test drives a deterministic interleaving by pausing one
-// writer's Redis client at a chosen point and running a competing writer on a
-// second client in the gap. Every assertion states the CORRECT behaviour, so a
-// failing test is a reproduced bug.
-
-let url: string;
-let testContainer: Awaited<ReturnType<RedisContainer["start"]>> | undefined;
-beforeAll(async () => {
-  url =
-    process.env.REDIS_TEST_URL ??
-    (testContainer = await new RedisContainer(
-      "redis:7-alpine",
-    ).start()).getConnectionUrl();
-}, 120_000);
+// Check-then-act windows and multi-round-trip writes in events.create. Each
+// test drives a deterministic interleaving by pausing one writer's Redis client
+// at a chosen point and running a competing writer on a second client in the
+// gap, and pins the outcome a single atomic write would give.
 
 let a: Redis; // the "healthy" writer
 let b: Redis; // the writer we pause / break
 
 beforeAll(() => {
-  a = new Redis(url);
-  b = new Redis(url);
+  a = new Redis(redisUrl);
+  b = new Redis(redisUrl);
 });
 afterAll(async () => {
-  try {
-    await Promise.all([a.quit(), b.quit()]);
-  } finally {
-    await testContainer?.stop();
-  }
+  await Promise.all([a.quit(), b.quit()]);
 });
-
-function gate() {
-  let release!: () => void;
-  const p = new Promise<void>((r) => {
-    release = r;
-  });
-  return { p, release };
-}
-
-/** Pause the next `get` of a matching key on `client`, after the read returns. */
-function pauseAfterGet(client: Redis, match: (key: string) => boolean) {
-  const reached = gate();
-  const hold = gate();
-  const orig = client.get.bind(client);
-  let armed = true;
-  (client as any).get = async (key: string, ...rest: unknown[]) => {
-    const value = await (orig as any)(key, ...rest);
-    if (armed && match(key)) {
-      armed = false;
-      reached.release();
-      await hold.p;
-    }
-    return value;
-  };
-  return {
-    reached: reached.p,
-    release: () => {
-      hold.release();
-    },
-    restore: () => {
-      (client as any).get = orig;
-    },
-  };
-}
 
 /** Pause before the next call of a script command defined on `client`. */
 function pauseBeforeScript(client: Redis, name: string) {
@@ -84,12 +36,12 @@ function pauseBeforeScript(client: Redis, name: string) {
     if (armed) {
       armed = false;
       reached.release();
-      await hold.p;
+      await hold.promise;
     }
     return orig(...args);
   };
   return {
-    reached: reached.p,
+    reached: reached.promise,
     release: hold.release,
     restore: () => {
       (client as any)[name] = orig;
@@ -138,7 +90,7 @@ async function types(s: S, runId: string) {
   );
 }
 
-describe("races: hook ordering", () => {
+describeRedis("races: hook ordering", () => {
   it("never journals a hook_received behind its hook_disposed", async () => {
     const { A, B, keyPrefix } = storages();
     const runId = await createRun(A);
@@ -150,7 +102,11 @@ describe("races: hook ordering", () => {
     });
 
     // B (a resumeHook delivery) passes its hook-existence read, then stalls.
-    const pause = pauseAfterGet(b, (k) => k === `${keyPrefix}hook:${hookId}`);
+    const pause = pauseAfter(
+      b,
+      "get",
+      (k) => k === keys(keyPrefix).hookKey(hookId),
+    );
     const received = B.events
       .create(runId, {
         eventType: "hook_received",
@@ -186,7 +142,11 @@ describe("races: hook ordering", () => {
       correlationId: hookId,
       eventData: { token: `tok-${randomUUID()}` },
     });
-    const pause = pauseAfterGet(b, (k) => k === `${keyPrefix}hook:${hookId}`);
+    const pause = pauseAfter(
+      b,
+      "get",
+      (k) => k === keys(keyPrefix).hookKey(hookId),
+    );
     const received = B.events
       .create(runId, {
         eventType: "hook_received",
@@ -213,7 +173,7 @@ describe("races: hook ordering", () => {
   });
 });
 
-describe("races: terminal transition is atomic", () => {
+describeRedis("races: terminal transition is atomic", () => {
   it("a failed terminal write leaves nothing behind, so the retry completes the run and frees its hooks", async () => {
     const { A, B } = storages();
     const runId = await createRun(A);
@@ -292,16 +252,17 @@ describe("races: terminal transition is atomic", () => {
   });
 });
 
-describe("races: entity creation racing a terminal transition", () => {
+describeRedis("races: entity creation racing a terminal transition", () => {
   it("hook_created racing run_cancelled leaves a live hook (and its token) on a cancelled run", async () => {
     const { A, B, keyPrefix } = storages();
     const runId = await createRun(A);
     const token = `tok-${randomUUID()}`;
 
     // B (the orchestrator) reads run meta = running, then stalls.
-    const pause = pauseAfterGet(
+    const pause = pauseAfter(
       b,
-      (k) => k === `${keyPrefix}run:meta:${runId}`,
+      "get",
+      (k) => k === keys(keyPrefix).runMetaKey(runId),
     );
     const created = B.events
       .create(runId, {
@@ -326,11 +287,11 @@ describe("races: entity creation racing a terminal transition", () => {
       correlationId: `hook_${randomUUID()}`,
       eventData: { token },
     });
-    expect(res.event?.eventType).toBe("hook_created"); // actual: hook_conflict, forever
+    expect(res.event?.eventType).toBe("hook_created");
   });
 });
 
-describe("races: hook token ownership", () => {
+describeRedis("races: hook token ownership", () => {
   it("takes over a token whose owner is gone, without a window to wipe a live claim", async () => {
     const { A, keyPrefix } = storages();
     const token = `tok-${randomUUID()}`;
@@ -343,7 +304,7 @@ describe("races: hook token ownership", () => {
     });
 
     // A crash during cleanup left the token behind its deleted hook.
-    await a.del(`${keyPrefix}hook:${h1}`);
+    await a.del(keys(keyPrefix).hookKey(h1));
 
     const r2 = await createRun(A);
     const h2 = `hook_${randomUUID()}`;
@@ -392,7 +353,7 @@ describe("races: hook token ownership", () => {
     // record is still around and is disposed late.
     const r2 = await createRun(A);
     const h2 = `hook_${randomUUID()}`;
-    await a.set(`${keyPrefix}hooks:by_token:${token}`, h2);
+    await a.set(keys(keyPrefix).hooksByTokenKey(token), h2);
     await A.events.create(r2, {
       eventType: "hook_created",
       correlationId: h2,
@@ -403,57 +364,61 @@ describe("races: hook token ownership", () => {
       correlationId: h1,
     });
 
-    expect(await a.get(`${keyPrefix}hooks:by_token:${token}`)).toBe(h2);
+    expect(await a.get(keys(keyPrefix).hooksByTokenKey(token))).toBe(h2);
   });
 });
 
-describe("races: step_retrying from a stale read regresses the attempt", () => {
-  it("keeps the attempt counter monotonic", async () => {
-    const { A, B, keyPrefix } = storages();
-    const runId = await createRun(A);
-    const stepId = `step_${randomUUID()}`;
-    await A.events.create(runId, {
-      eventType: "step_created",
-      correlationId: stepId,
-      eventData: { stepName: "s", input: [] },
-    });
-    await A.events.create(runId, {
-      eventType: "step_started",
-      correlationId: stepId,
-    }); // attempt 1
+describeRedis(
+  "races: step_retrying from a stale read keeps the attempt",
+  () => {
+    it("keeps the attempt counter monotonic", async () => {
+      const { A, B, keyPrefix } = storages();
+      const runId = await createRun(A);
+      const stepId = `step_${randomUUID()}`;
+      await A.events.create(runId, {
+        eventType: "step_created",
+        correlationId: stepId,
+        eventData: { stepName: "s", input: [] },
+      });
+      await A.events.create(runId, {
+        eventType: "step_started",
+        correlationId: stepId,
+      }); // attempt 1
 
-    // Attempt 1's body fails; its step_retrying reads the step, then stalls.
-    const pause = pauseAfterGet(
-      b,
-      (k) => k === `${keyPrefix}step:${runId}:${stepId}`,
-    );
-    const retrying = B.events.create(runId, {
-      eventType: "step_retrying",
-      correlationId: stepId,
-      eventData: { error: "boom" },
-    });
-    await pause.reached;
-    // Meanwhile a redelivery starts attempt 2.
-    const s2 = await A.events.create(runId, {
-      eventType: "step_started",
-      correlationId: stepId,
-    });
-    expect(s2.step?.attempt).toBe(2);
-    pause.release();
-    await retrying;
-    pause.restore();
+      // Attempt 1's body fails; its step_retrying reads the step, then stalls.
+      const pause = pauseAfter(
+        b,
+        "get",
+        (k) => k === keys(keyPrefix).stepKey(runId, stepId),
+      );
+      const retrying = B.events.create(runId, {
+        eventType: "step_retrying",
+        correlationId: stepId,
+        eventData: { error: "boom" },
+      });
+      await pause.reached;
+      // Meanwhile a redelivery starts attempt 2.
+      const s2 = await A.events.create(runId, {
+        eventType: "step_started",
+        correlationId: stepId,
+      });
+      expect(s2.step?.attempt).toBe(2);
+      pause.release();
+      await retrying;
+      pause.restore();
 
-    const step = await A.steps.get(runId, stepId);
-    expect(step.attempt).toBe(2); // actual: 1 (whole stale entity + `pending|1` written back)
-    const s3 = await A.events.create(runId, {
-      eventType: "step_started",
-      correlationId: stepId,
+      const step = await A.steps.get(runId, stepId);
+      expect(step.attempt).toBe(2);
+      const s3 = await A.events.create(runId, {
+        eventType: "step_started",
+        correlationId: stepId,
+      });
+      expect(s3.step?.attempt).toBe(3);
     });
-    expect(s3.step?.attempt).toBe(3); // actual: 2 again
-  });
-});
+  },
+);
 
-describe("races: duplicates the reference worlds refuse", () => {
+describeRedis("races: duplicates the reference worlds refuse", () => {
   it("refuses a second wait_completed for the same wait", async () => {
     const { A } = storages();
     const runId = await createRun(A);
@@ -476,7 +441,7 @@ describe("races: duplicates the reference worlds refuse", () => {
   });
 });
 
-describe("races: runs.list pagination under churn", () => {
+describeRedis("races: runs.list pagination under churn", () => {
   it("a status-filtered cursor survives the cursor run changing status", async () => {
     const { A } = storages();
     // Fresh prefix, so the pending index holds exactly these runs.

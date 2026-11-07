@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import type {
   FailureSummary,
   TraceSummary,
-} from "../../src/dev-telemetry-store";
+} from "../../src/dashboard-protocol";
 
 export function ErrorsView({
   failures,

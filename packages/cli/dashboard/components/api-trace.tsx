@@ -9,7 +9,7 @@ import { routeHref, useNow } from "@/state";
 import type {
   FailureSummary,
   TraceSummary,
-} from "../../src/dev-telemetry-store";
+} from "../../src/dashboard-protocol";
 
 /** The requests and failures the dashboard has seen, as of now. */
 export const TraceContext = createContext<{

@@ -1,3 +1,4 @@
+import { ATTR, SPAN } from "./telemetry-names";
 import type { Action, ActionContext, ProxyOptions, Service } from "./types";
 import type {
   BrickClientAction,
@@ -7,7 +8,7 @@ import type {
   InferActionOutput,
 } from "./client";
 import { getGlobalRegistry } from "./registry";
-import { getPluginActionRoute } from "./plugin";
+import { getPluginActionRoute } from "./routes";
 import { pickContextEnvelope } from "./context";
 import { withCallSpan } from "./telemetry";
 
@@ -143,8 +144,8 @@ async function callAction(
   }
   const envelopeCtx = createRpcEnvelope(options.from, options.context, callCtx);
   return withCallSpan(
-    `rpc ${serviceName}.${actionName}`,
-    { "brick.service": serviceName, "brick.action": actionName },
+    `${SPAN.rpcPrefix}${serviceName}.${actionName}`,
+    { [ATTR.service]: serviceName, [ATTR.action]: actionName },
     () => action.execute({ input: payload, ctx: envelopeCtx }),
   );
 }
@@ -166,9 +167,6 @@ export function createRpcEnvelope(
     ...pickContextEnvelope(defaultContext),
     ...pickContextEnvelope(callContext),
   } as Partial<ActionContext> & { caller?: string };
-  // `caller` identifies the service that created this proxy, never the target.
-  // A configured `from` wins over any supplied value; without `from` we keep
-  // an explicitly supplied caller (legacy) and otherwise leave it unset.
   if (from !== undefined) {
     envelope.caller = from;
   }

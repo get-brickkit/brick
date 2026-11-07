@@ -1,6 +1,7 @@
 import { expect, it } from "bun:test";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { freePort, tempProject, waitFor } from "./helpers";
 
 const root = resolve(import.meta.dir, "../../..");
 const entry = join(import.meta.dir, "fixtures/socket-app.ts");
@@ -8,11 +9,8 @@ const bin = join(root, "packages/cli/src/bin.ts");
 
 for (const mode of ["dev", "start", "build", "build-runtime"] as const)
   it(`serves typed sockets through brick ${mode}`, async () => {
-    const reservation = Bun.serve({ port: 0, fetch: () => new Response("") });
-    const port = reservation.port!;
-    await reservation.stop(true);
-    await mkdir(join(root, ".brick"), { recursive: true });
-    const dir = await mkdtemp(join(root, ".brick/socket-startup-"));
+    const port = freePort();
+    const dir = await tempProject("socket-startup");
     let child: ReturnType<typeof Bun.spawn> | undefined;
     let ws: WebSocket | undefined;
     try {
@@ -60,19 +58,18 @@ for (const mode of ["dev", "start", "build", "build-runtime"] as const)
       });
       const stdout = new Response(child.stdout).text();
       const stderr = new Response(child.stderr).text();
-      const deadline = Date.now() + 8000;
-      let healthy = false;
-      while (Date.now() < deadline && child.exitCode === null) {
-        try {
-          if ((await fetch(`http://localhost:${port}/_health`)).ok) {
-            healthy = true;
-            break;
-          }
-        } catch {
-          /* Wait for the listener. */
-        }
-        await Bun.sleep(25);
-      }
+      const healthy = await waitFor(
+        async () =>
+          child!.exitCode !== null ||
+          (await fetch(`http://localhost:${port}/_health`).then(
+            (response) => response.ok,
+            () => false,
+          )),
+        8000,
+      ).then(
+        () => child!.exitCode === null,
+        () => false,
+      );
       if (!healthy) {
         child.kill();
         await child.exited;

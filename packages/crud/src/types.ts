@@ -4,25 +4,14 @@ import type {
   ActionContext,
   ResourcePlugin,
   PluginRoutes,
+  PluginHookArgs,
 } from "@brickkit/core";
 import type { TSchema, TUnsafe, Static } from "@sinclair/typebox";
 import type { Table, SQL, Column, GetColumnData } from "drizzle-orm";
 
-export type FilterOperator =
-  | "eq"
-  | "ne"
-  | "in"
-  | "notIn"
-  | "gt"
-  | "gte"
-  | "lt"
-  | "lte"
-  | "between"
-  | "contains"
-  | "startsWith"
-  | "endsWith"
-  | "isNull"
-  | "isNotNull";
+import type { OPERATORS } from "./where";
+
+export type FilterOperator = keyof typeof OPERATORS;
 export interface ColumnFieldPolicy {
   read?: boolean;
   create?: boolean;
@@ -74,6 +63,12 @@ export type CrudCommitArgs = {
   | { operation: "create" | "update"; row: Record<string, unknown> }
   | { operation: "delete"; row?: undefined }
 );
+/** The write hooks: core's plugin hook arguments, plus the call's `error`. */
+type WriteHooks = {
+  [K in Exclude<keyof PluginHookArgs, "afterCommit">]?: (
+    args: PluginHookArgs[K] & { error: ErrorBuilder<Record<string, never>> },
+  ) => void | Promise<void>;
+};
 export interface CrudOptions<
   F extends Fields = Fields,
   O extends Operations = Operations,
@@ -111,52 +106,10 @@ export interface CrudOptions<
    * `afterCommit` runs after the commit, for side effects that must not happen
    * when the write is undone; an error it throws is logged, not returned.
    */
-  hooks?: {
-    afterCommit?: (args: CrudCommitArgs) => void | Promise<void>;
-    beforeCreate?: (args: {
-      data: Record<string, unknown>;
-      ctx: ActionContext;
-      error: ErrorBuilder<Record<string, never>>;
-      /** The operation's open transaction: write other tables through it. */
-      tx: any;
-    }) => void | Promise<void>;
-    afterCreate?: (args: {
-      row: Record<string, unknown>;
-      ctx: ActionContext;
-      error: ErrorBuilder<Record<string, never>>;
-      /** The operation's open transaction: write other tables through it. */
-      tx: any;
-    }) => void | Promise<void>;
-    afterUpdate?: (args: {
-      id: unknown;
-      row: Record<string, unknown>;
-      ctx: ActionContext;
-      error: ErrorBuilder<Record<string, never>>;
-      /** The operation's open transaction: write other tables through it. */
-      tx: any;
-    }) => void | Promise<void>;
-    beforeDelete?: (args: {
-      id: unknown;
-      ctx: ActionContext;
-      error: ErrorBuilder<Record<string, never>>;
-      /** The operation's open transaction: write other tables through it. */
-      tx: any;
-    }) => void | Promise<void>;
-    afterDelete?: (args: {
-      id: unknown;
-      ctx: ActionContext;
-      error: ErrorBuilder<Record<string, never>>;
-      /** The operation's open transaction: write other tables through it. */
-      tx: any;
-    }) => void | Promise<void>;
-    beforeUpdate?: (args: {
-      id: unknown;
-      data: Record<string, unknown>;
-      ctx: ActionContext;
-      error: ErrorBuilder<Record<string, never>>;
-      /** The operation's open transaction: write other tables through it. */
-      tx: any;
-    }) => void | Promise<void>;
+  hooks?: WriteHooks & {
+    afterCommit?: (
+      args: CrudCommitArgs & PluginHookArgs["afterCommit"],
+    ) => void | Promise<void>;
   };
 }
 type Row<T extends Table> = T["$inferSelect"];
@@ -200,13 +153,12 @@ type AllowedOps<F, K extends keyof F> = F[K] extends {
 }
   ? O
   : never;
-type Operand<V, O> = O extends "isNull" | "isNotNull"
-  ? {}
-  : O extends "in" | "notIn"
-    ? { value: readonly NonNullable<V>[] }
-    : O extends "between"
-      ? { value: readonly [NonNullable<V>, NonNullable<V>] }
-      : { value: NonNullable<V> };
+type Operand<V, O extends FilterOperator> = {
+  none: {};
+  one: { value: NonNullable<V> };
+  list: { value: readonly NonNullable<V>[] };
+  pair: { value: readonly [NonNullable<V>, NonNullable<V>] };
+}[(typeof OPERATORS)[O]["operand"]];
 type Leaf<F, V> = {
   [K in Extract<keyof F, keyof V>]: {
     [O in Extract<AllowedOps<F, K>, FilterOperator>]: {
@@ -324,6 +276,15 @@ type Selected<
   ? Pick<ReadRow<T, F>, Extract<K, keyof ReadRow<T, F>>>
   : ReadRow<T, F>) &
   IncludedRow<T, F, I>;
+/** What `list` returns. */
+type ListResult<R> = {
+  items: R[];
+  total?: number;
+  limit: number;
+  offset: number;
+  nextCursor?: string | null;
+};
+type QueryResult<Kind, R> = Kind extends "list" ? ListResult<R> : R | null;
 type Callable<I, R, C> = Action<
   TUnsafe<I>,
   TUnsafe<R>,
@@ -344,15 +305,7 @@ export interface QueryAction<
       readonly IncludeKeys<F>[] | undefined,
       Kind
     >,
-    Kind extends "list"
-      ? {
-          items: ReadRow<T, F>[];
-          total?: number;
-          limit: number;
-          offset: number;
-          nextCursor?: string | null;
-        }
-      : ReadRow<T, F> | null,
+    QueryResult<Kind, ReadRow<T, F>>,
     C
   >,
   "run" | "execute"
@@ -363,51 +316,21 @@ export interface QueryAction<
   >(params: {
     input: KindQuery<T, F, S, I, Kind>;
     ctx?: Partial<C>;
-  }): Promise<
-    Kind extends "list"
-      ? {
-          items: Selected<T, F, S, I>[];
-          total?: number;
-          limit: number;
-          offset: number;
-          nextCursor?: string | null;
-        }
-      : Selected<T, F, S, I> | null
-  >;
+  }): Promise<QueryResult<Kind, Selected<T, F, S, I>>>;
   run<
     const S extends readonly ReadKeys<T, F>[] | undefined = undefined,
     const I extends readonly IncludeKeys<F>[] | undefined = undefined,
   >(
     input: KindQuery<T, F, S, I, Kind>,
     ctx?: Partial<C>,
-  ): Promise<
-    Kind extends "list"
-      ? {
-          items: Selected<T, F, S, I>[];
-          total?: number;
-          limit: number;
-          offset: number;
-          nextCursor?: string | null;
-        }
-      : Selected<T, F, S, I> | null
-  >;
+  ): Promise<QueryResult<Kind, Selected<T, F, S, I>>>;
   execute<
     const S extends readonly ReadKeys<T, F>[] | undefined = undefined,
     const I extends readonly IncludeKeys<F>[] | undefined = undefined,
   >(params: {
     input: KindQuery<T, F, S, I, Kind>;
     ctx?: Partial<C>;
-  }): Promise<
-    Kind extends "list"
-      ? {
-          items: Selected<T, F, S, I>[];
-          total?: number;
-          limit: number;
-          offset: number;
-          nextCursor?: string | null;
-        }
-      : Selected<T, F, S, I> | null
-  >;
+  }): Promise<QueryResult<Kind, Selected<T, F, S, I>>>;
 }
 export interface GetAction<T extends Table, F, C, ID> extends Omit<
   Callable<

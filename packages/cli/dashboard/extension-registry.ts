@@ -1,5 +1,10 @@
 import type { ComponentType, ReactNode } from "react";
-import type { TraceSummary } from "../src/dev-telemetry-store";
+import {
+  hashHref,
+  isExternalHref,
+  VIEW_NAMES,
+  type TraceSummary,
+} from "../src/dashboard-protocol";
 import type { Route, View } from "./state";
 
 /*
@@ -96,6 +101,76 @@ export function defineDashboard<T extends DashboardExtension>(extension: T): T {
   return extension;
 }
 
+/**
+ * The app's extension and its plugins' as one, in order: the app's comes
+ * first and keeps its slots (drawer tabs add up), a page `mergeNav` would
+ * throw on is skipped (bad or taken id, no or both of component and url, an
+ * `after` that names no page), and a plugin's pages without a place go under a section named after
+ * it. Roots are left to the caller, which nests them.
+ */
+export function mergeExtensions(
+  parts: readonly {
+    name: string;
+    plugin: boolean;
+    extension: DashboardExtension;
+  }[],
+): DashboardExtension {
+  const pages: ExtensionPage[] = [];
+  const sidebar: SidebarLink[] = [];
+  const slots: Record<string, unknown> = {};
+  for (const { name, plugin, extension } of parts) {
+    for (const page of extension.pages ?? []) {
+      const problem =
+        typeof page.id !== "string" || !PAGE_ID.test(page.id)
+          ? "must be letters, digits and dashes"
+          : (VIEW_NAMES as readonly string[]).includes(page.id) ||
+              pages.some((item) => item.id === page.id)
+            ? "is taken"
+            : !page.component === !page.url
+              ? "needs a component or a url, not both"
+              : undefined;
+      if (problem) {
+        console.error(
+          `[Brick dashboard] Extension ${name}: page id ${String(page.id)} ${problem}; skipped.`,
+        );
+        continue;
+      }
+      pages.push(
+        plugin && !page.after && !page.section
+          ? { ...page, section: name }
+          : page,
+      );
+    }
+    sidebar.push(...(extension.sidebar ?? []));
+    for (const [slot, value] of Object.entries(extension.slots ?? {})) {
+      if (slot === "request.drawer.tabs")
+        slots[slot] = [
+          ...((slots[slot] as DrawerTab[]) ?? []),
+          ...(value as DrawerTab[]),
+        ];
+      else if (!(slot in slots)) slots[slot] = value;
+    }
+  }
+  // A page placed after a page that is none (or was skipped) would make
+  // `mergeNav` throw; dropping one can orphan another, so repeat.
+  const known = new Set<string>([
+    ...VIEW_NAMES,
+    ...sidebar.map((_, index) => `link:${index}`),
+  ]);
+  for (let size = -1; size !== pages.length;) {
+    size = pages.length;
+    const ids = new Set([...known, ...pages.map((page) => page.id)]);
+    const at = pages.findIndex((page) => page.after && !ids.has(page.after));
+    if (at >= 0) {
+      console.error(
+        `[Brick dashboard] Page ${pages[at]!.id} is placed after ${pages[at]!.after}, which is no page; skipped.`,
+      );
+      pages.splice(at, 1);
+    }
+  }
+  return { pages, sidebar, slots: slots as DashboardSlots };
+}
+
 /** One entry of the sidebar. */
 export interface NavItem {
   /** A built-in view's name, an extension page's id, or `link:<n>`. */
@@ -115,7 +190,7 @@ export interface NavItem {
 const PAGE_ID = /^[a-z0-9][a-z0-9-]*$/i;
 
 export function pageHref(id: string): string {
-  return `#/x/${encodeURIComponent(id)}`;
+  return hashHref(["x", id]);
 }
 
 /** The sidebar entry a route belongs to. */
@@ -171,7 +246,7 @@ export function mergeNav(
       label: link.label,
       icon: link.icon,
       href: link.href,
-      external: /^[a-z][a-z\d+.-]*:/i.test(link.href),
+      external: isExternalHref(link.href),
     });
 
   const nav: (NavItem & Placement)[] = [...builtIn];

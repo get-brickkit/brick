@@ -1,5 +1,5 @@
 /** Standard Date fields used across all worlds */
-export const DATE_FIELDS = new Set([
+const DATE_FIELDS = new Set([
   "createdAt",
   "updatedAt",
   "startedAt",
@@ -11,7 +11,7 @@ export const DATE_FIELDS = new Set([
  * JSON reviver that converts ISO date strings to Date objects.
  * Use with JSON.parse(json, dateReviver).
  */
-export function dateReviver(key: string, value: unknown): unknown {
+function dateReviver(key: string, value: unknown): unknown {
   if (
     DATE_FIELDS.has(
       key as typeof DATE_FIELDS extends Set<infer T> ? T : never,
@@ -27,7 +27,7 @@ export function dateReviver(key: string, value: unknown): unknown {
 /**
  * JSON replacer that encodes Uint8Array as a tagged object with base64 data.
  */
-export function uint8ArrayReplacer(_key: string, value: unknown): unknown {
+function uint8ArrayReplacer(_key: string, value: unknown): unknown {
   if (value instanceof Uint8Array) {
     return {
       __type: "Uint8Array",
@@ -37,18 +37,20 @@ export function uint8ArrayReplacer(_key: string, value: unknown): unknown {
   return value;
 }
 
-/**
- * JSON reviver that decodes tagged Uint8Array objects
- * (`{ __type: 'Uint8Array', data: '<base64>' }`) and ISO date strings.
- */
-export function uint8ArrayReviver(key: string, value: unknown): unknown {
+/** The Uint8Array a tagged object (`{ __type: 'Uint8Array', data: '<base64>' }`) encodes. */
+function taggedBinary(value: unknown): Uint8Array | undefined {
   if (value && typeof value === "object") {
     const obj = value as Record<string, unknown>;
     if (obj.__type === "Uint8Array" && typeof obj.data === "string") {
-      return new Uint8Array(Buffer.from(obj.data as string, "base64"));
+      return new Uint8Array(Buffer.from(obj.data, "base64"));
     }
   }
-  return dateReviver(key, value);
+  return undefined;
+}
+
+/** JSON reviver that decodes tagged Uint8Array objects and ISO date strings. */
+function uint8ArrayReviver(key: string, value: unknown): unknown {
+  return taggedBinary(value) ?? dateReviver(key, value);
 }
 
 // Handing JSON a reviver/replacer forces V8 off its fast path and calls into
@@ -94,7 +96,7 @@ function reviveDatesDeep(value: unknown): unknown {
  * path. The walk allocates nothing, which is why it beats the replacer over
  * the same nodes.
  */
-export function hasBinary(value: unknown): boolean {
+function hasBinary(value: unknown): boolean {
   if (value === null || typeof value !== "object") {
     return false;
   }
@@ -130,4 +132,14 @@ export function parse<T>(text: string): T {
     return JSON.parse(text, uint8ArrayReviver) as T;
   }
   return reviveDatesDeep(JSON.parse(text)) as T;
+}
+
+/**
+ * Parse a queue message: tagged Uint8Arrays only. Queue payloads are the
+ * runtime's own, so a field that happens to be named like a date stays a string.
+ */
+export function parseQueueMessage(text: string): unknown {
+  return text.includes(BINARY_TAG)
+    ? JSON.parse(text, (_key, value) => taggedBinary(value) ?? value)
+    : JSON.parse(text);
 }

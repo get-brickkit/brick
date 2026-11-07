@@ -1,4 +1,11 @@
 import { basename, dirname, relative, resolve, sep } from "node:path";
+import { kebabCase } from "@brickkit/core/client";
+import { PROJECT_DEFAULTS } from "../config";
+import {
+  DEFINITION_FILE,
+  TEST_FILE,
+  type DefinitionKind,
+} from "../definitions";
 
 // ESTree nodes as ESLint and oxlint hand them to rules. Kept loose on purpose:
 // the rules read a handful of fields and run under both linters.
@@ -37,55 +44,56 @@ export interface Rule {
   ): Record<string, ((node: Node) => void) | undefined>;
 }
 
+export function defineRule(
+  type: Rule["meta"]["type"],
+  description: string,
+  create: Rule["create"],
+  options: { fixable?: "code"; schema?: unknown[] } = {},
+): Rule {
+  return {
+    meta: {
+      type,
+      docs: { description },
+      fixable: options.fixable,
+      schema: options.schema ?? [],
+    },
+    create,
+  };
+}
+
 /** Paths from brick.config.ts, relative to `root`. Linters pass them in `settings.brick`. */
 export interface BrickSettings {
   root: string;
   services: string;
   entry: string;
   generated: string;
-  /** Browser code folder, which may import only the client and the contract. */
-  web: string;
 }
 
-export const DEFINITION_KINDS = [
-  "service",
-  "events",
-  "resource",
-  "table",
-  "action",
-  "command",
-  "tool",
-  "socket",
-  "listener",
-  "workflow",
-  "step",
-] as const;
-export type DefinitionKind = (typeof DEFINITION_KINDS)[number];
-
-const SUFFIX = new RegExp(
-  `^(.*)\\.(${DEFINITION_KINDS.join("|")})\\.(ts|tsx|mts|js|jsx|mjs)$`,
-);
+/** Browser code folder, which may import only the client and the contract. */
+export const WEB_DIR = "web";
 
 const posix = (path: string) => path.split(sep).join("/");
 
+/** The settings with Brick's default paths, each relative to the root without a trailing slash. */
 export function brickSettings(context: RuleContext): BrickSettings {
   const given = context.settings?.brick ?? {};
+  const root = given.root ?? context.cwd ?? process.cwd();
+  const from = (path: string) => posix(relative(root, resolve(root, path)));
   return {
-    root: given.root ?? context.cwd ?? process.cwd(),
-    services: given.services ?? "src/services",
-    entry: given.entry ?? "src/app.ts",
-    generated: given.generated ?? "_brick",
-    web: given.web ?? "web",
+    root,
+    services: from(given.services ?? PROJECT_DEFAULTS.services),
+    entry: from(given.entry ?? PROJECT_DEFAULTS.entry),
+    generated: from(given.generated ?? PROJECT_DEFAULTS.generated),
   };
 }
 
+/** The folders a service may live in: its kebab-case name, or the name itself. */
+export const serviceFolders = (name: string) => [kebabCase(name), name];
+
 export interface FileInfo {
   settings: BrickSettings;
-  /** Path from the project root, with forward slashes. */
   rel: string;
   base: string;
-  /** Services folder from the root. */
-  servicesDir: string;
   inServices: boolean;
   /** Service folder name, for files under `<services>/<name>/`. */
   service?: string;
@@ -94,6 +102,8 @@ export interface FileInfo {
   /** Definition kind from the file suffix, and the name before it. */
   kind?: DefinitionKind;
   stem?: string;
+  /** Tests, dependencies and generated files: no rule checks them. */
+  ignored: boolean;
   /** Tests, local plugins and generated files are not app definitions. */
   exempt: boolean;
 }
@@ -101,43 +111,31 @@ export interface FileInfo {
 export function fileInfo(context: RuleContext): FileInfo {
   const settings = brickSettings(context);
   const rel = posix(relative(settings.root, context.filename));
-  const servicesDir = posix(
-    relative(settings.root, resolve(settings.root, settings.services)),
-  );
-  const generated = posix(
-    relative(settings.root, resolve(settings.root, settings.generated)),
-  );
+  const { services: servicesDir, generated } = settings;
   const base = basename(rel);
   const inServices = rel.startsWith(`${servicesDir}/`);
   const parts = inServices ? rel.slice(servicesDir.length + 1).split("/") : [];
-  const match = SUFFIX.exec(base);
+  const match = DEFINITION_FILE.exec(base);
   const segments = rel.split("/");
+  const ignored =
+    TEST_FILE.test(base) ||
+    segments.includes("test") ||
+    segments.includes("tests") ||
+    segments.includes("__tests__") ||
+    segments.includes("node_modules") ||
+    rel.startsWith(`${generated}/`);
   return {
     settings,
     rel,
     base,
-    servicesDir,
     inServices,
     service: parts.length > 1 ? parts[0] : undefined,
     rest: parts.slice(1),
     kind: match?.[2] as DefinitionKind | undefined,
     stem: match?.[1],
-    exempt:
-      /\.(test|spec)\.[cm]?[jt]sx?$/.test(base) ||
-      segments.includes("test") ||
-      segments.includes("tests") ||
-      segments.includes("__tests__") ||
-      segments.includes("plugins") ||
-      segments.includes("node_modules") ||
-      rel.startsWith(`${generated}/`),
+    ignored,
+    exempt: ignored || segments.includes("plugins"),
   };
-}
-
-export function kebab(name: string): string {
-  return name
-    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
-    .replace(/[_\s.]+/g, "-")
-    .toLowerCase();
 }
 
 /** A string literal's value, or a template literal's text when it has no expressions. */
@@ -196,16 +194,16 @@ export interface Definition {
   nameNode?: Node;
 }
 
-const DEFINE_FUNCTIONS: Record<string, Definition["kind"]> = {
+export const DEFINE_FUNCTIONS: Record<string, Definition["kind"]> = {
   defineService: "service",
   defineAction: "action",
   defineTool: "tool",
   defineListener: "listener",
   definePlugin: "plugin",
+  defineResource: "resource",
   crud: "crud",
   sqliteTable: "table",
   pgTable: "table",
-  mysqlTable: "table",
 };
 
 const ATTACH_METHODS: Record<string, Definition["kind"]> = {
@@ -223,6 +221,11 @@ export function definitionOf(call: Node): Definition | undefined {
   const callee = call.callee;
   if (callee.type === "Identifier" && DEFINE_FUNCTIONS[callee.name]) {
     const kind = DEFINE_FUNCTIONS[callee.name]!;
+    // defineResource(service, config) is service.resource(config).
+    if (kind === "resource")
+      return first?.type === "Identifier"
+        ? attached(call, kind, first.name, second)
+        : undefined;
     if (kind === "service" || kind === "table") {
       const name = stringValue(first);
       if (name === undefined) return undefined;
@@ -253,12 +256,21 @@ export function definitionOf(call: Node): Definition | undefined {
       return undefined;
     return { kind, call, owner, name, nameNode: first, config: second };
   }
-  if (first?.type !== "ObjectExpression") return undefined;
-  const nameNode = getProperty(first, "name")?.value;
+  return attached(call, kind, owner, first);
+}
+
+function attached(
+  call: Node,
+  kind: Definition["kind"],
+  owner: string,
+  config: Node,
+): Definition | undefined {
+  if (config?.type !== "ObjectExpression") return undefined;
+  const nameNode = getProperty(config, "name")?.value;
   const name = stringValue(nameNode);
   // A resource needs its name and table; anything else called `.resource` is not one.
   if (kind === "resource" && name === undefined) return undefined;
-  return { kind, call, owner, config: first, name, nameNode };
+  return { kind, call, owner, config, name, nameNode };
 }
 
 /** The nearest enclosing definition of one of `kinds`. */
@@ -336,7 +348,7 @@ export function resolveImport(
   );
 }
 
-/** `name.method(...)` with a non-computed property. */
+/** `name.method(...)` with a non-computed property, or a bare `fn(...)` (no `object`). */
 export function memberCall(
   node: Node,
 ): { object?: string; property: string } | undefined {

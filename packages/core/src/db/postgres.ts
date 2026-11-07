@@ -33,15 +33,10 @@ export type PostgresDatabase<
   _TSchema extends Record<string, unknown> = Record<string, unknown>,
 > = any;
 
-export interface DatabaseAdapter<TDb = any, TConfig = any> {
-  createDatabase(config?: TConfig): TDb;
-}
-
 /**
  * Creates a PostgreSQL Drizzle instance using postgres-js.
- * Static imports (both are hard dependencies in package.json) so bundlers
- * (Nitro/Rollup) trace and ship the driver. `bun:sqlite` stays lazy in
- * `sqlite.ts` since it only exists under Bun.
+ * Static imports so bundlers (Nitro/Rollup) trace and ship the driver.
+ * `bun:sqlite` stays lazy in `sqlite.ts` since it only exists under Bun.
  */
 export function createPostgresDatabase<
   TSchema extends Record<string, unknown> = Record<string, unknown>,

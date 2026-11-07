@@ -1,13 +1,22 @@
 import { Check } from "@sinclair/typebox/value";
+import { restoreSocketSchema } from "./socket-schema";
 import {
-  isSocketEnvelope,
+  byteLength,
   compareSocketSeq,
+  decodeFrame,
+  encodeFrame,
+  isControlEvent,
+  isSocketEnvelope,
   isSocketRoom,
   isSocketSeq,
-  restoreSocketSchema,
   SOCKET_BUFFER_BYTES,
+  SOCKET_CLOSE,
+  SOCKET_CONTROL,
   SOCKET_MAX_BYTES,
-} from "./socket-schema";
+  SOCKET_PROTOCOL,
+  SOCKET_STOP_CODES,
+  SOCKET_TOKEN_PROTOCOL,
+} from "./protocol";
 import {
   BrickSocketError,
   type BrickClientSocket,
@@ -18,8 +27,6 @@ import {
 } from "./socket-types";
 import { ActionExecutionError } from "./types";
 
-/** Normal close, policy and auth refusals, protocol errors: retrying would not help. */
-const STOP_CODES = new Set([1000, 1003, 1007, 1008, 1009, 4000, 4401, 4403]);
 /** RFC 6455 subprotocols are RFC 7230 tokens. */
 const TOKEN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
@@ -28,7 +35,7 @@ export function connectSocket(
   contract: BrickClientSocket,
   options: BrickSocketConnectOptions,
 ): BrickSocketClient<Record<string, unknown>, Record<string, unknown>> {
-  const url = new URL(`${baseUrl.replace(/\/$/, "")}${contract.config.path}`);
+  const url = new URL(`${baseUrl}${contract.config.path}`);
   if (!["http:", "https:", "ws:", "wss:"].includes(url.protocol))
     throw new Error("Invalid socket URL protocol");
   url.protocol =
@@ -121,7 +128,6 @@ export function connectSocket(
     ws.onmessage = null;
     ws.onclose = null;
   };
-  /** Ends the client for good. */
   const finish = (info: { code: number; reason: string }, error?: unknown) => {
     if (status === "closed") return;
     detach();
@@ -154,7 +160,11 @@ export function connectSocket(
         listeners.clear();
     }
   };
-  const stop = (error?: unknown, code = 1000, reason = "") => {
+  const stop = (
+    error?: unknown,
+    code: number = SOCKET_CLOSE.normal,
+    reason = "",
+  ) => {
     if (status === "closed") return;
     try {
       if (error instanceof BrickSocketError) report(error);
@@ -175,7 +185,8 @@ export function connectSocket(
     detach();
     ws = undefined;
     if (error) report(error);
-    if (!backoff || STOP_CODES.has(info.code)) return finish(info, error);
+    if (!backoff || SOCKET_STOP_CODES.has(info.code))
+      return finish(info, error);
     settleJoins(
       new BrickSocketError("connection", "Socket closed before joining"),
     );
@@ -228,7 +239,7 @@ export function connectSocket(
         } catch (cause) {
           attempting = false;
           return dropped(
-            { code: 1006, reason: "" },
+            { code: SOCKET_CLOSE.abnormal, reason: "" },
             new BrickSocketError("connection", "Socket token failed", {
               cause,
             }),
@@ -242,14 +253,14 @@ export function connectSocket(
               "Socket token must use RFC 6455 token characters, such as a JWT or base64url without = padding",
             ),
           );
-        protocols = ["brick.v1", `brick.token.${token}`];
+        protocols = [SOCKET_PROTOCOL, SOCKET_TOKEN_PROTOCOL + token];
       }
       try {
         ws = protocols ? new WebSocket(url, protocols) : new WebSocket(url);
       } catch (cause) {
         attempting = false;
         return dropped(
-          { code: 1006, reason: "" },
+          { code: SOCKET_CLOSE.abnormal, reason: "" },
           new BrickSocketError("connection", "Socket connection failed", {
             cause,
           }),
@@ -261,7 +272,7 @@ export function connectSocket(
     const failed = (message: string) => {
       const socket = ws;
       dropped(
-        { code: 1006, reason: "" },
+        { code: SOCKET_CLOSE.abnormal, reason: "" },
         new BrickSocketError("connection", message),
       );
       socket?.close();
@@ -294,14 +305,19 @@ export function connectSocket(
         options.timeoutMs,
       );
   };
-  const write = (event: string, data: unknown) => {
+  const assertOpen = () => {
     if (!ws || status !== "open" || ws.readyState !== 1)
       throw new BrickSocketError("connection", "Socket is not open");
-    ws.send(JSON.stringify({ event, data }));
+    return ws;
   };
+  const write = (event: string, data: unknown) =>
+    assertOpen().send(encodeFrame(event, data));
   const request = (room: string, since?: string) =>
     new Promise<void>((resolve, reject) => {
-      write("$join", since === undefined ? { room } : { room, since });
+      write(
+        SOCKET_CONTROL.join,
+        since === undefined ? { room } : { room, since },
+      );
       joins.set(room, [
         ...(joins.get(room) ?? []),
         (result) =>
@@ -323,7 +339,7 @@ export function connectSocket(
   /** Checks a room acknowledgement or removal; returns the work to run once it passed. */
   const control = (event: string, data: unknown): (() => void) => {
     const fields = (data ?? {}) as Record<string, unknown>;
-    if (event === "$error") {
+    if (event === SOCKET_CONTROL.error) {
       const { event: input, code, message, status, details } = fields;
       if (
         typeof input !== "string" ||
@@ -343,7 +359,7 @@ export function connectSocket(
     const { room, seq } = fields;
     if (!isSocketRoom(room) || (seq !== undefined && !isSocketSeq(seq)))
       throw new Error("Invalid control message");
-    if (event === "$join" && typeof fields.ok === "boolean") {
+    if (event === SOCKET_CONTROL.join && typeof fields.ok === "boolean") {
       const ok = fields.ok;
       return () => {
         const pending = joins.get(room);
@@ -355,7 +371,7 @@ export function connectSocket(
         for (const settle of pending) settle(ok);
       };
     }
-    if (event === "$left") {
+    if (event === SOCKET_CONTROL.left) {
       const reason =
         typeof fields.reason === "string" ? fields.reason : undefined;
       return () => {
@@ -363,47 +379,22 @@ export function connectSocket(
         notifyLeave(room, reason);
       };
     }
-    if (event === "$gap" && seq !== undefined)
+    if (event === SOCKET_CONTROL.gap && seq !== undefined)
       return () => {
         seqs.set(room, seq);
         notifyGap(room);
       };
-    if (event === "$leave") return () => {};
+    if (event === SOCKET_CONTROL.leave) return () => {};
     throw new Error("Unknown control message");
   };
   const receive = ({ data }: MessageEvent<unknown>) => {
-    let message: unknown;
+    let message: ReturnType<typeof decodeFrame>;
     let action: (() => void) | undefined;
-    let room: unknown;
-    let seq: unknown;
     try {
-      if (
-        typeof data !== "string" ||
-        new TextEncoder().encode(data).byteLength > SOCKET_MAX_BYTES
-      )
-        throw new Error("Expected JSON text under 64 KiB");
-      const parsed: unknown = JSON.parse(data);
-      // Emits of sockets with replay also carry their room and sequence.
-      const fields = (
-        parsed && typeof parsed === "object" && !Array.isArray(parsed)
-          ? parsed
-          : {}
-      ) as Record<string, unknown>;
-      ({ room, seq } = fields);
-      message = Object.fromEntries(
-        Object.entries(fields).filter(
-          ([key]) => key !== "room" && key !== "seq",
-        ),
-      );
-      if (
-        (room !== undefined || seq !== undefined) &&
-        !(isSocketRoom(room) && isSocketSeq(seq))
-      )
-        throw new Error("Invalid socket sequence");
-      if (!isSocketEnvelope(message))
-        throw new Error("Invalid socket envelope");
-      if (message.event.startsWith("$")) {
-        if (seq !== undefined) throw new Error("Invalid control message");
+      message = decodeFrame(data);
+      if (isControlEvent(message.event)) {
+        if (message.seq !== undefined)
+          throw new Error("Invalid control message");
         action = control(message.event, message.data);
       } else {
         const schema = schemas.get(message.event);
@@ -417,21 +408,21 @@ export function connectSocket(
           "Server sent an invalid socket message",
           { cause },
         ),
-        4000,
+        SOCKET_CLOSE.invalidServerMessage,
         "Invalid server message",
       );
       return;
     }
     if (action) return action();
-    if (isSocketRoom(room) && isSocketSeq(seq)) {
+    const { room, seq } = message;
+    if (room !== undefined && seq !== undefined) {
       const last = seqs.get(room);
       // A replayed emit can also arrive live; deliver it once.
       if (last !== undefined && compareSocketSeq(seq, last) <= 0) return;
       seqs.set(room, seq);
     }
-    if (isSocketEnvelope(message))
-      for (const listener of events.get(message.event) ?? [])
-        listener(message.data);
+    for (const listener of events.get(message.event) ?? [])
+      listener(message.data);
   };
   function abort() {
     stop(signal?.reason ?? new DOMException("Aborted", "AbortError"));
@@ -461,26 +452,25 @@ export function connectSocket(
         settle(new BrickSocketError("refused", `Left before joining: ${room}`));
       joins.delete(room);
       if (isSocketRoom(room) && status === "open" && ws?.readyState === 1)
-        write("$leave", { room });
+        write(SOCKET_CONTROL.leave, { room });
     },
     send(event, data) {
-      if (!ws || status !== "open" || ws.readyState !== 1)
-        throw new BrickSocketError("connection", "Socket is not open");
-      if (event.startsWith("$"))
+      const ws = assertOpen();
+      if (isControlEvent(event))
         throw new BrickSocketError("protocol", "Reserved socket event");
-      const frame = JSON.stringify({ event, data });
-      const bytes = new TextEncoder().encode(frame).byteLength;
+      const frame = encodeFrame(event, data);
+      const bytes = byteLength(frame);
       if (!isSocketEnvelope(JSON.parse(frame)) || bytes > SOCKET_MAX_BYTES)
         throw new BrickSocketError(
           "protocol",
-          "Message must be a JSON payload under 64 KiB",
+          `Message must be a JSON payload under ${SOCKET_MAX_BYTES / 1024} KiB`,
         );
       if (ws.bufferedAmount + bytes > SOCKET_BUFFER_BYTES) {
         const error = new BrickSocketError(
           "backpressure",
           "Socket buffer full",
         );
-        stop(error, 4001, "Socket buffer full");
+        stop(error, SOCKET_CLOSE.clientBufferFull, "Socket buffer full");
         throw error;
       }
       ws.send(frame);

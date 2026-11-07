@@ -7,7 +7,6 @@ import {
   resetGlobalRegistry,
 } from "../src";
 
-// Mock User and Session types mirroring Better Auth
 interface User {
   id: string;
   email: string;
@@ -21,7 +20,6 @@ interface Session {
   expiresAt: Date;
 }
 
-// Mock Better Auth client
 const mockAuth = {
   api: {
     getSession: async ({
@@ -56,11 +54,9 @@ describe("Service-Level Context Resolution & Session Injection", () => {
   });
 
   it("should declare service-level context with Better Auth session injection", async () => {
-    // 1. Define service with context hook
     const docsService = defineService("docs", {
       database: defineDatabase(),
       context: async ({ request }) => {
-        // Resolve authentication session once per request from request.headers
         const session = await mockAuth.api.getSession({
           headers: request.headers,
         });
@@ -73,7 +69,6 @@ describe("Service-Level Context Resolution & Session Injection", () => {
       },
     });
 
-    // 2. Define action with authorize guard and type narrowing
     const createDoc = docsService.action({
       name: "createDoc",
       input: t.Object({
@@ -87,7 +82,6 @@ describe("Service-Level Context Resolution & Session Injection", () => {
         authorRole: t.String(),
         isOwner: t.Boolean(),
       }),
-      // Authorize reads from resolved context
       authorize: ({ ctx }) => {
         return ctx.user !== null;
       },
@@ -107,8 +101,7 @@ describe("Service-Level Context Resolution & Session Injection", () => {
       },
     });
 
-    // 3. Test unauthenticated invocation directly via .run()
-    expect(
+    await expect(
       createDoc.run({
         title: "Secret Doc",
         content: "Draft",
@@ -159,7 +152,6 @@ describe("Service-Level Context Resolution & Session Injection", () => {
       },
     });
 
-    // Invoke with valid Bearer token via custom request
     const authedRequest = new Request(
       "http://localhost/api/secured/getProfile",
       {
@@ -177,7 +169,6 @@ describe("Service-Level Context Resolution & Session Injection", () => {
     expect(authedResult.email).toBe("alice@example.com");
     expect(contextResolutionCount).toBe(1);
 
-    // Invoke with invalid / missing token
     const unauthedRequest = new Request(
       "http://localhost/api/secured/getProfile",
       {
@@ -187,7 +178,7 @@ describe("Service-Level Context Resolution & Session Injection", () => {
       },
     );
 
-    expect(
+    await expect(
       getProfile.execute({
         ctx: { request: unauthedRequest },
       }),
@@ -233,11 +224,9 @@ describe("Service-Level Context Resolution & Session Injection", () => {
   });
 
   it("should isolate context when one service calls another (orders -> billing)", async () => {
-    // Track which database each service uses
     const ordersDbCalls: string[] = [];
     const billingDbCalls: string[] = [];
 
-    // Create orders service with its own database
     const ordersDb = defineDatabase();
     const ordersService = defineService("orders", {
       database: ordersDb,
@@ -247,7 +236,6 @@ describe("Service-Level Context Resolution & Session Injection", () => {
       }),
     });
 
-    // Create billing service with its own database and context resolver
     const billingDb = defineDatabase();
     const billingService = defineService("billing", {
       database: billingDb,
@@ -263,7 +251,6 @@ describe("Service-Level Context Resolution & Session Injection", () => {
       },
     });
 
-    // Billing action that tracks which database and context it sees
     billingService.action({
       name: "charge",
       input: t.Object({ amount: t.Number() }),
@@ -283,14 +270,13 @@ describe("Service-Level Context Resolution & Session Injection", () => {
           dbName: ctx.dbName,
           serviceName: ctx.serviceName,
           resolverRan: ctx.resolverRan === true,
-          userId: ctx.user?.id,
+          userId: (ctx as { user?: { id: string } }).user?.id,
           caller: ctx.caller,
           resolverCaller: ctx.resolverCaller,
         };
       },
     });
 
-    // Orders action that calls billing
     const createOrderAction = ordersService.action({
       name: "createOrder",
       input: t.Object({ amount: t.Number() }),
@@ -309,12 +295,10 @@ describe("Service-Level Context Resolution & Session Injection", () => {
       execute: async ({ input, ctx }) => {
         ordersDbCalls.push(ctx.dbName);
 
-        // Call billing service from orders
         const billingRpc = useService(billingService, { from: "orders" });
         const chargeResult = await billingRpc.charge(
           { amount: input.amount },
           {
-            // Pass only safe envelope fields
             user: { id: "usr_alice" } as any,
             traceId: "tr_envelope_123",
             requestId: "req_envelope_456",
@@ -328,27 +312,19 @@ describe("Service-Level Context Resolution & Session Injection", () => {
       },
     });
 
-    // Execute orders action which internally calls billing
-    const result = await createOrderAction.run(
-      { amount: 100 },
-      {
-        user: { id: "usr_alice" } as any,
-      },
-    );
+    const result = await createOrderAction.run({ amount: 100 }, {
+      user: { id: "usr_alice" },
+    } as any);
 
-    // Verify orders uses its own database
     expect(ordersDbCalls).toContain("orders_db");
 
-    // Verify billing uses ITS OWN database, not orders'
     expect(billingDbCalls).toContain("billing_db");
     expect(billingDbCalls).not.toContain("orders_db");
 
-    // Verify billing's context resolver ran
     expect(result.chargeResult.resolverRan).toBe(true);
     expect(result.chargeResult.serviceName).toBe("billing");
     expect(result.chargeResult.dbName).toBe("billing_db");
 
-    // Verify user was preserved through the inter-service call
     expect(result.chargeResult.userId).toBe("usr_alice");
 
     // Verify billing sees the originating service (orders), not itself, as the caller
@@ -389,17 +365,16 @@ describe("Service-Level Context Resolution & Session Injection", () => {
       name: "getContext",
       output: t.Object({
         isValidDatabase: t.Boolean(),
-        db: t.Optional(t.Any()),
+        fakeDb: t.Boolean(),
       }),
       execute: async ({ ctx }) => ({
         isValidDatabase: ctx.isValidDatabase === true,
-        db: ctx.db ? "received_valid_db" : "no_db",
+        fakeDb: (ctx.db as any)?.isFake === true,
       }),
     });
 
     const billingRpc = useService(billingService);
 
-    // Attempt to pass a fake database in callCtx - it should be ignored
     const result = await billingRpc.getContext(
       {},
       {
@@ -409,11 +384,8 @@ describe("Service-Level Context Resolution & Session Injection", () => {
       },
     );
 
-    // Verify that billing's context resolver ran and set isValidDatabase
     expect(result.isValidDatabase).toBe(true);
-    // Verify that the fake db from caller was not used
-    // (billing has its own database and should reject the caller's db)
-    expect(result.db).not.toBe("isFake");
+    expect(result.fakeDb).toBe(false);
   });
 });
 
@@ -461,7 +433,7 @@ describe("Receiver-owned context", () => {
       };
       const result =
         dispatch === "direct"
-          ? await inspect.run(undefined, callerContext)
+          ? await inspect.run(undefined, callerContext as any)
           : await useService(service, {
               context: callerContext,
             }).inspect(undefined, callerContext);
@@ -569,5 +541,27 @@ describe("Receiver-owned context", () => {
       requestId: "request",
       extra: false,
     });
+  });
+});
+
+describe("generated ids", () => {
+  it("never repeat across processes, as a restarted or second worker's would", async () => {
+    // Each process makes its first id; a per-process counter gives both the same one.
+    const script = `const { brick, defineService } = await import(${JSON.stringify(new URL("../src/index.ts", import.meta.url).pathname)});
+const service = defineService("ids");
+service.action({ name: "id", execute: ({ ctx }) => ctx.traceId });
+const app = brick({ services: [service], requestLogging: false, docs: false });
+const response = await app.handle(new Request("http://localhost/api/ids/id", { method: "POST" }));
+console.log(response.headers.get("x-trace-id"), await (service.getAction("id") as any).run());`;
+    const run = async () => {
+      const child = Bun.spawn([process.execPath, "-e", script], {
+        stdout: "pipe",
+      });
+      return (await new Response(child.stdout).text()).trim().split(" ");
+    };
+    const [first, second] = await Promise.all([run(), run()]);
+    expect(first).toHaveLength(2);
+    for (const id of [...first!, ...second!]) expect(id).toMatch(/^tr_/);
+    expect(new Set([...first!, ...second!]).size).toBe(4);
   });
 });

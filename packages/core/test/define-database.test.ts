@@ -11,7 +11,6 @@ import {
   syncSchema,
   type BunSQLiteDatabase,
   createPostgresDatabase,
-  createDatabase,
 } from "../src";
 
 const items = sqliteTable("defined_items", { id: text("id").primaryKey() });
@@ -68,18 +67,17 @@ describe("defineDatabase", () => {
     const database = defineDatabase();
     const a = defineService("defined_tables_a", { database });
     const b = defineService("defined_tables_b", { database });
-    a.registerTable(items);
-    b.registerTable(other);
+    a.resource({ name: "item", table: items });
+    b.resource({ name: "other", table: other });
     expect(() => a.getDb()!.select().from(items).all()).toThrow();
     expect(() => b.getDb()!.select().from(other).all()).toThrow();
-    a.registerTable(other);
+    a.resource({ name: "other", table: other });
     expect(() => a.getDb()!.select().from(other).all()).toThrow();
   });
 
   it("never applies declared tables at runtime", () => {
     const database = defineDatabase({ tables: { items } });
     const service = defineService("defined_migrations", { database });
-    service.registerTable(items);
     service.resource({ name: "item", table: items });
     expect(() => database.getDb().select().from(items).all()).toThrow();
     expect(database.tables.items).toBe(items);
@@ -97,6 +95,10 @@ describe("defineDatabase", () => {
       // @ts-expect-error SQLite cannot take a Postgres URL.
       defineDatabase({ engine: "sqlite", url: "postgres://localhost/db" }),
     ).toThrow("url");
+    expect(() =>
+      // @ts-expect-error Prepared statements are a Postgres option.
+      defineDatabase({ engine: "sqlite", prepare: false }),
+    ).toThrow('Database option "prepare" is not valid for sqlite');
     expect(() =>
       // @ts-expect-error Postgres cannot take a SQLite path.
       defineDatabase({ engine: "postgres", path: ":memory:" }),
@@ -129,9 +131,6 @@ describe("defineDatabase", () => {
       expect(database.schema.pgItems).toBe(pgItems);
       expect(db.query.pgItems).toBeDefined();
       expect(createPostgresDatabase({ client }).$client).toBe(client);
-      expect(createDatabase({ engine: "postgres", client }).$client).toBe(
-        client,
-      );
     } finally {
       await client.end();
     }

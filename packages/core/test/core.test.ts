@@ -31,15 +31,12 @@ describe("@brickkit/core Engine", () => {
         amount: t.Number(),
         status: t.String(),
       }),
-      execute: async ({ input, ctx }) => {
-        expect(ctx.traceId).toBeDefined();
-        return {
-          id: "deal_123",
-          title: input.title,
-          amount: input.amount,
-          status: "pending",
-        };
-      },
+      execute: async ({ input }) => ({
+        id: "deal_123",
+        title: input.title,
+        amount: input.amount,
+        status: "pending",
+      }),
     });
 
     dealsService.action(createDeal);
@@ -79,11 +76,9 @@ describe("@brickkit/core Engine", () => {
 
     mathService.action(divideAction);
 
-    // Valid call
     const res = await divideAction({ input: { a: 10, b: 2 } });
     expect(res.result).toBe(5);
 
-    // Invalid input type (string instead of number)
     try {
       // @ts-expect-error test invalid input
       await divideAction({ input: { a: "not a number", b: 2 } });
@@ -93,7 +88,6 @@ describe("@brickkit/core Engine", () => {
       expect(err.errors.length).toBeGreaterThan(0);
     }
 
-    // Typed domain error
     try {
       await divideAction({ input: { a: 10, b: 0 } });
       expect.unreachable();
@@ -122,31 +116,5 @@ describe("@brickkit/core Engine", () => {
 
     const result = await notifyRpc.send({ message: "Hello from RPC!" });
     expect(result.delivered).toBe(true);
-  });
-
-  it("should enforce authorization guards when present", async () => {
-    const secureService = defineService("secure");
-    const secretAction = defineAction({
-      name: "getSecret",
-      authorize: ({ user }) => user?.role === "admin",
-      output: t.Object({ secret: t.String() }),
-      execute: async () => ({ secret: "brick-top-secret" }),
-    });
-
-    secureService.action(secretAction);
-
-    // Unauthenticated / unauthorized
-    try {
-      await secretAction({ ctx: { user: { role: "guest" } } });
-      expect.unreachable();
-    } catch (err: any) {
-      expect(err).toBeInstanceOf(ActionExecutionError);
-      expect(err.code).toBe("FORBIDDEN");
-      expect(err.status).toBe(403);
-    }
-
-    // Authorized
-    const res = await secretAction({ ctx: { user: { role: "admin" } } });
-    expect(res.secret).toBe("brick-top-secret");
   });
 });

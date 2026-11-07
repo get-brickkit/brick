@@ -1,5 +1,4 @@
-import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { eq } from "drizzle-orm";
+import { describe, expect, it, spyOn } from "bun:test";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import {
   brick,
@@ -8,21 +7,20 @@ import {
   defineListener,
   t,
   defineService,
+  DuplicateNameError,
   emitEvent,
   getGlobalRegistry,
-  EventsHub,
-  isOutboxTable,
   outboxTable,
   onTransactionCommit,
   runInTransaction,
   stopAllEvents,
   syncSchema,
+  type CreateServerOptions,
   type EventDelivery,
+  type EventsHub,
 } from "../src";
-import { backoffMs, Dispatcher } from "../src/events/dispatcher";
-import { matchesEvent } from "../src/events/hub";
-import { newEventId } from "../src/events/id";
-import { outboxEngine } from "../src/events/outbox";
+import { GLOBAL_SYMBOL } from "../src/telemetry-names";
+import { track, waitFor } from "./helpers";
 
 const items = sqliteTable("items", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -31,65 +29,33 @@ const items = sqliteTable("items", {
 const outbox = outboxTable("sqlite");
 
 let serial = 0;
-const hubs: EventsHub[] = [];
+
+function app(
+  services: CreateServerOptions["services"],
+  events: CreateServerOptions["events"],
+) {
+  return track(brick({ services, events, requestLogging: false, docs: false }));
+}
 
 function setup(
   listeners: Parameters<typeof defineListener>[0][],
-  dispatch = {},
+  dispatch: object | false = {},
 ) {
   const database = defineDatabase({ tables: { items, outbox } });
   const db: any = database.getDb();
   syncSchema([items, outbox], db);
   const service = defineService(`events_test_${++serial}`, { database });
-  const hub = new EventsHub({
+  const hub = app([service], {
     listeners: listeners.map(defineListener),
-    dispatch: { timer: false, maxBackoffMs: 5, ...dispatch },
-  }).attach([service]);
-  hubs.push(hub);
-  return { db, service, hub, events: service.recorder! };
+    dispatch: dispatch && { timer: false, maxBackoffMs: 5, ...dispatch },
+  }).events!;
+  return { database, db, service, hub, events: service.recorder! };
 }
 
 const rows = (db: any) => db.select().from(outbox).all();
-
-afterEach(async () => {
-  await Promise.all(hubs.splice(0).map((hub) => hub.stop()));
-});
-
-describe("event helpers", () => {
-  it("matches names exactly, by prefix, and with a wildcard", () => {
-    expect(matchesEvent("user.create", "user.create")).toBe(true);
-    expect(matchesEvent("user.create", "user.update")).toBe(false);
-    expect(matchesEvent("user.*", "user.update")).toBe(true);
-    expect(matchesEvent("user.*", "order.create")).toBe(false);
-    expect(matchesEvent("*", "anything.at.all")).toBe(true);
-  });
-
-  it("makes event ids that are unique and sort by time", () => {
-    const a = newEventId(1_000);
-    const b = newEventId(2_000);
-    expect(a).toMatch(/^evt_[0-9A-HJKMNP-TV-Z]{26}$/);
-    expect(a < b).toBe(true);
-    expect(new Set(Array.from({ length: 500 }, () => newEventId())).size).toBe(
-      500,
-    );
-  });
-
-  it("backs off from a second up to a cap", () => {
-    expect(backoffMs(1, 300_000)).toBe(1_000);
-    expect(backoffMs(2, 300_000)).toBe(2_000);
-    expect(backoffMs(4, 300_000)).toBe(8_000);
-    expect(backoffMs(20, 300_000)).toBe(300_000);
-  });
-
-  it("brands the outbox table and knows its engine", () => {
-    expect(isOutboxTable(outbox)).toBe(true);
-    expect(isOutboxTable(items)).toBe(false);
-    expect(outboxEngine(outbox)).toBe("sqlite");
-    expect(outboxEngine(outboxTable("postgres", { name: "events_out" }))).toBe(
-      "postgres",
-    );
-  });
-});
+/** Delivers until `done` holds: retries wait out their (short) backoff. */
+const settle = (hub: EventsHub, done: () => boolean | Promise<boolean>) =>
+  waitFor(async () => (await hub.drain(), done()));
 
 describe("defineListener", () => {
   const run = () => {};
@@ -120,9 +86,9 @@ describe("defineListener", () => {
 describe("EventsHub", () => {
   it("refuses duplicate listener names", () => {
     const listener = defineListener({ name: "same", on: "x", run: () => {} });
-    expect(() => new EventsHub({ listeners: [listener, listener] })).toThrow(
-      "Duplicate event listener 'same'",
-    );
+    const create = () => app([], { listeners: [listener, listener] });
+    expect(create).toThrow("Duplicate event listener 'same'");
+    expect(create).toThrow(DuplicateNameError);
   });
 
   it("gives only a service whose database holds an outbox a recorder", () => {
@@ -131,8 +97,7 @@ describe("EventsHub", () => {
     const plain = defineService(`events_test_${++serial}`, {
       database: defineDatabase({ tables: { items } }),
     });
-    const hub = new EventsHub({}).attach([plain]);
-    hubs.push(hub);
+    app([plain], {});
     expect(plain.recorder).toBeUndefined();
   });
 
@@ -141,11 +106,9 @@ describe("EventsHub", () => {
     const plain = defineService(`events_test_${++serial}`, {
       database: defineDatabase({ tables: { items } }),
     });
-    hubs.push(
-      new EventsHub({
-        listeners: [defineListener({ name: "a", on: "x", run() {} })],
-      }).attach([plain]),
-    );
+    app([plain], {
+      listeners: [defineListener({ name: "a", on: "x", run() {} })],
+    });
     expect(warn.mock.calls[0]?.[0]).toContain(
       "no service database has an outbox table",
     );
@@ -171,6 +134,7 @@ describe("recording events", () => {
     const { db, events } = setup([
       { name: "mail", on: "item.create", run: () => {} },
       { name: "audit", on: "item.*", run: () => {} },
+      { name: "all", on: "*", run: () => {} },
       { name: "other", on: "order.create", run: () => {} },
     ]);
     await events.transaction(
@@ -185,6 +149,7 @@ describe("recording events", () => {
     expect(db.select().from(items).all()).toHaveLength(1);
     const recorded = rows(db);
     expect(recorded.map((row: any) => row.listener).sort()).toEqual([
+      "all",
       "audit",
       "mail",
     ]);
@@ -199,6 +164,7 @@ describe("recording events", () => {
     });
     expect(new Set(recorded.map((row: any) => row.eventId)).size).toBe(1);
     expect(recorded.map((row: any) => row.id).sort()).toEqual([
+      `${first.eventId}:all`,
       `${first.eventId}:audit`,
       `${first.eventId}:mail`,
     ]);
@@ -245,7 +211,7 @@ describe("recording events", () => {
       ),
     );
     expect(db.select().from(items).all()).toHaveLength(20);
-    expect(rows(db)).toHaveLength(20);
+    expect(new Set(rows(db).map((row: any) => row.eventId)).size).toBe(20);
   });
 });
 
@@ -307,10 +273,7 @@ describe("delivering events", () => {
     await record(ctx);
     await ctx.hub.drain();
     expect(calls).toEqual(["good"]);
-    await new Promise((resolve) => setTimeout(resolve, 15));
-    await ctx.hub.drain();
-    await new Promise((resolve) => setTimeout(resolve, 15));
-    await ctx.hub.drain();
+    await settle(ctx.hub, async () => (await ctx.hub.counts()).dead === 1);
     expect(calls).toEqual(["good"]);
     expect(await ctx.hub.counts()).toEqual({
       pending: 0,
@@ -342,10 +305,7 @@ describe("delivering events", () => {
       dead: 0,
     });
     expect(rows(ctx.db)[0].lastError).toBe("fail 1");
-    await new Promise((resolve) => setTimeout(resolve, 15));
-    await ctx.hub.drain();
-    await new Promise((resolve) => setTimeout(resolve, 15));
-    await ctx.hub.drain();
+    await settle(ctx.hub, () => attempts.length === 3);
     expect(attempts).toEqual([1, 2, 3]);
     expect(await ctx.hub.counts()).toEqual({
       pending: 0,
@@ -353,6 +313,32 @@ describe("delivering events", () => {
       delivered: 1,
       dead: 0,
     });
+  });
+
+  it("waits longer after each failure, up to maxBackoffMs", async () => {
+    const ctx = setup(
+      [
+        {
+          name: "down",
+          on: "item.create",
+          run: () => {
+            throw new Error("down");
+          },
+        },
+      ],
+      { maxBackoffMs: 60_000 },
+    );
+    await record(ctx);
+    const delays: number[] = [];
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      ctx.db.update(outbox).set({ availableAt: new Date() }).run();
+      await ctx.hub.drain();
+      delays.push(rows(ctx.db)[0].availableAt.getTime() - Date.now());
+    }
+    expect(rows(ctx.db)[0].attempts).toBe(2);
+    expect(delays[0]).toBeGreaterThan(500);
+    expect(delays[1]).toBeGreaterThan(delays[0]!);
+    expect(delays[1]).toBeLessThanOrEqual(60_000);
   });
 
   it("parks a delivery as dead when its attempts run out, and retries it on request", async () => {
@@ -371,10 +357,7 @@ describe("delivering events", () => {
       { maxBackoffMs: 1 },
     );
     await record(ctx);
-    for (let round = 0; round < 3; round++) {
-      await ctx.hub.drain();
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    await settle(ctx.hub, async () => (await ctx.hub.counts()).dead === 1);
     expect(await ctx.hub.counts()).toEqual({
       pending: 0,
       claimed: 0,
@@ -402,15 +385,13 @@ describe("delivering events", () => {
   it("parks a delivery whose listener is no longer registered", async () => {
     const ctx = setup([{ name: "gone", on: "item.create", run: () => {} }]);
     await record(ctx);
-    const other = new EventsHub({ listeners: [], dispatch: true }).attach([
-      Object.assign(Object.create(null), {
-        name: "x",
-        getDb: () => ctx.db,
-        getOutbox: () => outbox,
-        setRecorder: () => {},
-      }),
-    ]);
-    hubs.push(other);
+    const elsewhere = defineService(`events_test_${++serial}`, {
+      database: ctx.database,
+    });
+    const other = app([elsewhere], {
+      listeners: [],
+      dispatch: { timer: false },
+    }).events!;
     await other.drain();
     expect(rows(ctx.db)[0]).toMatchObject({ status: "dead" });
     expect(rows(ctx.db)[0].lastError).toContain("No listener named 'gone'");
@@ -425,9 +406,10 @@ describe("delivering events", () => {
       },
     );
     await record(ctx);
-    ctx.db.$client.run(
-      `UPDATE brick_outbox SET status = 'claimed', claimed_at = ${Date.now() - 1000}`,
-    );
+    ctx.db
+      .update(outbox)
+      .set({ status: "claimed", claimedAt: new Date(Date.now() - 1000) })
+      .run();
     await ctx.hub.drain();
     expect(calls).toEqual(["ran"]);
     expect(await ctx.hub.counts()).toEqual({
@@ -447,9 +429,10 @@ describe("delivering events", () => {
       },
     );
     await record(ctx);
-    ctx.db.$client.run(
-      `UPDATE brick_outbox SET status = 'claimed', claimed_at = ${Date.now()}`,
-    );
+    ctx.db
+      .update(outbox)
+      .set({ status: "claimed", claimedAt: new Date() })
+      .run();
     await ctx.hub.drain();
     expect(calls).toEqual([]);
   });
@@ -474,8 +457,7 @@ describe("delivering events", () => {
     );
     ctx.hub.start();
     await record(ctx);
-    for (let wait = 0; wait < 100 && seen.length === 0; wait++)
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    await waitFor(() => seen.length > 0);
     expect(seen).toEqual(["item.create"]);
   });
 
@@ -498,15 +480,15 @@ describe("delivering events", () => {
     );
     ctx.hub.start();
     await record(ctx, "item.create", { id: 1 });
-    for (let wait = 0; wait < 100 && seen.length === 0; wait++)
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    await waitFor(() => seen.length > 0);
 
     const stopping = ctx.hub.stop();
     // The startup of a process that is being stopped still starts the hub, and a
     // commit does too. Neither may claim what the process will drop on exit.
     ctx.hub.start();
     await record(ctx, "item.create", { id: 2 });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Nothing to wait for: the second event must stay undelivered.
+    await Bun.sleep(50);
     release();
     await stopping;
 
@@ -519,28 +501,23 @@ describe("delivering events", () => {
 
   it("only records when this process does not dispatch", async () => {
     const seen: string[] = [];
-    const ctx = setup([
-      { name: "mail", on: "item.create", run: () => void seen.push("x") },
-    ]);
-    const recordOnly = new EventsHub({
-      listeners: [
-        defineListener({ name: "mail", on: "item.create", run: () => {} }),
-      ],
-      dispatch: false,
-    }).attach([ctx.service]);
-    hubs.push(recordOnly);
-    recordOnly.start();
-    await ctx.service.recorder!.transaction(ctx.db, {}, async (_tx, rec) => {
+    const ctx = setup(
+      [{ name: "mail", on: "item.create", run: () => void seen.push("x") }],
+      false,
+    );
+    ctx.hub.start();
+    await ctx.events.transaction(ctx.db, {}, async (_tx, rec) => {
       await rec("item.create", {});
     });
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    // Nothing to wait for: no delivery may happen.
+    await Bun.sleep(30);
     expect(rows(ctx.db)[0].status).toBe("pending");
     expect(seen).toEqual([]);
   });
 
   // Shared by name, so the CLI's copy of the package sees the app's hubs.
   const started = (globalThis as Record<symbol, unknown>)[
-    Symbol.for("brickkit.events.started")
+    Symbol.for(GLOBAL_SYMBOL.eventsStarted)
   ] as Set<EventsHub>;
 
   it("keeps the hubs that are started, in a set every copy of the package shares", async () => {
@@ -553,13 +530,10 @@ describe("delivering events", () => {
     hub.start();
     expect(started.has(hub)).toBe(true);
 
-    const recordOnly = new EventsHub({
-      listeners: [
-        defineListener({ name: "mail", on: "item.create", run: () => {} }),
-      ],
-      dispatch: false,
-    });
-    hubs.push(recordOnly);
+    const recordOnly = setup(
+      [{ name: "mail", on: "item.create", run: () => {} }],
+      false,
+    ).hub;
     recordOnly.start();
     expect(started.has(recordOnly)).toBe(false);
   });
@@ -584,8 +558,7 @@ describe("delivering events", () => {
     );
     // The commit starts the hub, as an event emitted while an entry loads does.
     await record(ctx);
-    for (let wait = 0; wait < 100 && seen.length === 0; wait++)
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    await waitFor(() => seen.length > 0);
 
     // Hubs that other test files left started are not this test's to stop.
     const others = [...started].filter((hub) => hub !== ctx.hub);
@@ -593,7 +566,8 @@ describe("delivering events", () => {
     let stopped = false;
     const stopping = stopAllEvents().then(() => (stopped = true));
     try {
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      // Nothing to wait for: the stop must still be waiting on the delivery.
+      await Bun.sleep(30);
       expect(stopped).toBe(false);
     } finally {
       release();
@@ -623,8 +597,7 @@ describe("delivering events", () => {
       { timer: true, intervalMs: 5 },
     );
     await record(slow);
-    for (let wait = 0; wait < 100 && !running; wait++)
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    await waitFor(() => running);
     const broken = setup([{ name: "mail", on: "item.create", run: () => {} }]);
     broken.hub.start();
     const failure = new Error("close failed");
@@ -641,8 +614,8 @@ describe("delivering events", () => {
     );
     void stopping.then(() => (settled = true));
     try {
-      await new Promise((resolve) => setTimeout(resolve, 30));
-      // The failing hub is done, the slow one is still delivering.
+      // Nothing to wait for: the failing hub is done, the slow one is still delivering.
+      await Bun.sleep(30);
       expect(fails).toHaveBeenCalledTimes(1);
       expect(settled).toBe(false);
     } finally {
@@ -655,18 +628,6 @@ describe("delivering events", () => {
     expect(await stopping).toBe(failure);
     expect(started.has(slow.hub)).toBe(false);
     expect(rows(slow.db)[0].status).toBe("delivered");
-  });
-
-  it("stops the dispatchers once when stops overlap", async () => {
-    const { hub } = setup([{ name: "mail", on: "item.create", run: () => {} }]);
-    hub.start();
-    const stop = spyOn(Dispatcher.prototype, "stop");
-    try {
-      await Promise.all([hub.stop(), hub.stop()]);
-      expect(stop).toHaveBeenCalledTimes(1);
-    } finally {
-      stop.mockRestore();
-    }
   });
 
   it("starts again once its stop is done", async () => {
@@ -688,8 +649,7 @@ describe("delivering events", () => {
     ctx.hub.start();
     expect(started.has(ctx.hub)).toBe(true);
     await record(ctx, "item.create", { id: 1 });
-    for (let wait = 0; wait < 100 && seen.length === 0; wait++)
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    await waitFor(() => seen.length > 0);
     expect(seen).toEqual([{ id: 1 }]);
   });
 });
@@ -698,26 +658,19 @@ describe("brick({ events })", () => {
   it("puts the hub on the app and its description in the definition", () => {
     const database = defineDatabase({ tables: { items, outbox } });
     const service = defineService(`events_test_${++serial}`, { database });
-    const app = brick({
-      services: [service],
-      events: {
-        listeners: [defineListener({ name: "a", on: "x.*", run: () => {} })],
-      },
-      requestLogging: false,
-      docs: false,
+    const made = app([service], {
+      listeners: [defineListener({ name: "a", on: "x.*", run: () => {} })],
     });
-    hubs.push(app.events!);
-    expect(app.events).toBeInstanceOf(EventsHub);
     expect(service.recorder).toBeDefined();
-    expect(app.definition.events).toEqual({
+    expect(made.definition.events).toEqual({
       listeners: [{ name: "a", on: ["x.*"], kind: "handler" }],
       dispatch: true,
       recorders: [service.name],
     });
     // The architecture export carries it to the dashboard and `brick info`.
     expect(
-      getGlobalRegistry().exportArchitecture(app.definition).events,
-    ).toEqual(app.definition.events);
+      getGlobalRegistry().exportArchitecture(made.definition).events,
+    ).toEqual(made.definition.events);
   });
 
   it("changes nothing when events are not set", () => {
@@ -732,19 +685,6 @@ describe("brick({ events })", () => {
     expect(app.events).toBeUndefined();
     expect(app.definition.events).toBeUndefined();
     expect(service.recorder).toBeUndefined();
-  });
-});
-
-describe("row lookups the tests rely on", () => {
-  it("find a delivery by its id", async () => {
-    const ctx = setup([{ name: "mail", on: "item.create", run: () => {} }]);
-    await ctx.events.transaction(ctx.db, {}, async (_tx, rec) => {
-      await rec("item.create", {});
-    });
-    const [row] = rows(ctx.db);
-    expect(
-      ctx.db.select().from(outbox).where(eq(outbox.id, row.id)).all(),
-    ).toHaveLength(1);
   });
 });
 
@@ -870,6 +810,7 @@ describe("emitEvent", () => {
       order.push("first done");
     });
     const second = runInTransaction(db, async () => void order.push("second"));
+    // Nothing to wait for: the second caller must not start yet.
     await Bun.sleep(5);
     expect(order).toEqual(["first"]);
     release();
@@ -943,5 +884,26 @@ describe("typed listener errors", () => {
     );
     expect(seen[0]).toMatchObject({ code: "UNKNOWN", message: "boom" });
     expect((await ctx.hub.counts()).pending).toBe(1);
+  });
+
+  it("retries, and logs, when retry itself throws", async () => {
+    const log = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { ctx } = await runWith(
+        () => {
+          throw new Error("boom");
+        },
+        () => {
+          throw new Error("bad policy");
+        },
+      );
+      expect((await ctx.hub.counts()).pending).toBe(1);
+      const logged = log.mock.calls.find((call) =>
+        String(call[0]).includes("its retry() threw"),
+      );
+      expect(logged?.[1]).toMatchObject({ message: "bad policy" });
+    } finally {
+      log.mockRestore();
+    }
   });
 });

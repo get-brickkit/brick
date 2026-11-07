@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listStreams } from "~/lib/client/workflow-streams";
-import type { EnvMap } from "~/lib/types";
 
 const STREAMS_REFRESH_INTERVAL_MS = 10000;
 
@@ -8,7 +7,6 @@ const STREAMS_REFRESH_INTERVAL_MS = 10000;
  * Hook to fetch and manage stream list for a run
  */
 export function useWorkflowStreams(
-  env: EnvMap,
   runId: string,
   refreshInterval: number = STREAMS_REFRESH_INTERVAL_MS,
 ) {
@@ -23,7 +21,7 @@ export function useWorkflowStreams(
     }
     setError(null);
     try {
-      const result = await listStreams(env, runId);
+      const result = await listStreams(runId);
       setStreams(result);
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)));
@@ -31,15 +29,13 @@ export function useWorkflowStreams(
       hasFetchedRef.current = true;
       setLoading(false);
     }
-  }, [env, runId]);
+  }, [runId]);
 
-  // Initial load
   useEffect(() => {
     hasFetchedRef.current = false;
     fetchData();
   }, [fetchData]);
 
-  // Auto-refresh interval
   useEffect(() => {
     if (!refreshInterval || refreshInterval <= 0) {
       return;

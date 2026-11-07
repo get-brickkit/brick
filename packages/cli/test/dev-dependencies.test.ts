@@ -1,37 +1,10 @@
 import { test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-
-async function waitFor(check: () => boolean, timeoutMs = 15000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (check()) return;
-    await Bun.sleep(50);
-  }
-  throw new Error("Timed out waiting for the dev restart");
-}
-
-async function freePort() {
-  const listener = Bun.serve({ port: 0, fetch: () => new Response() });
-  const port = listener.port;
-  listener.stop(true);
-  return port;
-}
-
-function capture(child: ReturnType<typeof Bun.spawn>) {
-  let output = "";
-  const collect = async (stream: typeof child.stdout) => {
-    if (typeof stream === "number" || !stream) return;
-    for await (const chunk of stream) output += new TextDecoder().decode(chunk);
-  };
-  const finished = Promise.all([collect(child.stdout), collect(child.stderr)]);
-  return { read: () => output, finished };
-}
+import { capture, freePort, tempProject, waitFor } from "./helpers";
 
 test("brick dev restarts when an imported file outside the entry directory changes", async () => {
-  const directory = await mkdtemp(
-    join(resolve(import.meta.dir, "../../.."), ".dev-deps-"),
-  );
+  const directory = await tempProject("dev-deps");
   await mkdir(join(directory, "server"));
   await mkdir(join(directory, "shared"));
   await writeFile(

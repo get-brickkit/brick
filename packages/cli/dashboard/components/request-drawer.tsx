@@ -17,7 +17,7 @@ import { LogLevelLabel } from "@/components/log-level";
 import { logsOfTrace } from "@/logs";
 import { requestReport } from "@/request-report";
 import { routeLabel } from "@/components/route-label";
-import type { TraceSummary } from "../../src/dev-telemetry-store";
+import type { TraceSummary } from "../../src/dashboard-protocol";
 
 function Fact({
   label,
@@ -136,7 +136,6 @@ export function RequestDrawer({
   const logs = trace ? logsOfTrace(trace) : undefined;
   const label = source ? routeLabel(source) : "Request";
   const duration = source?.durationMs;
-  // The extension's tabs, beside Details.
   const { extension, context } = useContext(ExtensionContext);
   const tabs = extension?.slots?.["request.drawer.tabs"] ?? [];
   const [tabId, setTabId] = useState<string>();

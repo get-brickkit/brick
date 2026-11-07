@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -19,13 +19,32 @@ export interface LintMessage {
   message: string;
 }
 
-/** The built lint/oxlint entry, which oxlint loads under Node. */
+let fromSource: string | undefined;
+/** The lint/oxlint entry oxlint loads under Node: the bundle beside this code, or, run from source, a fresh bundle of it. */
 function pluginPath() {
   const here = fileURLToPath(import.meta.url);
-  // From source (tests run src/ under Bun), use the build; bundled, this code sits in dist/.
-  return here.endsWith(".ts")
-    ? resolve(dirname(here), "../../dist/lint/oxlint.js")
-    : resolve(dirname(here), "lint/oxlint.js");
+  if (!here.endsWith(".ts")) return resolve(dirname(here), "lint/oxlint.js");
+  if (fromSource) return fromSource;
+  // Inside the package, so Node resolves the bundle's imports from here.
+  const file = resolve(here, "../../../node_modules/.cache/brick-lint.js");
+  // Built beside it, then renamed: another process may be loading it.
+  const building = `${file}.${process.pid}`;
+  const result = spawnSync(
+    process.execPath,
+    ["build", resolve(dirname(here), "oxlint.ts"), "--target", "node"].concat([
+      "--packages",
+      "external",
+      "--outfile",
+      building,
+    ]),
+    { encoding: "utf8" },
+  );
+  if (result.status !== 0)
+    throw new Error(
+      `Brick: building the lint plugin failed:\n${result.stderr}`,
+    );
+  renameSync(building, file);
+  return (fromSource = file);
 }
 
 function oxlintBin(root: string) {
@@ -36,9 +55,7 @@ function oxlintBin(root: string) {
     try {
       const pkg = createRequire(base).resolve("oxlint/package.json");
       return join(dirname(pkg), "bin/oxlint");
-    } catch {
-      // not installed there; try the next place
-    }
+    } catch {}
   }
   throw new ConfigError(
     "Brick: brick lint needs oxlint; add it: bun add -d oxlint",
@@ -54,8 +71,6 @@ export function runFileRules(options: {
   rules: Record<string, Severity>;
   settings: BrickSettings;
   ignore?: string[];
-  /** Files or folders to lint, from `root` (default: all of it). */
-  paths?: string[];
   fix?: boolean;
 }): LintMessage[] {
   const rules = Object.fromEntries(
@@ -89,7 +104,7 @@ export function runFileRules(options: {
           "--ignore-pattern",
           pattern,
         ]),
-        ...(options.paths ?? ["."]),
+        ".",
       ],
       { cwd: options.root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
     );

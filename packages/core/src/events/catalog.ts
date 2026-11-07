@@ -63,7 +63,45 @@ export function eventRefs(
   return Object.freeze(refs);
 }
 
-const CRUD_EVENT = /^(create|update|delete)$/;
+/** @throws When the payload does not match the event's schema. */
+export function checkPayload(ref: EventRef, payload: unknown): void {
+  const result = validateWithSchema(ref.schema, payload);
+  if (!result.success)
+    throw new Error(
+      `Event "${ref.name}" payload does not match its schema: ${result.errors
+        .map((error) => `${error.path || "/"} ${error.message}`)
+        .join("; ")}`,
+    );
+}
+
+/** The writes a resource's CRUD events report. Payloads are `CrudEventPayload`. */
+export const CRUD_EVENT_OPERATIONS = ["create", "update", "delete"] as const;
+export type CrudEventOperation = (typeof CRUD_EVENT_OPERATIONS)[number];
+
+/** The event a CRUD write records: `<resource>.<operation>`. */
+export const crudEventName = (
+  resource: string,
+  operation: CrudEventOperation,
+): string => `${resource}.${operation}`;
+
+/** The `source` of a resource's events: `<service>.<resource>`. */
+export const crudEventSource = (service: string, resource: string): string =>
+  `${service}.${resource}`;
+
+/** Whether `name` is the CRUD event of one of `resources`. */
+export function isCrudEvent(
+  name: string,
+  resources: readonly string[],
+): boolean {
+  const dot = name.indexOf(".");
+  return (
+    dot > 0 &&
+    (CRUD_EVENT_OPERATIONS as readonly string[]).includes(
+      name.slice(dot + 1),
+    ) &&
+    resources.includes(name.slice(0, dot))
+  );
+}
 
 /**
  * Check an event against the catalog of the service recording it. Without a
@@ -82,22 +120,13 @@ export function checkEvent(
   const ref = name.startsWith(prefix)
     ? service.events[name.slice(prefix.length)]
     : undefined;
-  if (ref) {
-    const result = validateWithSchema(ref.schema, payload);
-    if (!result.success)
-      throw new Error(
-        `Event "${name}" payload does not match its schema: ${result.errors
-          .map((error) => `${error.path || "/"} ${error.message}`)
-          .join("; ")}`,
-      );
-    return;
-  }
+  if (ref) return checkPayload(ref, payload);
   if (!service.hasCatalog) return;
-  const dot = name.indexOf(".");
   if (
-    dot > 0 &&
-    CRUD_EVENT.test(name.slice(dot + 1)) &&
-    service.listResources().some((r) => r.name === name.slice(0, dot))
+    isCrudEvent(
+      name,
+      service.listResources().map((r) => r.name),
+    )
   )
     return;
   throw new Error(

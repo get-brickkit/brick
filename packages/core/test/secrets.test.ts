@@ -4,10 +4,9 @@ import {
   resolveSecrets,
   listSecrets,
   overrideSecret,
-  overrideSecrets,
   resetSecrets,
   type SecretSource,
-} from "../src/secrets";
+} from "../src";
 
 const ENV_KEYS = ["BRICK_TEST_REQ", "BRICK_TEST_OPT", "BRICK_TEST_MISSING"];
 const savedEnv: Record<string, string | undefined> = {};
@@ -52,11 +51,18 @@ describe("defineSecret() type-safe env loading", () => {
     );
   });
 
-  it("re-declaring the same name returns the original ref", () => {
-    const a = defineSecret("BRICK_TEST_REQ");
-    const b = defineSecret("BRICK_TEST_REQ", { default: "late" });
+  it("re-declaring the same name returns the same ref, set to the new declaration", () => {
+    let checks = 0;
+    const declare = (fallback: string) =>
+      defineSecret("BRICK_TEST_REQ", { default: fallback }).validate(() => {
+        checks++;
+      });
+    const a = declare("early");
+    const b = declare("late");
     expect(b).toBe(a);
-    expect(b.value()).toBeUndefined();
+    expect(b.value()).toBe("late");
+    // A module evaluated twice declares its validator twice; it still runs once.
+    expect(checks).toBe(1);
   });
 
   it("resolveSecrets() throws listing all missing required secrets", () => {
@@ -87,7 +93,7 @@ describe("defineSecret() type-safe env loading", () => {
     const s = defineSecret("BRICK_TEST_OPT", { default: "fallback" });
     overrideSecret("BRICK_TEST_OPT", "override");
     expect(s.value()).toBe("override");
-    overrideSecrets({ BRICK_TEST_OPT: undefined });
+    overrideSecret("BRICK_TEST_OPT", undefined);
     expect(s.value()).toBe("from-env");
   });
 

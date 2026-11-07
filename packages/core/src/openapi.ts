@@ -1,9 +1,21 @@
 import type { EventRef } from "./events/catalog";
-import { getActionRoute } from "./routes";
+import {
+  DEFAULT_PREFIX,
+  actionOwners,
+  pathParamNames,
+  toOpenApiPath,
+} from "./routes";
+import { analyzeDeclaredApplication } from "./compiler/ir";
 import { getActionAccess } from "./access";
-import type { ServiceRegistry } from "./registry";
 import { getGlobalRegistry } from "./registry";
 import type { Service, ActionErrorDefinition } from "./types";
+
+/** The OpenAPI document's defaults, shared by `brick()` and `generateOpenApiSpec`. */
+export const OPENAPI_DEFAULTS = Object.freeze({
+  title: "Brick-TS API Mesh",
+  version: "1.0.0",
+  path: "/openapi.json",
+});
 
 export interface OpenApiGeneratorOptions {
   title?: string;
@@ -11,7 +23,6 @@ export interface OpenApiGeneratorOptions {
   description?: string;
   prefix?: string;
   services?: Service<any, any>[];
-  registry?: ServiceRegistry;
 }
 
 function isAnchor(
@@ -45,9 +56,8 @@ function toComponentKey(id: string): string {
  * `#/components/schemas/` and rewrite the refs to local pointers.
  * First definition wins when one `$id` is declared twice.
  */
-export function hoistAnchoredSchemas(spec: Record<string, any>): string[] {
+function hoistAnchoredSchemas(spec: Record<string, any>): void {
   const anchored = new Map<string, any>();
-  const conflicts: string[] = [];
 
   const collect = (node: any): any => {
     if (Array.isArray(node)) return node.map(collect);
@@ -56,13 +66,7 @@ export function hoistAnchoredSchemas(spec: Record<string, any>): string[] {
       const id = node.$id;
       const { $id: _dropped, ...rest } = node;
       const collected = collect(rest);
-      if (anchored.has(id)) {
-        if (JSON.stringify(anchored.get(id)) !== JSON.stringify(collected)) {
-          conflicts.push(id);
-        }
-      } else {
-        anchored.set(id, collected);
-      }
+      if (!anchored.has(id)) anchored.set(id, collected);
       return { $ref: `#/components/schemas/${toComponentKey(id)}` };
     }
     for (const key of Object.keys(node)) {
@@ -94,8 +98,6 @@ export function hoistAnchoredSchemas(spec: Record<string, any>): string[] {
   // Second pass covers refs inside the hoisted copies themselves
   // (e.g. the self-recursive JSON-value schema).
   rewrite(spec);
-
-  return [...anchored.keys()];
 }
 
 /**
@@ -109,45 +111,41 @@ export function hoistAnchoredSchemas(spec: Record<string, any>): string[] {
  * document to a file or feed another tool.
  *
  * @param options - `title`, `version`, and `description` for the `info` block,
- * `prefix` (default `/api`), and the `services` or `registry` to describe
- * (the global registry by default).
+ * `prefix` (default `/api`), and the `services` to describe (the global
+ * registry's by default).
  * @returns The document as a plain object.
  */
 export function generateOpenApiSpec(
   options: OpenApiGeneratorOptions = {},
 ): Record<string, any> {
-  const title = options.title ?? "Brick-TS API Mesh";
-  const version = options.version ?? "1.0.0";
+  const title = options.title ?? OPENAPI_DEFAULTS.title;
+  const version = options.version ?? OPENAPI_DEFAULTS.version;
   const description =
     options.description ??
     "Automated OpenAPI 3.1.0 specification for Brick-TS modular service mesh.";
-  const prefix = options.prefix ?? "/api";
+  const prefix = options.prefix ?? DEFAULT_PREFIX;
 
-  const services =
-    options.services ??
-    (options.registry ? options.registry.list() : getGlobalRegistry().list());
+  const services = options.services ?? getGlobalRegistry().list();
 
   const paths: Record<string, any> = {};
   const tags = new Map<string, string>();
   let hasAnyAuthorizedAction = false;
 
+  // The routes the server mounts: shadowed ones are left out, as the router leaves them out.
+  const { ir, bindings } = analyzeDeclaredApplication([...services], prefix);
   for (const service of services) {
     tags.set(service.name, `Actions exposed by '${service.name}' service`);
 
-    for (const action of service.listActions()) {
-      const route = getActionRoute(action, prefix);
-      if (route === false) continue;
+    for (const [index, route] of ir.routes.entries()) {
+      if (route.service !== service.name) continue;
+      const { action } = bindings[index]!;
       const routePath = route.path;
       const method = route.method.toLowerCase();
-      const pathParams = [...routePath.matchAll(/:([^/]+)/g)].map(
-        (match) => match[1]!,
-      );
-      const actionPath = routePath.replace(/:([^/]+)/g, "{$1}");
+      const pathParams = pathParamNames(routePath);
+      const actionPath = toOpenApiPath(routePath);
       if (!paths[actionPath]) paths[actionPath] = {};
-      // Match the compiler's first-registration-wins policy for route collisions.
-      if (paths[actionPath][method]) continue;
 
-      const resource = (action as { resource?: string }).resource;
+      const { plugin, resource } = actionOwners(action);
       // Resource routes group under `service · resource`.
       const group = resource ? `${service.name} · ${resource}` : service.name;
       if (resource)
@@ -161,10 +159,8 @@ export function generateOpenApiSpec(
         hasAnyAuthorizedAction = true;
       }
 
-      // Build responses map
       const responses: Record<string, any> = {};
 
-      // 200 Success Response
       if (action.config.output) {
         responses["200"] = {
           description: "Successful response",
@@ -237,12 +233,8 @@ export function generateOpenApiSpec(
           action.config.description ??
           `Execute action '${action.name}' on service '${service.name}'`,
         tags: [...new Set([group, ...(action.config.tags ?? [])])],
-        ...((action as { plugin?: string }).plugin
-          ? { "x-brick-plugin": (action as { plugin?: string }).plugin }
-          : {}),
-        ...((action as { resource?: string }).resource
-          ? { "x-brick-resource": (action as { resource?: string }).resource }
-          : {}),
+        ...(plugin ? { "x-brick-plugin": plugin } : {}),
+        ...(resource ? { "x-brick-resource": resource } : {}),
         responses,
       };
 
@@ -254,8 +246,7 @@ export function generateOpenApiSpec(
         required: true,
         schema: properties[key] ?? { type: "string" },
       }));
-      const queryOnly = method === "get" || method === "delete";
-      if (queryOnly) {
+      if (route.inputSource === "query") {
         for (const [key, schema] of Object.entries(properties)) {
           if (pathParams.includes(key)) continue;
           parameters.push({

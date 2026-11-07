@@ -1,9 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { resolveWorkflowPaths, type BrickApp } from "@brickkit/core";
+import {
+  resolveWorkflowPaths,
+  WORKFLOW_BUNDLE,
+  type BrickApp,
+} from "@brickkit/core";
+import { ConfigError } from "./config";
 
 interface Builders {
   StandaloneBuilder: new (config: Record<string, unknown>) => {
@@ -35,7 +40,7 @@ const DIRECTIVE = /["']use (?:step|workflow)["']/;
  * either: Bun drops `module.exports` from a file a plugin loads.
  */
 const TRANSFORMED = new RegExp(
-  String.raw`^(?!.*(?:node_modules|\.well-known/workflow/)).*\.(?:m?[jt]s|[jt]sx)$`,
+  String.raw`^(?!.*(?:node_modules|${WORKFLOW_BUNDLE.dir.replaceAll(".", "\\.")}/)).*\.(?:m?[jt]s|[jt]sx)$`,
 );
 
 /** Bun's own loader for each extension: JSX is allowed in `.js` but not in `.mjs`. */
@@ -48,17 +53,19 @@ function loaderFor(path: string): "ts" | "tsx" | "js" | "jsx" {
 async function loadBuilders(
   root: string,
 ): Promise<{ builders: Builders; path: string } | undefined> {
+  let path: string;
   try {
-    const path = createRequire(join(root, "package.json")).resolve(
+    path = createRequire(join(root, "package.json")).resolve(
       "@workflow/builders",
     );
-    return {
-      builders: (await import(pathToFileURL(path).href)) as Builders,
-      path,
-    };
   } catch {
+    // Not installed: the app uses no workflows. A broken install throws below.
     return undefined;
   }
+  return {
+    builders: (await import(pathToFileURL(path).href)) as Builders,
+    path,
+  };
 }
 
 /**
@@ -73,35 +80,54 @@ async function loadBuilders(
 export async function workflowTransformPlugin(
   root: string = process.cwd(),
 ): Promise<BunPlugin | undefined> {
-  const projectRoot = resolve(root);
-  const builders = (await loadBuilders(projectRoot))?.builders;
-  if (!builders) return undefined;
+  const load = await transformer(root);
+  if (!load) return undefined;
   return {
     name: "brick:workflows",
     setup(build) {
-      // Not async: Bun treats a module whose load returns a promise as async, and
-      // `require()` refuses it. Only a file with a directive waits for SWC.
-      build.onLoad({ filter: TRANSFORMED }, (args) => {
-        const source = readFileSync(args.path, "utf8");
-        if (!DIRECTIVE.test(source))
-          return { contents: source, loader: loaderFor(args.path) };
-        // SWC strips the types but leaves JSX as it is.
-        return builders
-          .applySwcTransform(
-            relative(projectRoot, args.path).replaceAll("\\", "/"),
-            source,
-            "step",
-            args.path,
-            projectRoot,
-            projectRoot,
-          )
-          .then(({ code }) => ({ contents: code, loader: "jsx" as const }));
-      });
+      build.onLoad({ filter: TRANSFORMED }, load);
     },
   };
 }
 
-let installed = false;
+type Load = Bun.OnLoadCallback;
+
+/** The transform for files of the project at `root`, or `undefined` without the SDK. */
+async function transformer(root: string): Promise<Load | undefined> {
+  const projectRoot = resolve(root);
+  const builders = (await loadBuilders(projectRoot))?.builders;
+  if (!builders) return undefined;
+  // Not async: Bun treats a module whose load returns a promise as async, and
+  // `require()` refuses it. Only a file with a directive waits for SWC.
+  return (args) => {
+    const source = readFileSync(args.path, "utf8");
+    if (!DIRECTIVE.test(source))
+      return { contents: source, loader: loaderFor(args.path) };
+    // SWC strips the types but leaves JSX as it is.
+    return builders
+      .applySwcTransform(
+        relative(projectRoot, args.path).replaceAll("\\", "/"),
+        source,
+        "step",
+        args.path,
+        projectRoot,
+        projectRoot,
+      )
+      .then(({ code }) => ({ contents: code, loader: "jsx" as const }));
+  };
+}
+
+/** The transform of each root registered in this process. */
+const registered = new Map<string, Load>();
+
+/** The registered root a file belongs to: the innermost that holds it, else the first. */
+function rootOf(file: string): string {
+  let found: string | undefined;
+  for (const root of registered.keys())
+    if (file.startsWith(root + sep) && root.length > (found?.length ?? -1))
+      found = root;
+  return found ?? registered.keys().next().value!;
+}
 
 /**
  * Make files marked `"use workflow"` or `"use step"` load as workflows and steps.
@@ -112,8 +138,8 @@ let installed = false;
  * Call it in a script or test before importing the files, with the project root.
  *
  * It does nothing, and returns `false`, when the Workflow SDK and its builders are
- * not installed in the project. Bun allows plugins once per process, so a second
- * call is ignored.
+ * not installed in the project. Each root gets ids relative to itself; a file
+ * under no registered root uses the first one.
  *
  * @param root - The project root, where the SDK is installed. Default: the working directory.
  * @returns Whether the transform is active.
@@ -121,11 +147,21 @@ let installed = false;
 export async function registerWorkflowTransform(
   root: string = process.cwd(),
 ): Promise<boolean> {
-  if (installed) return true;
-  const plugin = await workflowTransformPlugin(root);
-  if (!plugin) return false;
-  installed = true;
-  Bun.plugin(plugin);
+  const projectRoot = resolve(root);
+  if (registered.has(projectRoot)) return true;
+  const load = await transformer(projectRoot);
+  if (!load) return false;
+  registered.set(projectRoot, load);
+  // Bun keeps a plugin until the process ends, so one plugin serves every root.
+  if (registered.size === 1)
+    Bun.plugin({
+      name: "brick:workflows",
+      setup(build) {
+        build.onLoad({ filter: TRANSFORMED }, (args) =>
+          registered.get(rootOf(args.path))!(args),
+        );
+      },
+    });
   return true;
 }
 
@@ -356,21 +392,21 @@ export async function buildWorkflows(
     buildTarget: "standalone",
     dirs: ["."],
     workingDir: root,
-    stepsBundlePath: output("__step_registrations.mjs"),
-    workflowsBundlePath: output("flow.mjs"),
-    webhookBundlePath: output("webhook.mjs"),
+    stepsBundlePath: output(WORKFLOW_BUNDLE.steps),
+    workflowsBundlePath: output(WORKFLOW_BUNDLE.flow),
+    webhookBundlePath: output(WORKFLOW_BUNDLE.webhook),
     suppressCreateWorkflowsBundleLogs: true,
     suppressCreateWebhookBundleLogs: true,
     suppressCreateManifestLogs: true,
   });
   const statePath = join(dir, STATE_FILE);
-  const bundles = ["flow.mjs", "__step_registrations.mjs"].map((name) =>
+  const bundles = [WORKFLOW_BUNDLE.flow, WORKFLOW_BUNDLE.steps].map((name) =>
     join(dir, name),
   );
   const outputs = [
     ...bundles,
-    join(dir, "manifest.json"),
-    join(dir, "webhook.mjs"),
+    join(dir, WORKFLOW_BUNDLE.manifest),
+    join(dir, WORKFLOW_BUNDLE.webhook),
   ];
   const configs = await tsconfigInputs(await builder.findTsConfigPath());
   const key = JSON.stringify([
@@ -428,6 +464,12 @@ export async function buildAppWorkflows(
 ): Promise<boolean> {
   const target = app.events?.workflows;
   if (!target) return false;
+  // Ids come from the path relative to the root, so the transform the files
+  // loaded with and the bundle must share it. `brick build` loads none.
+  if (registered.size && !registered.has(resolve(target.root)))
+    throw new ConfigError(
+      `Brick: the app's workflows root ${target.root} is not the folder its workflow files were transformed from (${[...registered.keys()].join(", ")}). Run brick from the workflows root, or leave events.workflows.root unset.`,
+    );
   const started = performance.now();
   const built = await buildWorkflows({
     root: target.root,

@@ -3,8 +3,7 @@ import type { Event, WorkflowRun } from "@workflow/world";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { unwrapServerActionResult } from "~/lib/client/workflow-errors";
 import { mergeById, pollResource } from "~/lib/client/workflow-primitives";
-import { fetchEvents, fetchRun } from "~/lib/rpc-client";
-import type { EnvMap } from "~/lib/types";
+import { rpc } from "~/lib/rpc-client";
 
 const LIVE_POLL_LIMIT = 100;
 const INITIAL_PAGE_SIZE = 500;
@@ -18,7 +17,6 @@ const AUTO_LOAD_MAX_EVENTS = 500;
  * are fetched on-demand by the detail sidebar, not here.
  */
 export function useWorkflowTraceViewerData(
-  env: EnvMap,
   runId: string,
   options: { live?: boolean } = {},
 ) {
@@ -50,9 +48,10 @@ export function useWorkflowTraceViewerData(
     setError(null);
 
     const [runResult, eventsResult] = await Promise.all([
-      unwrapServerActionResult(fetchRun(env, runId, "none")),
+      unwrapServerActionResult(rpc("fetchRun", { runId, resolveData: "none" })),
       unwrapServerActionResult(
-        fetchEvents(env, runId, {
+        rpc("fetchEvents", {
+          runId,
           sortOrder: "asc",
           limit: INITIAL_PAGE_SIZE,
           withData: false,
@@ -101,7 +100,8 @@ export function useWorkflowTraceViewerData(
         setHasEncryptedData(true);
       } else {
         unwrapServerActionResult(
-          fetchEvents(env, runId, {
+          rpc("fetchEvents", {
+            runId,
             sortOrder: "asc",
             limit: 1,
             withData: true,
@@ -121,7 +121,7 @@ export function useWorkflowTraceViewerData(
           .catch(() => {});
       }
     }
-  }, [env, runId]);
+  }, [runId]);
 
   const loadMoreTraceData = useCallback(async () => {
     if (
@@ -136,7 +136,8 @@ export function useWorkflowTraceViewerData(
     setIsLoadingMoreTraceData(true);
     try {
       const nextEventsResult = await unwrapServerActionResult(
-        fetchEvents(env, runId, {
+        rpc("fetchEvents", {
+          runId,
           cursor: eventsCursor,
           sortOrder: "asc",
           limit: LOAD_MORE_PAGE_SIZE,
@@ -164,7 +165,6 @@ export function useWorkflowTraceViewerData(
       setIsLoadingMoreTraceData(false);
     }
   }, [
-    env,
     runId,
     initialLoadCompleted,
     isLoadingMoreTraceData,
@@ -184,7 +184,7 @@ export function useWorkflowTraceViewerData(
       return false;
     }
     const { error, result } = await unwrapServerActionResult(
-      fetchRun(env, runId, "none"),
+      rpc("fetchRun", { runId, resolveData: "none" }),
     );
     if (error) {
       setError(error);
@@ -193,15 +193,15 @@ export function useWorkflowTraceViewerData(
     setError(null);
     setRun(hydrateResourceIO(result));
     return true;
-  }, [env, runId, run?.completedAt]);
+  }, [runId, run?.completedAt]);
 
-  // Poll for new events
   const pollEvents = useCallback(
     () =>
       pollResource<Event>({
         fetchFn: () =>
           unwrapServerActionResult(
-            fetchEvents(env, runId, {
+            rpc("fetchEvents", {
+              runId,
               cursor: eventsCursor,
               sortOrder: "asc",
               limit: LIVE_POLL_LIMIT,
@@ -214,10 +214,9 @@ export function useWorkflowTraceViewerData(
         idKey: "eventId",
         transform: hydrateResourceIO,
       }),
-    [env, runId, eventsCursor],
+    [runId, eventsCursor],
   );
 
-  // Update function for live polling
   const update = useCallback(async (): Promise<{ foundNewItems: boolean }> => {
     if (isFetchingRef.current || !initialLoadCompleted) {
       return { foundNewItems: false };
@@ -235,7 +234,6 @@ export function useWorkflowTraceViewerData(
     return { foundNewItems };
   }, [pollEvents, initialLoadCompleted, pollRun]);
 
-  // Initial load
   useEffect(() => {
     fetchAllData();
   }, [fetchAllData]);
@@ -248,7 +246,6 @@ export function useWorkflowTraceViewerData(
     };
   }, []);
 
-  // Live polling
   useEffect(() => {
     if (!live || !initialLoadCompleted || run?.completedAt) {
       return;
@@ -264,7 +261,7 @@ export function useWorkflowTraceViewerData(
   }, [live, initialLoadCompleted, update, run?.completedAt]);
 
   return {
-    run: run ?? ({} as WorkflowRun),
+    run,
     events,
     loading,
     error,

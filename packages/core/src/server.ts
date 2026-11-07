@@ -1,22 +1,17 @@
+import { ATTR, SPAN } from "./telemetry-names";
+import type { HttpMethod } from "./http";
 import { Elysia } from "elysia";
 import {
   compileBrickApplication,
   type CompiledApplication,
   type RouteIR,
 } from "./compiler";
-import type { Service } from "./types";
+import { DuplicateNameError, type Service } from "./types";
 import { getGlobalRegistry } from "./registry";
-import {
-  getPluginActionRoute,
-  getPluginEndpoints,
-  installedPlugins,
-} from "./plugin";
-import {
-  pluginLifecycle,
-  setupAppPlugins,
-  type PluginInstance,
-} from "./define-plugin";
-import { generateOpenApiSpec } from "./openapi";
+import { getPluginEndpoints, installedPlugins } from "./plugin";
+import { pluginLifecycle, setupAppPlugins } from "./plugin-app";
+import type { PluginInstance } from "./define-plugin";
+import { OPENAPI_DEFAULTS, generateOpenApiSpec } from "./openapi";
 import { resolveSecrets, type SecretSource } from "./secrets";
 import {
   requestLoggingPlugin,
@@ -25,7 +20,6 @@ import {
 import {
   scalarDocsHTML,
   swaggerDocsHTML,
-  registerReferenceRoute,
   type ApiDocument,
   type DocumentationOptions,
   type OpenApiDocument,
@@ -44,12 +38,13 @@ import { bindDeps } from "./deps";
 import { WEBHOOK_ROUTE } from "./events/workflows";
 import type { EventsOptions } from "./events/types";
 import { localBroker, mountSockets, socketPath } from "./socket";
+import { DEFAULT_PREFIX, routeKey } from "./routes";
 import type { SocketBroker } from "./socket-types";
 import { corsHook, type CorsOptions } from "./cors";
 
 export interface CreateServerOptions {
   port?: number;
-  /** Generate specialized handlers once at startup (default true). */
+  /** Run the plugins' preparations (such as CRUD's prepared queries) at startup (default true). */
   compiler?: boolean;
   /** Ahead-of-time handlers already bound to the supplied services. */
   compilation?: CompiledApplication;
@@ -69,7 +64,7 @@ export interface CreateServerOptions {
    */
   reference?: boolean | ReferenceOptions; // default false
   secrets?: { source?: SecretSource; validate?: boolean };
-  /** Raw endpoints (outside the JSON action mesh), mounted at startup. */
+  /** Raw endpoints (plain routes, not actions), mounted at startup. */
   endpoints?: EndpointDefinition[];
   /**
    * Record request, action, and RPC spans with OpenTelemetry (default false).
@@ -127,12 +122,6 @@ export interface CreateServerOptions {
   cors?: false | CorsOptions;
 }
 
-export {
-  compileRoutePlan,
-  executeCompiledRoute,
-  createActionHandler,
-} from "./action-handler";
-
 /**
  * Create the HTTP application: an Elysia app that serves every service's
  * actions (and the tools that opt in with `http: true`) as routes, with
@@ -163,12 +152,12 @@ export {
  * });
  */
 export function brick(options: CreateServerOptions = {}): BrickApp {
-  const prefix = options.prefix ?? options.compilation?.ir.prefix ?? "/api";
-  const title = options.title ?? "Brick-TS API Mesh";
-  const version = options.version ?? "1.0.0";
-  const compiled = options.compiler !== false;
+  const prefix =
+    options.prefix ?? options.compilation?.ir.prefix ?? DEFAULT_PREFIX;
+  const title = options.title ?? OPENAPI_DEFAULTS.title;
+  const version = options.version ?? OPENAPI_DEFAULTS.version;
   const enableDocs = options.docs ?? true;
-  const openApiPath = options.openApiPath ?? "/openapi.json";
+  const openApiPath = options.openApiPath ?? OPENAPI_DEFAULTS.path;
   const docsPath = options.docsPath ?? "/docs";
   const swaggerPath = options.swaggerPath ?? "/swagger";
   const dashboard = normalizeDashboard(options.dashboard);
@@ -193,8 +182,14 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   if (options.cors) app.onRequest(corsHook(options.cors));
   for (const handler of plugins.middleware) app.onRequest(handler);
 
-  // Diagnostics & health
-  app.get("/_health", () => ({
+  // Mounted and registered in one call, so actions and sockets can't shadow them.
+  const registeredRoutes = new Map<string, boolean>();
+  const builtIn = (path: string, handler: any) => {
+    app.get(path, handler);
+    registeredRoutes.set(routeKey("GET", path), false);
+  };
+
+  builtIn("/_health", () => ({
     status: "ok",
     uptime: process.uptime(),
     timestamp: Date.now(),
@@ -202,12 +197,10 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
 
   // Request logging first so every route below is timed.
   const requestLogging = options.requestLogging ?? true;
-  if (requestLogging !== false) {
-    const pluginOpts = requestLogging === true ? {} : requestLogging;
-    if (pluginOpts.enabled !== false) {
-      app.use(requestLoggingPlugin(pluginOpts));
-    }
-  }
+  if (requestLogging !== false)
+    app.use(
+      requestLoggingPlugin(requestLogging === true ? {} : requestLogging),
+    );
 
   // Scalar API reference page (opt-in): `reference: true`, or options with a path.
   const reference = options.reference ?? false;
@@ -216,23 +209,23 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   const referencePath =
     reference === true ? "/reference" : referenceOptions.path;
   if (referencePath !== undefined) {
-    const settings = {
-      path: referencePath,
-      title: referenceOptions.title ?? title,
-      specUrl: referenceOptions.specUrl ?? openApiPath,
-    };
-    if (compiled)
-      app.get(
-        settings.path,
-        htmlResponse(scalarDocsHTML(settings.specUrl, settings.title)),
-      );
-    else registerReferenceRoute(app, settings);
+    builtIn(
+      referencePath,
+      htmlResponse(
+        scalarDocsHTML(
+          referenceOptions.specUrl ?? openApiPath,
+          referenceOptions.title ?? title,
+        ),
+      ),
+    );
   }
 
   const byName = new Map<string, unknown>();
   for (const service of services) {
     if ((byName.get(service.name) ?? service) !== service)
-      throw new Error(`Brick: duplicate service "${service.name}" in brick()`);
+      throw new DuplicateNameError(
+        `Brick: duplicate service "${service.name}" in brick()`,
+      );
     byName.set(service.name, service);
   }
   bindDeps(services, options.deps);
@@ -251,14 +244,9 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     for (const service of services) instrumentDatabase(service.getDb());
   }
 
-  // Precompute plans and freeze immutable plans across all services
-  for (const service of services) {
-    if (typeof (service as any).build === "function") {
-      (service as any).build();
-    }
-  }
+  // Close declarations before anything reads them.
+  for (const service of services) service.build();
 
-  // Raw endpoints declared via options or app.endpoint() (declaration order).
   const endpointDefs: EndpointDefinition[] = [];
   let endpointRevision = 0;
 
@@ -278,50 +266,23 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     return { ...spec, paths };
   };
 
-  // OpenAPI 3.1 & Interactive Documentation Endpoints
   if (enableDocs) {
-    app.get(
+    builtIn(
       openApiPath,
-      compiled
-        ? cachedJsonRoute(
-            buildSpec,
-            () =>
-              [
-                getGlobalRegistry(),
-                getGlobalRegistry().revision + endpointRevision,
-              ] as const,
-          )
-        : buildSpec,
+      cachedJsonRoute(
+        buildSpec,
+        () =>
+          [
+            getGlobalRegistry(),
+            getGlobalRegistry().revision + endpointRevision,
+          ] as const,
+      ),
     );
-
-    if (compiled) {
-      app.get(docsPath, htmlResponse(scalarDocsHTML(openApiPath, title)));
-      app.get(swaggerPath, htmlResponse(swaggerDocsHTML(openApiPath, title)));
-    } else {
-      app.get(docsPath, ({ set }) => {
-        set.headers["content-type"] = "text/html; charset=utf-8";
-        return scalarDocsHTML(openApiPath, title);
-      });
-
-      app.get(swaggerPath, ({ set }) => {
-        set.headers["content-type"] = "text/html; charset=utf-8";
-        return swaggerDocsHTML(openApiPath, title);
-      });
-    }
+    builtIn(docsPath, htmlResponse(scalarDocsHTML(openApiPath, title)));
+    builtIn(swaggerPath, htmlResponse(swaggerDocsHTML(openApiPath, title)));
   }
-
-  // Dedicated Route Registry
-  const registeredRoutes = new Map<string, boolean>();
-  const routeKey = (method: string, path: string) =>
-    `${method} ${path.replace(/:[^/]+/g, ":param")}`;
-  registeredRoutes.set(routeKey("GET", "/_health"), false);
-  registeredRoutes.set(routeKey("GET", "/_brick/services"), false);
-  if (enableDocs) {
-    for (const path of [openApiPath, docsPath, swaggerPath])
-      registeredRoutes.set(routeKey("GET", path), false);
-  }
-  if (referencePath !== undefined)
-    registeredRoutes.set(routeKey("GET", referencePath), false);
+  // Built from `definition`, below.
+  builtIn("/_brick/services", (context: any) => architecture(context));
 
   const sockets = services.flatMap((service) =>
     service.listSockets().map((definition) => ({
@@ -334,47 +295,34 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   for (const socket of sockets) {
     const key = routeKey("GET", socket.path);
     if (registeredRoutes.has(key) || socketRoutes.has(key))
-      throw new Error(`Brick: duplicate socket route '${socket.path}'`);
+      throw new DuplicateNameError(
+        `Brick: duplicate socket route '${socket.path}'`,
+      );
     socketRoutes.add(key);
   }
   const mountRoute = (
-    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+    method: HttpMethod,
     path: string,
     handler: any,
     plugin = false,
   ) => {
     const key = routeKey(method, path);
     if (socketRoutes.has(key))
-      throw new Error(
+      throw new DuplicateNameError(
         `Brick: route '${method} ${path}' conflicts with a socket`,
       );
     if (registeredRoutes.has(key)) {
       if (plugin || registeredRoutes.get(key))
-        throw new Error(`Brick: duplicate plugin route '${method} ${path}'`);
+        throw new DuplicateNameError(
+          `Brick: duplicate plugin route '${method} ${path}'`,
+        );
       return false;
     }
-    switch (method) {
-      case "GET":
-        app.get(path, handler);
-        break;
-      case "POST":
-        app.post(path, handler);
-        break;
-      case "PUT":
-        app.put(path, handler);
-        break;
-      case "PATCH":
-        app.patch(path, handler);
-        break;
-      case "DELETE":
-        app.delete(path, handler);
-        break;
-    }
+    app.route(method, path, handler);
     registeredRoutes.set(key, plugin);
     return true;
   };
 
-  // Raw endpoints (outside the JSON action mesh).
   const mountEndpoint = (def: EndpointDefinition, plugin = false) => {
     const handler = createEndpointHandler(def, services);
     mountRoute(
@@ -406,6 +354,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     mountEndpoint(def);
   };
   brickApp.listEndpoints = () => [...endpointDefs];
+  brickApp.openApiDocument = buildSpec;
   brickApp.referenceDocuments = async () => {
     const documents: ApiDocument[] = enableDocs
       ? [{ title, document: buildSpec() as unknown as OpenApiDocument }]
@@ -444,19 +393,13 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   }
   const mountedRoutes: RouteIR[] = [];
   for (const route of compilation.routes) {
-    const service = services.find(
-      (candidate) => candidate.name === route.ir.service,
-    )!;
-    const action = service
-      .listActions()
-      .find((candidate) => candidate.name === route.ir.action)!;
     const invoke = (context: any) => {
       const result = telemetry
         ? withSpan(
-            `action ${route.ir.service}.${route.ir.action}`,
+            `${SPAN.actionPrefix}${route.ir.service}.${route.ir.action}`,
             {
-              "brick.service": route.ir.service,
-              "brick.action": route.ir.action,
+              [ATTR.service]: route.ir.service,
+              [ATTR.action]: route.ir.action,
             },
             () => route.handler(context),
           )
@@ -475,7 +418,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
               invoke(context),
             )
         : invoke,
-      getPluginActionRoute(action, prefix) !== undefined,
+      Boolean(route.ir.plugin),
     );
     if (mounted) mountedRoutes.push(route.ir);
   }
@@ -510,12 +453,13 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   const listen = app.listen.bind(app);
   const stop = app.stop.bind(app);
   Object.defineProperty(brickApp, "start", { value: lifecycle.start });
+  // One rule with serve(): an app whose plugins fail to start does not serve.
+  // listen() is synchronous, so it stops the server it already opened.
   brickApp.listen = ((...args: Parameters<typeof listen>) => {
-    lifecycle
-      .start()
-      .catch((error) =>
-        console.error("[Brick-TS] A plugin failed to start:", error),
-      );
+    lifecycle.start().catch((error) => {
+      console.error("[Brick-TS] A plugin failed to start:", error);
+      return stop(true);
+    });
     return listen(...args);
   }) as typeof brickApp.listen;
   brickApp.stop = (async (closeActiveConnections?: boolean) => {
@@ -525,20 +469,28 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
       await lifecycle.stop();
     }
   }) as typeof brickApp.stop;
-  getGlobalRegistry().setApplicationRoutes(definition);
+  Object.defineProperty(brickApp, "serve", {
+    value: async ({ port }: { port: number }) => {
+      await lifecycle.start();
+      listen(port);
+      events?.start();
+      return brickApp;
+    },
+  });
+  Object.defineProperty(brickApp, "shutdown", {
+    value: async (closeActiveConnections?: boolean) => {
+      await events?.stop();
+      await brickApp.stop(closeActiveConnections);
+    },
+  });
 
   // Serialize stable metadata once; registry changes invalidate the snapshot.
-  app.get(
-    "/_brick/services",
-    compiled
-      ? cachedJsonRoute(
-          () => getGlobalRegistry().exportArchitecture(definition),
-          () => {
-            const registry = getGlobalRegistry();
-            return [registry, registry.revision] as const;
-          },
-        )
-      : () => getGlobalRegistry().exportArchitecture(definition),
+  const architecture = cachedJsonRoute(
+    () => getGlobalRegistry().exportArchitecture(definition),
+    () => {
+      const registry = getGlobalRegistry();
+      return [registry, registry.revision] as const;
+    },
   );
 
   return brickApp;

@@ -5,13 +5,10 @@ export type {
   DashboardTheme,
 } from "./dashboard-extension";
 export { generateClientContract } from "./client-contract";
-export { emitCompiledApplication, emitHandlerFactory } from "./compiler/emit";
-export {
-  defineConfig,
-  loadConfig,
-  type BrickConfig,
-  type LintPreset,
-  type LintSeverity,
-  type LoadedConfig,
-} from "./config";
-export { renderManifest, writeServiceManifest } from "./manifest";
+import { defineConfig as defineProjectConfig } from "./config";
+export type { BrickConfig, LintPreset, LintSeverity } from "./config";
+/**
+ * @deprecated Import it from `@brickkit/cli/config`, which loads less. This
+ * one keeps everything index reaches loadable under Node.
+ */
+export const defineConfig = defineProjectConfig;

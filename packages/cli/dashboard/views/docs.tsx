@@ -4,9 +4,12 @@ import { DocsPageLoader, Toc } from "@/components/docs/docs-page";
 import { DocsSearch } from "@/components/docs/docs-search";
 import { DocsTree, firstPage } from "@/components/docs/docs-tree";
 import { useDocsInfo, useProjectComponents } from "@/components/docs/use-docs";
-import { docsHref, useMediaQuery, type Route } from "@/state";
-import type { DocsPage } from "../../src/dev-docs";
-import type { DocsSnapshot } from "../../src/dev-telemetry-store";
+import { useMediaQuery, type Route } from "@/state";
+import {
+  docsHref,
+  type DocsPage,
+  type DocsSnapshot,
+} from "../../src/dashboard-protocol";
 
 /**
  * The app's developer documentation: its folder of pages in the dashboard,
@@ -29,8 +32,8 @@ export default function DocsView({
   if (docs.status === "missing")
     return (
       <Empty
-        title="The docs need two packages"
-        hint={`Install them with: bun add -d ${docs.packages?.join(" ") ?? "fumadocs-core @mdx-js/mdx"}`}
+        title="The docs need packages that are not installed"
+        hint={`Install them with: bun add -d ${docs.packages.join(" ")}`}
       />
     );
   if (docs.status === "error")
@@ -38,7 +41,13 @@ export default function DocsView({
   return <Ready docs={docs} route={route} />;
 }
 
-function Ready({ docs, route }: { docs: DocsSnapshot; route: Route }) {
+function Ready({
+  docs,
+  route,
+}: {
+  docs: Extract<DocsSnapshot, { status: "ready" }>;
+  route: Route;
+}) {
   const info = useDocsInfo(docs.revision);
   const project = useProjectComponents(docs.components, docs.revision);
   const [page, setPage] = useState<DocsPage>();

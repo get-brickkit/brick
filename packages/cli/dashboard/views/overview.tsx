@@ -16,7 +16,7 @@ import { Slot } from "@/extension";
 import type {
   ArchitectureSnapshot,
   TraceSummary,
-} from "../../src/dev-telemetry-store";
+} from "../../src/dashboard-protocol";
 
 interface RouteRow {
   key: string;

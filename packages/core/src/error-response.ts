@@ -1,14 +1,10 @@
 import { ActionExecutionError, ValidationError, type Logger } from "./types";
 import { recordFailure } from "./telemetry";
+import type { WireError } from "./protocol";
 
-export interface ErrorEnvelope {
-  name: string;
-  code: string;
-  message: string;
-  status: number;
+/** The JSON body of a failed HTTP call. */
+export interface ErrorEnvelope extends WireError {
   requestId: string;
-  details?: unknown;
-  errors?: ValidationError["errors"];
 }
 
 type ErrorContext = { logger: Pick<Logger, "error">; requestId: string };

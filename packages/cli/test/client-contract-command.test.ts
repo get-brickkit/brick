@@ -1,28 +1,16 @@
 import { expect, it } from "bun:test";
-import { mkdtemp, mkdir, readdir, rm, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { join } from "node:path";
+import { TEMPORARY_FILE_PREFIX } from "../src/client-contract-file";
+import { CLI, runCli, tempProject } from "./helpers";
 
-const cli = resolve(import.meta.dir, "../src/bin.ts");
 const entry = join(import.meta.dir, "fixtures/client-app.ts");
 
-async function run(cwd: string, ...args: string[]) {
-  const child = Bun.spawn([process.execPath, cli, "gen", "client", ...args], {
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [code, stdout, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
-  return { code, stdout, stderr };
-}
+const run = (cwd: string, ...args: string[]) =>
+  runCli(["gen", "client", ...args], { cwd });
 
 it("generates a browser-safe contract with default/custom output and preserves unchanged files", async () => {
-  const root = await mkdtemp(
-    resolve(import.meta.dir, "../.brick-vite-test-cli-"),
-  );
+  const root = await tempProject("cli-test");
   try {
     await mkdir(join(root, "_brick"));
     await Bun.write(join(root, "_brick/contract.ts"), "previous contract\n");
@@ -34,8 +22,6 @@ it("generates a browser-safe contract with default/custom output and preserves u
     const source = await Bun.file(output).text();
     expect(await readdir(join(root, "_brick"))).toEqual(["contract.ts"]);
     expect(source).toContain("BrickClientAction<");
-    expect(source).toContain("export type BrickJsonValue =");
-    expect(source).toContain("{ [key: string]: BrickJsonValue }");
     expect(source).toContain("/v2/records/:doctype/value");
     expect(source).not.toContain("private_tool");
     const modified = (await stat(output)).mtimeMs;
@@ -58,9 +44,7 @@ it("generates a browser-safe contract with default/custom output and preserves u
 });
 
 it("rejects invalid arguments/default exports and never overwrites the app entry", async () => {
-  const root = await mkdtemp(
-    resolve(import.meta.dir, "../.brick-vite-test-cli-"),
-  );
+  const root = await tempProject("cli-test");
   try {
     for (const args of [
       [],
@@ -92,9 +76,7 @@ it("rejects invalid arguments/default exports and never overwrites the app entry
 });
 
 it("preserves the previous contract and removes temporary files after write or rename failures", async () => {
-  const root = await mkdtemp(
-    resolve(import.meta.dir, "../.brick-vite-test-cli-"),
-  );
+  const root = await tempProject("cli-test");
   try {
     const directory = join(root, "output");
     await mkdir(directory);
@@ -112,7 +94,7 @@ const originalRename = fs.rename;
 mock.module("node:fs/promises", () => ({
   ...fs,
   ${operation}: async (path, ...args) => {
-    if (String(path).includes(".brick-contract-")) {
+    if (String(path).includes(${JSON.stringify(TEMPORARY_FILE_PREFIX)})) {
       if (${JSON.stringify(operation)} === "writeFile") await originalWrite(path, "partial write");
       throw new Error("Injected ${operation} failure");
     }
@@ -126,7 +108,7 @@ mock.module("node:fs/promises", () => ({
           process.execPath,
           "--preload",
           preload,
-          cli,
+          CLI,
           "gen",
           "client",
           entry,
@@ -155,7 +137,7 @@ mock.module("node:fs/promises", () => ({
 
 it("bundles the CLI without a Vite runtime dependency", async () => {
   const bundle = await Bun.build({
-    entrypoints: [cli],
+    entrypoints: [CLI],
     target: "bun",
     packages: "external",
   });

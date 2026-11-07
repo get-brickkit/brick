@@ -1,19 +1,24 @@
 import { describe, expect, it } from "bun:test";
 import {
-  applyFilters,
-  bucketRows,
-  computeFacets,
   hasFilters,
   historyParams,
   NO_FILTERS,
-  outcomeOf,
   sparkGroups,
-  summarizeRows,
-  toRow,
   type LogFilters,
   type LogRow,
 } from "../dashboard/filters";
-import type { TraceSummary } from "../src/dev-telemetry-store";
+import {
+  applyFilters,
+  bucketRows,
+  computeFacets,
+  decodeHistoryQuery,
+  encodeHistoryQuery,
+  outcomeOf,
+  summarizeRows,
+  toRow,
+  type HistoryQuery,
+} from "../src/dashboard-query";
+import type { TraceSummary } from "../src/dashboard-protocol";
 
 function row(id: string, options: Partial<LogRow> = {}): LogRow {
   return {
@@ -229,6 +234,23 @@ describe("history query strings", () => {
     });
   });
 
+  it("is what the server reads back", () => {
+    const query: HistoryQuery = {
+      from: 1_000,
+      to: 2_000,
+      endpoints: ["GET /a", "POST /b"],
+      methods: ["GET"],
+      services: ["pages"],
+      outcomes: ["server", "client"],
+      minMs: 500,
+      query: "pages",
+      sort: "slowest",
+      limit: 100,
+      offset: 200,
+    };
+    expect(decodeHistoryQuery(encodeHistoryQuery(query))).toEqual(query);
+  });
+
   it("leaves out blank text and the default order", () => {
     const params = historyParams(window, filters({ query: "   " }));
     expect(params.has("q")).toBe(false);
@@ -305,4 +327,9 @@ describe("sparkGroups", () => {
       errors: [0, 0, 0],
     });
   });
+});
+
+it("reads a fractional limit or offset as a whole number, which SQLite needs", () => {
+  const query = decodeHistoryQuery(new URLSearchParams("limit=1.5&offset=2.5"));
+  expect([query.limit, query.offset]).toEqual([1, 2]);
 });

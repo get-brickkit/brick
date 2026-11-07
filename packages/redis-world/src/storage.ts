@@ -52,7 +52,12 @@ import {
 import { globalSingleton } from "@workflow/utils";
 import type { Redis } from "ioredis";
 import { monotonicFactory } from "ulid";
-import { compact, parse, stringify } from "./util.js";
+import { keys } from "./keys.js";
+import { compact } from "./internal/util.js";
+// `parse`/`stringify` take a fast path that skips JSON's reviver/replacer when
+// the payload holds no binary (~5x on parse, ~2x on stringify) with identical
+// semantics.
+import { parse, stringify } from "./internal/serialization.js";
 
 interface RedisStorageConfig {
   redis: Redis;
@@ -147,20 +152,6 @@ local function isTerminal(status)
 end
 `;
 
-/** Stringify an object with Uint8Array support. Delegates to the shared
- * helper, which tags binary as base64; the previous number-array encoding
- * cost ~450x more CPU to re-parse and ~2.7x more storage at 2MB. */
-function stringifyWithUint8Array(obj: any): string {
-  return stringify(obj);
-}
-
-/** Parse JSON with Uint8Array and Date support. The shared reviver decodes
- * both the base64 tag and the legacy number-array tag, so rows already in
- * Redis keep reading back correctly. */
-function parseWithUint8Array<T>(json: string): T {
-  return parse<T>(json);
-}
-
 /**
  * Filter hook data based on resolveData parameter
  */
@@ -209,9 +200,6 @@ function filterRunData(
   return run;
 }
 
-// ============================================================
-// Lua Scripts for Atomic Multi-Key Writes
-// ============================================================
 // Each script encapsulates a multi-key write operation to ensure
 // atomicity. Lua scripts execute as a single atomic operation in
 // Redis, preventing partial writes on connection failures AND
@@ -734,10 +722,6 @@ const LUA_SET_ATTRIBUTES = `${LUA_APPEND_EVENT}
   return {1, appendEvent(KEYS[2], correlationKey, ARGV[1])}
 `;
 
-// ============================================================
-// Script registration (EVALSHA)
-// ============================================================
-
 /** Registered via `defineCommand` so ioredis dispatches with `EVALSHA` rather
  * than shipping the script body every call. `LUA_STORE_EVENT` is ~1 KB and
  * runs once per workflow event. */
@@ -805,12 +789,13 @@ function parseRunMeta(value: string): { status: string; specVersion?: number } {
 export function createRunsStorage(config: RedisStorageConfig): Storage["runs"] {
   const { redis, keyPrefix } = config;
 
-  const runKey = (id: string) => `${keyPrefix}run:${id}`;
-  const runAttributesKey = (id: string) => `${keyPrefix}run:attrs:${id}`;
-  const runsIndexKey = () => `${keyPrefix}runs:index`;
-  const runsByNameKey = (name: string) => `${keyPrefix}runs:by_name:${name}`;
-  const runsByStatusKey = (status: string) =>
-    `${keyPrefix}runs:by_status:${status}`;
+  const {
+    runKey,
+    runAttributesKey,
+    runsIndexKey,
+    runsByNameKey,
+    runsByStatusKey,
+  } = keys(keyPrefix);
 
   /** The statuses a list filter allows, or undefined for any. `status` takes one
    * status or an array; an empty array matches nothing, unlike omitting it. */
@@ -822,10 +807,8 @@ export function createRunsStorage(config: RedisStorageConfig): Storage["runs"] {
     return Array.isArray(status) ? status : [status];
   }
 
-  // Helper: Select the index (or indexes) to scan, based on filters
   function selectIndexKeys(params?: ListWorkflowRunsParams): string[] {
     if (params?.workflowName) {
-      // Use the workflowName index and filter by status in memory
       return [runsByNameKey(params.workflowName)];
     }
     const statuses = allowedStatuses(params);
@@ -836,7 +819,6 @@ export function createRunsStorage(config: RedisStorageConfig): Storage["runs"] {
     return [runsIndexKey()];
   }
 
-  // Helper: Fetch and parse runs from pipeline results
   function parseRunsFromPipeline(
     results: any[] | null,
     params?: ListWorkflowRunsParams,
@@ -850,13 +832,10 @@ export function createRunsStorage(config: RedisStorageConfig): Storage["runs"] {
         continue;
       }
 
-      const run: WorkflowRun = parseWithUint8Array<WorkflowRun>(
-        result[1] as string,
-      );
+      const run: WorkflowRun = parse<WorkflowRun>(result[1] as string);
       run.attributes =
         (results![i + 1]?.[1] as Record<string, string> | undefined) ?? {};
 
-      // Apply filters
       const statuses = allowedStatuses(params);
       const statusMatches = !statuses || statuses.includes(run.status);
       const nameMatches =
@@ -883,7 +862,7 @@ export function createRunsStorage(config: RedisStorageConfig): Storage["runs"] {
       if (!data) {
         throw new WorkflowRunNotFoundError(id);
       }
-      const run = parseWithUint8Array<WorkflowRun>(data);
+      const run = parse<WorkflowRun>(data);
       run.attributes =
         (replies?.[1]?.[1] as Record<string, string> | undefined) ?? {};
       const parsed = WorkflowRunSchema.parse(compact(run));
@@ -925,7 +904,6 @@ export function createRunsStorage(config: RedisStorageConfig): Storage["runs"] {
           break;
         }
 
-        // Fetch this batch of runs via pipeline
         const pipeline = redis.pipeline();
         for (const { id } of entries) {
           pipeline.get(runKey(id));
@@ -972,37 +950,24 @@ export function createEventsStorage(
   const ulid = monotonicFactory();
   const maxEventsPerRun = resolveMaxEventsPerRun(config.maxEventsPerRun);
 
-  const eventsKey = (runId: string) => `${keyPrefix}events:data:${runId}`;
-  // A correlation id is only unique within its run.
-  const eventsByCorrelationKey = (runId: string, correlationId: string) =>
-    `${keyPrefix}events:by_correlation:${runId}:${correlationId}`;
-  const resumeClaimKey = (runId: string, resumeId: string) =>
-    `${keyPrefix}events:resume:${runId}:${resumeId}`;
-
-  // Run key helpers (needed for event-sourced entity mutations)
-  const runKey = (id: string) => `${keyPrefix}run:${id}`;
-  const runAttributesKey = (id: string) => `${keyPrefix}run:attrs:${id}`;
-  const runMetaKey = (id: string) => `${keyPrefix}run:meta:${id}`;
-  const runsIndexKey = () => `${keyPrefix}runs:index`;
-  const runsByNameKey = (name: string) => `${keyPrefix}runs:by_name:${name}`;
-  const runsByStatusKey = (status: string) =>
-    `${keyPrefix}runs:by_status:${status}`;
-
-  // Step key helpers
-  const stepKey = (runId: string, stepId: string) =>
-    `${keyPrefix}step:${runId}:${stepId}`;
-  const stepsIndexKey = (runId: string) => `${keyPrefix}steps:by_run:${runId}`;
-  // `<status>|<attempt>`, kept beside the step so a script can check it atomically.
-  const stepStatusKey = (runId: string, stepId: string) =>
-    `${keyPrefix}step:status:${runId}:${stepId}`;
-
-  // Hook key helpers
-  const hookKey = (hookId: string) => `${keyPrefix}hook:${hookId}`;
-  const hooksByTokenKey = (token: string) =>
-    `${keyPrefix}hooks:by_token:${token}`;
-  const hooksIndexKey = (runId: string) => `${keyPrefix}hooks:by_run:${runId}`;
-  const hooksTokenMapKey = (runId: string) =>
-    `${keyPrefix}hooks:tokens:${runId}`;
+  const {
+    eventsKey,
+    eventsByCorrelationKey,
+    resumeClaimKey,
+    runKey,
+    runAttributesKey,
+    runMetaKey,
+    runsIndexKey,
+    runsByNameKey,
+    runsByStatusKey,
+    stepKey,
+    stepsIndexKey,
+    stepStatusKey,
+    hookKey,
+    hooksByTokenKey,
+    hooksIndexKey,
+    hooksTokenMapKey,
+  } = keys(keyPrefix);
 
   /** Events per `HMGET`; keeps a long log from building one huge command. */
   const READ_CHUNK = 500;
@@ -1026,7 +991,7 @@ export function createEventsStorage(
   /** Serialize an event for a script: `eventId` first, holding the placeholder. */
   function serializeEvent(event: Record<string, unknown>): string {
     const { eventId: _eventId, ...rest } = event;
-    return stringifyWithUint8Array({ eventId: EVENT_ID_PLACEHOLDER, ...rest });
+    return stringify({ eventId: EVENT_ID_PLACEHOLDER, ...rest });
   }
 
   /** Read events by id out of one run's log, skipping any that are absent. */
@@ -1042,9 +1007,7 @@ export function createEventsStorage(
       );
       for (const value of values) {
         if (value) {
-          events.push(
-            EventSchema.parse(compact(parseWithUint8Array<Event>(value))),
-          );
+          events.push(EventSchema.parse(compact(parse<Event>(value))));
         }
       }
     }
@@ -1093,15 +1056,15 @@ export function createEventsStorage(
       eventsKey(runId),
       hooksIndexKey(runId),
       hooksTokenMapKey(runId),
-      stringifyWithUint8Array(updatedRun),
+      stringify(updatedRun),
       runId,
       at.getTime().toString(),
       runMetaValue(newStatus, updatedRun.specVersion),
       oldStatus,
       serializeEvent(event),
       releaseHooks ? "1" : "0",
-      `${keyPrefix}hook:`,
-      `${keyPrefix}hooks:by_token:`,
+      hookKey(""),
+      hooksByTokenKey(""),
     )) as [number, string];
     if (result[0] === 1) return { kind: "ok", eventId: result[1] };
     if (result[0] === -2) return { kind: "moved", status: result[1] };
@@ -1269,7 +1232,6 @@ export function createEventsStorage(
     // The created event and the entities are never trimmed to the page option.
     const entityData = entityResolveData(resolveData);
 
-    // For run_created events, generate runId server-side if null or empty
     let effectiveRunId: string;
     if (data.eventType === "run_created" && (!runId || runId === "")) {
       effectiveRunId = `wrun_${ulid()}`;
@@ -1292,7 +1254,6 @@ export function createEventsStorage(
       ...overrides,
     });
 
-    // Track entity created/updated for EventResult
     let run: WorkflowRun | undefined;
     let step: Step | undefined;
     let hook: Hook | undefined;
@@ -1313,10 +1274,6 @@ export function createEventsStorage(
         }
       | undefined;
 
-    // ============================================================
-    // VALIDATION: Terminal state and event ordering checks
-    // ============================================================
-
     let currentRun: { status: string; specVersion?: number } | null = null;
     // Read at most once per call; every mutation branch below reuses it
     // rather than re-fetching and re-parsing the whole payload.
@@ -1325,7 +1282,7 @@ export function createEventsStorage(
     async function loadRunBody(): Promise<void> {
       const runData = await redis.get(runKey(effectiveRunId));
       if (runData) {
-        existingRun = parseWithUint8Array<WorkflowRun>(runData);
+        existingRun = parse<WorkflowRun>(runData);
         currentRun = {
           status: existingRun.status,
           specVersion: existingRun.specVersion,
@@ -1351,9 +1308,6 @@ export function createEventsStorage(
       }
     }
 
-    // ============================================================
-    // RESILIENT START: Bootstrap run from run_started eventData
-    // ============================================================
     if (
       data.eventType === "run_started" &&
       !currentRun &&
@@ -1415,7 +1369,7 @@ export function createEventsStorage(
           runMetaKey(effectiveRunId),
           eventsKey(effectiveRunId),
           runAttributesKey(effectiveRunId),
-          stringifyWithUint8Array(newRun),
+          stringify(newRun),
           effectiveRunId,
           now.getTime().toString(),
           runMetaValue("pending", effectiveSpecVersion),
@@ -1448,7 +1402,7 @@ export function createEventsStorage(
         } else {
           // Run already exists (the resilient re-start path, which must
           // tolerate losing the race): read the state the other writer left.
-          const parsed = parseWithUint8Array<WorkflowRun>(result[1]);
+          const parsed = parse<WorkflowRun>(result[1]);
           currentRun = {
             status: parsed.status,
             specVersion: parsed.specVersion,
@@ -1458,9 +1412,6 @@ export function createEventsStorage(
       }
     }
 
-    // ============================================================
-    // VERSION COMPATIBILITY: Check run spec version
-    // ============================================================
     if (currentRun) {
       if (requiresNewerWorld(currentRun.specVersion)) {
         throw new RunNotSupportedError(
@@ -1478,12 +1429,10 @@ export function createEventsStorage(
       }
     }
 
-    // Run terminal state validation
     if (currentRun && isTerminal((currentRun as { status: string }).status)) {
       const terminalStatus = (currentRun as { status: string }).status;
       const runTerminalEvents = ["run_started", "run_completed", "run_failed"];
 
-      // Idempotent operation: run_cancelled on already cancelled run is allowed
       if (
         data.eventType === "run_cancelled" &&
         terminalStatus === "cancelled"
@@ -1522,7 +1471,6 @@ export function createEventsStorage(
         );
       }
 
-      // Other run state transitions are not allowed on terminal runs
       if (
         runTerminalEvents.includes(data.eventType) ||
         data.eventType === "run_cancelled"
@@ -1532,7 +1480,6 @@ export function createEventsStorage(
         );
       }
 
-      // Creating new entities on terminal runs is not allowed
       if (
         data.eventType === "step_created" ||
         data.eventType === "hook_created" ||
@@ -1544,7 +1491,6 @@ export function createEventsStorage(
       }
     }
 
-    // Step-related event validation
     // Held whole so `step_started`/`step_retrying` can mutate it below
     // without re-fetching and re-parsing the step (including its input).
     let validatedStep: Step | null = null;
@@ -1562,7 +1508,7 @@ export function createEventsStorage(
         stepKey(effectiveRunId, data.correlationId),
       );
       if (stepData) {
-        validatedStep = parseWithUint8Array<Step>(stepData);
+        validatedStep = parse<Step>(stepData);
       }
 
       if (!validatedStep && !lazyStepStart) {
@@ -1621,14 +1567,9 @@ export function createEventsStorage(
       if (!existingHook) {
         throw new HookNotFoundError(data.correlationId);
       }
-      validatedHook = parseWithUint8Array<Hook>(existingHook);
+      validatedHook = parse<Hook>(existingHook);
     }
 
-    // ============================================================
-    // Entity creation/updates based on event type
-    // ============================================================
-
-    // Handle run_created event: create the run entity atomically
     if (data.eventType === "run_created") {
       const eventData = (data as any).eventData as {
         deploymentId: string;
@@ -1691,7 +1632,7 @@ export function createEventsStorage(
         runMetaKey(effectiveRunId),
         eventsKey(effectiveRunId),
         runAttributesKey(effectiveRunId),
-        stringifyWithUint8Array(newRun),
+        stringify(newRun),
         effectiveRunId,
         now.getTime().toString(),
         runMetaValue("pending", effectiveSpecVersion),
@@ -1714,7 +1655,6 @@ export function createEventsStorage(
       };
     }
 
-    // Handle run_started event: update run status atomically via Lua
     if (data.eventType === "run_started") {
       // Core reads the per-run event ceiling only from the run_started response, so
       // omitting it here would drop the limit on every replay after the first.
@@ -1787,8 +1727,6 @@ export function createEventsStorage(
       });
     }
 
-    // Handle run_completed / run_failed / run_cancelled: update the run status
-    // atomically, then clean up the run's hooks.
     if (
       data.eventType === "run_completed" ||
       data.eventType === "run_failed" ||
@@ -1863,7 +1801,6 @@ export function createEventsStorage(
       });
     }
 
-    // Handle step_created event: create step entity
     if (data.eventType === "step_created") {
       const eventData = (data as any).eventData as {
         stepName: string;
@@ -1897,7 +1834,7 @@ export function createEventsStorage(
         eventsByCorrelationKey(effectiveRunId, data.correlationId!),
         stepStatusKey(effectiveRunId, data.correlationId!),
         runMetaKey(effectiveRunId),
-        stringifyWithUint8Array(newStep),
+        stringify(newStep),
         data.correlationId!,
         now.getTime().toString(),
         serializeEvent(event),
@@ -1935,7 +1872,6 @@ export function createEventsStorage(
           ? "completion"
           : undefined;
 
-    // Handle step_started event: increment attempt, set status to 'running'
     if (data.eventType === "step_started") {
       // Retried steps may be scheduled for later. TooEarlyError tells core
       // to re-deliver after the remaining backoff instead of starting the
@@ -2003,7 +1939,7 @@ export function createEventsStorage(
           eventsByCorrelationKey(effectiveRunId, data.correlationId!),
           stepStatusKey(effectiveRunId, data.correlationId!),
           runMetaKey(effectiveRunId),
-          stringifyWithUint8Array(startedStep),
+          stringify(startedStep),
           data.correlationId!,
           now.getTime().toString(),
           serializeEvent(createdEvent),
@@ -2046,7 +1982,7 @@ export function createEventsStorage(
           updatedAt: now,
         };
         pendingEntityKey = stepKey(effectiveRunId, data.correlationId!);
-        pendingEntityJson = stringifyWithUint8Array(updatedStep);
+        pendingEntityJson = stringify(updatedStep);
         pendingStep = {
           key: stepStatusKey(effectiveRunId, data.correlationId!),
           status: "running",
@@ -2058,14 +1994,13 @@ export function createEventsStorage(
       }
     }
 
-    // Handle step_completed event: update step status
     if (data.eventType === "step_completed") {
       const eventData = (data as any).eventData as { result?: any };
       const existingData = await redis.get(
         stepKey(effectiveRunId, data.correlationId!),
       );
       if (existingData) {
-        const existing = parseWithUint8Array<Step>(existingData);
+        const existing = parse<Step>(existingData);
         if (isTerminal(existing.status)) {
           throw new EntityConflictError(
             `Cannot modify step in terminal state "${existing.status}"`,
@@ -2079,7 +2014,7 @@ export function createEventsStorage(
           updatedAt: now,
         };
         pendingEntityKey = stepKey(effectiveRunId, data.correlationId!);
-        pendingEntityJson = stringifyWithUint8Array(updatedStep);
+        pendingEntityJson = stringify(updatedStep);
         pendingStep = {
           key: stepStatusKey(effectiveRunId, data.correlationId!),
           status: "completed",
@@ -2094,7 +2029,6 @@ export function createEventsStorage(
       }
     }
 
-    // Handle step_failed event: terminal state with error
     if (data.eventType === "step_failed") {
       const eventData = (data as any).eventData as { error?: any };
 
@@ -2102,7 +2036,7 @@ export function createEventsStorage(
         stepKey(effectiveRunId, data.correlationId!),
       );
       if (existingData) {
-        const existing = parseWithUint8Array<Step>(existingData);
+        const existing = parse<Step>(existingData);
         if (isTerminal(existing.status)) {
           throw new EntityConflictError(
             `Cannot modify step in terminal state "${existing.status}"`,
@@ -2117,7 +2051,7 @@ export function createEventsStorage(
           updatedAt: now,
         };
         pendingEntityKey = stepKey(effectiveRunId, data.correlationId!);
-        pendingEntityJson = stringifyWithUint8Array(updatedStep);
+        pendingEntityJson = stringify(updatedStep);
         pendingStep = {
           key: stepStatusKey(effectiveRunId, data.correlationId!),
           status: "failed",
@@ -2132,7 +2066,6 @@ export function createEventsStorage(
       }
     }
 
-    // Handle step_retrying event: sets status back to 'pending', records error
     if (data.eventType === "step_retrying") {
       const eventData = (data as any).eventData as {
         error?: any;
@@ -2150,7 +2083,7 @@ export function createEventsStorage(
           updatedAt: now,
         };
         pendingEntityKey = stepKey(effectiveRunId, data.correlationId!);
-        pendingEntityJson = stringifyWithUint8Array(updatedStep);
+        pendingEntityJson = stringify(updatedStep);
         pendingStep = {
           key: stepStatusKey(effectiveRunId, data.correlationId!),
           status: "pending",
@@ -2161,7 +2094,6 @@ export function createEventsStorage(
       }
     }
 
-    // Handle hook_created event: create hook entity atomically via Lua
     if (data.eventType === "hook_created") {
       const eventData = (data as any).eventData as {
         token: string;
@@ -2203,12 +2135,12 @@ export function createEventsStorage(
         eventsKey(effectiveRunId),
         eventsByCorrelationKey(effectiveRunId, data.correlationId!),
         runMetaKey(effectiveRunId),
-        stringifyWithUint8Array(newHook),
+        stringify(newHook),
         data.correlationId!,
         now.getTime().toString(),
         eventData.token,
         serializeEvent(event),
-        `${keyPrefix}hook:`,
+        hookKey(""),
       )) as [number, string];
 
       if (result[0] === -6) {
@@ -2226,7 +2158,7 @@ export function createEventsStorage(
         let conflictingRunId: string | undefined;
         const owningHookData = await redis.get(hookKey(owningHookId));
         if (owningHookData) {
-          conflictingRunId = parseWithUint8Array<Hook>(owningHookData).runId;
+          conflictingRunId = parse<Hook>(owningHookData).runId;
         }
 
         // Recorded once: a redelivered hook_created must not journal a second
@@ -2529,9 +2461,7 @@ export function createEventsStorage(
           status: 404,
         });
       }
-      const event = EventSchema.parse(
-        compact(parseWithUint8Array<Event>(data)),
-      );
+      const event = EventSchema.parse(compact(parse<Event>(data)));
       return stripEventDataRefs(event, params?.resolveData ?? "all");
     },
 
@@ -2636,11 +2566,8 @@ export function createStepsStorage(
 ): Storage["steps"] {
   const { redis, keyPrefix } = config;
 
-  const stepKey = (runId: string, stepId: string) =>
-    `${keyPrefix}step:${runId}:${stepId}`;
-  const stepsIndexKey = (runId: string) => `${keyPrefix}steps:by_run:${runId}`;
+  const { stepKey, stepsIndexKey } = keys(keyPrefix);
 
-  // Helper: Get step data from Redis key
   async function getStepData(
     key: string,
     stepId: string,
@@ -2654,7 +2581,7 @@ export function createStepsStorage(
       });
     }
 
-    const step = parseWithUint8Array<Step>(data);
+    const step = parse<Step>(data);
     const parsed = StepSchema.parse(compact(step));
     const resolveData = params?.resolveData ?? "all";
     return filterStepData(parsed, resolveData);
@@ -2681,7 +2608,6 @@ export function createStepsStorage(
         params?.pagination?.sortOrder ?? "desc",
       );
 
-      // Fetch all steps
       const pipeline = redis.pipeline();
       for (const { id } of entries) {
         pipeline.get(stepKey(params.runId, id));
@@ -2692,7 +2618,7 @@ export function createStepsStorage(
       const steps: { step: Step | StepWithoutData; cursor: string }[] = [];
       for (const [i, result] of (results ?? []).entries()) {
         if (result?.[1]) {
-          const step = parseWithUint8Array<Step>(result[1] as string);
+          const step = parse<Step>(result[1] as string);
           const parsed = StepSchema.parse(compact(step));
           steps.push({
             step: filterStepData(parsed, resolveData),
@@ -2721,10 +2647,12 @@ export function createHooksStorage(
 ): Storage["hooks"] {
   const { redis, keyPrefix } = config;
 
-  const hookKeyFn = (hookId: string) => `${keyPrefix}hook:${hookId}`;
-  const hooksByTokenKey = (token: string) =>
-    `${keyPrefix}hooks:by_token:${token}`;
-  const hooksIndexKey = (runId: string) => `${keyPrefix}hooks:by_run:${runId}`;
+  const {
+    hookKey: hookKeyFn,
+    hooksByTokenKey,
+    hooksIndexKey,
+    runsByStatusKey,
+  } = keys(keyPrefix);
 
   // A finished run holds no hooks, so every hook is in the index of a live run.
   // shortcut: one index read per live run on each page, upgrade to a global hooks
@@ -2732,7 +2660,7 @@ export function createHooksStorage(
   async function liveHooksIndexKeys(): Promise<string[]> {
     const live = await Promise.all(
       ["pending", "running"].map((status) =>
-        redis.zrange(`${keyPrefix}runs:by_status:${status}`, "0", "-1"),
+        redis.zrange(runsByStatusKey(status), "0", "-1"),
       ),
     );
     return live.flat().map(hooksIndexKey);
@@ -2744,7 +2672,7 @@ export function createHooksStorage(
       if (!data) {
         throw new HookNotFoundError(hookId);
       }
-      const hook = parseWithUint8Array<Hook>(data);
+      const hook = parse<Hook>(data);
       const parsed = HookSchema.parse(compact(hook));
       const resolveData = params?.resolveData ?? "all";
       return filterHookData(parsed, resolveData);
@@ -2770,7 +2698,6 @@ export function createHooksStorage(
         params?.pagination?.sortOrder ?? "asc",
       );
 
-      // Fetch all hooks
       const pipeline = redis.pipeline();
       for (const { id } of entries) {
         pipeline.get(hookKeyFn(id));
@@ -2780,7 +2707,7 @@ export function createHooksStorage(
       const hooks: { hook: Hook; cursor: string }[] = [];
       for (const [i, result] of (results ?? []).entries()) {
         if (result?.[1]) {
-          const hook = parseWithUint8Array<Hook>(result[1] as string);
+          const hook = parse<Hook>(result[1] as string);
           const parsed = HookSchema.parse(compact(hook));
           hooks.push({
             hook: filterHookData(parsed, params?.resolveData ?? "all"),

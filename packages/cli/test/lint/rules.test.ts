@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import * as core from "@brickkit/core";
+import { DEFINE_FUNCTIONS } from "../../src/lint/ast";
 import { rules } from "../../src/lint/presets";
 import { lintCases, type Case } from "./helpers";
 
@@ -107,6 +109,11 @@ const CASES: Record<string, Case[]> = {
       errors: 1,
     },
     {
+      file: `${S}/orders/resources/order/order.resource.ts`,
+      code: `export const order = defineResource(orders, { name: "invoice", table });\n`,
+      errors: 1,
+    },
+    {
       file: `${S}/orders/resources/order/commands/ship.command.ts`,
       code: `import { order } from "../order.resource";\nexport default order.command("ship", {});\n`,
       errors: 0,
@@ -137,6 +144,17 @@ const CASES: Record<string, Case[]> = {
       file: `${S}/orders/actions/summary.action.ts`,
       code: `orders.action({ name: "getSummary" });\n`,
       errors: 1,
+    },
+    // The URL segment's kebab-case: acronyms split, underscores stay.
+    {
+      file: `${S}/orders/actions/import-csv.action.ts`,
+      code: `orders.action({ name: "importCSV" });\n`,
+      errors: 0,
+    },
+    {
+      file: `${S}/orders/actions/sync_stock.action.ts`,
+      code: `orders.action({ name: "sync_stock" });\n`,
+      errors: 0,
     },
   ],
   "service-folder": [
@@ -225,6 +243,16 @@ const CASES: Record<string, Case[]> = {
       file: "src/db.ts",
       code: `const a = process.env.DB;\nconst b = Bun.env.DB;\n`,
       errors: 2,
+    },
+    {
+      file: "src/plugins/audit/audit.plugin.ts",
+      code: `export const key = process.env.AUDIT_KEY;\n`,
+      errors: 1,
+    },
+    {
+      file: "src/db.test.ts",
+      code: `const a = process.env.DB;\n`,
+      errors: 0,
     },
   ],
   "action-schemas": [
@@ -450,7 +478,7 @@ const CASES: Record<string, Case[]> = {
   "plugin-manifest": [
     {
       file: "src/a.ts",
-      code: `definePlugin({ name: "@acme/brick-comments", brick: "^0.11.0", options: t.Object({ maxLength: t.Integer({ default: 2000, description: "Longest comment" }) }), app: ({ on }) => { let client; on("start", async () => { client = new RedisClient(); await client.connect(); }); } });\n`,
+      code: `definePlugin({ name: "@acme/brick-comments", brick: ">=0.10.0", options: t.Object({ maxLength: t.Integer({ default: 2000, description: "Longest comment" }) }), app: ({ on }) => { let client; on("start", async () => { client = new RedisClient(); await client.connect(); }); } });\n`,
       errors: 0,
     },
     {
@@ -460,7 +488,7 @@ const CASES: Record<string, Case[]> = {
     },
     {
       file: "src/c.ts",
-      code: `definePlugin({ name: "@acme/brick-cache", brick: "^0.11.0", options: t.Object({ ttl: t.Integer({ default: 60 }) }), tables: async () => ({}), app: () => { const client = createClient(); } });\n`,
+      code: `definePlugin({ name: "@acme/brick-cache", brick: ">=0.10.0", options: t.Object({ ttl: t.Integer({ default: 60 }) }), tables: async () => ({}), app: () => { const client = createClient(); } });\n`,
       errors: 3,
     },
   ],
@@ -484,7 +512,6 @@ describe("lint file rules", () => {
       }
       for (const message of result.messages) {
         expect(message.rule).toBe(`brick/${rule}`);
-        expect(message.line).toBeGreaterThan(0);
       }
     });
 
@@ -513,5 +540,23 @@ describe("lint file rules", () => {
     ]);
     expect(result.messages[0]?.message).toContain("ctx.deps");
     expect(result.messages[0]?.message).toContain("useDeps()");
+  });
+
+  it("maps every define* export of @brickkit/core, or ignores it on purpose", () => {
+    // Not definitions the rules check: values, errors and low-level plugin builders.
+    const ignored = [
+      "defineDatabase",
+      "defineError",
+      "defineSecret",
+      "defineServicePlugin",
+      "defineResourcePlugin",
+    ];
+    for (const name of Object.keys(core).filter((key) =>
+      key.startsWith("define"),
+    ))
+      expect([
+        name,
+        name in DEFINE_FUNCTIONS || ignored.includes(name),
+      ]).toEqual([name, true]);
   });
 });

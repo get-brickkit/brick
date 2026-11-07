@@ -1,4 +1,4 @@
-import { compareSocketSeq } from "./socket-schema";
+import { compareSocketSeq } from "./protocol";
 import type { SocketBroker, SocketBrokerMessage } from "./socket-types";
 
 // From the global, as @types/bun doesn't export RedisClient from "bun" for the .d.ts build.
@@ -16,6 +16,9 @@ export function reconnectDelay(failures: number): number {
   const ceiling = Math.min(30_000, 500 * 2 ** failures);
   return ceiling / 2 + Math.random() * (ceiling / 2);
 }
+
+/** How long a call waits for Redis to connect before going on without it. */
+const REDIS_WAIT_MS = 1000;
 
 /** One Redis connection that reconnects by itself and reports each fresh connection. */
 export function connection(
@@ -56,7 +59,6 @@ export function connection(
     );
   };
   return {
-    /** The connected client, starting a connection when there is none. */
     get(): RedisClient | undefined {
       start();
       return redis?.connected ? redis : undefined;
@@ -66,8 +68,11 @@ export function connection(
       if (redis?.connected) return Promise.resolve();
       start();
       return new Promise((resolve) => {
-        waiters.push(resolve);
-        setTimeout(resolve, ms);
+        const timeout = setTimeout(resolve, ms);
+        waiters.push(() => {
+          clearTimeout(timeout);
+          resolve();
+        });
       });
     },
     close() {
@@ -98,6 +103,16 @@ export function redisBroker(options: RedisBrokerOptions = {}): SocketBroker {
   >();
   const pending = new Map<string, Promise<unknown>>();
   const stream = (topic: string) => `brick:socket:stream:${topic}`;
+  // Failures stay non-fatal (an emit is best effort) but leave a trace, once per kind.
+  const warned = new Set<string>();
+  const warn = (what: string) => (error: unknown) => {
+    if (warned.has(what)) return;
+    warned.add(what);
+    console.warn(
+      `[Brick-TS] Redis socket broker: ${what} failed; later failures of it are not logged.`,
+      error,
+    );
+  };
   const queue: ((redis: RedisClient) => void)[] = [];
   const send = (work: (redis: RedisClient) => void) => {
     const redis = publisher.get();
@@ -115,7 +130,7 @@ export function redisBroker(options: RedisBrokerOptions = {}): SocketBroker {
     for (const deliver of listeners.get(name) ?? []) deliver(message);
   };
   const subscribe = (redis: RedisClient, name: string) => {
-    const done = redis.subscribe(name, receive).catch(() => {});
+    const done = redis.subscribe(name, receive).catch(warn("SUBSCRIBE"));
     pending.set(name, done);
     void done.then(() => {
       if (pending.get(name) === done) pending.delete(name);
@@ -133,7 +148,9 @@ export function redisBroker(options: RedisBrokerOptions = {}): SocketBroker {
       if (message.type !== "emit" || !replay)
         return send(
           (redis) =>
-            void redis.publish(name, JSON.stringify(message)).catch(() => {}),
+            void redis
+              .publish(name, JSON.stringify(message))
+              .catch(warn("PUBLISH")),
         );
       const key = stream(message.topic);
       send((redis) => {
@@ -151,15 +168,15 @@ export function redisBroker(options: RedisBrokerOptions = {}): SocketBroker {
           .then((seq: string) => {
             void redis
               .send("PEXPIRE", [key, String(replay.maxAgeMs)])
-              .catch(() => {});
+              .catch(warn("PEXPIRE"));
             return redis.publish(name, JSON.stringify({ ...message, seq }));
           })
-          .catch(() => {});
+          .catch(warn("XADD/PUBLISH"));
       });
     },
     async head() {
       try {
-        await publisher.opened(1000);
+        await publisher.opened(REDIS_WAIT_MS);
         const [seconds, micros] = (await publisher.get()!.send("TIME", [])) as [
           string,
           string,
@@ -172,7 +189,7 @@ export function redisBroker(options: RedisBrokerOptions = {}): SocketBroker {
     async history(topic, since, replay) {
       let raw: [string, string[]][];
       try {
-        await publisher.opened(1000);
+        await publisher.opened(REDIS_WAIT_MS);
         raw = await publisher.get()!.send("XRANGE", [stream(topic), "-", "+"]);
       } catch {
         return undefined;
@@ -208,16 +225,13 @@ export function redisBroker(options: RedisBrokerOptions = {}): SocketBroker {
         if (local.size || listeners.get(name) !== local) return;
         listeners.delete(name);
         pending.delete(name);
-        void subscriber
-          .get()
-          ?.unsubscribe(name)
-          .catch(() => {});
+        void subscriber.get()?.unsubscribe(name).catch(warn("UNSUBSCRIBE"));
       };
     },
     async ready(topic) {
       const name = channel(topic);
       // Wait briefly for Redis, so a join is acknowledged once its emits can arrive.
-      if (!pending.has(name)) await subscriber.opened(1000);
+      if (!pending.has(name)) await subscriber.opened(REDIS_WAIT_MS);
       await pending.get(name);
     },
     close() {

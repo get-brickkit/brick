@@ -1,30 +1,21 @@
-import { RedisContainer } from "@testcontainers/redis";
 import { randomUUID } from "node:crypto";
 import { Redis } from "ioredis";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
+import { keys } from "../src/keys.js";
 import {
   createEventsStorage,
   createHooksStorage,
   createRunsStorage,
   createStepsStorage,
 } from "../src/storage.js";
+import { describeRedis, redisUrl } from "./helpers.js";
 
-// Review2 repros. Every assertion states the CORRECT behaviour, so a failing
-// test is a reproduced bug.
+// Storage outcomes a stale or retried write must not change.
 
-let url: string;
-let testContainer: Awaited<ReturnType<RedisContainer["start"]>> | undefined;
-beforeAll(async () => {
-  url =
-    process.env.REDIS_TEST_URL ??
-    (testContainer = await new RedisContainer(
-      "redis:7-alpine",
-    ).start()).getConnectionUrl();
-}, 120_000);
 let a: Redis;
 
 beforeAll(() => {
-  a = new Redis(url);
+  a = new Redis(redisUrl);
 });
 afterAll(async () => {
   await a.quit();
@@ -60,7 +51,7 @@ async function types(s: S, runId: string) {
   );
 }
 
-describe("review2: step status key vs step JSON", () => {
+describeRedis("step status key vs step JSON", () => {
   it("a step that was running before the status key existed can be retried and restarted", async () => {
     const s = storages();
     const runId = await createRun(s);
@@ -75,7 +66,7 @@ describe("review2: step status key vs step JSON", () => {
       correlationId: stepId,
     }); // attempt 1
     // A step written by the previous version has no `step:status:` key.
-    await a.del(`${s.keyPrefix}step:status:${runId}:${stepId}`);
+    await a.del(keys(s.keyPrefix).stepStatusKey(runId, stepId));
 
     // Attempt 1 fails and is retried. The script seeds the key from attempt '0',
     // not from the JSON's attempt 1.
@@ -98,7 +89,7 @@ describe("review2: step status key vs step JSON", () => {
   });
 });
 
-describe("review2: hook re-creation after disposal", () => {
+describeRedis("hook re-creation after disposal", () => {
   it("refuses a second hook_created for a hook this run already created and disposed", async () => {
     const s = storages();
     const runId = await createRun(s);
@@ -122,7 +113,7 @@ describe("review2: hook re-creation after disposal", () => {
       (e) => e.name,
     );
 
-    expect(again).toBe("EntityConflictError"); // actual: 'hook_created'
+    expect(again).toBe("EntityConflictError");
     const log = (await types(s, runId)).filter((t) => t.endsWith(hookId));
     expect(log).toEqual([`hook_created:${hookId}`, `hook_disposed:${hookId}`]);
     // ...and the token must stay free for other runs.
@@ -132,7 +123,7 @@ describe("review2: hook re-creation after disposal", () => {
   });
 });
 
-describe("review2: lazy hook resume convergence", () => {
+describeRedis("lazy hook resume convergence", () => {
   it("a re-ensure converges on the recorded event even after the hook was disposed", async () => {
     const s = storages();
     const runId = await createRun(s);
@@ -165,10 +156,6 @@ describe("review2: lazy hook resume convergence", () => {
       (r) => r.event?.eventId,
       (e) => e.name,
     );
-    expect(second).toBe(first.event!.eventId); // actual: HookNotFoundError
+    expect(second).toBe(first.event!.eventId);
   });
-});
-
-afterAll(async () => {
-  await testContainer?.stop();
 });
