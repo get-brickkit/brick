@@ -378,8 +378,8 @@ export function RequestsView({
       >
         <div
           className={cn(
-            "lg:sticky lg:top-18 lg:block lg:max-h-[calc(100vh-6rem)] lg:overflow-auto",
-            showFilters ? "block" : "hidden",
+            "lg:sticky lg:top-18 lg:max-h-[calc(100vh-6rem)] lg:overflow-auto",
+            !showFilters && "max-lg:hidden",
           )}
         >
           <FacetPanel
