@@ -16,7 +16,7 @@ import { emitCompiledApplication } from "../src/compiler";
 
 beforeEach(resetGlobalRegistry);
 
-it("emits the IR that a built server checks its app against", async () => {
+it("emits the IR of a compiled app", async () => {
   const service = defineService("emitted");
   const action = service.action({
     name: "getItem",
@@ -57,7 +57,7 @@ it("emits the IR that a built server checks its app against", async () => {
     );
     expect(bound.routes).toHaveLength(1);
     action.config.input = t.Object({ id: t.Number() }) as any;
-    await expect(loadCompiledBrickApp(load, emitted.ir)).rejects.toThrow(
+    expect(() => bindCompiledApplication(emitted.ir, [service], [])).toThrow(
       "differ from the compiled IR",
     );
   } finally {

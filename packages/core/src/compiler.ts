@@ -27,18 +27,16 @@ function analyzeMatching(services: Service<any, any>[], ir: BrickIR) {
 }
 
 /**
- * Build artifact bootstrap: import the app and check that its definitions
- * still match the IR `brick build` compiled.
+ * Build artifact bootstrap: import the bundled app. It is not re-analyzed
+ * against the IR: the bundle and its IR come from one build (#107).
  *
- * @throws When the app's definitions differ from `ir`.
+ * @param _ir Ignored; kept so existing callers still type-check.
  */
 export async function loadCompiledBrickApp(
   load: () => Promise<{ default: unknown }>,
-  ir: BrickIR,
+  _ir?: BrickIR,
 ) {
-  const app = requireBrickApp((await load()).default);
-  analyzeMatching([...app.definition.services], ir);
-  return app;
+  return requireBrickApp((await load()).default);
 }
 
 export type { BrickIR, RouteIR, RouteMethod } from "./compiler/ir";

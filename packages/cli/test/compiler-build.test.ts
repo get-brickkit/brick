@@ -36,6 +36,78 @@ it("rejects an entry that does not default-export a BrickApp", async () => {
   }
 });
 
+it("starts a built server whose bundle registers actions in another order than the source (#107)", async () => {
+  const root = resolve(import.meta.dir, "../../..");
+  await mkdir(join(root, ".brick"), { recursive: true });
+  const dir = await mkdtemp(join(root, ".brick/reexport-order-"));
+  let server: ReturnType<typeof Bun.spawn> | undefined;
+  try {
+    // Bun's bundle runs named re-exports before `export *`; source ESM runs them in order.
+    await Bun.write(
+      join(dir, "svc.ts"),
+      `import { defineService, t } from "@brickkit/core";
+export const svc = defineService("demo", {});
+export const act = (name: string) =>
+  svc.action({ name, method: "GET", path: \`/\${name}\`, execute: () => name, output: t.String() });
+`,
+    );
+    await Bun.write(
+      join(dir, "a.ts"),
+      `import { act } from "./svc";\nexport const aAction = act("a");\n`,
+    );
+    await Bun.write(
+      join(dir, "c.ts"),
+      `import { act } from "./svc";\nexport const cAction = act("c");\n`,
+    );
+    await Bun.write(
+      join(dir, "index.ts"),
+      `export * from "./c";\nexport { aAction } from "./a";\n`,
+    );
+    await Bun.write(
+      join(dir, "app.ts"),
+      `import { brick } from "@brickkit/core";
+import { svc } from "./svc";
+import "./index";
+export default brick({ compiler: true, prefix: "/v2", services: [svc], requestLogging: false });
+`,
+    );
+    const build = Bun.spawn(
+      [
+        process.execPath,
+        join(root, "packages/cli/src/bin.ts"),
+        "build",
+        join(dir, "app.ts"),
+        "--outdir",
+        join(dir, "out"),
+      ],
+      { cwd: root, stdout: "pipe", stderr: "pipe" },
+    );
+    const [code, stderr] = await Promise.all([
+      build.exited,
+      new Response(build.stderr).text(),
+    ]);
+    expect(stderr).toBe("");
+    expect(code).toBe(0);
+    const port = freePort();
+    server = Bun.spawn([process.execPath, join(dir, "out/server.js")], {
+      cwd: dir,
+      env: { ...process.env, PORT: String(port) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const logs = capture(server);
+    await waitForOutput(logs.read, "http://localhost:");
+    for (const name of ["a", "c"])
+      expect(
+        await (await fetch(`http://localhost:${port}/v2/demo/${name}`)).text(),
+      ).toBe(name);
+  } finally {
+    server?.kill();
+    await server?.exited;
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 20000);
+
 for (const aot of [true, false]) {
   it(`builds a deployable ${aot ? "AOT" : "runtime compiled"} server and runs generated handlers without the definitions module`, async () => {
     const root = resolve(import.meta.dir, "../../..");
