@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -17,6 +17,7 @@ interface Builders {
     findTsConfigPath(): Promise<string | undefined>;
   };
   detectWorkflowPatterns(source: string): {
+    hasUseWorkflow: boolean;
     hasDirective: boolean;
     hasSerde: boolean;
   };
@@ -74,13 +75,15 @@ async function loadBuilders(
  * `brick build` hands it to `Bun.build`.
  *
  * @param root - The project root, where the SDK is installed. Default: the working directory.
+ * @param onDirective - Called for each file it loads that holds a `"use workflow"` function.
  * @returns The plugin, or `undefined` when the Workflow SDK and its builders are not
  * installed in the project.
  */
 export async function workflowTransformPlugin(
   root: string = process.cwd(),
+  onDirective?: () => void,
 ): Promise<BunPlugin | undefined> {
-  const load = await transformer(root);
+  const load = await transformer(root, onDirective);
   if (!load) return undefined;
   return {
     name: "brick:workflows",
@@ -93,7 +96,10 @@ export async function workflowTransformPlugin(
 type Load = Bun.OnLoadCallback;
 
 /** The transform for files of the project at `root`, or `undefined` without the SDK. */
-async function transformer(root: string): Promise<Load | undefined> {
+async function transformer(
+  root: string,
+  onDirective?: () => void,
+): Promise<Load | undefined> {
   const projectRoot = resolve(root);
   const builders = (await loadBuilders(projectRoot))?.builders;
   if (!builders) return undefined;
@@ -103,6 +109,8 @@ async function transformer(root: string): Promise<Load | undefined> {
     const source = readFileSync(args.path, "utf8");
     if (!DIRECTIVE.test(source))
       return { contents: source, loader: loaderFor(args.path) };
+    if (onDirective && builders.detectWorkflowPatterns(source).hasUseWorkflow)
+      onDirective();
     // SWC strips the types but leaves JSX as it is.
     return builders
       .applySwcTransform(
@@ -470,6 +478,10 @@ export async function buildAppWorkflows(
     throw new ConfigError(
       `Brick: the app's workflows root ${target.root} is not the folder its workflow files were transformed from (${[...registered.keys()].join(", ")}). Run brick from the workflows root, or leave events.workflows.root unset.`,
     );
+  // A compiled server reads the bundle `brick build` shipped beside it. Its
+  // own copy of core knows, so ask the app rather than compare paths: run from
+  // the outdir, the shipped bundle sits where a built one would.
+  if (target.shipped) return true;
   const started = performance.now();
   const built = await buildWorkflows({
     root: target.root,
@@ -479,5 +491,37 @@ export async function buildAppWorkflows(
     console.log(
       `[Brick-TS] Built workflows in ${Math.round(performance.now() - started)}ms`,
     );
+  return true;
+}
+
+/**
+ * What `brick build` ships: the workflow bundle, built from the project and
+ * copied to `<outdir>/.well-known/workflow/v1`, where the compiled server reads
+ * it. `brick build` calls it when the bundle holds a `"use workflow"` function, or
+ * the loaded app runs workflows.
+ *
+ * @param root - The project root.
+ * @param outdir - Where the compiled server is written.
+ * @param required - The loaded app runs workflows, so the SDK must be installed.
+ * @returns Whether a bundle was shipped: it holds a workflow, or one is required.
+ */
+export async function shipWorkflows(
+  root: string,
+  outdir: string,
+  required: boolean,
+): Promise<boolean> {
+  await buildWorkflows({ root });
+  const dir = join(resolve(root), WORKFLOW_BUNDLE.dir);
+  const manifest = JSON.parse(
+    await readFile(join(dir, WORKFLOW_BUNDLE.manifest), "utf8"),
+  ) as { workflows?: Record<string, unknown> };
+  if (!required && !Object.keys(manifest.workflows ?? {}).length) return false;
+  for (const name of [
+    WORKFLOW_BUNDLE.flow,
+    WORKFLOW_BUNDLE.steps,
+    WORKFLOW_BUNDLE.webhook,
+    WORKFLOW_BUNDLE.manifest,
+  ])
+    await cp(join(dir, name), join(outdir, WORKFLOW_BUNDLE.dir, name));
   return true;
 }

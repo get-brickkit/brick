@@ -133,7 +133,13 @@ describe("apps with workflows", () => {
   it("brick build transforms the workflows, builds the bundle, and starts events in the server", async () => {
     rmSync(join(root, ".well-known"), { recursive: true, force: true });
     const outdir = join(root, "dist", "brick");
-    await buildApplication({ entry, outdir });
+    // The build replaces only its bundle under .well-known.
+    mkdirSync(join(outdir, ".well-known"), { recursive: true });
+    writeFileSync(join(outdir, ".well-known", "security.txt"), "x");
+    const result = await buildApplication({ entry, outdir });
+    expect(result.workflows).toBe(join(outdir, ".well-known/workflow/v1"));
+    expect(existsSync(join(result.workflows!, "flow.mjs"))).toBe(true);
+    expect(existsSync(join(outdir, ".well-known", "security.txt"))).toBe(true);
     const server = readFileSync(join(outdir, "server.js"), "utf8");
     expect(server).toContain(WORKFLOW_ID);
     expect(server).toContain("events?.start()");
@@ -143,6 +149,40 @@ describe("apps with workflows", () => {
     // the precompiled handlers every route answers 500.
     expect(server).toContain("Compiled.register(");
     expect(existsSync(join(dir, "flow.mjs"))).toBe(true);
+  });
+
+  it("brick build neither builds nor ships workflows for an app that imports none", async () => {
+    const plain = copyFixture();
+    try {
+      // src/hello.ts stays: a workflow the app does not import is not shipped.
+      writeFileSync(
+        join(plain, "src", "app.ts"),
+        'import { brick } from "@brickkit/core";\nexport default brick({ requestLogging: false, docs: false });\n',
+      );
+      const cwd = process.cwd();
+      process.chdir(plain);
+      try {
+        const result = await buildApplication({
+          entry: join(plain, "src", "app.ts"),
+          outdir: join(plain, "dist", "brick"),
+        });
+        expect(result.workflows).toBeUndefined();
+      } finally {
+        process.chdir(cwd);
+      }
+      expect(existsSync(join(plain, ".well-known"))).toBe(false);
+    } finally {
+      rmSync(dirname(plain), { recursive: true, force: true });
+    }
+  });
+
+  it("builds nothing for a compiled server, even run from its outdir", async () => {
+    const app = {
+      events: { workflows: { root, dir, shipped: true } },
+    } as unknown as BrickApp;
+    rmSync(join(root, ".well-known"), { recursive: true, force: true });
+    expect(await buildAppWorkflows(app)).toBe(true);
+    expect(existsSync(dir)).toBe(false);
   });
 
   it("refuses an app whose workflows root is not the one its files were transformed from", async () => {

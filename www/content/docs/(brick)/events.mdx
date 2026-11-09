@@ -402,11 +402,13 @@ The inspector can cancel runs and resume hooks, so it is a developer's tool: the
 
 ### With `brick build`
 
-`brick build` transforms the workflows, builds the bundle into `.well-known/workflow/v1`, and makes the compiled server start its events and stop them on `SIGINT` and `SIGTERM`. Run the server from the project root: it finds the bundle from the working directory and loads the SDK from `node_modules`, so deploy those with it.
+`brick build` transforms the workflows, builds the bundle, and ships it in the output folder as `<outdir>/.well-known/workflow/v1`. The compiled server reads it from beside `server.js`, from any working directory, and starts its events and stops them on `SIGINT` and `SIGTERM`. `brick start dist/brick/server.js` uses that bundle too and builds nothing. The server loads the Workflow SDK from `node_modules` (the working directory's, else the one above `server.js`), so deploy it with the server.
+
+Whether to ship workflows depends on the project, not on the env the build runs in: `brick build` ships them whenever a file the app imports holds a `"use workflow"` function, so an app that creates its world and declares its workflow listeners only when, say, a Redis URL is set at run time still gets its bundle.
 
 ### Limits
 
-- The bundle is always written to `<root>/.well-known/workflow/v1`; its location cannot be changed.
+- `brick dev` and `brick start` with a source entry write the bundle to `<root>/.well-known/workflow/v1`, and `brick build` to `<outdir>/.well-known/workflow/v1`; neither location can be changed.
 - Stopping the events closes the world for good.
 - `stopAllEvents()` from `@brickkit/core` stops every events hub started in the process, even one made by another copy of the package, and waits for the deliveries that are running. `brick dev` calls it when you press Ctrl-C or the app reloads; call it yourself if you host an app in a process of your own and need the deliveries to finish before it exits.
 - If you delete finished runs from Redis (a retention policy), delivering the same event again starts the workflow again.

@@ -13,7 +13,7 @@ import type {
   EventsWorld,
   ServiceEvents,
 } from "./types";
-import { WorkflowRuntime } from "./workflows";
+import { isWorkflowBundleShipped, WorkflowRuntime } from "./workflows";
 import { runWithDeps } from "../deps";
 import { portOf, type ServicePort } from "../service-port";
 import { DuplicateNameError, type Service } from "../types";
@@ -184,16 +184,18 @@ export class EventsHub {
    * Where the workflow bundle is read from, the project it is built from, and
    * the world the workflows run on. Only set when a listener runs a workflow.
    * The CLI builds the bundle there before events start, and shows the world's
-   * runs in the dev dashboard.
+   * runs in the dev dashboard. `shipped`: a compiled server reads the bundle
+   * `brick build` shipped beside it, so there is nothing to build.
    */
   get workflows():
-    | { root: string; dir: string; world: EventsWorld }
+    | { root: string; dir: string; world: EventsWorld; shipped: boolean }
     | undefined {
     return (
       this.runtime && {
         root: this.runtime.root,
         dir: this.runtime.dir,
         world: this.runtime.world,
+        shipped: isWorkflowBundleShipped(),
       }
     );
   }

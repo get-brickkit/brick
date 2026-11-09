@@ -2,10 +2,11 @@ import { aot } from "elysia/plugin/aot/bun";
 import type { BunPlugin } from "bun";
 
 /** Keep the pinned Elysia beta's incomplete stripping from breaking builds. */
-export function brickAot(entry: string, hasSockets: boolean): BunPlugin {
-  // WS routes still need cookie setup during reconstruction in beta.29.
-  // Retain those modules while continuing to precompile HTTP handlers.
-  if (hasSockets) return aot(entry, { target: "bun", strip: false });
+export function brickAot(entry: string, keep: boolean): BunPlugin {
+  // `keep`: WS routes still need cookie setup during reconstruction in beta.29,
+  // and shipped workflows mount their webhook route only when a world is set at
+  // run time. Retain those modules while continuing to precompile HTTP handlers.
+  if (keep) return aot(entry, { target: "bun", strip: false });
   return {
     name: "brick-elysia-aot",
     async setup(build) {

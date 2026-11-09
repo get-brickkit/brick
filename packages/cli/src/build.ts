@@ -1,13 +1,13 @@
 import { mkdtemp, mkdir, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { compileBrickApplication } from "@brickkit/core";
+import { compileBrickApplication, WORKFLOW_BUNDLE } from "@brickkit/core";
 import type { BunPlugin } from "bun";
 import { emitCompiledApplication } from "./compiler";
 import { brickAot } from "./compiler/aot";
 import { loadBrickApp } from "./app-entry";
 import { ownModule } from "./own-module";
 import { DEFAULT_OUTDIR, resolvePort } from "./config";
-import { buildAppWorkflows, workflowTransformPlugin } from "./workflows";
+import { shipWorkflows, workflowTransformPlugin } from "./workflows";
 import {
   themeCss,
   writeDashboardExtension,
@@ -67,9 +67,7 @@ export async function buildApplication(options: BuildApplicationOptions) {
       `Brick compiler: dashboard extension not found: ${extension}`,
     );
   const app = await loadBrickApp(entry);
-  // The bundle stays in the project, where the server finds it from the working
-  // directory, as `brick start` does.
-  await buildAppWorkflows(app);
+  const root = app.events?.workflows?.root ?? process.cwd();
   const services = [...app.definition.services];
   const compilation = compileBrickApplication({
     services,
@@ -90,11 +88,16 @@ export async function buildApplication(options: BuildApplicationOptions) {
       ? join(outdir, "dashboard")
       : undefined;
     const theme = JSON.stringify(options.dashboard?.theme);
-    const source = `import { fileURLToPath } from "node:url";
+    const source = `import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { loadCompiledBrickApp } from "@brickkit/core";
 import { resolvePort } from ${JSON.stringify(ownModule("config"))};
 import { serveApp, shutdownOnSignal } from ${JSON.stringify(ownModule("serve"))};
-export const app = await loadCompiledBrickApp(() => import(${JSON.stringify(entry)}));
+const workflows = fileURLToPath(new URL(${JSON.stringify(`./${WORKFLOW_BUNDLE.dir}`)}, import.meta.url));
+export const app = await loadCompiledBrickApp(() => import(${JSON.stringify(entry)}), undefined, {
+  workflows: existsSync(workflows) ? workflows : undefined,
+});
+export default app;
 if (import.meta.main) {
   await serveApp(app, {
     port: resolvePort(undefined, ${port}),
@@ -105,9 +108,12 @@ if (import.meta.main) {
 }
 `;
     await Bun.write(join(staging, "entry.ts"), source);
-    const workflows = app.events?.workflows
-      ? await workflowTransformPlugin(app.events.workflows.root)
-      : undefined;
+    // Whether to ship workflows depends on the files the bundle holds, not on
+    // the env: an app may declare its workflow listeners only at run time.
+    let directives = false;
+    const transform = await workflowTransformPlugin(root, () => {
+      directives = true;
+    });
     const result = await Bun.build({
       entrypoints: [join(staging, "entry.ts")],
       target: "bun",
@@ -123,15 +129,18 @@ if (import.meta.main) {
           : [
               brickAot(
                 join(staging, "entry.ts"),
-                app.definition.sockets.length > 0,
+                app.definition.sockets.length > 0 || transform !== undefined,
               ),
             ]),
-        ...(workflows ? [workflows] : []),
+        ...(transform ? [transform] : []),
         productionDashboardAtRunTime,
       ],
     });
     if (!result.success)
       throw new AggregateError(result.logs, "Brick compiler: bundling failed");
+    const workflows =
+      (directives || Boolean(app.events?.workflows)) &&
+      (await shipWorkflows(root, staging, Boolean(app.events?.workflows)));
     await Bun.write(
       join(staging, "brick-ir.json"),
       JSON.stringify(compilation.ir, null, 2) + "\n",
@@ -139,6 +148,13 @@ if (import.meta.main) {
     await mkdir(outdir, { recursive: true });
     for (const name of OUTPUTS)
       await rename(join(staging, name), join(outdir, name));
+    // Only the bundle is ours: other files under .well-known stay.
+    const bundle = join(outdir, WORKFLOW_BUNDLE.dir);
+    await rm(bundle, { recursive: true, force: true });
+    if (workflows) {
+      await mkdir(dirname(bundle), { recursive: true });
+      await rename(join(staging, WORKFLOW_BUNDLE.dir), bundle);
+    }
     if (dashboard) {
       await rm(dashboard, { recursive: true, force: true });
       await rename(join(staging, "dashboard"), dashboard);
@@ -148,6 +164,7 @@ if (import.meta.main) {
       entry: join(outdir, "server.js"),
       ir: compilation.ir,
       dashboard,
+      workflows: workflows ? join(outdir, WORKFLOW_BUNDLE.dir) : undefined,
     };
   } finally {
     await rm(staging, { recursive: true, force: true });

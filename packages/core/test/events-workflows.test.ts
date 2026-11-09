@@ -230,6 +230,7 @@ describe("workflow listeners", () => {
       root,
       dir: join(root, ".well-known", "workflow", "v1"),
       world,
+      shipped: false,
     });
     expect(
       hubOf({
