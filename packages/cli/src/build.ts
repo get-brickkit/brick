@@ -145,9 +145,13 @@ if (import.meta.main) {
     await mkdir(outdir, { recursive: true });
     for (const name of OUTPUTS)
       await rename(join(staging, name), join(outdir, name));
-    await rm(join(outdir, ".well-known"), { recursive: true, force: true });
-    if (workflows)
-      await rename(join(staging, ".well-known"), join(outdir, ".well-known"));
+    // Only the bundle is ours: other files under .well-known stay.
+    const bundle = join(outdir, WORKFLOW_BUNDLE.dir);
+    await rm(bundle, { recursive: true, force: true });
+    if (workflows) {
+      await mkdir(dirname(bundle), { recursive: true });
+      await rename(join(staging, WORKFLOW_BUNDLE.dir), bundle);
+    }
     if (dashboard) {
       await rm(dashboard, { recursive: true, force: true });
       await rename(join(staging, "dashboard"), dashboard);

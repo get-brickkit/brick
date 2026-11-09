@@ -33,6 +33,7 @@ interface Builders {
 type BunPlugin = Parameters<typeof Bun.plugin>[0];
 
 const DIRECTIVE = /["']use (?:step|workflow)["']/;
+const WORKFLOW_DIRECTIVE = /["']use workflow["']/;
 
 /**
  * Every project source file. Not the generated bundle: it holds the directives as
@@ -501,7 +502,7 @@ export async function shipWorkflows(
   outdir: string,
   required: boolean,
 ): Promise<boolean> {
-  if (!required && !(await loadBuilders(resolve(root)))) return false;
+  if (!required && !(await hasWorkflows(resolve(root)))) return false;
   await buildWorkflows({ root });
   const dir = join(resolve(root), WORKFLOW_BUNDLE.dir);
   const manifest = JSON.parse(
@@ -516,4 +517,18 @@ export async function shipWorkflows(
   ])
     await cp(join(dir, name), join(outdir, WORKFLOW_BUNDLE.dir, name));
   return true;
+}
+
+/** Whether a source file under `root`, among those the builder reads, holds a `"use workflow"` function. */
+async function hasWorkflows(root: string): Promise<boolean> {
+  const loaded = await loadBuilders(root);
+  if (!loaded) return false;
+  const builder = new loaded.builders.StandaloneBuilder({
+    buildTarget: "standalone",
+    dirs: ["."],
+    workingDir: root,
+  });
+  for (const file of await builder.getInputFiles())
+    if (WORKFLOW_DIRECTIVE.test(await readFile(file, "utf8"))) return true;
+  return false;
 }
