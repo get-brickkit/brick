@@ -404,7 +404,7 @@ The inspector can cancel runs and resume hooks, so it is a developer's tool: the
 
 `brick build` transforms the workflows, builds the bundle, and ships it in the output folder as `<outdir>/.well-known/workflow/v1`. The compiled server reads it from beside `server.js`, from any working directory, and starts its events and stops them on `SIGINT` and `SIGTERM`. `brick start dist/brick/server.js` uses that bundle too and builds nothing. The server loads the Workflow SDK from `node_modules` (the working directory's, else the one above `server.js`), so deploy it with the server.
 
-Whether to ship workflows depends on the project, not on the env the build runs in: `brick build` ships them whenever a project file holds a `"use workflow"` function, so an app that creates its world and declares its workflow listeners only when, say, a Redis URL is set at run time still gets its bundle.
+Whether to ship workflows depends on the project, not on the env the build runs in: `brick build` ships them whenever a file the app imports holds a `"use workflow"` function, so an app that creates its world and declares its workflow listeners only when, say, a Redis URL is set at run time still gets its bundle.
 
 ### Limits
 

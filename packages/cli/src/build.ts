@@ -87,18 +87,15 @@ export async function buildApplication(options: BuildApplicationOptions) {
     ))
       ? join(outdir, "dashboard")
       : undefined;
-    const workflows = await shipWorkflows(
-      root,
-      staging,
-      Boolean(app.events?.workflows),
-    );
     const theme = JSON.stringify(options.dashboard?.theme);
-    const source = `import { fileURLToPath } from "node:url";
+    const source = `import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { loadCompiledBrickApp } from "@brickkit/core";
 import { resolvePort } from ${JSON.stringify(ownModule("config"))};
 import { serveApp, shutdownOnSignal } from ${JSON.stringify(ownModule("serve"))};
+const workflows = fileURLToPath(new URL(${JSON.stringify(`./${WORKFLOW_BUNDLE.dir}`)}, import.meta.url));
 export const app = await loadCompiledBrickApp(() => import(${JSON.stringify(entry)}), undefined, {
-  workflows: ${workflows ? `fileURLToPath(new URL(${JSON.stringify(`./${WORKFLOW_BUNDLE.dir}`)}, import.meta.url))` : "undefined"},
+  workflows: existsSync(workflows) ? workflows : undefined,
 });
 export default app;
 if (import.meta.main) {
@@ -111,9 +108,12 @@ if (import.meta.main) {
 }
 `;
     await Bun.write(join(staging, "entry.ts"), source);
-    const transform = workflows
-      ? await workflowTransformPlugin(root)
-      : undefined;
+    // Whether to ship workflows depends on the files the bundle holds, not on
+    // the env: an app may declare its workflow listeners only at run time.
+    let directives = false;
+    const transform = await workflowTransformPlugin(root, () => {
+      directives = true;
+    });
     const result = await Bun.build({
       entrypoints: [join(staging, "entry.ts")],
       target: "bun",
@@ -129,7 +129,7 @@ if (import.meta.main) {
           : [
               brickAot(
                 join(staging, "entry.ts"),
-                app.definition.sockets.length > 0 || workflows,
+                app.definition.sockets.length > 0 || transform !== undefined,
               ),
             ]),
         ...(transform ? [transform] : []),
@@ -138,6 +138,9 @@ if (import.meta.main) {
     });
     if (!result.success)
       throw new AggregateError(result.logs, "Brick compiler: bundling failed");
+    const workflows =
+      (directives || Boolean(app.events?.workflows)) &&
+      (await shipWorkflows(root, staging, Boolean(app.events?.workflows)));
     await Bun.write(
       join(staging, "brick-ir.json"),
       JSON.stringify(compilation.ir, null, 2) + "\n",

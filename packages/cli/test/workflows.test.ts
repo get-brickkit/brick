@@ -151,10 +151,10 @@ describe("apps with workflows", () => {
     expect(existsSync(join(dir, "flow.mjs"))).toBe(true);
   });
 
-  it("brick build neither builds nor ships workflows for a project without any", async () => {
+  it("brick build neither builds nor ships workflows for an app that imports none", async () => {
     const plain = copyFixture();
     try {
-      rmSync(join(plain, "src", "hello.ts"));
+      // src/hello.ts stays: a workflow the app does not import is not shipped.
       writeFileSync(
         join(plain, "src", "app.ts"),
         'import { brick } from "@brickkit/core";\nexport default brick({ requestLogging: false, docs: false });\n',

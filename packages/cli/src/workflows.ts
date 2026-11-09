@@ -17,6 +17,7 @@ interface Builders {
     findTsConfigPath(): Promise<string | undefined>;
   };
   detectWorkflowPatterns(source: string): {
+    hasUseWorkflow: boolean;
     hasDirective: boolean;
     hasSerde: boolean;
   };
@@ -33,7 +34,6 @@ interface Builders {
 type BunPlugin = Parameters<typeof Bun.plugin>[0];
 
 const DIRECTIVE = /["']use (?:step|workflow)["']/;
-const WORKFLOW_DIRECTIVE = /["']use workflow["']/;
 
 /**
  * Every project source file. Not the generated bundle: it holds the directives as
@@ -75,13 +75,15 @@ async function loadBuilders(
  * `brick build` hands it to `Bun.build`.
  *
  * @param root - The project root, where the SDK is installed. Default: the working directory.
+ * @param onDirective - Called for each file it loads that holds a `"use workflow"` function.
  * @returns The plugin, or `undefined` when the Workflow SDK and its builders are not
  * installed in the project.
  */
 export async function workflowTransformPlugin(
   root: string = process.cwd(),
+  onDirective?: () => void,
 ): Promise<BunPlugin | undefined> {
-  const load = await transformer(root);
+  const load = await transformer(root, onDirective);
   if (!load) return undefined;
   return {
     name: "brick:workflows",
@@ -94,7 +96,10 @@ export async function workflowTransformPlugin(
 type Load = Bun.OnLoadCallback;
 
 /** The transform for files of the project at `root`, or `undefined` without the SDK. */
-async function transformer(root: string): Promise<Load | undefined> {
+async function transformer(
+  root: string,
+  onDirective?: () => void,
+): Promise<Load | undefined> {
   const projectRoot = resolve(root);
   const builders = (await loadBuilders(projectRoot))?.builders;
   if (!builders) return undefined;
@@ -104,6 +109,8 @@ async function transformer(root: string): Promise<Load | undefined> {
     const source = readFileSync(args.path, "utf8");
     if (!DIRECTIVE.test(source))
       return { contents: source, loader: loaderFor(args.path) };
+    if (onDirective && builders.detectWorkflowPatterns(source).hasUseWorkflow)
+      onDirective();
     // SWC strips the types but leaves JSX as it is.
     return builders
       .applySwcTransform(
@@ -490,21 +497,19 @@ export async function buildAppWorkflows(
 /**
  * What `brick build` ships: the workflow bundle, built from the project and
  * copied to `<outdir>/.well-known/workflow/v1`, where the compiled server reads
- * it. Whether to build depends on the project, not on the env the build runs
- * with: an app may only declare its workflow listeners when a world is
- * configured, at run time.
+ * it. `brick build` calls it when the bundle holds a `"use workflow"` function, or
+ * the loaded app runs workflows.
  *
  * @param root - The project root.
  * @param outdir - Where the compiled server is written.
  * @param required - The loaded app runs workflows, so the SDK must be installed.
- * @returns Whether a bundle was shipped: the project has a `"use workflow"` function.
+ * @returns Whether a bundle was shipped: it holds a workflow, or one is required.
  */
 export async function shipWorkflows(
   root: string,
   outdir: string,
   required: boolean,
 ): Promise<boolean> {
-  if (!required && !(await hasWorkflows(resolve(root)))) return false;
   await buildWorkflows({ root });
   const dir = join(resolve(root), WORKFLOW_BUNDLE.dir);
   const manifest = JSON.parse(
@@ -519,18 +524,4 @@ export async function shipWorkflows(
   ])
     await cp(join(dir, name), join(outdir, WORKFLOW_BUNDLE.dir, name));
   return true;
-}
-
-/** Whether a source file under `root`, among those the builder reads, holds a `"use workflow"` function. */
-async function hasWorkflows(root: string): Promise<boolean> {
-  const loaded = await loadBuilders(root);
-  if (!loaded) return false;
-  const builder = new loaded.builders.StandaloneBuilder({
-    buildTarget: "standalone",
-    dirs: ["."],
-    workingDir: root,
-  });
-  for (const file of await builder.getInputFiles())
-    if (WORKFLOW_DIRECTIVE.test(await readFile(file, "utf8"))) return true;
-  return false;
 }
