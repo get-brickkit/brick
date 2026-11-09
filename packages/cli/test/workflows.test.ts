@@ -176,6 +176,15 @@ describe("apps with workflows", () => {
     }
   });
 
+  it("builds nothing for a compiled server, even run from its outdir", async () => {
+    const app = {
+      events: { workflows: { root, dir, shipped: true } },
+    } as unknown as BrickApp;
+    rmSync(join(root, ".well-known"), { recursive: true, force: true });
+    expect(await buildAppWorkflows(app)).toBe(true);
+    expect(existsSync(dir)).toBe(false);
+  });
+
   it("refuses an app whose workflows root is not the one its files were transformed from", async () => {
     await registerWorkflowTransform(root);
     const app = { events: { workflows: { root: tmpdir() } } } as BrickApp;

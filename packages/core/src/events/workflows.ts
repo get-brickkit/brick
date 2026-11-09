@@ -71,6 +71,10 @@ export function setShippedWorkflowBundle(dir: string): void {
   shippedBundle = resolve(dir);
 }
 
+/** Whether this process runs a compiled server that reads the bundle shipped beside it. */
+export const isWorkflowBundleShipped = (): boolean =>
+  shippedBundle !== undefined;
+
 /**
  * Runs workflow listeners: wires the world into the Workflow SDK, serves the
  * built bundle from this process, and starts one run for each delivery.

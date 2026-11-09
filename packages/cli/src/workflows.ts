@@ -471,8 +471,10 @@ export async function buildAppWorkflows(
     throw new ConfigError(
       `Brick: the app's workflows root ${target.root} is not the folder its workflow files were transformed from (${[...registered.keys()].join(", ")}). Run brick from the workflows root, or leave events.workflows.root unset.`,
     );
-  // A compiled server reads the bundle `brick build` shipped beside it.
-  if (target.dir !== join(target.root, WORKFLOW_BUNDLE.dir)) return true;
+  // A compiled server reads the bundle `brick build` shipped beside it. Its
+  // own copy of core knows, so ask the app rather than compare paths: run from
+  // the outdir, the shipped bundle sits where a built one would.
+  if (target.shipped) return true;
   const started = performance.now();
   const built = await buildWorkflows({
     root: target.root,
