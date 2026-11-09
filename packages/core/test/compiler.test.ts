@@ -314,7 +314,7 @@ it("rejects over-nested input with a 400", async () => {
   ]);
 });
 
-it("loads a built app without a binder, and refuses one whose definitions changed since the build", async () => {
+it("loads a built app without re-analyzing it against the IR", async () => {
   const service = defineService("built");
   service.action({ name: "ready", execute: () => ({ ok: true }) });
   const app = brick({
@@ -325,7 +325,44 @@ it("loads a built app without a binder, and refuses one whose definitions change
   const { ir } = compileBrickApplication({ services: [service] });
   const load = async () => ({ default: app });
   expect(await loadCompiledBrickApp(load, ir)).toBe(app);
-  await expect(
-    loadCompiledBrickApp(load, { ...ir, routes: [] }),
-  ).rejects.toThrow("rebuild the application");
+  expect(await loadCompiledBrickApp(load, { ...ir, routes: [] })).toBe(app);
+});
+
+it("analyzes the same IR whatever order actions register in, and binds each route to its own action (#107)", async () => {
+  const names = ["zeta", "alpha", "mid", "beta"];
+  const analyze = (order: string[]) => {
+    resetGlobalRegistry();
+    const first = defineService("first");
+    const second = defineService("second");
+    for (const name of order) {
+      for (const service of [first, second])
+        service.action({
+          name,
+          execute: () => ({ service: service.name, action: name }),
+        });
+      // Four actions claim `GET /api/second/shared`.
+      second.action({
+        name: `${name}Shared`,
+        method: "GET",
+        path: "/shared",
+        execute: () => ({ service: "second", action: `${name}Shared` }),
+      });
+    }
+    return compileBrickApplication({ services: [first, second] });
+  };
+  const forward = analyze(names);
+  const backward = analyze([...names].reverse());
+  expect(JSON.stringify(backward.ir)).toBe(JSON.stringify(forward.ir));
+  expect(forward.routes).toHaveLength(9);
+  for (const compilation of [forward, backward])
+    for (const route of compilation.routes)
+      expect(route.handler({ set: { headers: {} } })).toEqual({
+        service: route.ir.service,
+        action: route.ir.action,
+      });
+  // The lowest action name wins a shared route, whichever registered first.
+  expect(
+    forward.ir.routes.find((route) => route.path === "/api/second/shared"),
+  ).toMatchObject({ action: "alphaShared" });
+  expect(forward.ir.diagnostics).toHaveLength(3);
 });

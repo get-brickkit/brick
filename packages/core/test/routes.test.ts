@@ -86,12 +86,13 @@ it("mounts service actions, explicit relative paths, sockets and plugin scopes o
     path: "/api/order-billing/get-summary",
   });
   const app = brick({ services: [service], docs: false });
+  // Canonical order: by route key (#107).
   expect(routesOf(app)).toEqual([
-    "GET /api/order-billing/get-summary",
     "GET /api/order-billing/:id/summary",
+    "GET /api/order-billing/get-summary",
+    "GET /api/order-billing/order-item/tags",
     "GET /api/order-billing/status",
     "GET /api/ping",
-    "GET /api/order-billing/order-item/tags",
   ]);
   expect(app.definition.sockets[0]?.path).toBe("/api/order-billing/live-feed");
 });

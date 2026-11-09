@@ -110,7 +110,7 @@ export function analyzeDeclaredApplication(
           `Brick compiler: duplicate plugin route '${method} ${path}'`,
         );
       diagnostics.push(
-        `${key}: '${service.name}.${action.name}' shadowed by '${previous.name}' (first registration wins)`,
+        `${key}: '${service.name}.${action.name}' shadowed by '${previous.name}' (earlier service, then lower action name, wins)`,
       );
       return;
     }
@@ -125,14 +125,37 @@ export function analyzeDeclaredApplication(
     routes.push(route);
     bindings.push({ service, action });
   };
-  for (const service of services) {
+  // Registration order follows module evaluation, which bundlers reorder (#107),
+  // so routes are canonical: by route key, then service order, then action name.
+  const candidates: [
+    string,
+    number,
+    Service<any, any>,
+    Action<any, any, any, any>,
+    RouteMethod,
+    string,
+  ][] = [];
+  for (const [index, service] of services.entries()) {
     checkSegments(service);
     for (const action of service.listActions()) {
       const route = getActionRoute(action, prefix);
       if (route === false) continue;
-      add(service, action, route.method, route.path);
+      candidates.push([
+        routeKey(route.method, route.path),
+        index,
+        service,
+        action,
+        route.method,
+        route.path,
+      ]);
     }
   }
+  candidates.sort(
+    (a, b) =>
+      compare(a[0], b[0]) || a[1] - b[1] || compare(a[3].name, b[3].name),
+  );
+  for (const [, , service, action, method, path] of candidates)
+    add(service, action, method, path);
   const preparations = services.flatMap((service) =>
     portOf(service)
       .listPreparations()
@@ -140,7 +163,8 @@ export function analyzeDeclaredApplication(
         service: service.name,
         name: contribution.name,
         metadata: schemaSnapshot(contribution.describe?.()),
-      })),
+      }))
+      .sort((a, b) => compare(a.name, b.name)),
   );
   const ir: BrickIR = freezeIR({
     version: 1,
@@ -153,6 +177,9 @@ export function analyzeDeclaredApplication(
   });
   return { ir, bindings };
 }
+
+/** Code-unit order, independent of locale. */
+const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /** What the compiler records about one action route. */
 export function describeRoute(
