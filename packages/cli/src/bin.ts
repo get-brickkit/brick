@@ -313,7 +313,10 @@ ${PORT_RESOLUTION_HELP}`,
         console.log(`IR: ${result.outdir}/brick-ir.json`);
         if (result.dashboard)
           console.log(`Dashboard extension: ${result.dashboard}`);
+        if (result.workflows) console.log(`Workflows: ${result.workflows}`);
         console.log(`Run: bun ${result.entry}`);
+        // The imported entry may hold timers or sockets open (#109).
+        process.exit(0);
       },
     );
 

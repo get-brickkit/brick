@@ -65,15 +65,18 @@ PORT=8080 bun dist/brick/server.js
 
 ## Output Bundle Structure
 
-The compilation produces four artifacts in the output directory:
+The compilation produces four artifacts in the output directory, plus the workflow bundle when the project has [workflows](/docs/events#with-brick-build):
 
 ```text
 dist/brick/
 ├── server.js          # Standalone Bun server entry with graceful shutdown
 ├── routes.js          # The route IR the server checks the app against
 ├── server.js.map      # Source map for debugging
-└── brick-ir.json      # Serialized intermediate representation of all routes
+├── brick-ir.json      # Serialized intermediate representation of all routes
+└── .well-known/workflow/v1/   # The workflow bundle, read from beside server.js
 ```
+
+`brick build` exits once these are written, even when loading the app started timers or opened connections.
 
 ### Production Readiness
 

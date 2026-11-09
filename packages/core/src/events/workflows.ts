@@ -60,7 +60,15 @@ export function resolveWorkflowPaths(options: WorkflowsOptions = {}): {
   dir: string;
 } {
   const root = resolve(options.root ?? process.cwd());
-  return { root, dir: join(root, WORKFLOW_BUNDLE.dir) };
+  return { root, dir: shippedBundle ?? join(root, WORKFLOW_BUNDLE.dir) };
+}
+
+/** The bundle `brick build` shipped beside a compiled server, which reads it instead of building one. */
+let shippedBundle: string | undefined;
+
+/** @internal Called by a compiled server before it loads its app. */
+export function setShippedWorkflowBundle(dir: string): void {
+  shippedBundle = resolve(dir);
 }
 
 /**
@@ -72,7 +80,6 @@ export function resolveWorkflowPaths(options: WorkflowsOptions = {}): {
  */
 export class WorkflowRuntime {
   readonly root: string;
-  readonly dir: string;
   private ready: Promise<WorkflowSdk> | undefined;
   private connected: Promise<WorkflowSdk> | undefined;
   private closed = false;
@@ -83,7 +90,12 @@ export class WorkflowRuntime {
     private readonly listeners: readonly EventListener[],
     private readonly deps: Record<string, unknown> = {},
   ) {
-    ({ root: this.root, dir: this.dir } = resolveWorkflowPaths(options));
+    this.root = resolveWorkflowPaths(options).root;
+  }
+
+  /** Read when used, in case a bundler evaluates the app before the compiled server names its shipped bundle. */
+  get dir(): string {
+    return resolveWorkflowPaths({ root: this.root }).dir;
   }
 
   /** Begin loading the runtime now rather than at the first delivery. */
@@ -200,12 +212,17 @@ export class WorkflowRuntime {
   }
 
   private async loadSdk(): Promise<WorkflowSdk> {
-    const from = createRequire(join(this.root, "package.json"));
+    // A compiled server may run where no SDK is installed: then the one beside its bundle.
+    const from = [this.root, this.dir].map((dir) =>
+      createRequire(join(dir, "package.json")),
+    );
     const load = async (specifier: string) => {
-      let path: string;
-      try {
-        path = from.resolve(specifier);
-      } catch {
+      let path: string | undefined;
+      for (const require of from)
+        try {
+          path ??= require.resolve(specifier);
+        } catch {}
+      if (!path) {
         throw new Error(
           `The Workflow SDK is not installed in ${this.root} (could not resolve '${specifier}'). Add it with: bun add workflow`,
         );

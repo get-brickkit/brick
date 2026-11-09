@@ -138,7 +138,8 @@ export interface EventsWorld {
 /**
  * Where the workflows of an app are built from. The CLI (`brick dev`,
  * `brick start`) writes the bundle to `<root>/.well-known/workflow/v1` before
- * events start, and events read it from there.
+ * events start, and events read it from there. A server compiled by
+ * `brick build` reads the bundle shipped beside it instead.
  */
 export interface WorkflowsOptions {
   /** The project root: where the Workflow SDK is installed. Default: the working directory. */

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -470,6 +470,8 @@ export async function buildAppWorkflows(
     throw new ConfigError(
       `Brick: the app's workflows root ${target.root} is not the folder its workflow files were transformed from (${[...registered.keys()].join(", ")}). Run brick from the workflows root, or leave events.workflows.root unset.`,
     );
+  // A compiled server reads the bundle `brick build` shipped beside it.
+  if (target.dir !== join(target.root, WORKFLOW_BUNDLE.dir)) return true;
   const started = performance.now();
   const built = await buildWorkflows({
     root: target.root,
@@ -479,5 +481,39 @@ export async function buildAppWorkflows(
     console.log(
       `[Brick-TS] Built workflows in ${Math.round(performance.now() - started)}ms`,
     );
+  return true;
+}
+
+/**
+ * What `brick build` ships: the workflow bundle, built from the project and
+ * copied to `<outdir>/.well-known/workflow/v1`, where the compiled server reads
+ * it. Whether to build depends on the project, not on the env the build runs
+ * with: an app may only declare its workflow listeners when a world is
+ * configured, at run time.
+ *
+ * @param root - The project root.
+ * @param outdir - Where the compiled server is written.
+ * @param required - The loaded app runs workflows, so the SDK must be installed.
+ * @returns Whether a bundle was shipped: the project has a `"use workflow"` function.
+ */
+export async function shipWorkflows(
+  root: string,
+  outdir: string,
+  required: boolean,
+): Promise<boolean> {
+  if (!required && !(await loadBuilders(resolve(root)))) return false;
+  await buildWorkflows({ root });
+  const dir = join(resolve(root), WORKFLOW_BUNDLE.dir);
+  const manifest = JSON.parse(
+    await readFile(join(dir, WORKFLOW_BUNDLE.manifest), "utf8"),
+  ) as { workflows?: Record<string, unknown> };
+  if (!required && !Object.keys(manifest.workflows ?? {}).length) return false;
+  for (const name of [
+    WORKFLOW_BUNDLE.flow,
+    WORKFLOW_BUNDLE.steps,
+    WORKFLOW_BUNDLE.webhook,
+    WORKFLOW_BUNDLE.manifest,
+  ])
+    await cp(join(dir, name), join(outdir, WORKFLOW_BUNDLE.dir, name));
   return true;
 }

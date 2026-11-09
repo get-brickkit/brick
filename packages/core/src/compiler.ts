@@ -15,6 +15,7 @@ import {
 } from "./compiler/runtime";
 import { requireBrickApp } from "./app-entry";
 import { portOf } from "./service-port";
+import { setShippedWorkflowBundle } from "./events/workflows";
 
 /** @throws When the services no longer analyze to `ir`, so the build is stale. */
 function analyzeMatching(services: Service<any, any>[], ir: BrickIR) {
@@ -31,11 +32,15 @@ function analyzeMatching(services: Service<any, any>[], ir: BrickIR) {
  * against the IR: the bundle and its IR come from one build (#107).
  *
  * @param _ir Ignored; kept so existing callers still type-check.
+ * @param options `workflows`: the workflow bundle `brick build` shipped beside
+ * the server, read instead of `<root>/.well-known/workflow/v1`.
  */
 export async function loadCompiledBrickApp(
   load: () => Promise<{ default: unknown }>,
   _ir?: BrickIR,
+  options: { workflows?: string } = {},
 ) {
+  if (options.workflows) setShippedWorkflowBundle(options.workflows);
   return requireBrickApp((await load()).default);
 }
 
