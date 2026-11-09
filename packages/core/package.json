@@ -1,6 +1,6 @@
 {
   "name": "@brickkit/core",
-  "version": "0.13.1",
+  "version": "0.13.2",
   "description": "Core engine primitives for the Brick-TS framework",
   "homepage": "https://brickkit.dev",
   "keywords": [

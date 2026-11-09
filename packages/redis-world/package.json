@@ -1,6 +1,6 @@
 {
   "name": "@brickkit/redis-world",
-  "version": "0.13.1",
+  "version": "0.13.2",
   "description": "Plain Redis World for Workflow SDK v5 with a reliable list queue and durable storage",
   "homepage": "https://brickkit.dev",
   "keywords": [
