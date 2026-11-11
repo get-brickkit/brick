@@ -54,19 +54,19 @@ This needs no Redis or queue. A schedule can still run a [workflow](#workflows) 
 
 ## Options
 
-| Option        | Default  | Meaning                                                                                                                               |
-| ------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`        | required | Unique among the app's schedules. Its state is stored under it, so renaming a schedule starts it afresh.                              |
-| `cron`        |          | A cron expression. Give `cron` or `every`.                                                                                            |
-| `timeZone`    | `"UTC"`  | The IANA time zone `cron` is read in, such as `"America/New_York"`.                                                                   |
-| `every`       |          | A duration after the last successful run: `"90s"`, `"15m"`, `"6h"`, `"1d"`, `"1h30m"`, or milliseconds.                               |
-| `run`         |          | The handler. It receives the [run](#the-run). Give `run` or `workflow`.                                                               |
-| `workflow`    |          | A `"use workflow"` function, started once per due time. See [Workflows](#workflows).                                                  |
-| `catchUp`     | `"once"` | Due times missed while no process ran: `"once"` runs one catch-up run however many were missed, `"skip"` waits for the next due time. |
-| `maxAttempts` | `3`      | Tries per due time, the first included.                                                                                               |
-| `backoff`     | `"1m"`   | The wait before the first retry. It doubles on each retry after it.                                                                   |
-| `jitter`      | none     | A random delay of up to this much added to each due time, so many apps on one schedule do not all start in the same second.           |
-| `enabled`     | `true`   | `false` keeps it from running on its own. A [manual run](#seeing-and-running-schedules) still works.                                  |
+| Option        | Default  | Meaning                                                                                                                                                                         |
+| ------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`        | required | Unique among the app's schedules. Its state is stored under it, so renaming a schedule starts it afresh.                                                                        |
+| `cron`        |          | A cron expression. Give `cron` or `every`.                                                                                                                                      |
+| `timeZone`    | `"UTC"`  | The IANA time zone `cron` is read in, such as `"America/New_York"`.                                                                                                             |
+| `every`       |          | A duration after the last successful run: `"90s"`, `"15m"`, `"6h"`, `"1d"`, `"1h30m"`, or milliseconds.                                                                         |
+| `run`         |          | The handler. It receives the [run](#the-run). Give `run` or `workflow`.                                                                                                         |
+| `workflow`    |          | A `"use workflow"` function, started once per due time. See [Workflows](#workflows).                                                                                            |
+| `catchUp`     | `"once"` | Cron times missed while no process ran: `"once"` runs one catch-up run however many were missed, `"skip"` waits for the next due time. An overdue interval always runs at once. |
+| `maxAttempts` | `3`      | Tries per due time, the first included.                                                                                                                                         |
+| `backoff`     | `"1m"`   | The wait before the first retry. It doubles on each retry after it.                                                                                                             |
+| `jitter`      | none     | A random delay of up to this much added to each due time, so many apps on one schedule do not all start in the same second.                                                     |
+| `enabled`     | `true`   | `false` keeps it from running on its own. A [manual run](#seeing-and-running-schedules) still works.                                                                            |
 
 A bad cron expression, an unknown time zone, an expression that never fires (`0 0 30 2 *`) or a duplicate name throws when the app is built, so `brick lint` reports it too.
 
@@ -89,10 +89,10 @@ An hourly schedule therefore runs 23 times on the day the clocks go forward and 
 
 - **Once per due time.** Each schedule has one row. A process claims a due row with a single conditional update (due, and not held by another process), so however many processes run the app, one runs each due time. This works the same on PostgreSQL and SQLite.
 - **Done only after success.** A run that throws is retried for the same due time with a growing delay, up to `maxAttempts`. The row moves to the next due time only when a run succeeds or the tries run out. A retry that would land after the next cron time is dropped: the next due time covers it.
-- **Crashes are retried.** While a run is going, its process renews its claim every third of `claimTimeoutMs`. When the process dies, the claim runs out and another process takes the due time over as its next try. The dead try is recorded as failed.
+- **Crashes are retried.** While a run is going, its process renews its claim every third of `claimTimeoutMs`. When the process dies, the claim runs out and another process takes the due time over as its next try. The dead try is recorded as failed. On PostgreSQL, claims are timed by the database's clock, so hosts whose clocks disagree still agree on when a claim runs out.
 - **No overlap.** A run never starts while the previous run of the same schedule is still going. Due times that pass in the meantime are skipped. For a cron schedule, the next run is the first cron time after the current run ends.
-- **Missed times.** When every process was down through one or more due times, `catchUp: "once"` runs one catch-up run when a process comes back, and `catchUp: "skip"` skips them and waits for the next. A due time more than a minute late on its first try counts as missed.
-- **Changed schedules.** When the code changes a schedule's `cron`, `timeZone` or `every`, the next start works out its next due time again.
+- **Missed times.** When every process was down through one or more cron times, `catchUp: "once"` runs one catch-up run when a process comes back, and `catchUp: "skip"` skips them and waits for the next. A cron time more than a minute late on its first try counts as missed. An interval has no later time to wait for, so an overdue interval runs at once either way.
+- **Changed schedules.** When the code changes a schedule's `cron`, `timeZone` or `every`, its next due time is worked out again from the new definition: at start, and whenever a process finds the row written by another version of the app, as during a rolling deploy.
 
 A process cut off from the database for longer than `claimTimeoutMs` loses its claim while its run goes on, and another process may then run the same due time. Brick warns when this happens. Give a run that must not repeat an idempotency key from `runKey`.
 
