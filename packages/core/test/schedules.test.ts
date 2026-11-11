@@ -83,6 +83,17 @@ describe("defineSchedule", () => {
       run,
     });
     expect([schedule.jitterMs, schedule.backoffMs]).toEqual([0, 0]);
+    const text = defineSchedule({
+      name: "b",
+      every: "1h",
+      jitter: "0m",
+      backoff: "0s",
+      run,
+    });
+    expect([text.jitterMs, text.backoffMs]).toEqual([0, 0]);
+    expect(() =>
+      defineSchedule({ name: "c", every: "100000000000d", run }),
+    ).toThrow("not a duration");
   });
 
   it("needs one schedule table and unique names", () => {
@@ -294,6 +305,33 @@ describe("schedules", () => {
     expect((await row("report")).nextAt.toISOString()).toBe(
       "2026-01-03T00:00:00.000Z",
     );
+  });
+
+  it("records a crashed run with its own slot when a manual trigger replaces it", async () => {
+    at("2026-01-01T00:00:00Z");
+    const { calls, run } = recorder();
+    const { db, table, schedules } = setup([
+      { name: "report", cron: "0 0 * * *", run },
+    ]);
+    await schedules.drain();
+    at("2026-01-02T00:00:00Z");
+    await db.update(table).set({
+      runId: "dead-process",
+      startedAt: new Date(),
+      leaseUntil: new Date(Date.now() + 60_000),
+      attempts: 1,
+    });
+    at("2026-01-02T00:05:00Z");
+    expect(await schedules.trigger("report")).toBe(true);
+    expect(await schedules.drain()).toBe(1);
+    expect(calls).toMatchObject([{ trigger: "manual", attempt: 1 }]);
+    const [listed] = await schedules.list();
+    expect(
+      listed!.runs.map((r) => [r.outcome, r.trigger, r.slot, r.attempt]),
+    ).toEqual([
+      ["succeeded", "manual", "2026-01-02T00:05:00.000Z", 1],
+      ["failed", "schedule", "2026-01-02T00:00:00.000Z", 1],
+    ]);
   });
 
   it("runs slots missed while down once, or skips them", async () => {

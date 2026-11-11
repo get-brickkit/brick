@@ -159,9 +159,7 @@ export function defineSchedule(config: ScheduleConfig): Schedule {
   ) =>
     value === undefined
       ? fallback
-      : value === 0
-        ? 0
-        : attempt(() => parseDuration(value));
+      : attempt(() => parseDuration(value, { allowZero: true }));
   if ((config.cron === undefined) === (config.every === undefined))
     fail("give it a cron expression or an interval (every), not both");
   if ((config.run === undefined) === (config.workflow === undefined))

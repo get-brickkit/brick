@@ -246,6 +246,9 @@ export function nextCron(
   }
 }
 
+/** A century: well inside what a `Date` can hold after any due time. */
+const MAX_DURATION_MS = 100 * 366 * DAY_MS;
+
 const UNITS: Record<string, number> = {
   ms: 1,
   s: 1000,
@@ -258,9 +261,13 @@ const UNITS: Record<string, number> = {
  * A duration in milliseconds: a number of milliseconds, or text such as
  * `"90s"`, `"15m"`, `"6h"`, `"1d"` or `"1h30m"`.
  *
- * @throws When it is not a positive duration.
+ * @throws When it is not a positive duration (or zero, with `allowZero`), or
+ * is longer than a century.
  */
-export function parseDuration(duration: string | number): number {
+export function parseDuration(
+  duration: string | number,
+  options: { allowZero?: boolean } = {},
+): number {
   let ms = 0;
   if (typeof duration === "number") ms = duration;
   else {
@@ -275,7 +282,11 @@ export function parseDuration(duration: string | number): number {
     if (!text || read !== text.length) ms = NaN;
   }
   const rounded = Math.round(ms);
-  if (!Number.isFinite(rounded) || rounded <= 0)
+  if (
+    !Number.isFinite(rounded) ||
+    rounded < (options.allowZero ? 0 : 1) ||
+    rounded > MAX_DURATION_MS
+  )
     throw new Error(
       `'${duration}' is not a duration: use milliseconds or text such as "15m", "6h" or "1h30m"`,
     );

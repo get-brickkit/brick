@@ -160,6 +160,12 @@ describe("parseDuration", () => {
     expect(parseDuration("250ms")).toBe(250);
   });
 
+  it("takes zero only when asked to", () => {
+    expect(parseDuration("0s", { allowZero: true })).toBe(0);
+    expect(parseDuration(0, { allowZero: true })).toBe(0);
+    expect(() => parseDuration(-1, { allowZero: true })).toThrow();
+  });
+
   it("refuses anything else", () => {
     for (const bad of [
       "",
@@ -172,6 +178,8 @@ describe("parseDuration", () => {
       Number.NaN,
       0.4,
       "0.1ms",
+      "100000000000d",
+      1e16,
     ])
       expect(() => parseDuration(bad)).toThrow("is not a duration");
   });

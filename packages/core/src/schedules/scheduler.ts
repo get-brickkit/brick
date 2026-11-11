@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { nextDue, type Schedule, type ScheduleRun } from "./schedule";
 import type { ScheduleRow, ScheduleRunRecord, ScheduleTable } from "./table";
 
@@ -6,6 +6,7 @@ import type { ScheduleRow, ScheduleRunRecord, ScheduleTable } from "./table";
 const MISSED_AFTER_MS = 60_000;
 /** Runs kept per schedule. */
 const KEEP_RUNS = 20;
+const ABANDONED = "The process running it stopped before it finished";
 
 /** A schedule as `schedules.list()` reports it. */
 export interface ScheduleState {
@@ -130,16 +131,61 @@ export class Scheduler {
   async trigger(name: string): Promise<boolean> {
     if (!this.byName.has(name)) throw new Error(`No schedule named '${name}'`);
     await this.sync();
-    const t = this.table as any;
     const now = new Date();
-    const rows = await this.db
-      .update(t)
-      .set({ slot: now, nextAt: now, attempts: 0, trigger: "manual" })
-      .where(and(eq(t.name, name), this.free(now)))
-      .returning({ name: t.name });
-    if (!rows.length) return false;
+    const set = await this.reset(name, now, {
+      slot: now,
+      nextAt: now,
+      attempts: 0,
+      trigger: "manual",
+    });
+    if (!set) return false;
     if (this.timer) setTimeout(() => void this.tick(), 0).unref?.();
     return true;
+  }
+
+  /**
+   * Set a schedule's row afresh, unless a live claim holds it. A claim whose
+   * process died is recorded first, as a failed run of its own due time.
+   *
+   * @returns Whether the row was set.
+   */
+  private async reset(
+    name: string,
+    now: Date,
+    values: Partial<ScheduleRow>,
+  ): Promise<boolean> {
+    const t = this.table as any;
+    const [row]: ScheduleRow[] = await this.db
+      .select()
+      .from(t)
+      .where(eq(t.name, name));
+    if (!row || (row.runId && row.leaseUntil! >= now)) return false;
+    const updated = await this.db
+      .update(t)
+      .set({
+        ...values,
+        runId: null,
+        startedAt: null,
+        leaseUntil: null,
+        // Only the holder of a claim writes the runs, and this one is dead.
+        ...(row.runId
+          ? {
+              runs: [
+                this.record(row, row.startedAt!, "failed", ABANDONED),
+                ...row.runs,
+              ].slice(0, KEEP_RUNS),
+            }
+          : {}),
+      })
+      // Unless another process claimed it meanwhile.
+      .where(
+        and(
+          eq(t.name, name),
+          row.runId ? eq(t.runId, row.runId) : isNull(t.runId),
+        ),
+      )
+      .returning({ name: t.name });
+    return updated.length > 0;
   }
 
   /** Not held by a live claim. */
@@ -178,16 +224,12 @@ export class Scheduler {
         .insert(t)
         .values({ name: schedule.name, runs: [], ...fresh })
         .onConflictDoNothing();
-      await this.db
-        .update(t)
-        .set(fresh)
-        .where(
-          and(
-            eq(t.name, schedule.name),
-            ne(t.spec, schedule.spec),
-            this.free(now),
-          ),
-        );
+      const [row]: Pick<ScheduleRow, "spec">[] = await this.db
+        .select({ spec: t.spec })
+        .from(t)
+        .where(eq(t.name, schedule.name));
+      if (row && row.spec !== schedule.spec)
+        await this.reset(schedule.name, now, fresh);
     }
   }
 
@@ -274,7 +316,7 @@ export class Scheduler {
           { ...row, attempts: attempt - 1 },
           abandonedAt,
           "failed",
-          "The process running it stopped before it finished",
+          ABANDONED,
         ),
       );
     const now = () => new Date();
