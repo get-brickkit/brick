@@ -48,6 +48,33 @@ function setup(configs: ScheduleConfig[]) {
   return { app, db, table, schedules, row };
 }
 
+/**
+ * `db`, but the first `update` waits for `before` to finish before it runs:
+ * another process acting between this one's read and its claim.
+ */
+function beforeFirstUpdate(db: any, before: () => Promise<void>): any {
+  let armed = true;
+  const chain = (builder: any): any =>
+    new Proxy(builder, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop);
+        if (prop === "then")
+          return (resolve: any, reject: any) =>
+            before().then(() => target.then(resolve, reject), reject);
+        return typeof value === "function"
+          ? (...args: unknown[]) => chain(value.apply(target, args))
+          : value;
+      },
+    });
+  return new Proxy(db, {
+    get(target, prop) {
+      if (prop !== "update" || !armed) return Reflect.get(target, prop);
+      armed = false;
+      return (table: unknown) => chain(target.update(table));
+    },
+  });
+}
+
 /** A run handler that records what it was given. */
 function recorder() {
   const calls: ScheduleRun[] = [];
@@ -331,6 +358,120 @@ describe("schedules", () => {
     ).toEqual([
       ["succeeded", "manual", "2026-01-02T00:05:00.000Z", 1],
       ["failed", "schedule", "2026-01-02T00:00:00.000Z", 1],
+    ]);
+  });
+
+  it("moves to a changed cron time even when the old code finished the last run", async () => {
+    // A rolling deploy changes 03:00 to 04:00 while the old process runs 03:00.
+    at("2026-01-01T02:00:00Z");
+    const { db, table } = setup([]);
+    const old = defineSchedule({
+      name: "job",
+      cron: "0 3 * * *",
+      run: () => {},
+    });
+    const changed = defineSchedule({
+      name: "job",
+      cron: "0 4 * * *",
+      run: () => {},
+    });
+    const options = { timer: false, intervalMs: 1000, claimTimeoutMs: 60_000 };
+    let release!: () => void;
+    const ran: string[] = [];
+    const oldProcess = new Scheduler(
+      db,
+      table,
+      [old],
+      () => {
+        ran.push(`old ${new Date().toISOString()}`);
+        return new Promise<void>((resolve) => (release = resolve));
+      },
+      options,
+    );
+    const newProcess = new Scheduler(
+      db,
+      table,
+      [changed],
+      async () => {
+        ran.push(`new ${new Date().toISOString()}`);
+      },
+      options,
+    );
+    await oldProcess.drain();
+    at("2026-01-01T03:00:00Z");
+    const running = oldProcess.drain();
+    await waitFor(() => ran.length === 1);
+    expect(await newProcess.drain()).toBe(0);
+    release();
+    await running;
+    // The old process exits; the new one carries on alone.
+    at("2026-01-02T03:00:00Z");
+    expect(await newProcess.drain()).toBe(0);
+    at("2026-01-02T04:00:00Z");
+    expect(await newProcess.drain()).toBe(1);
+    expect(ran).toEqual([
+      "old 2026-01-01T03:00:00.000Z",
+      "new 2026-01-02T04:00:00.000Z",
+    ]);
+  });
+
+  it("runs an overdue interval at once with catchUp skip: there is no later time to wait for", async () => {
+    at("2026-01-01T00:00:00Z");
+    const { calls, run } = recorder();
+    const { schedules } = setup([
+      { name: "sweep", every: "1h", catchUp: "skip", run },
+    ]);
+    await schedules.drain();
+    // Down from 00:00 to 04:30.
+    at("2026-01-01T04:30:00Z");
+    expect(await schedules.drain()).toBe(1);
+    expect(calls).toHaveLength(2);
+    expect((await schedules.list())[0]!.nextRunAt).toBe(
+      "2026-01-01T05:30:00.000Z",
+    );
+  });
+
+  it("does not claim a row that changed between reading it and claiming it", async () => {
+    at("2026-01-01T00:00:00Z");
+    const { calls, run } = recorder();
+    const { db, table, row } = setup([]);
+    const schedule = defineSchedule({ name: "report", cron: "0 0 * * *", run });
+    const options = { timer: false, intervalMs: 1000, claimTimeoutMs: 60_000 };
+    const other = new Scheduler(
+      db,
+      table,
+      [schedule],
+      async (_s, r) => run(r),
+      options,
+    );
+    await other.drain();
+    // A process claimed today's run and died.
+    at("2026-01-02T00:00:00Z");
+    await db.update(table).set({
+      runId: "dead-process",
+      startedAt: new Date(),
+      leaseUntil: new Date(Date.now() + 60_000),
+      attempts: 1,
+    });
+    at("2026-01-02T00:05:00Z");
+    // This process reads the dead claim; before it claims, the other process
+    // triggers a manual run, which records the dead try and clears the claim.
+    const raced = new Scheduler(
+      beforeFirstUpdate(db, () => other.trigger("report").then(() => {})),
+      table,
+      [schedule],
+      async (_s, r) => run(r),
+      options,
+    );
+    // The row changed under it, so it backs off; the next poll claims it.
+    expect(await raced.drain()).toBe(0);
+    expect(await raced.drain()).toBe(1);
+    expect(calls.map((c) => c.trigger)).toEqual(["manual"]);
+    const stopped = (await row("report")).runs.filter((r: { error?: string }) =>
+      r.error?.includes("stopped"),
+    );
+    expect(stopped).toEqual([
+      expect.objectContaining({ slot: "2026-01-02T00:00:00.000Z", attempt: 1 }),
     ]);
   });
 

@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, setSystemTime } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -66,6 +66,42 @@ suite("schedules on Postgres", () => {
     }
     expect(runs).toHaveLength(11);
     expect(new Set(runs.map((run) => run.slot)).size).toBe(11);
+  });
+
+  it("judges a claim by the database's clock, not a host whose clock runs ahead", async () => {
+    const { table, dbs } = await setup(2);
+    const schedule = defineSchedule({
+      name: "job",
+      every: "1h",
+      run: () => {},
+    });
+    const lease = { ...options, claimTimeoutMs: 60_000 };
+    let release!: () => void;
+    const holder = new Scheduler(
+      dbs[0],
+      table,
+      [schedule],
+      () => new Promise<void>((resolve) => (release = resolve)),
+      lease,
+    );
+    const running = holder.drain();
+    await waitFor(async () => (await holder.list())[0]!.running);
+    // A second host whose clock is two minutes ahead.
+    setSystemTime(new Date(Date.now() + 120_000));
+    try {
+      const ahead = new Scheduler(
+        dbs[1],
+        table,
+        [schedule],
+        async () => {},
+        lease,
+      );
+      expect(await ahead.drain()).toBe(0);
+    } finally {
+      setSystemTime();
+      release();
+      await running;
+    }
   });
 
   it("takes over the run of a process that was killed mid-run", async () => {

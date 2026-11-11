@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { isSqliteDatabase } from "../events/transaction";
 import { nextDue, type Schedule, type ScheduleRun } from "./schedule";
 import type { ScheduleRow, ScheduleRunRecord, ScheduleTable } from "./table";
 
@@ -44,7 +45,8 @@ export interface SchedulerOptions {
  * update (due, and not held by a live claim), so one process wins each due
  * time, on Postgres and SQLite alike. While it runs, the process renews its
  * claim; a process that dies stops renewing, and after `claimTimeoutMs`
- * another process takes the due time over. Only success (or giving up after
+ * another process takes the due time over. On Postgres claims are timed by
+ * the database's clock, so hosts whose clocks disagree still agree on them. Only success (or giving up after
  * `maxAttempts`) moves the row to the next due time.
  */
 export class Scheduler {
@@ -53,6 +55,7 @@ export class Scheduler {
   private timer?: ReturnType<typeof setInterval>;
   private tickQueue?: Promise<number>;
   private synced?: Promise<void>;
+  private readonly postgres: boolean;
 
   constructor(
     private readonly db: any,
@@ -65,6 +68,7 @@ export class Scheduler {
     private readonly options: SchedulerOptions,
   ) {
     this.byName = new Map(schedules.map((s) => [s.name, s]));
+    this.postgres = !isSqliteDatabase(db);
   }
 
   start(): void {
@@ -159,7 +163,7 @@ export class Scheduler {
       .select()
       .from(t)
       .where(eq(t.name, name));
-    if (!row || (row.runId && row.leaseUntil! >= now)) return false;
+    if (!row) return false;
     const updated = await this.db
       .update(t)
       .set({
@@ -177,13 +181,8 @@ export class Scheduler {
             }
           : {}),
       })
-      // Unless another process claimed it meanwhile.
-      .where(
-        and(
-          eq(t.name, name),
-          row.runId ? eq(t.runId, row.runId) : isNull(t.runId),
-        ),
-      )
+      // Unless its claim is live, or another process claimed it meanwhile.
+      .where(and(eq(t.name, name), this.unchanged(row.runId), this.free(now)))
       .returning({ name: t.name });
     return updated.length > 0;
   }
@@ -191,7 +190,40 @@ export class Scheduler {
   /** Not held by a live claim. */
   private free(now: Date) {
     const t = this.table as any;
-    return or(isNull(t.runId), lt(t.leaseUntil, now));
+    return or(isNull(t.runId), lt(t.leaseUntil, this.clock(now)));
+  }
+
+  /** Still held by the claim `runId`, or by none when it is null. */
+  private unchanged(runId: string | null) {
+    const t = this.table as any;
+    return runId ? eq(t.runId, runId) : isNull(t.runId);
+  }
+
+  /** Now, for claims: the database's clock on Postgres, this host's on SQLite (one host). */
+  private clock(now: Date) {
+    return this.postgres ? sql`now()` : now;
+  }
+
+  /** When a claim made or renewed now runs out. */
+  private leaseFrom(now: Date) {
+    const ms = this.options.claimTimeoutMs;
+    return this.postgres
+      ? sql`now() + make_interval(secs => ${ms / 1000})`
+      : new Date(now.getTime() + ms);
+  }
+
+  /** A row due at the schedule's first time from now: an interval at once, a cron schedule at its next time. */
+  private fresh(schedule: Schedule, now: Date) {
+    const slot = schedule.cron ? nextDue(schedule, now) : now;
+    return (
+      slot && {
+        spec: schedule.spec,
+        slot,
+        nextAt: this.jittered(schedule, slot),
+        attempts: 0,
+        trigger: "schedule" as const,
+      }
+    );
   }
 
   /**
@@ -210,16 +242,8 @@ export class Scheduler {
     const t = this.table as any;
     const now = new Date();
     for (const schedule of this.byName.values()) {
-      // An interval is due at once the first time; a cron schedule at its next time.
-      const slot = schedule.cron ? nextDue(schedule, now) : now;
-      if (!slot) continue;
-      const fresh = {
-        spec: schedule.spec,
-        slot,
-        nextAt: this.jittered(schedule, slot),
-        attempts: 0,
-        trigger: "schedule" as const,
-      };
+      const fresh = this.fresh(schedule, now);
+      if (!fresh) continue;
       await this.db
         .insert(t)
         .values({ name: schedule.name, runs: [], ...fresh })
@@ -248,10 +272,11 @@ export class Scheduler {
       const now = new Date();
       const due: Pick<
         ScheduleRow,
-        "name" | "trigger" | "runId" | "startedAt"
+        "name" | "spec" | "trigger" | "runId" | "startedAt"
       >[] = await this.db
         .select({
           name: t.name,
+          spec: t.spec,
           trigger: t.trigger,
           runId: t.runId,
           startedAt: t.startedAt,
@@ -269,21 +294,34 @@ export class Scheduler {
         const schedule = this.byName.get(candidate.name)!;
         if (this.inFlight.has(schedule.name)) continue;
         if (!schedule.enabled && candidate.trigger !== "manual") continue;
+        // Another version of the app wrote it (a rolling deploy): this
+        // process's definition decides when it is due.
+        if (candidate.spec !== schedule.spec) {
+          const fresh = this.fresh(schedule, now);
+          if (fresh) await this.reset(schedule.name, now, fresh);
+          continue;
+        }
         const runId = crypto.randomUUID();
         const [row]: ScheduleRow[] = await this.db
           .update(t)
           .set({
             runId,
             startedAt: now,
-            leaseUntil: new Date(now.getTime() + this.options.claimTimeoutMs),
+            leaseUntil: this.leaseFrom(now),
             // Counted at the claim, so a try whose process dies still counts.
             attempts: sql`${t.attempts} + 1`,
           })
           .where(
-            and(eq(t.name, schedule.name), lte(t.nextAt, now), this.free(now)),
+            and(
+              eq(t.name, schedule.name),
+              lte(t.nextAt, now),
+              this.free(now),
+              // As read: the abandoned try recorded below is that claim's.
+              this.unchanged(candidate.runId),
+            ),
           )
           .returning();
-        if (!row) continue; // Another process won it.
+        if (!row) continue; // Another process won it, or changed it.
         started++;
         const run = this.execute(
           schedule,
@@ -323,6 +361,8 @@ export class Scheduler {
     if (
       attempt === 1 &&
       row.trigger === "schedule" &&
+      // An overdue interval has no later time to wait for.
+      schedule.cron &&
       schedule.catchUp === "skip" &&
       startedAt.getTime() - row.nextAt.getTime() > MISSED_AFTER_MS
     ) {
@@ -361,7 +401,7 @@ export class Scheduler {
     const updated = await this.db
       .update(t)
       .set({
-        leaseUntil: new Date(Date.now() + this.options.claimTimeoutMs),
+        leaseUntil: this.leaseFrom(new Date()),
       })
       .where(and(eq(t.name, row.name), eq(t.runId, row.runId)))
       .returning({ name: t.name });
