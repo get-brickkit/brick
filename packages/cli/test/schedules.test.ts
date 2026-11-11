@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { resetGlobalRegistry, type BrickApp } from "@brickkit/core";
 import { startWorker } from "../src/runner";
 import { formatSchedules, runSchedulesCommand } from "../src/schedules";
@@ -6,11 +6,21 @@ import { waitFor } from "./helpers";
 
 const entry = new URL("./fixtures/schedules-app.ts", import.meta.url).pathname;
 const apps: BrickApp[] = [];
+const signals = ["SIGINT", "SIGTERM"] as const;
+let before = signals.map((signal) => process.listeners(signal));
+
+beforeEach(() => {
+  before = signals.map((signal) => process.listeners(signal));
+});
 
 afterEach(async () => {
   for (const app of apps.splice(0)) await app.shutdown();
-  for (const signal of ["SIGINT", "SIGTERM"] as const)
-    process.removeAllListeners(signal);
+  // Only the handlers the worker added: other code (signal-exit, in the
+  // workflow runtime) keeps its own, and tests in this process count them.
+  signals.forEach((signal, index) => {
+    for (const listener of process.listeners(signal))
+      if (!before[index]!.includes(listener)) process.off(signal, listener);
+  });
 });
 
 describe("schedules in the CLI", () => {
