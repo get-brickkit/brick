@@ -1,4 +1,5 @@
 import type { ActionErrorDefinition, ErrorDetails } from "../types";
+import type { Schedule } from "../schedules/schedule";
 
 /**
  * An event, as it was recorded. It is the same for every listener of it.
@@ -177,13 +178,20 @@ export interface EventsOptions {
   /** The listeners of the app. */
   listeners?: readonly EventListener[];
   /**
-   * Whether this process delivers recorded events. `true` (the default) starts a
-   * dispatcher with the default settings, an object tunes it, and `false` only
-   * records events, for an app whose events are delivered by another process.
+   * The schedules of the app, from `defineSchedule`. Their state lives in the
+   * one `scheduleTable()` among the services' databases, and they run in the
+   * processes that deliver events, by the same `dispatch` settings.
+   */
+  schedules?: readonly Schedule[];
+  /**
+   * Whether this process delivers recorded events and runs schedules. `true`
+   * (the default) starts a dispatcher with the default settings, an object
+   * tunes it, and `false` only records events, for an app whose events are
+   * delivered by another process.
    */
   dispatch?: boolean | DispatchOptions;
   /**
-   * The world that runs `workflow` listeners. Required when any listener has one.
+   * The world that runs `workflow` listeners and schedules. Required when any has one.
    * Brick starts it when the app's events start and closes it when they stop.
    */
   world?: EventsWorld;

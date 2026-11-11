@@ -5,6 +5,7 @@ import {
   expect,
   it,
   setDefaultTimeout,
+  setSystemTime,
 } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -270,6 +271,39 @@ describe("failures and retries", () => {
 
     expect(await rows(made, auditLog)).toHaveLength(1);
     expect(await rows(made, notifications)).toHaveLength(1);
+  });
+});
+
+describe("schedules", () => {
+  it("reminds the warehouse of unshipped orders at 09:00 Berlin time on weekdays", async () => {
+    // Friday 2026-01-09, 08:59 in Berlin (UTC+1).
+    setSystemTime(new Date("2026-01-09T07:59:00Z"));
+    try {
+      const made = open();
+      const order = await place(made);
+      const shipped = await place(made);
+      expect((await ship(made, shipped.id)).status).toBe(200);
+      const schedules = made.app.events!.schedules!;
+      expect(await schedules.drain()).toBe(0);
+      expect((await schedules.list())[0]!.nextRunAt).toBe(
+        "2026-01-09T08:00:00.000Z",
+      );
+
+      setSystemTime(new Date("2026-01-09T08:00:00Z"));
+      expect(await schedules.drain()).toBe(1);
+      const reminders = (await rows(made, notifications)).filter(
+        (row: { kind: string }) => row.kind === "unshipped",
+      );
+      expect(reminders).toEqual([
+        expect.objectContaining({ orderId: order.id }),
+      ]);
+      // Next is Monday morning: weekends are skipped.
+      expect((await schedules.list())[0]!.nextRunAt).toBe(
+        "2026-01-12T08:00:00.000Z",
+      );
+    } finally {
+      setSystemTime();
+    }
   });
 });
 

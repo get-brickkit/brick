@@ -23,6 +23,7 @@
     "validation-and-errors",
     "hooks",
     "events",
+    "schedules",
     "primary-keys",
     "relations",
     "typed-client",

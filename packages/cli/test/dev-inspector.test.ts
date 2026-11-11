@@ -1,8 +1,8 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { brick } from "@brickkit/core";
-import { INSPECTOR_TOKEN_HEADER } from "../src/dashboard-protocol";
+import { INSPECTOR_TOKEN_HEADER, ROUTES } from "../src/dashboard-protocol";
 import { startInspector } from "../src/dev-inspector";
 
 const built = join(import.meta.dir, "..", "inspector-dist");
@@ -85,6 +85,104 @@ describe("startInspector", () => {
     expect(
       await startInspector(brick({ services: [], docs: false })),
     ).toBeUndefined();
+  });
+
+  it("serves the app's schedules, without workflows: list them and run one", async () => {
+    const triggered: string[] = [];
+    const schedules = {
+      list: async () => [{ name: "backup" }],
+      trigger: async (name: string) => {
+        if (name !== "backup") throw new Error(`No schedule named '${name}'`);
+        triggered.push(name);
+        return true;
+      },
+    };
+    const inspector = await startInspector({
+      events: {
+        schedules,
+        describe: () => ({ schedules: [{ name: "backup" }] }),
+      },
+    } as never);
+    try {
+      expect(inspector!.workflows).toBe(false);
+      const base = `http://127.0.0.1:${inspector!.port}${ROUTES.schedules.path}`;
+      const headers = { [INSPECTOR_TOKEN_HEADER]: inspector!.token };
+      expect((await fetch(base)).status).toBe(403);
+      expect(await (await fetch(base, { headers })).json()).toEqual([
+        { name: "backup" },
+      ]);
+      const run = await fetch(`${base}/backup`, { method: "POST", headers });
+      expect(await run.json()).toEqual({ started: true });
+      expect(triggered).toEqual(["backup"]);
+      const missing = await fetch(`${base}/nope`, { method: "POST", headers });
+      expect(missing.status).toBe(404);
+      const malformed = await fetch(`${base}/%E0`, { method: "POST", headers });
+      expect(malformed.status).toBe(400);
+      expect(await malformed.text()).toContain("URI");
+      expect(
+        (
+          await fetch(`http://127.0.0.1:${inspector!.port}/workflows/`, {
+            headers,
+          })
+        ).status,
+      ).toBe(404);
+    } finally {
+      inspector?.stop();
+    }
+  });
+
+  it("answers 500, not 404, when running a schedule fails for another reason", async () => {
+    const inspector = await startInspector({
+      events: {
+        describe: () => ({ schedules: [{ name: "backup" }] }),
+        schedules: {
+          list: async () => [],
+          trigger: async () => {
+            throw new Error("connection refused");
+          },
+        },
+      },
+    } as never);
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${inspector!.port}${ROUTES.schedules.path}/backup`,
+        {
+          method: "POST",
+          headers: { [INSPECTOR_TOKEN_HEADER]: inspector!.token },
+        },
+      );
+      expect(response.status).toBe(500);
+      expect(await response.text()).toBe("connection refused");
+    } finally {
+      inspector?.stop();
+    }
+  });
+
+  it("still serves the schedules when the inspector build is missing", async () => {
+    const app = {
+      events: {
+        workflows: { world: {} },
+        schedules: { list: async () => [{ name: "backup" }] },
+        describe: () => ({ schedules: [{ name: "backup" }] }),
+      },
+    };
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const inspector = await startInspector(
+      app as never,
+      join(built, "nowhere"),
+    );
+    try {
+      expect(inspector!.workflows).toBe(false);
+      expect(warn.mock.calls[0]![0]).toContain("not built");
+      const response = await fetch(
+        `http://127.0.0.1:${inspector!.port}${ROUTES.schedules.path}`,
+        { headers: { [INSPECTOR_TOKEN_HEADER]: inspector!.token } },
+      );
+      expect(await response.json()).toEqual([{ name: "backup" }]);
+    } finally {
+      inspector?.stop();
+      warn.mockRestore();
+    }
   });
 
   it("says how to build it when the build is missing", async () => {

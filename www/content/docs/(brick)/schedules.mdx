@@ -1,0 +1,229 @@
+---
+title: Schedules
+description: Run code on a cron expression or at an interval, once per due time across every process of the app.
+---
+
+A schedule runs code at set times: a nightly report, a backup every six hours, a sweep of expired sessions. You declare it, and Brick runs it in one of the app's processes, keeps its state in your database, and retries it when it fails. You don't write timers, locks or "last run" rows.
+
+A schedule fires on one of two clocks:
+
+- **`cron`**: fixed wall-clock times in a time zone. `0 */6 * * *` runs at 00:00, 06:00, 12:00 and 18:00, whenever the last run happened.
+- **`every`**: a period after the last success. `every: "6h"` runs six hours after the last successful run finished, so the times drift with the runs.
+
+## Minimal Example
+
+Give a database the schedule table, define a schedule, and pass it to `brick()`:
+
+```ts title="src/schema.ts"
+import { scheduleTable } from "@brickkit/core";
+
+export const schedules = scheduleTable("postgres");
+```
+
+```ts title="src/app.ts"
+import { brick, defineSchedule } from "@brickkit/core";
+
+const backup = defineSchedule({
+  name: "db-backup",
+  cron: "0 3 * * *",
+  timeZone: "Europe/Berlin",
+  run: () => backupDatabase(),
+});
+
+const sweep = defineSchedule({
+  name: "clear-expired-sessions",
+  every: "1h",
+  run: () => clearExpiredSessions(),
+});
+
+export default brick({
+  services: [accountsService], // its database holds `schedules`
+  events: { schedules: [backup, sweep] },
+});
+```
+
+`brick dev`, `brick start`, `brick worker` and a built server run them. Importing the app runs nothing: schedules start with the app's events, so `brick build`, `brick gen` and your tests can load the app without a backup starting.
+
+## The schedule table
+
+A schedule's state lives in one row of the schedule table: when it is next due, which process runs it now, how many tries the current due time has had, and its last 20 runs. Processes that share the table share the schedules, and a restart or deploy carries on from the row.
+
+Brick does not create tables. Add `scheduleTable("postgres")` (or `scheduleTable("sqlite")`) to the tables of one of the app's databases and create it with your migrations, as you do the [outbox](/docs/events#the-outbox-table). `scheduleTable(engine, { name })` names it something other than `brick_schedules`. The app needs exactly one: `brick()` throws when no database holds one, or when several do.
+
+This needs no Redis or queue. A schedule can still run a [workflow](#workflows) on the app's world.
+
+## Options
+
+| Option        | Default  | Meaning                                                                                                                                                                         |
+| ------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`        | required | Unique among the app's schedules. Its state is stored under it, so renaming a schedule starts it afresh.                                                                        |
+| `cron`        |          | A cron expression. Give `cron` or `every`.                                                                                                                                      |
+| `timeZone`    | `"UTC"`  | The IANA time zone `cron` is read in, such as `"America/New_York"`.                                                                                                             |
+| `every`       |          | A duration after the last successful run: `"90s"`, `"15m"`, `"6h"`, `"1d"`, `"1h30m"`, or milliseconds.                                                                         |
+| `run`         |          | The handler. It receives the [run](#the-run). Give `run` or `workflow`.                                                                                                         |
+| `workflow`    |          | A `"use workflow"` function, started once per due time. See [Workflows](#workflows).                                                                                            |
+| `catchUp`     | `"once"` | Cron times missed while no process ran: `"once"` runs one catch-up run however many were missed, `"skip"` waits for the next due time. An overdue interval always runs at once. |
+| `maxAttempts` | `3`      | Tries per due time, the first included.                                                                                                                                         |
+| `backoff`     | `"1m"`   | The wait before the first retry. It doubles on each retry after it.                                                                                                             |
+| `jitter`      | none     | A random delay of up to this much added to each due time, so many apps on one schedule do not all start in the same second.                                                     |
+| `enabled`     | `true`   | `false` keeps it from running on its own. A [manual run](#seeing-and-running-schedules) still works.                                                                            |
+
+A bad cron expression, an unknown time zone, an expression that never fires (`0 0 30 2 *`) or a duplicate name throws when the app is built, so `brick lint` reports it too.
+
+## Cron expressions
+
+Five fields, `minute hour day-of-month month day-of-week`, or six with seconds first. Each field takes `*`, a number, a range (`1-5`), a step (`*/15`, `0-30/10`, `5/10`), a list (`1,15`), and month and weekday names (`jan`, `mon-fri`). Weekday `0` and `7` are both Sunday. When both day fields are restricted, a day that matches either runs, as in Vixie cron: `0 0 13 * fri` runs on the 13th and on Fridays. `@hourly`, `@daily`, `@weekly`, `@monthly` and `@yearly` work too.
+
+Times are wall-clock times in `timeZone`, and changes to daylight saving time are handled:
+
+- A time the clocks skip (02:30 on the night they jump from 02:00 to 03:00) runs once, when they jump, shifted by the gap: at 03:30.
+- A time the clocks repeat (01:30 on the night they fall back) runs once, the first time.
+
+An hourly schedule therefore runs 23 times on the day the clocks go forward and 24 times on the day they go back. Use `every: "1h"` when the time between runs matters more than the time of day.
+
+## Intervals
+
+`every` counts from the end of the last successful run. The first run is due as soon as a process starts the schedules. With `every: "6h"`, a run that takes an hour is followed by the next one six hours after it ends. A failed run does not reset the clock: its retries come after `backoff`, and once `maxAttempts` run out, the next try waits a full period.
+
+## What Brick guarantees
+
+- **Once per due time.** Each schedule has one row. A process claims a due row with a single conditional update (due, and not held by another process), so however many processes run the app, one runs each due time. This works the same on PostgreSQL and SQLite.
+- **Done only after success.** A run that throws is retried for the same due time with a growing delay, up to `maxAttempts`. The row moves to the next due time only when a run succeeds or the tries run out. A retry that would land after the next cron time is dropped: the next due time covers it.
+- **Crashes are retried.** While a run is going, its process renews its claim every third of `claimTimeoutMs`. When the process dies, the claim runs out and another process takes the due time over as its next try. The dead try is recorded as failed. On PostgreSQL, claims are timed by the database's clock, so hosts whose clocks disagree still agree on when a claim runs out.
+- **No overlap.** A run never starts while the previous run of the same schedule is still going. Due times that pass in the meantime are skipped. For a cron schedule, the next run is the first cron time after the current run ends.
+- **Missed times.** When every process was down through one or more cron times, `catchUp: "once"` runs one catch-up run when a process comes back, and `catchUp: "skip"` skips them and waits for the next. A cron time more than a minute late on its first try counts as missed. An interval has no later time to wait for, so an overdue interval runs at once either way.
+- **Changed schedules.** When the code changes a schedule's `cron`, `timeZone` or `every`, its next due time is worked out again from the new definition: at start, and whenever a process finds the row written by another version of the app, as during a rolling deploy.
+
+A process cut off from the database for longer than `claimTimeoutMs` loses its claim while its run goes on, and another process may then run the same due time. Brick warns when this happens. Give a run that must not repeat an idempotency key from `runKey`.
+
+## The run
+
+`run` receives:
+
+- `schedule`: the schedule's name.
+- `slot`: when this run was due, as an ISO timestamp: the cron time, the end of the interval, or the moment of a manual trigger. Retries keep it.
+- `trigger`: `"schedule"`, or `"manual"` for a manual run.
+- `attempt`: 1 on the first try.
+- `runKey`: `<schedule>:<slot>`, the same on every retry.
+
+```ts
+defineSchedule({
+  name: "monthly-invoices",
+  cron: "0 6 1 * *",
+  timeZone: "Europe/London",
+  run: async ({ slot, runKey }) => {
+    const month = slot.slice(0, 7);
+    await billing.issueInvoices(month, { idempotencyKey: runKey });
+  },
+});
+```
+
+A handler reads the app's deps with `useDeps()`, as a listener does. See [Dependencies](/docs/dependencies).
+
+## Where schedules run
+
+Schedules run in the processes that deliver events, with the same settings. `events.dispatch.intervalMs` (default `1000`) is how often a process looks for due schedules, and `claimTimeoutMs` (default `60000`) is how long a run's claim lasts without being renewed. `dispatch: false` keeps a process from running schedules. To keep the API processes free of background work, run them with `dispatch: false` and run the schedules in `brick worker`:
+
+```sh
+brick start src/app.ts      # serves HTTP
+brick worker src/app.ts     # delivers events and runs schedules
+```
+
+Running several workers is safe: each due time still runs once.
+
+## Workflows
+
+A schedule can start a durable workflow instead of running a handler, so its steps get the Workflow SDK's retries and its runs show in the Workflows tab. It runs on the app's `events.world`, as [workflow listeners](/docs/events#workflows) do:
+
+```ts title="src/workflows/nightly-report.ts"
+import type { ScheduleWorkflowRun } from "@brickkit/core";
+
+export async function nightlyReport(run: ScheduleWorkflowRun) {
+  "use workflow";
+  const rows = await collectRows(run.slot);
+  await emailReport(rows);
+}
+```
+
+```ts title="src/app.ts"
+export default brick({
+  services,
+  events: {
+    world: createWorld({ redis: process.env.REDIS_URL }),
+    schedules: [
+      defineSchedule({
+        name: "nightly-report",
+        cron: "0 2 * * *",
+        timeZone: "Europe/Berlin",
+        workflow: nightlyReport,
+      }),
+    ],
+  },
+});
+```
+
+The workflow receives the run without `attempt`. A due time counts as done once its workflow run has started, and the workflow retries its own steps from there. The workflow run is named after `runKey`, so a due time that is tried again after a crash finds the run it started instead of starting a second one.
+
+A handler is the default because it needs nothing beyond the database. Use a workflow when the job has several steps that should be retried on their own, or must survive a restart halfway through.
+
+## Seeing and running schedules
+
+In `brick dev`, the dashboard gains a **Schedules** tab for an app with schedules: when each is next due, whether it is running, its last runs with their errors, and a **Run now** button. A workflow schedule's runs show in the Workflows tab too.
+
+From the command line, against the app's database:
+
+```sh
+brick schedules src/app.ts                       # name, when, next run, last run
+brick schedules src/app.ts --run db-backup       # make db-backup due now
+```
+
+`--run` makes the schedule due now, and a process that runs the schedules starts it at its next poll. It works on a disabled schedule too, and does nothing while the schedule is running.
+
+In code, `app.events.schedules` offers the same:
+
+```ts
+const schedules = app.events!.schedules!;
+
+await schedules.list(); // [{ name, cron, timeZone, every, nextRunAt, running, lastSuccessAt, runs, ... }]
+await schedules.trigger("db-backup"); // false while it is running
+await schedules.drain(); // run what is due now and wait; for tests
+```
+
+## Testing
+
+Turn the timer off and run what is due by hand. Bun's `setSystemTime` moves the clock. The first `drain()` writes the schedule's row, with the first due time after the clock, so drain once before the due time and again at it:
+
+```ts
+import { setSystemTime } from "bun:test";
+
+const app = brick({
+  services,
+  events: { schedules: [backup], dispatch: { timer: false } },
+});
+
+setSystemTime(new Date("2026-01-01T02:59:00+01:00"));
+await app.events!.schedules!.drain(); // writes the row: next due at 03:00
+setSystemTime(new Date("2026-01-01T03:00:00+01:00"));
+await app.events!.schedules!.drain(); // runs the backup
+```
+
+## From `setInterval`
+
+A hand-written job such as
+
+```ts
+on("start", () => {
+  setInterval(async () => {
+    if (await claimPeriod("db-backup", 6 * 3_600_000)) await backupDatabase();
+  }, 10 * 60_000);
+});
+```
+
+becomes one of these, depending on whether the times or the gaps matter:
+
+```ts
+defineSchedule({ name: "db-backup", every: "6h", run: backupDatabase });
+defineSchedule({ name: "db-backup", cron: "0 */6 * * *", run: backupDatabase });
+```
+
+The schedule runs on time rather than up to ten minutes late, keeps its due time until the run succeeds, and is retried within minutes of a failure.

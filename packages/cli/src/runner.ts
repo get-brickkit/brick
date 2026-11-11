@@ -78,8 +78,8 @@ export async function startProdServer(options: {
 }
 
 /**
- * What `brick worker` runs: load the app and deliver its events from this
- * process, without serving HTTP. Run it beside API processes that only record
+ * What `brick worker` runs: load the app, deliver its events and run its
+ * schedules from this process, without serving HTTP. Run it beside API processes that only record
  * events (`events: { dispatch: false }`), or alone for an app with no routes.
  * Workflow listeners run here too: the world starts and the steps of every run
  * in it execute in this process.
@@ -109,11 +109,16 @@ export async function startWorker(options: { entry: string }) {
   await app.start();
   app.events.start();
   shutdownOnSignal(app);
-  const listeners = app.events.describe().listeners;
+  const { listeners, schedules = [] } = app.events.describe();
   console.log(`\n🧱 Brick-TS Worker`);
   console.log(
-    `   Delivering events to ${listeners.length} ${listeners.length === 1 ? "listener" : "listeners"}: ${listeners.map((l) => l.name).join(", ") || "none"}\n`,
+    `   Delivering events to ${listeners.length} ${listeners.length === 1 ? "listener" : "listeners"}: ${listeners.map((l) => l.name).join(", ") || "none"}`,
   );
+  if (schedules.length)
+    console.log(
+      `   Running ${schedules.length} ${schedules.length === 1 ? "schedule" : "schedules"}: ${schedules.map((s) => s.name).join(", ")}`,
+    );
+  console.log("");
   return app;
 }
 
@@ -224,7 +229,11 @@ export async function startDevServer(options: DevServerOptions = {}) {
         return;
       case "brick:inspector":
         if (generation === telemetry?.latestGeneration)
-          telemetry.setInspector({ port: message.port, token: message.token });
+          telemetry.setInspector({
+            port: message.port,
+            token: message.token,
+            workflows: message.workflows,
+          });
         return;
       case "brick:documentation":
         void dashboard?.docs?.configure(

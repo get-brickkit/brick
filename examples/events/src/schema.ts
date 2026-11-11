@@ -1,4 +1,10 @@
-import { integer, outboxTable, sqliteTable, text } from "@brickkit/core";
+import {
+  integer,
+  outboxTable,
+  scheduleTable,
+  sqliteTable,
+  text,
+} from "@brickkit/core";
 
 export const orders = sqliteTable("orders", {
   id: text("id")
@@ -26,6 +32,7 @@ export const notifications = sqliteTable("notifications", {
 });
 
 export const outbox = outboxTable("sqlite");
+export const schedules = scheduleTable("sqlite");
 
 export type OrderRow = {
   id: string;

@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { runWithDeps } from "../deps";
 import { listenerDeps } from "./listener";
+import type { Schedule, ScheduleRun } from "../schedules/schedule";
 import type {
   EventDelivery,
   EventListener,
@@ -91,7 +92,11 @@ export class WorkflowRuntime {
   constructor(
     readonly world: EventsWorld,
     options: WorkflowsOptions | undefined,
-    private readonly listeners: readonly EventListener[],
+    /** The listeners and schedules that run workflows. */
+    private readonly listeners: readonly {
+      readonly name: string;
+      readonly workflow?: unknown;
+    }[],
     private readonly deps: Record<string, unknown> = {},
   ) {
     this.root = resolveWorkflowPaths(options).root;
@@ -130,6 +135,20 @@ export class WorkflowRuntime {
       world: this.world,
       runKey: delivery.deliveryId,
       runKeyTime: Date.parse(delivery.occurredAt),
+    });
+  }
+
+  /**
+   * Start the workflow of a schedule's run. The workflow run is named after
+   * the run key, so a run that is tried again does not start another.
+   */
+  async startScheduled(schedule: Schedule, run: ScheduleRun): Promise<void> {
+    const sdk = await this.ensure();
+    const { attempt: _attempt, ...workflowRun } = run;
+    await sdk.start(schedule.workflow, [workflowRun], {
+      world: this.world,
+      runKey: `schedule:${run.runKey}`,
+      runKeyTime: Date.parse(run.slot),
     });
   }
 

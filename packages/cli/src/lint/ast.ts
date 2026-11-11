@@ -199,6 +199,7 @@ export const DEFINE_FUNCTIONS: Record<string, Definition["kind"]> = {
   defineAction: "action",
   defineTool: "tool",
   defineListener: "listener",
+  defineSchedule: "schedule",
   definePlugin: "plugin",
   defineResource: "resource",
   crud: "crud",

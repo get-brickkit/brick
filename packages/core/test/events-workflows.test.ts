@@ -8,6 +8,8 @@ import {
   defineDatabase,
   defineListener,
   definePlugin,
+  defineSchedule,
+  scheduleTable,
   defineService,
   outboxTable,
   port,
@@ -597,5 +599,52 @@ describe("webhooks", () => {
       }),
     );
     expect(await response.text()).toBe("resumed tok_2");
+  });
+});
+
+describe("workflow schedules", () => {
+  it("needs a world", () => {
+    const schedule = defineSchedule({
+      name: "nightly",
+      cron: "@daily",
+      workflow: transformed(),
+    });
+    expect(() => hubOf({ schedules: [schedule] })).toThrow(
+      "Schedule 'nightly' runs a workflow, so events needs a world",
+    );
+  });
+
+  it("starts one run per due time, keyed by the slot", async () => {
+    const { root } = project();
+    const { world } = fakeWorld();
+    const schedules = scheduleTable("sqlite");
+    const database = defineDatabase({ tables: { schedules } });
+    syncSchema([schedules], database.getDb());
+    const workflow = transformed();
+    const hub = hubOf(
+      {
+        schedules: [defineSchedule({ name: "nightly", every: "1d", workflow })],
+        world,
+        workflows: { root },
+        dispatch: { timer: false },
+      },
+      [defineService(`wf_schedules_${++serial}`, { database })],
+    );
+    expect(await hub.schedules!.drain()).toBe(1);
+    const [start] = globalThis.__fakeWorkflow.starts;
+    const run = start!.args[0] as Record<string, string>;
+    expect(start!.workflow).toBe(workflow);
+    expect(run).toEqual({
+      schedule: "nightly",
+      slot: run.slot,
+      trigger: "schedule",
+      runKey: `nightly:${run.slot}`,
+    });
+    expect(start!.options).toMatchObject({
+      runKey: `schedule:nightly:${run.slot}`,
+      runKeyTime: Date.parse(run.slot),
+    });
+    const [state] = await hub.schedules!.list();
+    expect(state!.runs[0]!.outcome).toBe("succeeded");
   });
 });

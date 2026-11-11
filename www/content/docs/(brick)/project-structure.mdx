@@ -33,10 +33,12 @@ my-app/
 │       │   │   └── order-item/
 │       │   │       ├── order-item.resource.ts
 │       │   │       └── order-item.table.ts
-│       │   ├── tables/                   # tables with no resource: outbox, join tables
+│       │   ├── tables/                   # tables with no resource: outbox, schedules, join tables
 │       │   │   └── outbox.table.ts
 │       │   ├── listeners/
 │       │   │   └── send-receipt.listener.ts
+│       │   ├── schedules/
+│       │   │   └── nightly-report.schedule.ts
 │       │   ├── workflows/
 │       │   │   ├── fulfil-order.workflow.ts
 │       │   │   └── book-carrier.step.ts

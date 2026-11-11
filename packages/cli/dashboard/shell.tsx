@@ -5,6 +5,7 @@ import {
   Blocks,
   BookOpen,
   BookText,
+  CalendarClock,
   LayoutGrid,
   Moon,
   PanelLeft,
@@ -47,6 +48,7 @@ export const BUILT_IN_NAV: NavItem[] = [
   builtIn("apis", "APIs", <BookOpen />),
   builtIn("docs", "Docs", <BookText />),
   builtIn("workflows", "Workflows", <Workflow />),
+  builtIn("schedules", "Schedules", <CalendarClock />),
   builtIn("errors", "Errors", <TriangleAlert />),
   builtIn("reloads", "Reloads", <RefreshCw />),
 ];
@@ -63,6 +65,7 @@ export function Sidebar({
   hasNewErrors,
   hasDocs,
   hasWorkflows,
+  hasSchedules,
   production,
 }: {
   nav: NavItem[];
@@ -73,6 +76,7 @@ export function Sidebar({
   hasNewErrors: boolean;
   hasDocs: boolean;
   hasWorkflows: boolean;
+  hasSchedules: boolean;
   /** The monitoring dashboard, which hides the views that need a developer's machine. */
   production: boolean;
 }) {
@@ -111,7 +115,8 @@ export function Sidebar({
           .filter(
             (item) =>
               (item.view !== "docs" || hasDocs) &&
-              (item.view !== "workflows" || hasWorkflows),
+              (item.view !== "workflows" || hasWorkflows) &&
+              (item.view !== "schedules" || hasSchedules),
           )
           .map((item, index, shown) => {
             const showCount = item.view === "errors" && errorCount > 0;

@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { BrickApp } from "@brickkit/core";
+import type { BrickApp, ScheduleControl } from "@brickkit/core";
 import type { CreateFetchHandler } from "../../workflow-inspector/server/handler";
 import { INSPECTOR_TOKEN_HEADER, ROUTES } from "./dashboard-protocol";
 
@@ -10,6 +10,8 @@ const INSPECTOR_PATH = ROUTES.workflows.path;
 
 export interface Inspector {
   readonly port: number;
+  /** Whether it serves the workflow inspector; it may serve only the schedules. */
+  readonly workflows: boolean;
   /** Every request must carry it in `INSPECTOR_TOKEN_HEADER`. */
   readonly token: string;
   stop(): void;
@@ -48,15 +50,45 @@ function browserAsset(request: Request, client: string): Response | undefined {
 }
 
 /**
+ * The app's schedules, for the dashboard's Schedules view: `GET` lists them,
+ * `POST <path>/<name>` runs one now.
+ */
+async function schedulesRoute(
+  schedules: ScheduleControl,
+  names: ReadonlySet<string>,
+  request: Request,
+  pathname: string,
+): Promise<Response> {
+  let name: string;
+  try {
+    name = decodeURIComponent(pathname.slice(ROUTES.schedules.path.length + 1));
+  } catch (error) {
+    return new Response((error as Error).message, { status: 400 });
+  }
+  if (request.method === "GET" && !name)
+    return Response.json(await schedules.list());
+  if (request.method !== "POST" || !name)
+    return new Response("Not found", { status: 404 });
+  if (!names.has(name))
+    return new Response(`No schedule named '${name}'`, { status: 404 });
+  try {
+    return Response.json({ started: await schedules.trigger(name) });
+  } catch (error) {
+    return new Response((error as Error).message, { status: 500 });
+  }
+}
+
+/**
  * Serve the Workflow inspector (the Workflow SDK's observability UI, built into
- * this package) for the app's world, on a loopback port of its own. The
- * dashboard proxies it at `/workflows`; it is the only caller that knows the
- * token. The UI can cancel runs and resume hooks, so nothing else may reach it,
- * and it exists only under `brick dev`.
+ * this package) for the app's world, and the app's schedules, on a loopback
+ * port of its own. The dashboard proxies them at `/workflows` and
+ * `/api/schedules`; it is the only caller that knows the token. The UI can
+ * cancel runs and resume hooks, and a schedule can be run from it, so nothing
+ * else may reach it, and it exists only under `brick dev`.
  *
  * @param app - The loaded app, running in this process.
  * @param directory - The inspector's build; this package's own by default.
- * @returns The inspector, or `undefined` when the app runs no workflows.
+ * @returns The inspector, or `undefined` when the app runs no workflows and has no schedules.
  * @throws When the inspector's build is missing.
  */
 export async function startInspector(
@@ -64,7 +96,49 @@ export async function startInspector(
   directory = INSPECTOR_DIRECTORY,
 ): Promise<Inspector | undefined> {
   const target = app.events?.workflows;
-  if (!target) return undefined;
+  const schedules = app.events?.schedules;
+  if (!target && !schedules) return undefined;
+  // An unbuilt inspector costs the Workflows view, not the schedules.
+  const workflows =
+    target &&
+    (await workflowsPage(target, directory).catch((error: unknown) => {
+      if (!schedules) throw error;
+      console.warn(`[Brick-TS] ${(error as Error).message}`);
+      return undefined;
+    }));
+  const names = new Set(
+    schedules
+      ? app.events!.describe().schedules?.map((schedule) => schedule.name)
+      : [],
+  );
+  const token = randomBytes(16).toString("hex");
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    // The UI streams a run's output and holds the connection open.
+    idleTimeout: 0,
+    fetch: (request) => {
+      if (request.headers.get(INSPECTOR_TOKEN_HEADER) !== token)
+        return new Response("Forbidden", { status: 403 });
+      const { pathname } = new URL(request.url);
+      if (schedules && pathname.startsWith(ROUTES.schedules.path))
+        return schedulesRoute(schedules, names, request, pathname);
+      if (!workflows) return new Response("Not found", { status: 404 });
+      return browserAsset(request, workflows.client) ?? workflows.page(request);
+    },
+  });
+  return {
+    port: server.port!,
+    workflows: Boolean(workflows),
+    token,
+    stop: () => void server.stop(true),
+  };
+}
+
+async function workflowsPage(
+  target: NonNullable<NonNullable<BrickApp["events"]>["workflows"]>,
+  directory: string,
+) {
   const entry = join(directory, "server", "index.js");
   if (!existsSync(entry))
     throw new Error(
@@ -77,17 +151,5 @@ export async function startInspector(
     // Core types only the parts of the world it calls; the world is a whole Workflow SDK World.
     world: target.world as Parameters<CreateFetchHandler>[1]["world"],
   });
-  const client = join(directory, "client");
-  const token = randomBytes(16).toString("hex");
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    // The UI streams a run's output and holds the connection open.
-    idleTimeout: 0,
-    fetch: (request) =>
-      request.headers.get(INSPECTOR_TOKEN_HEADER) === token
-        ? (browserAsset(request, client) ?? page(request))
-        : new Response("Forbidden", { status: 403 }),
-  });
-  return { port: server.port!, token, stop: () => void server.stop(true) };
+  return { page, client: join(directory, "client") };
 }

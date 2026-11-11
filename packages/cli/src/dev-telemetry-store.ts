@@ -66,7 +66,7 @@ export class DevTelemetryStore {
   #architecture: ArchitectureSnapshot | null = null;
   #api: ApiSnapshot | null = null;
   #docs: DocsSnapshot | null = null;
-  #inspector: { port: number; token: string } | undefined;
+  #inspector: { port: number; token: string; workflows: boolean } | undefined;
   #apiDocuments: ApiDocument[] = [];
   #sequence = 0;
   #generation = 0;
@@ -182,15 +182,18 @@ export class DevTelemetryStore {
   }
 
   /**
-   * Set where the app serves its workflow inspector, or `undefined` when it
-   * stops. The address stays here: the snapshot says only whether there is one.
+   * Set where the app serves its workflow inspector and schedules, or
+   * `undefined` when it stops. The address stays here: the snapshot says only
+   * whether there is a workflow inspector.
    */
-  setInspector(target: { port: number; token: string } | undefined): void {
+  setInspector(
+    target: { port: number; token: string; workflows: boolean } | undefined,
+  ): void {
     this.#inspector = target;
-    this.#emit({ type: "inspector", inspector: Boolean(target) });
+    this.#emit({ type: "inspector", inspector: Boolean(target?.workflows) });
   }
 
-  /** Where the dashboard proxies the workflow inspector, when the app serves one. */
+  /** Where the dashboard proxies the workflow inspector and schedules, when the app serves them. */
   inspectorTarget(): { port: number; token: string } | undefined {
     return this.#inspector;
   }
@@ -213,7 +216,7 @@ export class DevTelemetryStore {
       architecture: this.#architecture,
       api: this.#api,
       docs: this.#docs,
-      inspector: Boolean(this.#inspector),
+      inspector: Boolean(this.#inspector?.workflows),
     };
   }
 

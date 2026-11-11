@@ -22,6 +22,7 @@ import { actionMeta } from "./action-meta";
 import { actionOwners } from "./routes";
 import type { ServicePort } from "./service-port";
 import { isOutboxTable, type OutboxTable } from "./events/outbox";
+import { isScheduleTable, type ScheduleTable } from "./schedules/table";
 import type { ServiceEvents } from "./events/types";
 import {
   checkEvent,
@@ -302,6 +303,10 @@ export class ServiceImpl<
 
   getOutbox(): OutboxTable | undefined {
     return Object.values(this.database?.tables ?? {}).find(isOutboxTable);
+  }
+
+  getScheduleTable(): ScheduleTable | undefined {
+    return Object.values(this.database?.tables ?? {}).find(isScheduleTable);
   }
 
   setRecorder(recorder: ServiceEvents | undefined): void {

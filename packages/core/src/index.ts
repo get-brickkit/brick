@@ -145,11 +145,28 @@ export {
   type SQLiteOutboxTable,
 } from "./events/outbox";
 export { runInTransaction, onTransactionCommit } from "./events/transaction";
+export {
+  defineSchedule,
+  type Schedule,
+  type ScheduleConfig,
+  type ScheduleRun,
+  type ScheduleWorkflow,
+  type ScheduleWorkflowRun,
+} from "./schedules/schedule";
+export {
+  scheduleTable,
+  type ScheduleRunRecord,
+  type ScheduleTable,
+  type PostgresScheduleTable,
+  type SQLiteScheduleTable,
+} from "./schedules/table";
+export type { ScheduleState } from "./schedules/scheduler";
 export { resolveWorkflowPaths, WORKFLOW_BUNDLE } from "./events/workflows";
 export {
   stopAllEvents,
   type EventsHub,
   type EventsDefinition,
+  type ScheduleControl,
 } from "./events/hub";
 export { Dispatcher, type OutboxCounts } from "./events/dispatcher";
 export type {
