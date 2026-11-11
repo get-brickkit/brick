@@ -63,7 +63,7 @@ export type ScheduleConfig = When & {
   catchUp?: "once" | "skip";
   /** Tries per due time, the first included. Default 3. */
   maxAttempts?: number;
-  /** The wait before the first retry, doubling on each retry after it. Default `"1m"`. */
+  /** The wait before the first retry, doubling on each retry after it; 0 retries at once. Default `"1m"`. */
   backoff?: string | number;
   /** A random delay of up to this much, added to every due time, so many processes or apps do not all start at once. */
   jitter?: string | number;
@@ -152,6 +152,16 @@ export function defineSchedule(config: ScheduleConfig): Schedule {
       return fail((error as Error).message);
     }
   };
+  /** A duration that may also be 0: none. */
+  const optionalDuration = (
+    value: string | number | undefined,
+    fallback: number,
+  ) =>
+    value === undefined
+      ? fallback
+      : value === 0
+        ? 0
+        : attempt(() => parseDuration(value));
   if ((config.cron === undefined) === (config.every === undefined))
     fail("give it a cron expression or an interval (every), not both");
   if ((config.run === undefined) === (config.workflow === undefined))
@@ -185,11 +195,8 @@ export function defineSchedule(config: ScheduleConfig): Schedule {
     ...when,
     catchUp: config.catchUp ?? "once",
     maxAttempts,
-    backoffMs: attempt(() => parseDuration(config.backoff ?? 60_000)),
-    jitterMs:
-      config.jitter === undefined
-        ? 0
-        : attempt(() => parseDuration(config.jitter!)),
+    backoffMs: optionalDuration(config.backoff, 60_000),
+    jitterMs: optionalDuration(config.jitter, 0),
     enabled: config.enabled ?? true,
     ...(config.run ? { run: config.run } : {}),
     ...(config.workflow ? { workflow: config.workflow } : {}),

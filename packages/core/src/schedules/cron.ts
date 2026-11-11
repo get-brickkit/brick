@@ -71,7 +71,9 @@ function parseField(
     let to: number;
     if (range === "*") [from, to] = [min, max];
     else if (range.includes("-")) {
-      const [a, b] = range.split("-");
+      const [a, b, extra] = range.split("-");
+      if (extra !== undefined)
+        throw new Error(`'${range}' is not a valid range`);
       [from, to] = [value(a!), value(b!)];
       if (from > to) throw new Error(`'${range}' runs backwards`);
     } else {
@@ -81,7 +83,8 @@ function parseField(
     }
     for (let v = from; v <= to; v += step) values.add(v);
   }
-  return { values, star: field === "*" || field === "?" };
+  // As in Vixie cron, `*/2` still counts as unrestricted for the day rule.
+  return { values, star: field.startsWith("*") || field.startsWith("?") };
 }
 
 /**
@@ -271,9 +274,10 @@ export function parseDuration(duration: string | number): number {
     }
     if (!text || read !== text.length) ms = NaN;
   }
-  if (!Number.isFinite(ms) || ms <= 0)
+  const rounded = Math.round(ms);
+  if (!Number.isFinite(rounded) || rounded <= 0)
     throw new Error(
       `'${duration}' is not a duration: use milliseconds or text such as "15m", "6h" or "1h30m"`,
     );
-  return Math.round(ms);
+  return rounded;
 }

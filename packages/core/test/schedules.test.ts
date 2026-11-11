@@ -74,6 +74,17 @@ describe("defineSchedule", () => {
       expect(() => defineSchedule(config as ScheduleConfig)).toThrow(message);
   });
 
+  it("takes zero jitter and zero backoff", () => {
+    const schedule = defineSchedule({
+      name: "a",
+      every: "1h",
+      jitter: 0,
+      backoff: 0,
+      run,
+    });
+    expect([schedule.jitterMs, schedule.backoffMs]).toEqual([0, 0]);
+  });
+
   it("needs one schedule table and unique names", () => {
     const schedule = defineSchedule({ name: "a", every: "1h", run });
     const service = defineService(`schedules_none_${++serial}`, {
@@ -123,6 +134,42 @@ describe("schedules", () => {
     at("2026-01-01T06:00:00Z");
     expect(await schedules.drain()).toBe(1);
     expect(calls).toHaveLength(2);
+  });
+
+  it("runs at the due time in the pattern the docs' Testing section shows", async () => {
+    const { calls, run } = recorder();
+    const { schedules } = setup([
+      { name: "backup", cron: "0 3 * * *", timeZone: "Europe/Berlin", run },
+    ]);
+    // Drained first at the due time itself, the row is made due the next day.
+    const late = setup([
+      { name: "backup", cron: "0 3 * * *", timeZone: "Europe/Berlin", run },
+    ]);
+    at("2026-01-01T03:00:00+01:00");
+    expect(await late.schedules.drain()).toBe(0);
+    // So drain once before the due time, then at it.
+    at("2026-01-01T02:59:00+01:00");
+    await schedules.drain();
+    at("2026-01-01T03:00:00+01:00");
+    expect(await schedules.drain()).toBe(1);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("retries at once with zero backoff", async () => {
+    at("2026-01-01T00:00:00Z");
+    let tries = 0;
+    const { schedules } = setup([
+      {
+        name: "flaky",
+        every: "1h",
+        backoff: 0,
+        run: () => {
+          if (++tries < 3) throw new Error("not yet");
+        },
+      },
+    ]);
+    await schedules.drain();
+    expect(tries).toBe(3);
   });
 
   it("runs a cron schedule at its times only", async () => {

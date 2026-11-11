@@ -33,6 +33,7 @@ describe("parseCron", () => {
       "*/0 * * * *",
       "a * * * *",
       "1/2/3 * * * *",
+      "1-5-9 * * * *",
     ])
       expect(() => parseCron(bad)).toThrow();
   });
@@ -70,6 +71,14 @@ describe("nextCron", () => {
       "2026-01-01T00:00:20.000Z",
       "2026-01-01T00:00:40.000Z",
       "2026-01-01T00:01:00.000Z",
+    ]);
+  });
+
+  it("treats a stepped star day field as unrestricted, as Vixie cron does", () => {
+    // Odd days that are Mondays, not odd days or Mondays. 2026-02-09 is a Monday.
+    expect(fires("0 0 */2 * 1", "2026-02-01T00:00:00Z", "UTC", 2)).toEqual([
+      "2026-02-09T00:00:00.000Z",
+      "2026-02-23T00:00:00.000Z",
     ]);
   });
 
@@ -152,7 +161,18 @@ describe("parseDuration", () => {
   });
 
   it("refuses anything else", () => {
-    for (const bad of ["", "6", "6x", "h", "1h 30", 0, -5, Number.NaN])
+    for (const bad of [
+      "",
+      "6",
+      "6x",
+      "h",
+      "1h 30",
+      0,
+      -5,
+      Number.NaN,
+      0.4,
+      "0.1ms",
+    ])
       expect(() => parseDuration(bad)).toThrow("is not a duration");
   });
 });
