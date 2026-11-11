@@ -37,6 +37,19 @@ listener shows retries and the `dead` state. Every listener writes its row under
 
 `internalNote` can be written but not read, so it never appears in an event.
 
+## A schedule
+
+`src/schedules.ts` defines `unshipped-reminder`, a cron schedule that runs at
+09:00 Berlin time on weekdays and writes an `unshipped` notification for every
+order still waiting to ship. Its state lives in the `schedules` table
+(`scheduleTable("sqlite")`), so it runs once per morning however many processes
+serve the app, and a restart keeps its next due time.
+
+```sh
+bunx brick schedules src/app.ts                               # next run, last runs
+bunx brick schedules src/app.ts --run unshipped-reminder      # due now
+```
+
 ## Run it
 
 From the repository root:

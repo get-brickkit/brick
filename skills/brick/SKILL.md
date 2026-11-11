@@ -31,6 +31,7 @@ If the hosted docs differ from the installed version, inspect the package types 
 - Use the generated typed-client contract for browser calls. Keep server modules out of browser imports.
 - For work on one row or one collection of a resource that CRUD doesn't cover, use `resource.action()`. `record: true` adds `id` from the path and passes the loaded `row` to `execute`; it answers 404 for rows the caller can't see. Every record action and command needs `access` (`"public"` or `{ scope }`).
 - For a state change with rules that emits events, use `resource.command(name, { access, input, errors, load, decide })`. `decide(row, input, { error })` is pure: return `error.CODE()` to reject, or `{ set, children, emit }`. Brick writes the change and records `emit` events in one transaction. Declare events in `defineService(name, { events: { shipped: t.Object(...) } })` and listen with `defineListener({ name, on: service.events.shipped, run })`; catalog events are named `<service>.<event>` on the wire.
+- For background jobs, use `defineSchedule({ name, cron, timeZone, run })` (fixed wall-clock times) or `defineSchedule({ name, every: "6h", run })` (a period after the last success), passed in `brick({ events: { schedules } })`, with `scheduleTable("postgres")` in one database. Never hand-write `setInterval` jobs: a schedule runs once per due time across processes, survives restarts, and retries failures.
 
 ## Routes
 

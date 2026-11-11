@@ -246,7 +246,7 @@ brick start src/app.ts      # serves HTTP, records events
 brick worker src/app.ts     # delivers events, serves nothing
 ```
 
-`brick worker` loads the same app file and delivers from this process only. Workflow listeners run in it too: the world starts, and the steps and replays of every run in the world execute here. It stops delivering on `SIGINT` and `SIGTERM`, after the deliveries that are running finish. It fails to start for an app without `events`, or one with `dispatch: false`.
+`brick worker` loads the same app file and delivers from this process only. It runs the app's [schedules](/docs/schedules) too. Workflow listeners run in it too: the world starts, and the steps and replays of every run in the world execute here. It stops delivering on `SIGINT` and `SIGTERM`, after the deliveries that are running finish. It fails to start for an app without `events`, or one with `dispatch: false`.
 
 ## Workflows
 

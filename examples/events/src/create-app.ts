@@ -12,7 +12,8 @@ import { crud } from "@brickkit/crud";
 import { createCarrier, type Carrier } from "./carrier";
 import { ordersDeps } from "./deps";
 import { createListeners } from "./listeners";
-import { auditLog, notifications, orders, outbox } from "./schema";
+import { createSchedules } from "./schedules";
+import { auditLog, notifications, orders, outbox, schedules } from "./schema";
 
 export interface OrdersAppOptions {
   /** SQLite file, or `:memory:`. */
@@ -31,7 +32,7 @@ export function createOrdersApp(options: OrdersAppOptions) {
   const carrier = options.carrier ?? createCarrier();
   const database = defineDatabase({
     path: options.path,
-    tables: { orders, auditLog, notifications, outbox },
+    tables: { orders, auditLog, notifications, outbox, schedules },
   });
   syncSchema(database.tables, database.getDb());
 
@@ -118,6 +119,7 @@ export function createOrdersApp(options: OrdersAppOptions) {
         service.events,
         { workflows: options.world !== undefined },
       ),
+      schedules: createSchedules(database.getDb()),
       dispatch: options.dispatch ?? { intervalMs: 250 },
       ...(options.world ? { world: options.world } : {}),
     },
