@@ -59,9 +59,12 @@ async function schedulesRoute(
   request: Request,
   pathname: string,
 ): Promise<Response> {
-  const name = decodeURIComponent(
-    pathname.slice(ROUTES.schedules.path.length + 1),
-  );
+  let name: string;
+  try {
+    name = decodeURIComponent(pathname.slice(ROUTES.schedules.path.length + 1));
+  } catch (error) {
+    return new Response((error as Error).message, { status: 400 });
+  }
   if (request.method === "GET" && !name)
     return Response.json(await schedules.list());
   if (request.method !== "POST" || !name)

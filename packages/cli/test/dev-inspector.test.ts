@@ -116,6 +116,9 @@ describe("startInspector", () => {
       expect(triggered).toEqual(["backup"]);
       const missing = await fetch(`${base}/nope`, { method: "POST", headers });
       expect(missing.status).toBe(404);
+      const malformed = await fetch(`${base}/%E0`, { method: "POST", headers });
+      expect(malformed.status).toBe(400);
+      expect(await malformed.text()).toContain("URI");
       expect(
         (
           await fetch(`http://127.0.0.1:${inspector!.port}/workflows/`, {
