@@ -191,7 +191,7 @@ await schedules.drain(); // run what is due now and wait; for tests
 
 ## Testing
 
-Turn the timer off and run what is due by hand. Bun's `setSystemTime` moves the clock:
+Turn the timer off and run what is due by hand. Bun's `setSystemTime` moves the clock. The first `drain()` writes the schedule's row, with the first due time after the clock, so drain once before the due time and again at it:
 
 ```ts
 import { setSystemTime } from "bun:test";
@@ -201,8 +201,10 @@ const app = brick({
   events: { schedules: [backup], dispatch: { timer: false } },
 });
 
+setSystemTime(new Date("2026-01-01T02:59:00+01:00"));
+await app.events!.schedules!.drain(); // writes the row: next due at 03:00
 setSystemTime(new Date("2026-01-01T03:00:00+01:00"));
-await app.events!.schedules!.drain();
+await app.events!.schedules!.drain(); // runs the backup
 ```
 
 ## From `setInterval`
