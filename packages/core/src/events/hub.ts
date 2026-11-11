@@ -17,6 +17,9 @@ import { isWorkflowBundleShipped, WorkflowRuntime } from "./workflows";
 import { runWithDeps } from "../deps";
 import { portOf, type ServicePort } from "../service-port";
 import { DuplicateNameError, type Service } from "../types";
+import type { Schedule } from "../schedules/schedule";
+import { Scheduler, type ScheduleState } from "../schedules/scheduler";
+import type { ScheduleTable } from "../schedules/table";
 
 export function matchesEvent(pattern: string, name: string): boolean {
   if (pattern === "*") return true;
@@ -56,6 +59,31 @@ export interface EventsDefinition {
   dispatch: boolean;
   /** Names of the services whose writes record events. */
   recorders: string[];
+  /** The app's schedules; absent when it has none. */
+  schedules?: {
+    name: string;
+    kind: "handler" | "workflow";
+    cron?: string;
+    timeZone?: string;
+    every?: number;
+    enabled: boolean;
+  }[];
+}
+
+/** What `app.events.schedules` offers: see and trigger the app's schedules. */
+export interface ScheduleControl {
+  /** Every schedule, with when it is next due and its last runs. */
+  list(): Promise<ScheduleState[]>;
+  /**
+   * Run a schedule now, once, in whichever process runs the schedules. It
+   * works with `enabled: false` too.
+   *
+   * @returns `false` when the schedule is running now, so nothing was started.
+   * @throws When no schedule has that name.
+   */
+  trigger(name: string): Promise<boolean>;
+  /** Run what is due now, and wait for it. For tests and workers driven by hand. @returns How many runs started. */
+  drain(): Promise<number>;
 }
 
 /** What the dispatcher runs for a delivery. */
@@ -78,6 +106,8 @@ export class EventsHub {
   private readonly dispatchOptions: DispatchOptions | false;
   private readonly runtime: WorkflowRuntime | undefined;
   private readonly recorderNames: string[] = [];
+  private readonly scheduleList: Schedule[] = [];
+  private scheduler: Scheduler | undefined;
   private started = false;
   private stopping: Promise<void> | undefined;
 
@@ -98,13 +128,21 @@ export class EventsHub {
         );
       this.byName.set(listener.name, listener);
     }
-    const workflowListeners = [...this.byName.values()].filter(
-      (listener) => listener.workflow,
-    );
+    const scheduleNames = new Set<string>();
+    for (const schedule of options.schedules ?? []) {
+      if (scheduleNames.has(schedule.name))
+        throw new DuplicateNameError(`Duplicate schedule '${schedule.name}'`);
+      scheduleNames.add(schedule.name);
+      this.scheduleList.push(schedule);
+    }
+    const workflowListeners = [
+      ...this.byName.values(),
+      ...this.scheduleList,
+    ].filter((listener) => listener.workflow);
     if (workflowListeners.length) {
       if (!options.world)
         throw new Error(
-          `Event listener '${workflowListeners[0]!.name}' runs a workflow, so events needs a world: ` +
+          `${"on" in workflowListeners[0]! ? "Event listener" : "Schedule"} '${workflowListeners[0]!.name}' runs a workflow, so events needs a world: ` +
             "brick({ events: { world: createWorld(...) } }) with createWorld from @brickkit/redis-world.",
         );
       this.runtime = new WorkflowRuntime(
@@ -151,6 +189,7 @@ export class EventsHub {
           ),
         );
     }
+    if (this.scheduleList.length) this.attachSchedules(services);
     if (this.recorderNames.length === 0 && this.byName.size > 0) {
       console.warn(
         "[Brick-TS] events are configured, but no service database has an outbox table. " +
@@ -177,7 +216,69 @@ export class EventsHub {
       })),
       dispatch: this.dispatchOptions !== false,
       recorders: [...this.recorderNames],
+      ...(this.scheduleList.length
+        ? {
+            schedules: this.scheduleList.map((schedule) => ({
+              name: schedule.name,
+              kind: schedule.workflow
+                ? ("workflow" as const)
+                : ("handler" as const),
+              ...(schedule.cron
+                ? { cron: schedule.cron.source, timeZone: schedule.timeZone }
+                : { every: schedule.every }),
+              enabled: schedule.enabled,
+            })),
+          }
+        : {}),
     };
+  }
+
+  /** The app's schedules, when it has any. Running them follows `start()` and `stop()`. */
+  get schedules(): ScheduleControl | undefined {
+    const scheduler = this.scheduler;
+    return (
+      scheduler && {
+        list: () => scheduler.list(),
+        trigger: (name) => scheduler.trigger(name),
+        drain: () => scheduler.drain(),
+      }
+    );
+  }
+
+  /**
+   * Find the one schedule table among the services' databases.
+   *
+   * @throws When none holds one, or more than one does: a schedule must have
+   * one place where its state lives.
+   */
+  private attachSchedules(services: readonly Service<any, any>[]): void {
+    const found = new Map<ScheduleTable, unknown>();
+    for (const service of services.map(portOf)) {
+      const table = service.getScheduleTable();
+      if (table && !found.has(table)) found.set(table, service.getDb());
+    }
+    if (found.size !== 1)
+      throw new Error(
+        found.size
+          ? "Brick: schedules need exactly one scheduleTable(), but several databases hold one."
+          : "Brick: schedules keep their state in a scheduleTable(), and no service database holds one. Add scheduleTable() to a database's tables.",
+      );
+    const [[table, db]] = [...found];
+    const options = this.dispatchOptions || {};
+    this.scheduler = new Scheduler(
+      db,
+      table,
+      this.scheduleList,
+      (schedule, run) =>
+        schedule.workflow
+          ? this.runtime!.startScheduled(schedule, run)
+          : runWithDeps(this.deps, async () => schedule.run!(run)),
+      {
+        timer: options.timer ?? true,
+        intervalMs: options.intervalMs ?? 1_000,
+        claimTimeoutMs: options.claimTimeoutMs ?? 60_000,
+      },
+    );
   }
 
   /**
@@ -223,6 +324,7 @@ export class EventsHub {
     startedHubs.add(this);
     this.runtime?.warmUp();
     for (const dispatcher of this.dispatchers.values()) dispatcher.start();
+    this.scheduler?.start();
   }
 
   /**
@@ -240,9 +342,10 @@ export class EventsHub {
 
   private async shutDown(): Promise<void> {
     this.started = false;
-    await Promise.all(
-      [...this.dispatchers.values()].map((dispatcher) => dispatcher.stop()),
-    );
+    await Promise.all([
+      ...[...this.dispatchers.values()].map((dispatcher) => dispatcher.stop()),
+      this.scheduler?.stop(),
+    ]);
     await this.runtime?.close();
   }
 

@@ -177,5 +177,5 @@ export function validateListener(listener: EventListener): void {
 }
 
 /** The deps a plugin's listener runs with, set by the plugin install; `undefined` for the app's own. */
-export const listenerDeps = (listener: EventListener) =>
+export const listenerDeps = (listener: object) =>
   (listener as { [PLUGIN_DEPS]?: Record<string, unknown> })[PLUGIN_DEPS];
