@@ -114,6 +114,7 @@ try {
         sendToSupervisor({
           type: "brick:inspector",
           port: inspector.port,
+          workflows: inspector.workflows,
           token: inspector.token,
         }),
       (error: unknown) =>

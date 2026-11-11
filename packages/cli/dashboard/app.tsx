@@ -35,6 +35,7 @@ import { ErrorsView } from "@/views/errors";
 import { OverviewView } from "@/views/overview";
 import { ReloadsView } from "@/views/reloads";
 import { RequestsView } from "@/views/requests";
+import { SchedulesView } from "@/views/schedules";
 import { WorkflowsView } from "@/views/workflows";
 import {
   CSRF_HEADER,
@@ -133,6 +134,10 @@ export function App({ loaded = {} }: { loaded?: LoadedExtension }) {
     ) ??
       false);
 
+  const hasSchedules = Boolean(
+    state.architecture?.schema.events?.schedules?.length,
+  );
+
   const focusSearch = useCallback(() => {
     if (route.view === "requests") {
       filterRef.current?.focus();
@@ -185,6 +190,7 @@ export function App({ loaded = {} }: { loaded?: LoadedExtension }) {
           hasNewErrors={hasNewErrors}
           hasDocs={state.docs !== null}
           hasWorkflows={hasWorkflows}
+          hasSchedules={hasSchedules}
           production={production}
         />
         <div className="flex min-w-0 flex-1 flex-col">
@@ -258,6 +264,9 @@ export function App({ loaded = {} }: { loaded?: LoadedExtension }) {
                 available={state.inspector}
                 hidden={route.view !== "workflows"}
               />
+            )}
+            {route.view === "schedules" && shown("schedules") && (
+              <SchedulesView />
             )}
             {route.view === "docs" && shown("docs") && (
               <Suspense fallback={<Empty title="Loading docs" />}>

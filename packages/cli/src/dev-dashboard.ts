@@ -306,6 +306,7 @@ export function startDevDashboard(
       frameOnlyHere(response);
       return inspector(request, response, url);
     },
+    schedules: (request, response, url) => inspector(request, response, url),
     ingest,
     restart(request, response) {
       if (!options.restart) {
@@ -440,7 +441,7 @@ export function startDevDashboard(
       send(
         response,
         503,
-        "The workflow inspector is not running. The app may be restarting, or it may run no workflows.",
+        "The workflow inspector and schedules are not being served. The app may be restarting, or it may have neither workflows nor schedules.",
         { "content-type": "text/plain; charset=utf-8" },
       );
       return;

@@ -12,6 +12,7 @@ export const DEFINITION_KINDS = [
   "tool",
   "socket",
   "listener",
+  "schedule",
   "workflow",
   "step",
 ] as const;

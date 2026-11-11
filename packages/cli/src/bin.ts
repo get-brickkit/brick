@@ -19,6 +19,7 @@ import {
 import { writeServiceManifest } from "./manifest";
 import { runLint } from "./lint";
 import { runDbCommand } from "./db";
+import { runSchedulesCommand } from "./schedules";
 import cliPkg from "../package.json";
 
 // Single source of truth for the CLI version (inlined at build time).
@@ -233,7 +234,9 @@ ${PORT_RESOLUTION_HELP}`,
 
   program
     .command("worker")
-    .description("Deliver the app's events without serving HTTP")
+    .description(
+      "Deliver the app's events and run its schedules without serving HTTP",
+    )
     .argument(
       "[entry]",
       "Application entry file (must default-export a BrickApp)",
@@ -242,6 +245,34 @@ ${PORT_RESOLUTION_HELP}`,
       async (entry: string | undefined, _opts: object, command: Command) => {
         const project = await projectOf(command);
         await startWorker({ entry: requireEntry(command, entry, project) });
+      },
+    );
+
+  program
+    .command("schedules")
+    .description(
+      "List the app's schedules with their next run, or run one now with --run",
+    )
+    .argument(
+      "[entry]",
+      "Application entry file (must default-export a BrickApp)",
+    )
+    .option("--run <name>", "Make this schedule due now")
+    .action(
+      async (
+        entry: string | undefined,
+        opts: { run?: string },
+        command: Command,
+      ) => {
+        const project = await projectOf(command);
+        console.log(
+          await runSchedulesCommand(
+            requireEntry(command, entry, project),
+            opts,
+          ),
+        );
+        // The app's database connections would keep the process open.
+        process.exit(0);
       },
     );
 

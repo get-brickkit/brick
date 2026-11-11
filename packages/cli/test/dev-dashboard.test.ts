@@ -585,7 +585,7 @@ describe("startDevDashboard", () => {
         },
       });
       const { store, dashboard, base } = await setup();
-      store.setInspector({ port: inspector.port!, token });
+      store.setInspector({ port: inspector.port!, token, workflows: true });
       try {
         return await run({ store, base, release });
       } finally {
@@ -719,12 +719,12 @@ describe("startDevDashboard", () => {
       try {
         const none = await fetch(`${base}/workflows/`);
         expect(none.status).toBe(503);
-        expect(await none.text()).toContain("inspector is not running");
+        expect(await none.text()).toContain("are not being served");
 
         const closed = Bun.serve({ port: 0, fetch: () => new Response() });
         const port = closed.port!;
         closed.stop(true);
-        store.setInspector({ port, token: "t" });
+        store.setInspector({ port, token: "t", workflows: true });
         expect((await fetch(`${base}/workflows/`)).status).toBe(502);
       } finally {
         dashboard.stop();

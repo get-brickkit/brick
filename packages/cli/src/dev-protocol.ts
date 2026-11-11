@@ -36,8 +36,10 @@ export type WorkerMessage =
   | { type: "brick:api-documents"; documents: ApiDocument[] }
   | {
       type: "brick:inspector";
-      /** The loopback port the workflow inspector listens on. */
+      /** The loopback port the workflow inspector and the schedules listen on. */
       port: number;
+      /** Whether it serves the workflow inspector, not only the schedules. */
+      workflows: boolean;
       /** What the dashboard sends with each request to prove who it is. */
       token: string;
     }

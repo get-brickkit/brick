@@ -59,6 +59,7 @@ export const VIEW_NAMES = [
   "apis",
   "docs",
   "workflows",
+  "schedules",
   "errors",
   "reloads",
 ] as const;
@@ -122,6 +123,14 @@ export const ROUTES = {
     prefix: true,
     production: false,
     view: "workflows",
+  },
+  /** The app's schedules, served beside the workflow inspector: list them, run one now. */
+  schedules: {
+    path: "/api/schedules",
+    prefix: true,
+    methods: ["GET", "POST"],
+    production: false,
+    view: "schedules",
   },
   ingest: {
     path: "/api/ingest",
@@ -597,4 +606,25 @@ export interface DocsInfo {
   /** Whether the project supplied components of its own. */
   components: boolean;
   revision: number;
+}
+
+/** How a schedule fires: its cron expression and time zone, or its interval (`every 6h`). */
+export function describeSchedule(schedule: {
+  cron?: string;
+  timeZone?: string;
+  every?: number;
+}): string {
+  if (schedule.cron)
+    return schedule.timeZone && schedule.timeZone !== "UTC"
+      ? `${schedule.cron} (${schedule.timeZone})`
+      : schedule.cron;
+  const ms = schedule.every ?? 0;
+  for (const [unit, size] of [
+    ["d", 86_400_000],
+    ["h", 3_600_000],
+    ["m", 60_000],
+    ["s", 1000],
+  ] as const)
+    if (ms % size === 0) return `every ${ms / size}${unit}`;
+  return `every ${ms}ms`;
 }
