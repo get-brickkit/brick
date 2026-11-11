@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/table";
 import { formatDateTime } from "@/format";
 import { describeSchedule, ROUTES } from "../../src/dashboard-protocol";
+import { runSchedule } from "@/schedules";
 
 const REFRESH_MS = 3000;
 
@@ -44,6 +45,8 @@ function RunBadge({ run }: { run: ScheduleRunRecord }) {
 export function SchedulesView() {
   const [schedules, setSchedules] = useState<ScheduleState[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Kept apart from load's error, so the next refresh does not wipe it.
+  const [runError, setRunError] = useState<string | null>(null);
   const load = useCallback(async () => {
     try {
       const response = await fetch(ROUTES.schedules.path);
@@ -60,13 +63,7 @@ export function SchedulesView() {
     return () => clearInterval(timer);
   }, [load]);
   const runNow = async (name: string) => {
-    const response = await fetch(
-      `${ROUTES.schedules.path}/${encodeURIComponent(name)}`,
-      { method: "POST" },
-    );
-    if (!response.ok) setError(await response.text());
-    else if (!((await response.json()) as { started: boolean }).started)
-      setError(`'${name}' is running now, so it was not started again.`);
+    setRunError(await runSchedule(name));
     void load();
   };
   return (
@@ -75,7 +72,14 @@ export function SchedulesView() {
         title="Schedules"
         description="When each schedule is next due, and its last runs"
       />
-      {error && <div className="text-sm text-destructive">{error}</div>}
+      {[error, runError].map(
+        (message, index) =>
+          message && (
+            <div key={index} className="text-sm text-destructive">
+              {message}
+            </div>
+          ),
+      )}
       <Panel>
         {!schedules ? (
           <Empty title="Loading schedules" />

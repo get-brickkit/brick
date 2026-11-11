@@ -55,6 +55,7 @@ function browserAsset(request: Request, client: string): Response | undefined {
  */
 async function schedulesRoute(
   schedules: ScheduleControl,
+  names: ReadonlySet<string>,
   request: Request,
   pathname: string,
 ): Promise<Response> {
@@ -65,10 +66,12 @@ async function schedulesRoute(
     return Response.json(await schedules.list());
   if (request.method !== "POST" || !name)
     return new Response("Not found", { status: 404 });
+  if (!names.has(name))
+    return new Response(`No schedule named '${name}'`, { status: 404 });
   try {
     return Response.json({ started: await schedules.trigger(name) });
   } catch (error) {
-    return new Response((error as Error).message, { status: 404 });
+    return new Response((error as Error).message, { status: 500 });
   }
 }
 
@@ -92,7 +95,19 @@ export async function startInspector(
   const target = app.events?.workflows;
   const schedules = app.events?.schedules;
   if (!target && !schedules) return undefined;
-  const workflows = target && (await workflowsPage(target, directory));
+  // An unbuilt inspector costs the Workflows view, not the schedules.
+  const workflows =
+    target &&
+    (await workflowsPage(target, directory).catch((error: unknown) => {
+      if (!schedules) throw error;
+      console.warn(`[Brick-TS] ${(error as Error).message}`);
+      return undefined;
+    }));
+  const names = new Set(
+    schedules
+      ? app.events!.describe().schedules?.map((schedule) => schedule.name)
+      : [],
+  );
   const token = randomBytes(16).toString("hex");
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -104,7 +119,7 @@ export async function startInspector(
         return new Response("Forbidden", { status: 403 });
       const { pathname } = new URL(request.url);
       if (schedules && pathname.startsWith(ROUTES.schedules.path))
-        return schedulesRoute(schedules, request, pathname);
+        return schedulesRoute(schedules, names, request, pathname);
       if (!workflows) return new Response("Not found", { status: 404 });
       return browserAsset(request, workflows.client) ?? workflows.page(request);
     },
