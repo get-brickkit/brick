@@ -511,7 +511,10 @@ async function dispatch(
   if (hasBody) {
     // `fetch` sets the multipart content-type, with its boundary, itself.
     payload = toFormData(body);
-    if (!payload) {
+    if (payload) {
+      for (const key of Object.keys(headers))
+        if (key.toLowerCase() === "content-type") delete headers[key];
+    } else {
       headers["content-type"] = "application/json";
       payload = JSON.stringify(body ?? null);
     }
