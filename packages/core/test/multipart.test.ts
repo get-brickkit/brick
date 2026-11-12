@@ -99,6 +99,36 @@ it("sends FormData from the client when the input holds a file", async () => {
   expect(result).toEqual({ text: "inbox/c.txt:hix3", attachments: 2 });
 });
 
+it("decodes object and typed array fields sent beside a file", async () => {
+  const service = defineService("tagged");
+  const tag = service.action({
+    name: "tag",
+    input: t.Object({
+      file: t.File(),
+      meta: t.Object({ label: t.String() }),
+      sizes: t.Array(t.Number()),
+    }),
+    output: t.Object({ label: t.String(), total: t.Number() }),
+    execute: async ({ input }) => ({
+      label: input.meta.label,
+      total: input.sizes.reduce((sum, size) => sum + size, 0),
+    }),
+  });
+  const app = brick({ services: [service], requestLogging: false });
+  const api = createBrickClient<{ tagged: { tag: typeof tag } }>({
+    baseUrl: "http://localhost",
+    fetch: ((url: string, init: RequestInit) =>
+      app.handle(new Request(url, init))) as unknown as typeof fetch,
+  });
+  expect(
+    await api.tagged.tag({
+      file: new File(["x"], "x.txt"),
+      meta: { label: "inbox" },
+      sizes: [1, 2, 3],
+    }),
+  ).toEqual({ label: "inbox", total: 6 });
+});
+
 it("describes file fields as binary multipart in OpenAPI", () => {
   const { app } = filesApp();
   const body = (app.openApiDocument() as any).paths["/api/files/upload"].post

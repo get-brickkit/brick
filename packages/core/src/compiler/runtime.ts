@@ -9,7 +9,7 @@ import {
 import { toErrorResponse } from "../error-response";
 import { baseContext, requestIds } from "../context";
 import type { ServicePort } from "../service-port";
-import type { RouteIR } from "./ir";
+import type { Coercion, RouteIR } from "./ir";
 
 /*
  * The action pipeline, as stages: request ids → read input → validate →
@@ -66,23 +66,35 @@ function mergeInput(first: any, second: any, third: any) {
   return undefined;
 }
 
-function coerceQueryValue(
-  value: unknown,
-  type: RouteIR["coercions"][number]["type"],
-  request: Request | undefined,
-  key: string,
-) {
+function coerceScalar(value: unknown, type: Coercion | undefined) {
+  if (typeof value !== "string") return value;
   if (type === "number") {
     const number = Number(value);
     return Number.isNaN(number) ? value : number;
   }
-  if (type === "array") {
-    const values = request ? new URL(request.url).searchParams.getAll(key) : [];
-    return values.length ? values : Array.isArray(value) ? value : [value];
+  if (type === "boolean") {
+    if (value === "true" || value === "1") return true;
+    if (value === "false" || value === "0") return false;
   }
-  if (value === "true" || value === "1") return true;
-  if (value === "false" || value === "0") return false;
+  if (type === "json") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }
   return value;
+}
+
+function coerceQueryValue(
+  value: unknown,
+  { key, type, items }: RouteIR["coercions"][number],
+  request: Request | undefined,
+) {
+  if (type !== "array") return coerceScalar(value, type);
+  const values = request ? new URL(request.url).searchParams.getAll(key) : [];
+  const list = values.length ? values : Array.isArray(value) ? value : [value];
+  return list.map((item) => coerceScalar(item, items));
 }
 
 export const BODY_TOO_LARGE = Symbol("brick.bodyTooLarge");
@@ -112,9 +124,13 @@ export function readInput(
   if (route.coercions.length) {
     if (query) {
       coercedQuery = { ...query };
-      for (const { key, type } of route.coercions)
-        if (query[key] !== undefined)
-          coercedQuery[key] = coerceQueryValue(query[key], type, request, key);
+      for (const coercion of route.coercions)
+        if (query[coercion.key] !== undefined)
+          coercedQuery[coercion.key] = coerceQueryValue(
+            query[coercion.key],
+            coercion,
+            request,
+          );
     }
     // Form fields arrive as strings, and a single file as itself, like query values.
     if (
@@ -122,9 +138,13 @@ export function readInput(
       request?.headers.get("content-type")?.startsWith("multipart/form-data")
     ) {
       coercedBody = { ...body };
-      for (const { key, type } of route.coercions)
-        if (body[key] !== undefined)
-          coercedBody[key] = coerceQueryValue(body[key], type, undefined, key);
+      for (const coercion of route.coercions)
+        if (body[coercion.key] !== undefined)
+          coercedBody[coercion.key] = coerceQueryValue(
+            body[coercion.key],
+            coercion,
+            undefined,
+          );
     }
     for (const { key, type } of route.coercions) {
       if (type !== "number" || typeof params?.[key] !== "string") continue;
