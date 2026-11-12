@@ -10,6 +10,10 @@ import {
   routeKey,
 } from "../routes";
 import { portOf } from "../service-port";
+import { fileFields } from "../typebox";
+
+// Room for the non-file fields and multipart framing on top of the files' maxSize.
+const FORM_OVERHEAD = 1024 * 1024;
 
 export type RouteMethod = HttpMethod;
 export interface RouteIR {
@@ -32,6 +36,8 @@ export interface RouteIR {
     readonly key: string;
     readonly type: "number" | "boolean" | "array";
   }[];
+  /** The most bytes a multipart body may declare (`Content-Length`) for an input with `t.File` fields. */
+  readonly bodyLimit?: number;
   /** JSON projection for inspection and stale-artifact detection, not runtime validation. */
   readonly inputSchema?: unknown;
   readonly outputSchema?: unknown;
@@ -198,6 +204,9 @@ export function describeRoute(
     else if (prop.type === "array") coercions.push({ key, type: "array" });
   }
   const plugin = actionMeta(action).route?.plugin;
+  const files = fileFields(action.config.input);
+  const bodyLimit =
+    files.reduce((sum, field) => sum + field.bytes, 0) + FORM_OVERHEAD;
   return {
     method,
     path,
@@ -212,6 +221,7 @@ export function describeRoute(
     readLike: isReadLike(method, action.name),
     inputSource: inputSource(method),
     coercions,
+    ...(files.length && Number.isFinite(bodyLimit) ? { bodyLimit } : {}),
     inputSchema: schemaSnapshot(action.config.input),
     outputSchema: schemaSnapshot(action.config.output),
   };

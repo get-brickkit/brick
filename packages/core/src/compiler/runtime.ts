@@ -85,20 +85,48 @@ function coerceQueryValue(
   return value;
 }
 
+/** The body a route's parse hook leaves, unread, when its `Content-Length` is over the route's `bodyLimit`. */
+export const BODY_TOO_LARGE = Symbol("brick.bodyTooLarge");
+
+/** The Elysia parse hook that refuses a body over `limit` bytes before it is read. */
+export function bodyLimitParser(limit: number) {
+  return ({ request }: { request: Request }) =>
+    Number(request.headers.get("content-length")) > limit
+      ? BODY_TOO_LARGE
+      : undefined;
+}
+
 /** The action's input from the path, query and body, coerced by its schema. */
 export function readInput(
   route: RouteIR,
   { params, body, query, request }: any,
 ): unknown {
+  if (body === BODY_TOO_LARGE)
+    throw new ActionExecutionError(
+      "PAYLOAD_TOO_LARGE",
+      `Request body exceeds ${route.bodyLimit} bytes`,
+      413,
+    );
   if (!route.input) return undefined;
   let coercedQuery = query;
   let coercedParams = params;
+  let coercedBody = body;
   if (route.coercions.length) {
     if (query) {
       coercedQuery = { ...query };
       for (const { key, type } of route.coercions)
         if (query[key] !== undefined)
           coercedQuery[key] = coerceQueryValue(query[key], type, request, key);
+    }
+    // Form fields arrive as strings, and a single file as itself, like query values.
+    if (
+      body &&
+      request?.headers.get("content-type")?.startsWith("multipart/form-data")
+    ) {
+      coercedBody = { ...body };
+      for (const { key, type } of route.coercions)
+        if (body[key] !== undefined)
+          coercedBody[key] = coerceQueryValue(body[key], type, undefined, key);
     }
     for (const { key, type } of route.coercions) {
       if (type !== "number" || typeof params?.[key] !== "string") continue;
@@ -109,8 +137,8 @@ export function readInput(
     }
   }
   const input = route.readLike
-    ? mergeInput(coercedQuery, coercedParams, body)
-    : mergeInput(coercedParams, body, coercedQuery);
+    ? mergeInput(coercedQuery, coercedParams, coercedBody)
+    : mergeInput(coercedParams, coercedBody, coercedQuery);
   return input === undefined &&
     (route.inputSchema as { type?: string } | undefined)?.type === "object"
     ? {}
@@ -289,9 +317,9 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
   };
   if (contextHook || authorize) {
     return async function brickAction(context) {
-      const input = readInput(route, context);
       const ctx = requestContext(plan, context);
       try {
+        const input = readInput(route, context);
         if (contextHook) {
           const extra = await contextHook(ctx);
           if (extra) Object.assign(ctx, extra);
@@ -305,9 +333,9 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
   }
   // Nothing to wait for before `execute`: the same stages, without `authorize`, synchronously.
   return function brickAction(context) {
-    const input = readInput(route, context);
     const ctx = requestContext(plan, context);
     try {
+      const input = readInput(route, context);
       stages.checkInput(input);
       const result = execute({ input, ctx, error: errorBuilder });
       if (isThenable(result))

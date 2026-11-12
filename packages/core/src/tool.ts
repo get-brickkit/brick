@@ -1,5 +1,6 @@
 import type { TSchema } from "@sinclair/typebox";
 import { defineAction } from "./action";
+import { fileFields } from "./typebox";
 import type {
   Tool,
   ToolConfigWithAuthorize,
@@ -67,6 +68,11 @@ export function defineTool<
 export function defineTool(config: any): any {
   if (config.input && config.input.type !== "object") {
     throw new Error(`Tool '${config.name}' input must be an object schema`);
+  }
+  if (fileFields(config.input).length) {
+    throw new Error(
+      `Tool '${config.name}' input has file fields; MCP carries JSON only, so take uploads in an action`,
+    );
   }
   const tool = defineAction(config);
   Object.defineProperty(tool, "kind", { value: "tool" });

@@ -7,6 +7,7 @@ import {
 } from "./routes";
 import { analyzeDeclaredApplication } from "./compiler/ir";
 import { getActionAccess } from "./access";
+import { fileFields } from "./typebox";
 import { getGlobalRegistry } from "./registry";
 import type { Service, ActionErrorDefinition } from "./types";
 
@@ -273,7 +274,11 @@ export function generateOpenApiSpec(
             : inputSchema;
         operation.requestBody = {
           required: true,
-          content: { "application/json": { schema: bodySchema } },
+          content: {
+            [fileFields(inputSchema).length
+              ? "multipart/form-data"
+              : "application/json"]: { schema: bodySchema },
+          },
         };
       }
       if (parameters.length) operation.parameters = parameters;

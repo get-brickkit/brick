@@ -135,6 +135,26 @@ curl http://localhost:4000/api/users/usr_1
 
 Both invocations run the same steps in the same order: input validation, `authorize`, `execute`, then output validation.
 
+### File Uploads
+
+Put `t.File()` or `t.Files()` in an action's `input` to take a `multipart/form-data` body. The other fields arrive as form values, coerced by their schema like query parameters.
+
+```ts title="src/services/files.ts"
+export const uploadFile = filesService.action({
+  name: "uploadFile",
+  input: t.Object({
+    file: t.File({ maxSize: 25 * 1024 * 1024 }),
+    folder: t.Optional(t.String()),
+  }),
+  execute: async ({ input }) => {
+    const bytes = new Uint8Array(await input.file.arrayBuffer());
+    // ...
+  },
+});
+```
+
+When every file field declares `maxSize` (and `t.Files` also `maxItems`), a request whose `Content-Length` is over their sum plus 1 MiB is refused with `PAYLOAD_TOO_LARGE` (413) before its body is read. A body without `Content-Length` is still capped by Bun's `maxRequestBodySize` (128 MB by default) and checked against `maxSize` once read. The typed client sends `FormData` when a field holds a `Blob`, and OpenAPI describes the field as `format: binary`. MCP carries JSON only, so a tool can't take files: `defineTool` throws for a file field.
+
 ## Path Parameters and Custom Routes
 
 An explicit `path` is relative to the service, so `path: "/:id"` on `users` mounts at `/api/users/:id`. When the path has parameters, Brick merges them into `input`. Declare them in the `input` schema so they're validated; a parameter the schema types as a number is coerced to one. See [URL Scheme](/docs/routes) for every route shape:

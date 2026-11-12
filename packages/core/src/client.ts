@@ -325,27 +325,39 @@ function normalizePrefix(prefix: string | undefined): string {
   return withLeading.length > 1 ? withLeading.replace(/\/+$/, "") : withLeading;
 }
 
-function toQueryString(input: unknown): string {
-  if (input == null || typeof input !== "object") return "";
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
-    if (value === undefined || value === null) continue;
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        if (item === undefined || item === null) continue;
-        params.append(
+/** Each field as form values: arrays repeat the key, objects travel as JSON, files as themselves. */
+function appendFields(target: URLSearchParams | FormData, input: object) {
+  for (const [key, value] of Object.entries(input)) {
+    for (const item of Array.isArray(value) ? value : [value]) {
+      if (item === undefined || item === null) continue;
+      if (item instanceof Blob) (target as FormData).append(key, item);
+      else
+        target.append(
           key,
           typeof item === "object" ? JSON.stringify(item) : String(item),
         );
-      }
-    } else if (typeof value === "object") {
-      params.append(key, JSON.stringify(value));
-    } else {
-      params.append(key, String(value));
     }
   }
+}
+
+function toQueryString(input: unknown): string {
+  if (input == null || typeof input !== "object") return "";
+  const params = new URLSearchParams();
+  appendFields(params, input);
   const qs = params.toString();
   return qs ? `?${qs}` : "";
+}
+
+/** A body with a file (a `Blob`) in a field goes as `multipart/form-data`. */
+function toFormData(body: unknown): FormData | undefined {
+  if (body == null || typeof body !== "object") return undefined;
+  const isFile = (value: unknown) =>
+    value instanceof Blob ||
+    (Array.isArray(value) && value.some((item) => item instanceof Blob));
+  if (!Object.values(body).some(isFile)) return undefined;
+  const form = new FormData();
+  appendFields(form, body);
+  return form;
 }
 
 interface PlannedRequest {
@@ -495,10 +507,14 @@ async function dispatch(
     ...staticHeaders,
     ...callOptions?.headers,
   };
-  let payload: string | undefined;
+  let payload: string | FormData | undefined;
   if (hasBody) {
-    headers["content-type"] = "application/json";
-    payload = JSON.stringify(body ?? null);
+    // `fetch` sets the multipart content-type, with its boundary, itself.
+    payload = toFormData(body);
+    if (!payload) {
+      headers["content-type"] = "application/json";
+      payload = JSON.stringify(body ?? null);
+    }
   }
 
   const timeoutMs = callOptions?.timeoutMs ?? resolved.timeoutMs;
