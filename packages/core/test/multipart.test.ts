@@ -107,11 +107,20 @@ it("decodes object and typed array fields sent beside a file", async () => {
       file: t.File(),
       meta: t.Object({ label: t.String() }),
       sizes: t.Array(t.Number()),
+      data: t.Json(),
+      note: t.Json(),
     }),
-    output: t.Object({ label: t.String(), total: t.Number() }),
+    output: t.Object({
+      label: t.String(),
+      total: t.Number(),
+      data: t.Json(),
+      note: t.Json(),
+    }),
     execute: async ({ input }) => ({
       label: input.meta.label,
       total: input.sizes.reduce((sum, size) => sum + size, 0),
+      data: input.data,
+      note: input.note,
     }),
   });
   const app = brick({ services: [service], requestLogging: false });
@@ -125,8 +134,10 @@ it("decodes object and typed array fields sent beside a file", async () => {
       file: new File(["x"], "x.txt"),
       meta: { label: "inbox" },
       sizes: [1, 2, 3],
+      data: { a: [1, null] },
+      note: "123",
     }),
-  ).toEqual({ label: "inbox", total: 6 });
+  ).toEqual({ label: "inbox", total: 6, data: { a: [1, null] }, note: "123" });
 });
 
 it("describes file fields as binary multipart in OpenAPI", () => {
