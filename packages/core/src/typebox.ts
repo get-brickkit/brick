@@ -9,7 +9,7 @@ import type { ValidationErrorItem } from "./types";
 
 /**
  * Any JSON value: null, boolean, number, string, or an array or object of
- * JSON values. Built from plain kinds, so actions and sockets both accept it.
+ * JSON values.
  */
 function Json(options?: SchemaOptions) {
   return TypeBox.Recursive(
