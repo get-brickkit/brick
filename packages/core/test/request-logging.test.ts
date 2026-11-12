@@ -75,6 +75,22 @@ describe("request logging & reference docs", () => {
     ).toBe(true);
   });
 
+  it("logs the status of a Response returned by a raw route", async () => {
+    const lines: string[] = [];
+    const app = brick({
+      services: [makeService()],
+      requestLogging: { logger: (msg) => lines.push(msg) },
+    });
+    app.post("/raw", () => Response.json({ error: "nope" }, { status: 403 }));
+
+    const res = await app.handle(
+      new Request("http://localhost/raw", { method: "POST" }),
+    );
+    expect(res.status).toBe(403);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^POST \/raw → 403 \(\d+ms\)$/);
+  });
+
   it("logs framework errors (404) without changing the response", async () => {
     const lines: string[] = [];
     const app = brick({
