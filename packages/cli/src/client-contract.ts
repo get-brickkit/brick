@@ -405,7 +405,7 @@ class SchemaTypes {
         return `(${schema.allOf.map((child: any) => emit(child, false, currentBase)).join(" & ")})`;
       switch (schema.type) {
         case "string":
-          return "string";
+          return schema.format === "binary" ? "Blob" : "string";
         case "number":
         case "integer":
           return "number";

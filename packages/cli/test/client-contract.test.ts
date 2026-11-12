@@ -437,3 +437,15 @@ it("does not share identical reference spellings from different document scopes"
   expect(source).toContain('"field0": BrickSchema;');
   expect(source).toContain('"field0": BrickSchema_2;');
 });
+
+it("types file input fields as Blob", () => {
+  const files = defineService("files");
+  files.action({
+    name: "upload",
+    input: t.Object({ file: t.File(), name: t.String() }),
+    execute: () => null,
+  });
+  const source = generateClientContract(brick({ services: [files] }));
+  expect(source).toContain('"file": Blob;');
+  expect(source).toContain('"name": string;');
+});

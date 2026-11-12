@@ -41,6 +41,7 @@ import { localBroker, mountSockets, socketPath } from "./socket";
 import { DEFAULT_PREFIX, routeKey } from "./routes";
 import type { SocketBroker } from "./socket-types";
 import { corsHook, type CorsOptions } from "./cors";
+import { bodyLimitParser } from "./compiler/runtime";
 
 export interface CreateServerOptions {
   port?: number;
@@ -305,6 +306,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     path: string,
     handler: any,
     plugin = false,
+    hook?: object,
   ) => {
     const key = routeKey(method, path);
     if (socketRoutes.has(key))
@@ -318,7 +320,8 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
         );
       return false;
     }
-    app.route(method, path, handler);
+    if (hook) app.route(method, path, hook, handler);
+    else app.route(method, path, handler);
     registeredRoutes.set(key, plugin);
     return true;
   };
@@ -419,6 +422,9 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
             )
         : invoke,
       Boolean(route.ir.plugin),
+      route.ir.bodyLimit
+        ? { parse: bodyLimitParser(route.ir.bodyLimit) }
+        : undefined,
     );
     if (mounted) mountedRoutes.push(route.ir);
   }

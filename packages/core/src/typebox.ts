@@ -1,7 +1,11 @@
 import {
+  Kind,
   Type as TypeBox,
+  TypeRegistry,
   type SchemaOptions,
+  type TArray,
   type TSchema,
+  type TUnsafe,
   type Static,
 } from "@sinclair/typebox";
 import { TypeCompiler, type TypeCheck } from "@sinclair/typebox/compiler";
@@ -26,11 +30,60 @@ function Json(options?: SchemaOptions) {
   );
 }
 
-/** TypeBox's `Type` plus Brick helpers such as `Json()`. */
+export interface FileOptions {
+  /** The largest file accepted, in bytes. Also caps the request body before it is read. */
+  maxSize?: number;
+  description?: string;
+}
+
+TypeRegistry.Set<{ maxSize?: number }>(
+  "File",
+  (schema, value) =>
+    value instanceof Blob && !(value.size > (schema.maxSize ?? Infinity)),
+);
+
+/** A file from a `multipart/form-data` body: a `File` (a `Blob`), at most `maxSize` bytes. */
+function File(options: FileOptions = {}): TUnsafe<File> {
+  return TypeBox.Unsafe<File>({
+    [Kind]: "File",
+    type: "string",
+    format: "binary",
+    ...options,
+  });
+}
+
+/** Several files under one form field. */
+function Files(
+  options: FileOptions & { minItems?: number; maxItems?: number } = {},
+): TArray<TUnsafe<File>> {
+  const { minItems, maxItems, ...file } = options;
+  return TypeBox.Array(File(file), { minItems, maxItems });
+}
+
+/** TypeBox's `Type` plus Brick's `Json`, `File` and `Files`. */
 // TypeBox's `Type` is a module namespace at runtime, so its functions copy over.
-export const Type = Object.assign({}, TypeBox, { Json });
+export const Type = Object.assign({}, TypeBox, { Json, File, Files });
 export { Type as t };
 export type { TSchema, Static };
+
+export function fileFields(
+  schema: unknown,
+): { key: string; maxBytes: number | undefined }[] {
+  const fields = [];
+  const properties = (schema as { properties?: Record<string, any> })
+    ?.properties;
+  for (const [key, prop] of Object.entries(properties ?? {})) {
+    const file = prop[Kind] === "File" ? prop : prop.items;
+    if (file?.[Kind] !== "File") continue;
+    const count: number | undefined = file === prop ? 1 : prop.maxItems;
+    const maxBytes =
+      file.maxSize === undefined || count === undefined
+        ? undefined
+        : file.maxSize * count;
+    fields.push({ key, maxBytes });
+  }
+  return fields;
+}
 
 const compilerCache = new WeakMap<TSchema, TypeCheck<TSchema>>();
 

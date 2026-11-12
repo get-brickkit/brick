@@ -9,7 +9,7 @@ import {
 import { toErrorResponse } from "../error-response";
 import { baseContext, requestIds } from "../context";
 import type { ServicePort } from "../service-port";
-import type { RouteIR } from "./ir";
+import type { Coercion, RouteIR } from "./ir";
 
 /*
  * The action pipeline, as stages: request ids → read input → validate →
@@ -66,23 +66,44 @@ function mergeInput(first: any, second: any, third: any) {
   return undefined;
 }
 
-function coerceQueryValue(
-  value: unknown,
-  type: RouteIR["coercions"][number]["type"],
-  request: Request | undefined,
-  key: string,
-) {
+function coerceScalar(value: unknown, type: Coercion | undefined) {
+  if (typeof value !== "string") return value;
   if (type === "number") {
     const number = Number(value);
     return Number.isNaN(number) ? value : number;
   }
-  if (type === "array") {
-    const values = request ? new URL(request.url).searchParams.getAll(key) : [];
-    return values.length ? values : Array.isArray(value) ? value : [value];
+  if (type === "boolean") {
+    if (value === "true" || value === "1") return true;
+    if (value === "false" || value === "0") return false;
   }
-  if (value === "true" || value === "1") return true;
-  if (value === "false" || value === "0") return false;
+  if (type === "json") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }
   return value;
+}
+
+function coerceQueryValue(
+  value: unknown,
+  { key, type, items }: RouteIR["coercions"][number],
+  request: Request | undefined,
+) {
+  if (type !== "array") return coerceScalar(value, type);
+  const values = request ? new URL(request.url).searchParams.getAll(key) : [];
+  const list = values.length ? values : Array.isArray(value) ? value : [value];
+  return list.map((item) => coerceScalar(item, items));
+}
+
+export const BODY_TOO_LARGE = Symbol("brick.bodyTooLarge");
+
+export function bodyLimitParser(limit: number) {
+  return ({ request }: { request: Request }) =>
+    Number(request.headers.get("content-length")) > limit
+      ? BODY_TOO_LARGE
+      : undefined;
 }
 
 /** The action's input from the path, query and body, coerced by its schema. */
@@ -90,15 +111,40 @@ export function readInput(
   route: RouteIR,
   { params, body, query, request }: any,
 ): unknown {
+  if (body === BODY_TOO_LARGE)
+    throw new ActionExecutionError(
+      "PAYLOAD_TOO_LARGE",
+      `Request body exceeds ${route.bodyLimit} bytes`,
+      413,
+    );
   if (!route.input) return undefined;
   let coercedQuery = query;
   let coercedParams = params;
+  let coercedBody = body;
   if (route.coercions.length) {
     if (query) {
       coercedQuery = { ...query };
-      for (const { key, type } of route.coercions)
-        if (query[key] !== undefined)
-          coercedQuery[key] = coerceQueryValue(query[key], type, request, key);
+      for (const coercion of route.coercions)
+        if (query[coercion.key] !== undefined)
+          coercedQuery[coercion.key] = coerceQueryValue(
+            query[coercion.key],
+            coercion,
+            request,
+          );
+    }
+    // Form fields arrive as strings, and a single file as itself, like query values.
+    if (
+      body &&
+      request?.headers.get("content-type")?.startsWith("multipart/form-data")
+    ) {
+      coercedBody = { ...body };
+      for (const coercion of route.coercions)
+        if (body[coercion.key] !== undefined)
+          coercedBody[coercion.key] = coerceQueryValue(
+            body[coercion.key],
+            coercion,
+            undefined,
+          );
     }
     for (const { key, type } of route.coercions) {
       if (type !== "number" || typeof params?.[key] !== "string") continue;
@@ -109,8 +155,8 @@ export function readInput(
     }
   }
   const input = route.readLike
-    ? mergeInput(coercedQuery, coercedParams, body)
-    : mergeInput(coercedParams, body, coercedQuery);
+    ? mergeInput(coercedQuery, coercedParams, coercedBody)
+    : mergeInput(coercedParams, coercedBody, coercedQuery);
   return input === undefined &&
     (route.inputSchema as { type?: string } | undefined)?.type === "object"
     ? {}
@@ -289,9 +335,9 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
   };
   if (contextHook || authorize) {
     return async function brickAction(context) {
-      const input = readInput(route, context);
       const ctx = requestContext(plan, context);
       try {
+        const input = readInput(route, context);
         if (contextHook) {
           const extra = await contextHook(ctx);
           if (extra) Object.assign(ctx, extra);
@@ -305,9 +351,9 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
   }
   // Nothing to wait for before `execute`: the same stages, without `authorize`, synchronously.
   return function brickAction(context) {
-    const input = readInput(route, context);
     const ctx = requestContext(plan, context);
     try {
+      const input = readInput(route, context);
       stages.checkInput(input);
       const result = execute({ input, ctx, error: errorBuilder });
       if (isThenable(result))

@@ -10,8 +10,21 @@ import {
   routeKey,
 } from "../routes";
 import { portOf } from "../service-port";
+import { fileFields } from "../typebox";
+
+const FORM_FIELDS_AND_FRAMING_BYTES = 1024 * 1024;
 
 export type RouteMethod = HttpMethod;
+/** How a string from a query or form field becomes the schema's type; objects travel as JSON. */
+export type Coercion = "number" | "boolean" | "array" | "json";
+
+function coercionOf(schema: any): Coercion | undefined {
+  if (schema?.type === "number" || schema?.type === "integer") return "number";
+  if (schema?.type === "boolean") return "boolean";
+  if (schema?.type === "array") return "array";
+  if (schema?.type === "object") return "json";
+  return undefined;
+}
 export interface RouteIR {
   readonly method: RouteMethod;
   readonly path: string;
@@ -30,8 +43,12 @@ export interface RouteIR {
   readonly inputSource: "query" | "body";
   readonly coercions: readonly {
     readonly key: string;
-    readonly type: "number" | "boolean" | "array";
+    readonly type: Coercion;
+    /** How each item of an `array` field is coerced. */
+    readonly items?: Exclude<Coercion, "array">;
   }[];
+  /** The most bytes a multipart body may declare (`Content-Length`) for an input with `t.File` fields. */
+  readonly bodyLimit?: number;
   /** JSON projection for inspection and stale-artifact detection, not runtime validation. */
   readonly inputSchema?: unknown;
   readonly outputSchema?: unknown;
@@ -188,16 +205,24 @@ export function describeRoute(
   method: RouteMethod,
   path: string,
 ): RouteIR {
-  const coercions: { key: string; type: "number" | "boolean" | "array" }[] = [];
+  const coercions: RouteIR["coercions"][number][] = [];
   for (const [key, prop] of Object.entries(
     action.config.input?.properties ?? {},
   ) as [string, any][]) {
-    if (prop.type === "number" || prop.type === "integer")
-      coercions.push({ key, type: "number" });
-    else if (prop.type === "boolean") coercions.push({ key, type: "boolean" });
-    else if (prop.type === "array") coercions.push({ key, type: "array" });
+    const type = coercionOf(prop);
+    if (!type) continue;
+    const items = type === "array" ? coercionOf(prop.items) : undefined;
+    coercions.push(
+      items && items !== "array" ? { key, type, items } : { key, type },
+    );
   }
   const plugin = actionMeta(action).route?.plugin;
+  const files = fileFields(action.config.input);
+  const bodyLimit =
+    files.length && files.every((field) => field.maxBytes !== undefined)
+      ? files.reduce((sum, field) => sum + (field.maxBytes ?? 0), 0) +
+        FORM_FIELDS_AND_FRAMING_BYTES
+      : undefined;
   return {
     method,
     path,
@@ -212,6 +237,7 @@ export function describeRoute(
     readLike: isReadLike(method, action.name),
     inputSource: inputSource(method),
     coercions,
+    ...(bodyLimit === undefined ? {} : { bodyLimit }),
     inputSchema: schemaSnapshot(action.config.input),
     outputSchema: schemaSnapshot(action.config.output),
   };
