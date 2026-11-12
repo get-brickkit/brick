@@ -115,7 +115,7 @@ What the receiving service sees:
 
 1. **Own context and database**: The receiving service runs its own `context` resolver and uses its own database.
 2. **Framework fields are dropped**: `db`, `request`, `logger`, `services`, and `metadata` in the call context are discarded before reaching the receiving service.
-3. **Envelope fields pass through**: Only `caller`, `user`, `traceId`, `requestId`, and `tenantId` are forwarded. The resolver receives these fields and its returned values always take precedence. Caller custom fields such as `session` and `isOwner` are discarded for direct action calls and proxy calls. Treat `tenantId` as a claim to validate, not proof of access.
+3. **Envelope fields pass through**: Only `caller`, `user`, `traceId`, `requestId`, `tenantId`, and `dashboard` are forwarded. Passing `ctx` on lets a `dashboard: true` action be called from a dashboard request's action. The resolver receives these fields and its returned values always take precedence. Caller custom fields such as `session` and `isOwner` are discarded for direct action calls and proxy calls. Treat `tenantId` as a claim to validate, not proof of access.
 4. **`ctx.caller`**: The client sets `ctx.caller` to `from` — the name you passed when creating it, `useService(usersService, { from: "notifications" })` — never the target service's name. When `from` is provided, any `caller` in the client's `options.context` or the per-call context is ignored, so it cannot be spoofed. Without `from`, an explicitly supplied `caller` still passes through; otherwise `caller` is left unset.
 
 ### Internal calls without cookies

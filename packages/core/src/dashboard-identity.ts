@@ -40,6 +40,14 @@ export function dashboardKey(): string {
   return (global[KEY] ??= randomBytes(32).toString("base64url"));
 }
 
+// When each request reached the app, so a slow upload's body does not age its signature.
+const arrivedAt = new WeakMap<Request, number>();
+
+/** Note when `request` arrived, before its body is read. */
+export function markDashboardArrival(request: Request): void {
+  arrivedAt.set(request, Date.now());
+}
+
 const mac = (payload: string) =>
   createHmac("sha256", dashboardKey()).update(payload).digest();
 
@@ -74,7 +82,8 @@ export function dashboardIdentity(
     const { user, exp } = JSON.parse(
       Buffer.from(payload, "base64url").toString("utf8"),
     );
-    if (typeof exp !== "number" || exp < Date.now()) return undefined;
+    const now = (request && arrivedAt.get(request)) ?? Date.now();
+    if (typeof exp !== "number" || exp < now) return undefined;
     return user === undefined ? {} : { user };
   } catch {
     return undefined;

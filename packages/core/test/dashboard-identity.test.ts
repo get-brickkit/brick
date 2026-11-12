@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it, setSystemTime } from "bun:test";
 import {
   brick,
   DASHBOARD_IDENTITY_HEADER,
@@ -8,7 +8,9 @@ import {
   generateOpenApiSpec,
   resetGlobalRegistry,
   signDashboardIdentity,
+  useService,
 } from "@brickkit/core";
+import { markDashboardArrival } from "../src/dashboard-identity";
 
 const ada = { id: "u1", name: "Ada" };
 const withHeader = (value?: string) =>
@@ -46,6 +48,22 @@ describe("dashboardUser", () => {
     ])
       expect(dashboardUser(withHeader(value))).toBeUndefined();
   });
+});
+
+it("checks the signature's age when the request arrived, not after a slow body", () => {
+  const request = withHeader(signDashboardIdentity({ user: ada }));
+  markDashboardArrival(request);
+  try {
+    setSystemTime(new Date(Date.now() + 120_000));
+    expect(dashboardUser(request)).toEqual(ada);
+    expect(
+      dashboardUser(
+        withHeader(request.headers.get(DASHBOARD_IDENTITY_HEADER)!),
+      ),
+    ).toBeUndefined();
+  } finally {
+    setSystemTime();
+  }
 });
 
 describe("action({ dashboard: true })", () => {
@@ -124,6 +142,41 @@ describe("action({ dashboard: true })", () => {
     const responses = spec.paths["/api/admin/whoami"].post.responses;
     expect(responses["401"]).toBeDefined();
     expect(spec.paths["/api/admin/open"].post.responses["401"]).toBeUndefined();
+  });
+
+  it("passes the dashboard identity on through a call to another service", async () => {
+    const admin = defineService("admin");
+    admin.action(
+      defineAction({
+        name: "whoami",
+        dashboard: true,
+        execute: ({ ctx }) => ({ user: ctx.dashboard?.user ?? null }),
+      }),
+    );
+    const front = defineService("front");
+    front.action(
+      defineAction({
+        name: "relay",
+        execute: ({ ctx }) =>
+          useService(admin, { from: "front" }).whoami(undefined, ctx),
+      }),
+    );
+    const server = brick({ services: [admin, front] });
+    const relay = (header?: string) =>
+      server.handle(
+        new Request("http://localhost/api/front/relay", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(header ? { [DASHBOARD_IDENTITY_HEADER]: header } : {}),
+          },
+          body: "{}",
+        }),
+      );
+    const signed = await relay(signDashboardIdentity({ user: ada }));
+    expect(signed.status).toBe(200);
+    expect(await signed.json()).toEqual({ user: ada });
+    expect((await relay()).status).toBe(401);
   });
 
   it("refuses an in-process call without a dashboard context", async () => {
