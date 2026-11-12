@@ -470,13 +470,14 @@ describe("the dashboard server with an extension", () => {
     it("signs who authorize let in onto the request, replacing any copy the page sent", async () => {
       await withApp(async (app) => {
         const token = "0123456789abcdef-secret";
+        const sessionUser = { id: "u1", name: "Ada", email: "ada@example.com" };
         const { dashboard, base } = await start({
           mode: "production",
           auth: {
             token,
             authorize: (request) =>
               request.headers.get("x-session") === "ada"
-                ? { user: { id: "u1", name: "Ada" } }
+                ? { user: sessionUser }
                 : false,
           },
           appUrl: app.url,

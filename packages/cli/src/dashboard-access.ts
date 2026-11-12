@@ -160,7 +160,17 @@ export function createAccess(
     }
     if (decision === true) return { allowed: true, identity: {} };
     if (isIdentity(decision))
-      return { allowed: true, identity: { user: decision.user } };
+      return {
+        allowed: true,
+        identity: {
+          user: {
+            id: decision.user.id,
+            ...(typeof decision.user.name === "string"
+              ? { name: decision.user.name }
+              : {}),
+          },
+        },
+      };
     if (decision instanceof Response) {
       const headers: Record<string, string | string[]> = {};
       decision.headers.forEach((value, name) => {
