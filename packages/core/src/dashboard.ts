@@ -1,4 +1,4 @@
-import type { DashboardIdentity } from "./dashboard-identity";
+import type { DashboardUser } from "./dashboard-identity";
 
 /** Who may open the dashboard that `brick start` serves for monitoring. */
 export interface DashboardAuth {
@@ -32,8 +32,8 @@ export interface DashboardAuth {
   ) =>
     | boolean
     | Response
-    | DashboardIdentity
-    | Promise<boolean | Response | DashboardIdentity>;
+    | { user: DashboardUser }
+    | Promise<boolean | Response | { user: DashboardUser }>;
 }
 
 /**

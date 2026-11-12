@@ -217,6 +217,8 @@ export function generateOpenApiSpec(
         addError("UNAUTHORIZED", 401, "Authentication required");
         addError("FORBIDDEN", 403, "Access denied");
       }
+      if ((action.config as { dashboard?: boolean }).dashboard === true)
+        addError("UNAUTHORIZED", 401, "Only for the dashboard");
       if (action.config.errors) {
         for (const [code, errorDef] of Object.entries(action.config.errors)) {
           const def = errorDef as ActionErrorDefinition;

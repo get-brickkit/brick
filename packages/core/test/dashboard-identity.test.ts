@@ -5,6 +5,7 @@ import {
   dashboardUser,
   defineAction,
   defineService,
+  generateOpenApiSpec,
   resetGlobalRegistry,
   signDashboardIdentity,
 } from "@brickkit/core";
@@ -39,7 +40,7 @@ describe("dashboardUser", () => {
       `${payload}.`,
       `.${mac}`,
       `${forged}.${mac}`,
-      `${payload}.${mac.slice(0, -2)}AA`,
+      `${payload}.${mac[0] === "A" ? "B" : "A"}${mac.slice(1)}`,
       `${payload}x.${mac}`,
       signDashboardIdentity({ user: ada }, Date.now() - 120_000),
     ])
@@ -115,6 +116,14 @@ describe("action({ dashboard: true })", () => {
         await call(server, "open", signDashboardIdentity({ user: ada }))
       ).json(),
     ).toEqual({ user: ada });
+  });
+
+  it("documents the 401 in OpenAPI", () => {
+    app();
+    const spec = generateOpenApiSpec();
+    const responses = spec.paths["/api/admin/whoami"].post.responses;
+    expect(responses["401"]).toBeDefined();
+    expect(spec.paths["/api/admin/open"].post.responses["401"]).toBeUndefined();
   });
 
   it("refuses an in-process call without a dashboard context", async () => {
