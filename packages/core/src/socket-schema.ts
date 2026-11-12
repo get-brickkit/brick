@@ -19,19 +19,25 @@ const kinds = new Set([
 ]);
 
 /** Keep validators browser-safe and reject schemas whose behavior cannot cross JSON. */
-export function serializeSocketSchema(schema: TSchema): unknown {
-  const visit = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(visit);
+export function serializeSocketSchema(
+  schema: TSchema,
+  path = "schema",
+): unknown {
+  const visit = (value: unknown, at: string): unknown => {
+    if (Array.isArray(value))
+      return value.map((child, i) => visit(child, `${at}[${i}]`));
     if (!value || typeof value !== "object") return value;
     if (TransformKind in value)
       throw new Error("Socket schemas cannot contain transforms");
     const entries = Object.entries(value).map(([key, child]) => [
       key,
-      visit(child),
+      visit(child, `${at}.${key}`),
     ]);
     if (Kind in value) {
       if (typeof value[Kind] !== "string" || !kinds.has(value[Kind]))
-        throw new Error("Socket schemas must describe JSON values");
+        throw new Error(
+          `Socket schemas must describe JSON values (got kind "${String(value[Kind])}" at ${at}); use t.Json() for any JSON value`,
+        );
       if ("format" in value || "__brick_kind" in value)
         throw new Error(
           "Socket schemas cannot contain formats or reserved __brick_kind annotations",
@@ -40,7 +46,7 @@ export function serializeSocketSchema(schema: TSchema): unknown {
     }
     return Object.fromEntries(entries);
   };
-  return visit(schema);
+  return visit(schema, path);
 }
 
 export function restoreSocketSchema(value: unknown): TSchema {

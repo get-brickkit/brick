@@ -1,8 +1,35 @@
-import { Type, type TSchema, type Static } from "@sinclair/typebox";
+import {
+  Type as TypeBox,
+  type SchemaOptions,
+  type TSchema,
+  type Static,
+} from "@sinclair/typebox";
 import { TypeCompiler, type TypeCheck } from "@sinclair/typebox/compiler";
 import type { ValidationErrorItem } from "./types";
 
-export { Type, Type as t };
+/**
+ * Any JSON value: null, boolean, number, string, or an array or object of
+ * JSON values.
+ */
+function Json(options?: SchemaOptions) {
+  return TypeBox.Recursive(
+    (This) =>
+      TypeBox.Union([
+        TypeBox.Null(),
+        TypeBox.Boolean(),
+        TypeBox.Number(),
+        TypeBox.String(),
+        TypeBox.Array(This),
+        TypeBox.Record(TypeBox.String(), This),
+      ]),
+    options,
+  );
+}
+
+/** TypeBox's `Type` plus Brick helpers such as `Json()`. */
+// TypeBox's `Type` is a module namespace at runtime, so its functions copy over.
+export const Type = Object.assign({}, TypeBox, { Json });
+export { Type as t };
 export type { TSchema, Static };
 
 const compilerCache = new WeakMap<TSchema, TypeCheck<TSchema>>();

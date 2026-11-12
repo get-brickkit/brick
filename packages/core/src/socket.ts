@@ -195,8 +195,11 @@ export function defineServiceSocket<
     throw new Error(
       "Socket replay needs a positive integer keep and a positive finite maxAgeMs",
     );
-  for (const schema of [...Object.values(input), ...Object.values(output)]) {
-    serializeSocketSchema(schema);
+  for (const [path, schema] of [
+    ...Object.entries(input).map(([k, v]) => [`input.${k}`, v] as const),
+    ...Object.entries(output).map(([k, v]) => [`output.${k}`, v] as const),
+  ]) {
+    serializeSocketSchema(schema, path);
     getCompiledCheck(schema);
   }
   const typed = (socket: SocketSender): BrickSocketSender<SocketPayloads<O>> =>
