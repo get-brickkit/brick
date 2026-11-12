@@ -306,7 +306,7 @@ Brick processes message handlers in arrival order within each connection. Separa
 - 32 pending handlers per connection.
 - 1 MiB of pending message data per connection and a bounded native outgoing buffer.
 
-Only JSON-compatible TypeBox schemas are supported. Transforms, custom formats, non-JSON types such as `Date`, and unresolved schema references fail during declaration or generation. Use strings for dates and encode application values before sending them. Self-contained recursive schemas retain their validation metadata in generated contracts.
+Only JSON-compatible TypeBox schemas are supported. Transforms, custom formats, non-JSON types such as `Date`, and unresolved schema references fail during declaration or generation. Use strings for dates and encode application values before sending them. For a field that holds any JSON value, use `t.Json()`; it works in actions too. A rejected schema's error names the kind and where it is, such as `got kind "Unsafe" at output.update.properties.data`. Self-contained recursive schemas retain their validation metadata in generated contracts.
 
 Unknown input events and invalid payloads close with `1008`. Malformed JSON closes with `1007`, binary frames with `1003`, and overloaded queues with `1013`. Oversized messages close with `1009` when Brick detects them; frames rejected by the native transport can appear as an abnormal `1006` close. Unexpected handler errors and invalid server output close with `1011`; detailed errors stay in server logs. Declared handler errors do not close the connection: they reach [`onHandlerError`](#typed-errors). The browser client closes invalid server messages with the application code `4000` and reports a protocol error.
 

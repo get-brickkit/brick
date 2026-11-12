@@ -42,6 +42,8 @@ Every route follows the owner tree, with URL segments in kebab-case of the decla
 - Resource action `importCsv`: `POST /api/orders/order/import-csv`. Record action `archive`: `POST /api/orders/order/:id/archive`, client `api.orders.order.archive({ id, reason })`.
 - Socket `live`: `GET /api/orders/live`, client `api.orders.live.connect()`.
 
+For a field that holds any JSON value, use `t.Json()`: it works in actions and sockets alike. Socket schemas reject `t.Unsafe`, `t.Any` and `t.Unknown`.
+
 An explicit `path` on an action, resource action or socket is relative to its owner (`path: "/:id/summary"` on `orders` mounts at `/api/orders/:id/summary`). Never repeat the prefix. Only raw `endpoints`, `app.endpoint()` and webhooks take absolute paths. Plugin route scopes `app`, `service` and `resource` mount under `/api`, `/api/<service>` and `/api/<service>/<resource>`.
 
 Names that share a URL segment in one service, or a resource action named after a CRUD segment or action (`query`, `count`, `findOne`, `list`, ...), fail at startup.

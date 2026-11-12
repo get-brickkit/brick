@@ -16,7 +16,11 @@ import {
   BrickSocketError,
   type BrickClientSocket,
 } from "../src/client";
-import { serializeSocketSchema } from "../src/socket-schema";
+import { TypeCompiler } from "@sinclair/typebox/compiler";
+import {
+  restoreSocketSchema,
+  serializeSocketSchema,
+} from "../src/socket-schema";
 import { openSocket as open, track, waitFor } from "./helpers";
 import { chatContract, replayScenario } from "./socket-replay";
 
@@ -399,7 +403,27 @@ it("rejects nonportable schemas at declaration", () => {
       output: {},
       handlers: { say() {} },
     }),
-  ).toThrow("JSON values");
+  ).toThrow('got kind "Date" at input.say');
+});
+
+it("accepts t.Json() and keeps it checkable across the contract", () => {
+  const service = defineService("chat");
+  const schema = t.Object({ data: t.Json() });
+  service.socket({
+    name: "json",
+    input: {},
+    output: { data: schema },
+    handlers: {},
+  });
+  const restored = restoreSocketSchema(
+    JSON.parse(JSON.stringify(serializeSocketSchema(schema))),
+  );
+  const check = TypeCompiler.Compile(restored);
+  expect(check.Check({ data: { a: [1, "b", null, { c: true }] } })).toBe(true);
+  expect(check.Check({ data: { a: undefined } })).toBe(false);
+  expect(() => serializeSocketSchema(t.Unsafe({}), "output.x")).toThrow(
+    'got kind "Unsafe" at output.x',
+  );
 });
 
 it("rejects invalid server output in the browser client", async () => {
