@@ -58,6 +58,15 @@ export { traceRoute } from "./telemetry";
 export { SPAN, ATTR, GLOBAL_SYMBOL } from "./telemetry-names";
 export type { DashboardAuth, DashboardOptions } from "./dashboard";
 export {
+  dashboardUser,
+  dashboardKey,
+  signDashboardIdentity,
+  DASHBOARD_IDENTITY_HEADER,
+  DASHBOARD_KEY_ENV,
+  type DashboardIdentity,
+  type DashboardUser,
+} from "./dashboard-identity";
+export {
   scalarDocsHTML,
   referencePlugin,
   registerReferenceRoute,

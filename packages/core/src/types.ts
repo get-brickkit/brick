@@ -18,6 +18,7 @@ import type { DatabaseHandle } from "./db/define";
 import type { Ports } from "./deps";
 import type { HttpMethod } from "./http";
 import type { StandardErrorCode } from "./protocol";
+import type { DashboardIdentity } from "./dashboard-identity";
 import type { ServiceEvents } from "./events/types";
 import type { EventCatalog, EventRefs } from "./events/catalog";
 import type { EventsDefinition } from "./events/hub";
@@ -57,6 +58,11 @@ export interface BaseContext<TDb = any> {
   tenantId?: string;
   services?: Record<string, any>;
   metadata?: Record<string, unknown>;
+  /**
+   * Set when the request came through the dashboard's `/app/*` proxy, signed
+   * by the dashboard: `user` is who `dashboard.auth.authorize` let in.
+   */
+  dashboard?: DashboardIdentity;
 }
 
 /**
@@ -267,6 +273,12 @@ export interface ActionConfigWithAuthorize<
   >,
   TContext extends ActionContext = ActionContext,
 > extends BaseActionConfig<TInputSchema, TOutputSchema, TErrors> {
+  /**
+   * `true` refuses (401) any HTTP call that did not come through the
+   * dashboard's `/app/*` proxy, so only the dashboard's pages can reach it.
+   * `ctx.dashboard` is then set.
+   */
+  dashboard?: boolean;
   authorize: (params: {
     user?: TContext extends { user: infer U } ? U : any;
     input: TInputSchema extends TSchema ? Static<TInputSchema> : any;
@@ -290,6 +302,12 @@ export interface ActionConfigWithoutAuthorize<
   >,
   TContext extends ActionContext = ActionContext,
 > extends BaseActionConfig<TInputSchema, TOutputSchema, TErrors> {
+  /**
+   * `true` refuses (401) any HTTP call that did not come through the
+   * dashboard's `/app/*` proxy, so only the dashboard's pages can reach it.
+   * `ctx.dashboard` is then set.
+   */
+  dashboard?: boolean;
   authorize?: undefined;
   execute: (params: {
     input: TInputSchema extends TSchema ? Static<TInputSchema> : any;

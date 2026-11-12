@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import {
+  DASHBOARD_IDENTITY_HEADER,
+  dashboardUser,
+  signDashboardIdentity,
+} from "@brickkit/core";
+import {
   cpSync,
   existsSync,
   mkdtempSync,
@@ -366,7 +371,13 @@ describe("the dashboard server with an extension", () => {
       const app = Bun.serve({
         port: 0,
         fetch(request) {
-          seen.push(request);
+          // A copy: Bun lets go of the request's headers once it is answered.
+          seen.push(
+            new Request(request.url, {
+              method: request.method,
+              headers: request.headers,
+            }),
+          );
           return Response.json(
             {
               path: new URL(request.url).pathname,
@@ -452,6 +463,50 @@ describe("the dashboard server with an extension", () => {
         } finally {
           plain.dashboard.stop();
           extended.dashboard.stop();
+        }
+      });
+    });
+
+    it("signs who authorize let in onto the request, replacing any copy the page sent", async () => {
+      await withApp(async (app) => {
+        const token = "0123456789abcdef-secret";
+        const { dashboard, base } = await start({
+          mode: "production",
+          auth: {
+            token,
+            authorize: (request) =>
+              request.headers.get("x-session") === "ada"
+                ? { user: { id: "u1", name: "Ada" } }
+                : false,
+          },
+          appUrl: app.url,
+          dashboard: { extension: entry },
+        });
+        try {
+          const forged = signDashboardIdentity({
+            user: { id: "root" },
+          }).replace(/^./, "A");
+          const response = await fetch(`${base}/app/api/queues`, {
+            headers: {
+              "x-session": "ada",
+              [DASHBOARD_IDENTITY_HEADER]: forged,
+            },
+          });
+          expect(response.status).toBe(200);
+          const sent = app.seen.at(-1)!;
+          expect(sent.headers.get(DASHBOARD_IDENTITY_HEADER)).not.toBe(forged);
+          expect(dashboardUser(sent)).toEqual({ id: "u1", name: "Ada" });
+
+          // In by token: through the dashboard, but no user.
+          await fetch(`${base}/app/api/queues`, {
+            headers: { authorization: `Bearer ${token}` },
+          });
+          expect(
+            app.seen.at(-1)!.headers.get(DASHBOARD_IDENTITY_HEADER),
+          ).toBeTruthy();
+          expect(dashboardUser(app.seen.at(-1)!)).toBeUndefined();
+        } finally {
+          dashboard.stop();
         }
       });
     });

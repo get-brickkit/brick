@@ -166,6 +166,7 @@ export function defineAction(config: any): any {
 
   const stages: Stages = {
     name: config.name,
+    dashboard: config.dashboard === true,
     checkInput: (input) => {
       if (!config.input) return;
       const checked = actionFn.validateInput(input);

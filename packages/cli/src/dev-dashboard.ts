@@ -13,7 +13,12 @@ import type { DevHistory } from "./dev-history";
 import { decodeHistoryQuery, type HistoryQuery } from "./dashboard-query";
 import type { DevTelemetryStore } from "./dev-telemetry-store";
 import { dashboardShell } from "./dev-dashboard-shell";
-import type { DashboardAuth } from "@brickkit/core";
+import {
+  DASHBOARD_IDENTITY_HEADER,
+  signDashboardIdentity,
+  type DashboardAuth,
+  type DashboardIdentity,
+} from "@brickkit/core";
 import {
   createAccess,
   isLoopbackHost,
@@ -60,6 +65,8 @@ const NOT_FORWARDED = new Set([
   "origin",
   "referer",
   "cookie",
+  // Only the dashboard writes it, signed, and only on `/app/*`.
+  DASHBOARD_IDENTITY_HEADER,
 ]);
 const NOT_RETURNED = new Set([
   "connection",
@@ -198,12 +205,15 @@ export function startDevDashboard(
       await health(response);
       return;
     }
+    // Without `auth` the dashboard is open to whoever reaches it: no user.
+    let identity: DashboardIdentity = {};
     if (access) {
       const decision = await access(request);
       if (!decision.allowed) {
         send(response, decision.status, decision.body, decision.headers);
         return;
       }
+      identity = decision.identity;
     }
     if (!route || (production && !servedInProduction(route))) {
       send(response, 404, "Not found");
@@ -216,7 +226,7 @@ export function startDevDashboard(
       send(response, 403, "Forbidden");
       return;
     }
-    await handlers[route](request, response, url);
+    await handlers[route](request, response, url, identity);
   }
 
   function servedInProduction(route: RouteName): boolean {
@@ -253,6 +263,7 @@ export function startDevDashboard(
     request: IncomingMessage,
     response: ServerResponse,
     url: URL,
+    identity: DashboardIdentity,
   ) => void | Promise<void>;
 
   const handlers: Record<Exclude<RouteName, "health">, Handler> = {
@@ -462,12 +473,14 @@ export function startDevDashboard(
   /**
    * Pass `/app/*` to the app, so the extension's pages read it from the
    * dashboard's own origin. Only the dashboard's page may use it, as with the
-   * API proxy. A credential for the dashboard itself is not passed on.
+   * API proxy. A credential for the dashboard itself is not passed on; who the
+   * dashboard let in is, signed, for `ctx.dashboard` and `dashboardUser()`.
    */
   async function app(
     request: IncomingMessage,
     response: ServerResponse,
     url: URL,
+    identity: DashboardIdentity,
   ): Promise<void> {
     if (!fromOwnPage(request)) {
       send(response, 403, "Forbidden");
@@ -486,6 +499,7 @@ export function startDevDashboard(
       `${new URL(appUrl).origin}${url.pathname.slice(ROUTES.app.path.length) || "/"}${url.search}`,
       (headers) => {
         if (access) headers.delete("authorization");
+        headers.set(DASHBOARD_IDENTITY_HEADER, signDashboardIdentity(identity));
       },
       "Could not reach the app.",
     );

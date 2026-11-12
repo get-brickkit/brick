@@ -442,6 +442,7 @@ async function resolveServiceContext<
     requestId: callCtx?.requestId,
     services: callCtx?.services,
     metadata: callCtx?.metadata,
+    dashboard: callCtx?.dashboard,
     // The app's deps for this service; a direct call with no app (a unit test) may pass its own,
     // but never those of a context another service (or a plugin) resolved.
     deps:

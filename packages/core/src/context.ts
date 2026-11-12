@@ -1,5 +1,6 @@
 import type { BaseContext, Logger } from "./types";
 import { createLogger, DEFAULT_LOG_PREFIXES } from "./logger";
+import { dashboardIdentity } from "./dashboard-identity";
 
 const DEFAULT_REQUEST = new Request("http://localhost");
 const EMPTY = Object.freeze({});
@@ -40,6 +41,7 @@ export function baseContext(
     services: fields.services ?? EMPTY,
     metadata: fields.metadata ?? EMPTY,
     deps: fields.deps ?? EMPTY,
+    dashboard: fields.dashboard ?? dashboardIdentity(fields.request),
   };
 }
 

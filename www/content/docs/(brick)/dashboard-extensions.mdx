@@ -171,6 +171,32 @@ Inputs and results are typed from the contract `brick dev` generates (pass its `
 
 The dashboard server passes `/app/*` to your app, as it passes `/workflows` to the workflow inspector. `/app/api/admin/queues` reaches `/api/admin/queues`, from the dashboard's own origin, so there are no cross-origin problems. Only the dashboard's own page may use it. The dashboard's cookies, and in production the credential you signed in to the dashboard with, aren't passed on: send your app's own `authorization` header in `init` when it needs one.
 
+### Who is calling
+
+What the dashboard does pass on is who it let in. Every request through `/app` carries an `x-brick-dashboard` header the dashboard signs with a key only it and the app hold; any copy a page or client sent is dropped first. The app reads it through Brick, never by parsing the header:
+
+```ts
+import { dashboardUser } from "@brickkit/core";
+
+// An action only the dashboard's pages may call: anything else gets 401.
+const updateRecord = defineAction({
+  name: "updateRecord",
+  dashboard: true,
+  input: t.Object({ id: t.String(), title: t.String() }),
+  execute: ({ ctx, input }) =>
+    saveRecord(input, { editedBy: ctx.dashboard?.user?.id }),
+});
+
+// In an endpoint
+const user = dashboardUser(request); // { id, name } or undefined
+```
+
+- `ctx.dashboard` is set when the request came through `/app` with a valid signature, and undefined otherwise (sent straight to the app, or a missing, forged or stale header).
+- `ctx.dashboard.user` is the user `dashboard.auth.authorize` returned (see [Monitoring Dashboard](/docs/brick-cli/dev-and-start#monitoring-dashboard)). It is missing when the dashboard let the request in without one: by token, with `authorize` returning `true`, or with no `auth`, as in `brick dev`.
+- `dashboard: true` refuses with 401 any call without a valid `ctx.dashboard`, so an admin-only action can't be reached from the app's public port. Called in process (`action.run(input, ctx)`), it needs a `ctx.dashboard` from its caller.
+
+The key is random per process. The production dashboard runs in the app's process, and `brick dev` hands it to the app process it starts, so there is nothing to configure.
+
 ## UI kit
 
 `@brickkit/cli/dashboard` also exports the dashboard's components, so pages match it:

@@ -1,3 +1,5 @@
+import type { DashboardIdentity } from "./dashboard-identity";
+
 /** Who may open the dashboard that `brick start` serves for monitoring. */
 export interface DashboardAuth {
   /**
@@ -16,13 +18,22 @@ export interface DashboardAuth {
    * `Response` to send instead, such as a redirect to your login page. If it
    * throws or takes longer than five seconds, the request is refused with 503.
    *
+   * Return `{ user: { id, name } }` to let it in and say who it is: requests
+   * the dashboard's pages send to the app through `/app/*` carry that user,
+   * signed, which the app reads with `ctx.dashboard?.user` in an action or
+   * `dashboardUser(request)` in an endpoint.
+   *
    * A request is let in when it carries a valid `token`, or when this
    * returns `true`; give both to let monitors in by token and people in by
    * sign-in.
    */
   authorize?: (
     request: Request,
-  ) => boolean | Response | Promise<boolean | Response>;
+  ) =>
+    | boolean
+    | Response
+    | DashboardIdentity
+    | Promise<boolean | Response | DashboardIdentity>;
 }
 
 /**

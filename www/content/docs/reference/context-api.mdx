@@ -20,20 +20,22 @@ export interface BaseContext<TDb = any> {
   tenantId?: string;
   services?: Record<string, any>;
   metadata?: Record<string, unknown>;
+  dashboard?: { user?: { id: string; name?: string } };
 }
 ```
 
 ### Properties Breakdown
 
-| Property    | Type                      | Description                                                                                                                                                                       |
-| :---------- | :------------------------ | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `request`   | `Request`                 | Standard web `Request` for the active HTTP call. In-process calls without a request receive a placeholder `Request("http://localhost")`.                                          |
-| `db`        | `TDb`                     | The database client from the service's database handle (`service.getDb()`). Undefined when the service has no database.                                                           |
-| `logger`    | `Logger`                  | Logger with `.info()`, `.warn()`, `.error()`, and `.debug()` methods. The default logger prefixes output with the level (e.g. `[INFO]`).                                          |
-| `traceId`   | `string`                  | Correlation id. Over HTTP it is taken from the `x-trace-id` request header or minted (e.g. `tr_1`), and echoed back as an `x-trace-id` response header.                           |
-| `requestId` | `string \| undefined`     | Request id. Over HTTP it is taken from the `x-request-id` header or minted (e.g. `req_1`), and echoed back as an `x-request-id` response header. The HTTP runtime always sets it. |
-| `services`  | `Record<string, any>`     | Reserved. The HTTP runtime and default context set it to an empty object.                                                                                                         |
-| `metadata`  | `Record<string, unknown>` | Free-form metadata. The HTTP action runtime sets it to `{ headers }` (the request headers).                                                                                       |
+| Property    | Type                      | Description                                                                                                                                                                                          |
+| :---------- | :------------------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `request`   | `Request`                 | Standard web `Request` for the active HTTP call. In-process calls without a request receive a placeholder `Request("http://localhost")`.                                                             |
+| `db`        | `TDb`                     | The database client from the service's database handle (`service.getDb()`). Undefined when the service has no database.                                                                              |
+| `logger`    | `Logger`                  | Logger with `.info()`, `.warn()`, `.error()`, and `.debug()` methods. The default logger prefixes output with the level (e.g. `[INFO]`).                                                             |
+| `traceId`   | `string`                  | Correlation id. Over HTTP it is taken from the `x-trace-id` request header or minted (e.g. `tr_1`), and echoed back as an `x-trace-id` response header.                                              |
+| `requestId` | `string \| undefined`     | Request id. Over HTTP it is taken from the `x-request-id` header or minted (e.g. `req_1`), and echoed back as an `x-request-id` response header. The HTTP runtime always sets it.                    |
+| `services`  | `Record<string, any>`     | Reserved. The HTTP runtime and default context set it to an empty object.                                                                                                                            |
+| `metadata`  | `Record<string, unknown>` | Free-form metadata. The HTTP action runtime sets it to `{ headers }` (the request headers).                                                                                                          |
+| `dashboard` | `{ user? } \| undefined`  | Set only when the request came through the dashboard's `/app` proxy, signed by it; `user` is who `dashboard.auth.authorize` let in. See [Who is calling](/docs/dashboard-extensions#who-is-calling). |
 
 ## Logger Interface
 
