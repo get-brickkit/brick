@@ -1,6 +1,6 @@
 {
   "name": "@brickkit/bullmq-world",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Redis and BullMQ world for the Workflow SDK: durable runs, steps, hooks and streams on Redis",
   "homepage": "https://brickkit.dev",
   "keywords": [
@@ -48,7 +48,7 @@
     "test:e2e": "bun run build && bun run --cwd ../redis-world build && E2E_WORLD=bullmq-world vitest run --root ../redis-world --config ../redis-world/vitest.e2e.config.ts"
   },
   "dependencies": {
-    "@brickkit/redis-world": "0.14.0",
+    "@brickkit/redis-world": "0.15.0",
     "@workflow/world": "5.1.0",
     "bullmq": "^6.5.4",
     "ioredis": "^6.0.0"
