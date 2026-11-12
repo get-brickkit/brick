@@ -325,7 +325,6 @@ function normalizePrefix(prefix: string | undefined): string {
   return withLeading.length > 1 ? withLeading.replace(/\/+$/, "") : withLeading;
 }
 
-/** Each field as form values: arrays repeat the key, objects travel as JSON, files as themselves. */
 function appendFields(target: URLSearchParams | FormData, input: object) {
   for (const [key, value] of Object.entries(input)) {
     for (const item of Array.isArray(value) ? value : [value]) {
@@ -348,8 +347,7 @@ function toQueryString(input: unknown): string {
   return qs ? `?${qs}` : "";
 }
 
-/** A body with a file (a `Blob`) in a field goes as `multipart/form-data`. */
-function toFormData(body: unknown): FormData | undefined {
+function formDataIfFiles(body: unknown): FormData | undefined {
   if (body == null || typeof body !== "object") return undefined;
   const isFile = (value: unknown) =>
     value instanceof Blob ||
@@ -510,7 +508,7 @@ async function dispatch(
   let payload: string | FormData | undefined;
   if (hasBody) {
     // `fetch` sets the multipart content-type, with its boundary, itself.
-    payload = toFormData(body);
+    payload = formDataIfFiles(body);
     if (payload) {
       for (const key of Object.keys(headers))
         if (key.toLowerCase() === "content-type") delete headers[key];

@@ -85,10 +85,8 @@ function coerceQueryValue(
   return value;
 }
 
-/** The body a route's parse hook leaves, unread, when its `Content-Length` is over the route's `bodyLimit`. */
 export const BODY_TOO_LARGE = Symbol("brick.bodyTooLarge");
 
-/** The Elysia parse hook that refuses a body over `limit` bytes before it is read. */
 export function bodyLimitParser(limit: number) {
   return ({ request }: { request: Request }) =>
     Number(request.headers.get("content-length")) > limit

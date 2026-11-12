@@ -12,8 +12,7 @@ import {
 import { portOf } from "../service-port";
 import { fileFields } from "../typebox";
 
-// Room for the non-file fields and multipart framing on top of the files' maxSize.
-const FORM_OVERHEAD = 1024 * 1024;
+const FORM_FIELDS_AND_FRAMING_BYTES = 1024 * 1024;
 
 export type RouteMethod = HttpMethod;
 export interface RouteIR {
@@ -206,7 +205,10 @@ export function describeRoute(
   const plugin = actionMeta(action).route?.plugin;
   const files = fileFields(action.config.input);
   const bodyLimit =
-    files.reduce((sum, field) => sum + field.bytes, 0) + FORM_OVERHEAD;
+    files.length && files.every((field) => field.maxBytes !== undefined)
+      ? files.reduce((sum, field) => sum + (field.maxBytes ?? 0), 0) +
+        FORM_FIELDS_AND_FRAMING_BYTES
+      : undefined;
   return {
     method,
     path,
@@ -221,7 +223,7 @@ export function describeRoute(
     readLike: isReadLike(method, action.name),
     inputSource: inputSource(method),
     coercions,
-    ...(files.length && Number.isFinite(bodyLimit) ? { bodyLimit } : {}),
+    ...(bodyLimit === undefined ? {} : { bodyLimit }),
     inputSchema: schemaSnapshot(action.config.input),
     outputSchema: schemaSnapshot(action.config.output),
   };

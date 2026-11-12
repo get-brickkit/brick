@@ -66,19 +66,21 @@ export const Type = Object.assign({}, TypeBox, { Json, File, Files });
 export { Type as t };
 export type { TSchema, Static };
 
-/**
- * The file fields of an object schema, each with the most bytes it may carry
- * (`Infinity` when it declares no `maxSize`, or a `t.Files` no `maxItems`).
- */
-export function fileFields(schema: unknown): { key: string; bytes: number }[] {
+export function fileFields(
+  schema: unknown,
+): { key: string; maxBytes: number | undefined }[] {
   const fields = [];
   const properties = (schema as { properties?: Record<string, any> })
     ?.properties;
   for (const [key, prop] of Object.entries(properties ?? {})) {
     const file = prop[Kind] === "File" ? prop : prop.items;
     if (file?.[Kind] !== "File") continue;
-    const count = file === prop ? 1 : (prop.maxItems ?? Infinity);
-    fields.push({ key, bytes: (file.maxSize ?? Infinity) * count });
+    const count: number | undefined = file === prop ? 1 : prop.maxItems;
+    const maxBytes =
+      file.maxSize === undefined || count === undefined
+        ? undefined
+        : file.maxSize * count;
+    fields.push({ key, maxBytes });
   }
   return fields;
 }

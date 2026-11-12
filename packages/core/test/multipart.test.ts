@@ -82,7 +82,6 @@ it("sends FormData from the client when the input holds a file", async () => {
   const bodies: unknown[] = [];
   const api = createBrickClient<{ files: { upload: typeof upload } }>({
     baseUrl: "http://localhost",
-    // A default JSON content-type must not replace the multipart boundary.
     headers: { "Content-Type": "application/json" },
     fetch: (async (url: string, init: RequestInit) => {
       bodies.push(init.body);
