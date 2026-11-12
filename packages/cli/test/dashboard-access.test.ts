@@ -40,18 +40,17 @@ describe("createAccess with tokens", () => {
 
   it("lets in a Bearer token, or a Basic password with any user name", async () => {
     expect(await access(request({ authorization: `Bearer ${token}` }))).toEqual(
-      {
-        allowed: true,
-      },
+      { allowed: true, identity: {} },
     );
     expect(
       await access(request({ authorization: `bearer  ${other} ` })),
-    ).toEqual({ allowed: true });
+    ).toEqual({ allowed: true, identity: {} });
     expect(
       await access(request({ authorization: basic("anyone", token) })),
-    ).toEqual({ allowed: true });
+    ).toEqual({ allowed: true, identity: {} });
     expect(await access(request({ authorization: basic("", other) }))).toEqual({
       allowed: true,
+      identity: {},
     });
   });
 
@@ -87,12 +86,30 @@ describe("createAccess with authorize", () => {
     });
     expect(await access(request({ cookie: "a=1; session=ok" }))).toEqual({
       allowed: true,
+      identity: {},
     });
     const refused = await access(request({ cookie: "session=bad" }));
     expect(refused).toMatchObject({ allowed: false, status: 401 });
     expect(
       (refused as { headers: Record<string, string> }).headers,
     ).not.toHaveProperty("www-authenticate");
+  });
+
+  it("lets in, as that user, an identity authorize returns; refuses a malformed one", async () => {
+    const access = createAccess({
+      authorize: (req) =>
+        (req.headers.get("x-user") === "ada"
+          ? { user: { id: "u1", name: "Ada" } }
+          : { user: { name: "no id" } }) as never,
+    });
+    expect(await access(request({ "x-user": "ada" }))).toEqual({
+      allowed: true,
+      identity: { user: { id: "u1", name: "Ada" } },
+    });
+    expect(await access(request())).toMatchObject({
+      allowed: false,
+      status: 401,
+    });
   });
 
   it("hands authorize a standard request: method, address, headers, no body", async () => {
@@ -202,13 +219,12 @@ describe("createAccess with both", () => {
       },
     });
     expect(await access(request({ authorization: `Bearer ${token}` }))).toEqual(
-      {
-        allowed: true,
-      },
+      { allowed: true, identity: {} },
     );
     expect(asked).toBe(0);
     expect(await access(request({ "x-user": "ada" }))).toEqual({
       allowed: true,
+      identity: {},
     });
     expect(asked).toBe(1);
     // Refused by authorize, the browser can still be asked for a token.

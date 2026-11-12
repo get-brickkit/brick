@@ -1,6 +1,11 @@
 import { existsSync, watch } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { brick, isBrickApp } from "@brickkit/core";
+import {
+  brick,
+  dashboardKey,
+  DASHBOARD_KEY_ENV,
+  isBrickApp,
+} from "@brickkit/core";
 import { importEntry } from "./app-entry";
 import { TEMPORARY_FILE_PREFIX } from "./client-contract-file";
 import {
@@ -280,6 +285,9 @@ export async function startDevServer(options: DevServerOptions = {}) {
       ],
       {
         cwd: process.cwd(),
+        env: dashboard
+          ? { ...process.env, [DASHBOARD_KEY_ENV]: dashboardKey() }
+          : process.env,
         stdout: "inherit",
         stderr: "inherit",
         ipc: (message: WorkerMessage) => receive(message, generation),

@@ -1,5 +1,6 @@
 import type { BaseContext, Logger } from "./types";
 import { createLogger, DEFAULT_LOG_PREFIXES } from "./logger";
+import { dashboardIdentity } from "./dashboard-identity";
 
 const DEFAULT_REQUEST = new Request("http://localhost");
 const EMPTY = Object.freeze({});
@@ -40,12 +41,13 @@ export function baseContext(
     services: fields.services ?? EMPTY,
     metadata: fields.metadata ?? EMPTY,
     deps: fields.deps ?? EMPTY,
+    dashboard: fields.dashboard ?? dashboardIdentity(fields.request),
   };
 }
 
 type ContextEnvelope = Pick<
   BaseContext,
-  "caller" | "traceId" | "requestId" | "tenantId"
+  "caller" | "traceId" | "requestId" | "tenantId" | "dashboard"
 > & { user?: unknown };
 
 export function pickContextEnvelope(
@@ -58,5 +60,7 @@ export function pickContextEnvelope(
   if (context.traceId !== undefined) envelope.traceId = context.traceId;
   if (context.requestId !== undefined) envelope.requestId = context.requestId;
   if (context.tenantId !== undefined) envelope.tenantId = context.tenantId;
+  // In process only: the identity was verified when the outer request arrived.
+  if (context.dashboard !== undefined) envelope.dashboard = context.dashboard;
   return envelope;
 }

@@ -232,9 +232,9 @@ The dashboard listens on a port of its own, so you can keep it private or mount 
 **Access control is required to listen beyond the machine.** On any host but loopback (`127.0.0.1`, `::1`, `localhost`), `brick start` refuses to run the dashboard without `auth`. It takes either or both of:
 
 - `token`: one secret, or several to rotate one while the other still works, each at least 16 characters (`openssl rand -base64 32` makes a good one). A browser asks for it in its sign-in prompt (any user name, the secret as the password), and a monitor or script sends `Authorization: Bearer <secret>`.
-- `authorize(request)`: your own check, to sign people in with the auth the app already has. It receives a standard `Request` (method, URL, and headers, but no body) and returns `true` to let it in, `false` to refuse with 401, or a `Response` to send instead, such as a redirect to your login page. It is called for each request. If it throws or takes longer than five seconds, the request is refused with 503, so a broken check never lets anyone in.
+- `authorize(request)`: your own check, to sign people in with the auth the app already has. It receives a standard `Request` (method, URL, and headers, but no body) and returns `true` to let it in, `{ user: { id, name } }` to let it in as that user, `false` to refuse with 401, or a `Response` to send instead, such as a redirect to your login page. It is called for each request. If it throws or takes longer than five seconds, the request is refused with 503, so a broken check never lets anyone in.
 
-A request is let in when it carries a valid `token`, or when `authorize` returns `true`. With Better Auth:
+A request is let in when it carries a valid `token`, or when `authorize` returns `true` (or a user, below). With Better Auth:
 
 ```ts
 dashboard: {
@@ -251,6 +251,19 @@ dashboard: {
 ```
 
 The same shape fits any other provider, such as Clerk: verify the request's session in `authorize` and return whether that user may look.
+
+To also say who is signed in, return `{ user: { id, name } }` instead of `true`. That lets the request in too, and the dashboard passes the user on, signed, to calls its pages make to the app through `/app`, where actions read it as `ctx.dashboard?.user` (see [Who is calling](/docs/dashboard-extensions#who-is-calling)):
+
+```ts
+authorize: async (request) => {
+  const session = await auth.api.getSession({ headers: request.headers });
+  if (!session) return Response.redirect(`${siteUrl}/login`, 302);
+  if (session.user.role !== "admin") return false;
+  return { user: { id: session.user.id, name: session.user.name } };
+},
+```
+
+`authorize` only sees the app's session cookie when the browser sends it to the dashboard's address. When the dashboard is on another host or port than the app, that is the app's cookie-domain choice: a cookie for `example.com` set with `Domain=example.com` reaches `dashboard.example.com`; one without a `Domain` does not. Cookies ignore the port, so a dashboard on the same host at another port gets them.
 
 `GET /_health` on the dashboard's port needs no sign-in, so an uptime monitor can use it: it answers 200 `{"status":"ok","app":"up"}` while the app answers its own `/_health`, and 503 when it does not. It says nothing else.
 

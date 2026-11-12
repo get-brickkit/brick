@@ -254,6 +254,7 @@ async function authorizeCall(
 /** What a call runs once its context is ready. */
 export interface Stages {
   readonly name: string;
+  readonly dashboardOnly?: boolean;
   /** @throws The input's validation error. */
   readonly checkInput: (input: unknown) => void;
   readonly authorize?: (params: any) => unknown;
@@ -267,8 +268,14 @@ export interface Stages {
 export async function runStages(
   stages: Stages,
   input: unknown,
-  ctx: { user?: unknown },
+  ctx: { user?: unknown; dashboard?: unknown },
 ): Promise<unknown> {
+  if (stages.dashboardOnly && !ctx.dashboard)
+    throw new ActionExecutionError(
+      "UNAUTHORIZED",
+      `Action '${stages.name}' is only for the dashboard`,
+      401,
+    );
   stages.checkInput(input);
   await authorizeCall(stages.authorize, ctx, input, stages.name);
   return stages.checkOutput(
@@ -322,6 +329,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
   const name = route.action;
   const stages: Stages = {
     name,
+    dashboardOnly: plan.action.config.dashboard === true,
     checkInput: (input) => {
       if (inputChecker) validateInput(inputChecker, input, name, checkInput);
     },
@@ -333,7 +341,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
       return result;
     },
   };
-  if (contextHook || authorize) {
+  if (contextHook || authorize || stages.dashboardOnly) {
     return async function brickAction(context) {
       const ctx = requestContext(plan, context);
       try {

@@ -10,7 +10,7 @@ import {
   type ResolvedConfig,
   type EnvironmentModuleNode,
 } from "vite";
-import { requireBrickApp } from "@brickkit/core";
+import { dashboardKey, GLOBAL_SYMBOL, requireBrickApp } from "@brickkit/core";
 import { startViteDashboard, type ViteDashboard } from "./dev-vite-dashboard";
 import type {
   DashboardExtensionOptions,
@@ -232,6 +232,7 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
         if (!dashboard) return "";
         return `import { installDevReporter } from ${JSON.stringify(reporterModule)};
 installDevReporter({ url: ${JSON.stringify(dashboard.ingestUrl)} });
+globalThis[Symbol.for(${JSON.stringify(GLOBAL_SYMBOL.dashboardKey)})] = ${JSON.stringify(dashboardKey())};
 `;
       }
       if (id !== resolvedId) return;

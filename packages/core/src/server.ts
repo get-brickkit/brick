@@ -26,6 +26,7 @@ import {
   type ReferenceOptions,
 } from "./docs";
 import { normalizeDashboard, type DashboardOptions } from "./dashboard";
+import { markDashboardArrival } from "./dashboard-identity";
 import {
   createEndpointHandler,
   endpointPaths,
@@ -180,6 +181,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   );
   // CORS first, so preflights are answered and its headers reach responses
   // from middleware, which skips the later lifecycle hooks.
+  app.onRequest(({ request }) => markDashboardArrival(request));
   if (options.cors) app.onRequest(corsHook(options.cors));
   for (const handler of plugins.middleware) app.onRequest(handler);
 
