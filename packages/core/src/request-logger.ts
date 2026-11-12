@@ -51,12 +51,16 @@ export function requestLoggingPlugin(opts: RequestLoggingOptions = {}): Elysia {
   const logSuccess = ({
     request,
     set,
-  }: Pick<Context, "request" | "set">): void => {
+    responseValue,
+  }: Pick<Context, "request" | "set"> & { responseValue?: unknown }): void => {
     const start = startedAt.get(request) ?? Date.now();
     const path = new URL(request.url).pathname;
-    logger(
-      formatLog(request.method, path, set.status ?? 200, Date.now() - start),
-    );
+    // A raw route's Response carries its own status; `set.status` stays 200.
+    const status =
+      responseValue instanceof Response
+        ? responseValue.status
+        : (set.status ?? 200);
+    logger(formatLog(request.method, path, status, Date.now() - start));
   };
 
   const logError = ({
