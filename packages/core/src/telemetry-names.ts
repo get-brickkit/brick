@@ -43,4 +43,6 @@ export const GLOBAL_SYMBOL = {
   logsRecord: "brickkit.logs.record",
   /** The set of running event hubs, so the CLI can stop them all. */
   eventsStarted: "brickkit.events.started",
+  /** The key the dashboard signs `/app/*` identities with. */
+  dashboardKey: "brickkit.dashboard.key",
 } as const;

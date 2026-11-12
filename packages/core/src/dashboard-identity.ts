@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { GLOBAL_SYMBOL } from "./telemetry-names";
 
 /** The person `dashboard.auth.authorize` let in. */
 export interface DashboardUser {
@@ -22,21 +23,21 @@ export const DASHBOARD_KEY_ENV = "BRICK_DASHBOARD_KEY";
 /** The proxy signs each request as it forwards it, so a copy goes stale fast. */
 const MAX_AGE_MS = 60_000;
 // Shared through globalThis: the CLI and the app may each hold their own copy of core.
-const KEY = Symbol.for("brickkit.dashboard.key");
+const KEY = Symbol.for(GLOBAL_SYMBOL.dashboardKey);
+const global = globalThis as Record<symbol, string | undefined>;
+// Taken out of the environment as the app loads, so processes it starts do not inherit it.
+const handedOver = process.env[DASHBOARD_KEY_ENV];
+if (handedOver) {
+  global[KEY] = handedOver;
+  delete process.env[DASHBOARD_KEY_ENV];
+}
 
 /**
  * The key the dashboard signs identities with: random per process, or the one
- * `brick dev` handed the app's process. Taken out of the environment once
- * read, so processes the app starts do not inherit it.
+ * `brick dev` or the Vite plugin handed the app.
  */
 export function dashboardKey(): string {
-  const global = globalThis as Record<symbol, string | undefined>;
-  if (!global[KEY]) {
-    global[KEY] =
-      process.env[DASHBOARD_KEY_ENV] || randomBytes(32).toString("base64url");
-    delete process.env[DASHBOARD_KEY_ENV];
-  }
-  return global[KEY];
+  return (global[KEY] ??= randomBytes(32).toString("base64url"));
 }
 
 const mac = (payload: string) =>
