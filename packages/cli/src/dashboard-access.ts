@@ -2,7 +2,6 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import type { DashboardAuth, DashboardIdentity } from "@brickkit/core";
 
-/** What to do with a request: let it through, as this identity, or answer it with this. */
 export type Access =
   | { allowed: true; identity: DashboardIdentity }
   | {
@@ -96,7 +95,6 @@ function webRequest(request: IncomingMessage): Request {
   return new Request(url, { method: request.method ?? "GET", headers });
 }
 
-/** An identity `authorize` let in: an object with `user.id` a string. */
 const isIdentity = (value: unknown): value is Required<DashboardIdentity> =>
   typeof value === "object" &&
   value !== null &&
@@ -116,8 +114,7 @@ const refusal = (
 
 /**
  * The check for the dashboard's requests. A request passes with a valid token,
- * or when the app's `authorize` returns `true` or an identity (`{ user }`),
- * which the `/app/*` proxy passes on to the app, signed. Anything else is answered:
+ * or when the app's `authorize` returns `true` or an identity (`{ user }`). Anything else is answered:
  * what `authorize` returned if it returned a `Response`, else 401 (with a
  * browser sign-in prompt when tokens are in use), and 503 when `authorize`
  * threw or ran out of time, since a check that cannot answer must not let

@@ -23,7 +23,6 @@ describe("dashboardUser", () => {
     expect(
       dashboardUser(withHeader(signDashboardIdentity({ user: ada }))),
     ).toEqual(ada);
-    // Let in without a user (a token): through the dashboard, but nobody named.
     expect(
       dashboardUser(withHeader(signDashboardIdentity({}))),
     ).toBeUndefined();

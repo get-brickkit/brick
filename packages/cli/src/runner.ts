@@ -285,7 +285,6 @@ export async function startDevServer(options: DevServerOptions = {}) {
       ],
       {
         cwd: process.cwd(),
-        // The app checks what the dashboard's `/app/*` proxy signs with this key.
         env: dashboard
           ? { ...process.env, [DASHBOARD_KEY_ENV]: dashboardKey() }
           : process.env,

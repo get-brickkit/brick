@@ -497,7 +497,6 @@ describe("the dashboard server with an extension", () => {
           expect(sent.headers.get(DASHBOARD_IDENTITY_HEADER)).not.toBe(forged);
           expect(dashboardUser(sent)).toEqual({ id: "u1", name: "Ada" });
 
-          // In by token: through the dashboard, but no user.
           await fetch(`${base}/app/api/queues`, {
             headers: { authorization: `Bearer ${token}` },
           });

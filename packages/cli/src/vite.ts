@@ -230,8 +230,6 @@ export function brickClient(options: BrickClientPluginOptions): Plugin {
     load(id) {
       if (id === resolvedReporterId) {
         if (!dashboard) return "";
-        // The app may run in another process or worker: hand it the key the
-        // dashboard signs `/app/*` identities with (this module is server-only).
         return `import { installDevReporter } from ${JSON.stringify(reporterModule)};
 installDevReporter({ url: ${JSON.stringify(dashboard.ingestUrl)} });
 globalThis[Symbol.for(${JSON.stringify(GLOBAL_SYMBOL.dashboardKey)})] = ${JSON.stringify(dashboardKey())};

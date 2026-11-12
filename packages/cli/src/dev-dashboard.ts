@@ -65,8 +65,6 @@ const NOT_FORWARDED = new Set([
   "origin",
   "referer",
   "cookie",
-  // Only the dashboard writes it, signed, and only on `/app/*`.
-  DASHBOARD_IDENTITY_HEADER,
 ]);
 const NOT_RETURNED = new Set([
   "connection",
@@ -205,7 +203,6 @@ export function startDevDashboard(
       await health(response);
       return;
     }
-    // Without `auth` the dashboard is open to whoever reaches it: no user.
     let identity: DashboardIdentity = {};
     if (access) {
       const decision = await access(request);
@@ -833,7 +830,12 @@ function frameOnlyHere(response: ServerResponse): void {
 function forwardedHeaders(request: IncomingMessage): Headers {
   const headers = new Headers();
   for (const [name, value] of Object.entries(request.headers)) {
-    if (value === undefined || NOT_FORWARDED.has(name)) continue;
+    if (
+      value === undefined ||
+      NOT_FORWARDED.has(name) ||
+      name === DASHBOARD_IDENTITY_HEADER
+    )
+      continue;
     if (name.startsWith("sec-")) continue;
     headers.set(name, Array.isArray(value) ? value.join(", ") : value);
   }

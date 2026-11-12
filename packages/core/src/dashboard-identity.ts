@@ -20,17 +20,16 @@ export interface DashboardIdentity {
 export const DASHBOARD_IDENTITY_HEADER = "x-brick-dashboard";
 /** How `brick dev` hands the signing key to the app's process. */
 export const DASHBOARD_KEY_ENV = "BRICK_DASHBOARD_KEY";
-/** The proxy signs each request as it forwards it, so a copy goes stale fast. */
-const MAX_AGE_MS = 60_000;
-// Shared through globalThis: the CLI and the app may each hold their own copy of core.
+const SIGNATURE_TTL_MS = 60_000;
 const KEY = Symbol.for(GLOBAL_SYMBOL.dashboardKey);
 const global = globalThis as Record<symbol, string | undefined>;
-// Taken out of the environment as the app loads, so processes it starts do not inherit it.
-const handedOver = process.env[DASHBOARD_KEY_ENV];
-if (handedOver) {
+function hideKeyFromChildProcesses(): void {
+  const handedOver = process.env[DASHBOARD_KEY_ENV];
+  if (!handedOver) return;
   global[KEY] = handedOver;
   delete process.env[DASHBOARD_KEY_ENV];
 }
+hideKeyFromChildProcesses();
 
 /**
  * The key the dashboard signs identities with: random per process, or the one
@@ -57,15 +56,11 @@ export function signDashboardIdentity(
   now = Date.now(),
 ): string {
   const payload = Buffer.from(
-    JSON.stringify({ user: identity.user, exp: now + MAX_AGE_MS }),
+    JSON.stringify({ user: identity.user, exp: now + SIGNATURE_TTL_MS }),
   ).toString("base64url");
   return `${payload}.${mac(payload).toString("base64url")}`;
 }
 
-/**
- * The identity the dashboard signed into `request`, or undefined when the
- * header is missing, malformed, wrongly signed or stale.
- */
 export function dashboardIdentity(
   request: Request | undefined,
 ): DashboardIdentity | undefined {
