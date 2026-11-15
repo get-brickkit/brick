@@ -6,7 +6,7 @@ import {
 } from "node:crypto";
 import { lstat, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { brickDeps } from "./deps";
+import { freezeAsBuiltDeps } from "./deps";
 import { hasIdentity, identityOf } from "./identity";
 import { SecretRef } from "./secrets";
 import type { Service } from "./types";
@@ -256,7 +256,7 @@ export function scopeFiles<T extends Readonly<Record<string, unknown>>>(
     });
     copy[name] = files;
   }
-  const view = brickDeps(copy);
+  const view = freezeAsBuiltDeps(copy);
   views.set(view, { deps, ctx });
   return view as T;
 }

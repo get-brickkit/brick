@@ -53,13 +53,13 @@ Request logging is off unless you set `requestLogging`.
 
 ## Fakes for deps
 
-A service's [deps](/docs/dependencies) are values on the service. To run an app on fakes, build the service in a factory that takes them:
+A service's [deps](/docs/dependencies) are values on the service. To run an app on fakes, build the service in a factory that takes them and returns the service with its actions, so the contract keeps their types:
 
 ```ts
-const orders = createOrdersService({ carrier: fakeCarrier() });
+const { orders, ship } = createOrdersService({ carrier: fakeCarrier() });
 const { client } = createTestApp({
   services: [orders],
-  contract: { orders: { ship: orders.getAction("ship")! } },
+  contract: { orders: { ship } },
 });
 ```
 

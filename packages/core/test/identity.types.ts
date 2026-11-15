@@ -13,9 +13,9 @@ defineService("crm", {
   identity: (ctx) => {
     const region: string = ctx.deps.region;
     void region;
-    // @ts-expect-error not a declared dep
+    // @ts-expect-error
     void ctx.deps.other;
-    // @ts-expect-error not on the context
+    // @ts-expect-error
     void ctx.account;
     return (
       ctx.user && {
@@ -34,11 +34,10 @@ defineService("sync", {
 
 defineService("wrong", {
   context: () => ({ n: 1 }),
-  // @ts-expect-error id must be a string
+  // @ts-expect-error
   identity: (ctx) => ({ id: ctx.n }),
 });
 
-// A hook may return a whole user: it compiles, and Brick keeps only id, label and tenant.
 interface Account {
   id: string;
   email: string;

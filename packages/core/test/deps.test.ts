@@ -98,7 +98,6 @@ describe("service deps", () => {
   });
 
   it("refuses deps that are not an object, and a dep that is undefined", () => {
-    // A class instance or a Map would be emptied by the copy.
     for (const deps of ["oops", [1, 2], null, new Map(), new Date()])
       expect(() => defineService("bad", { deps: deps as any })).toThrow(
         'Service "bad": deps must be a plain object of values by name',
@@ -126,7 +125,6 @@ describe("service deps", () => {
     orders.action({
       name: "viaTool",
       output: t.Object({ tracking: t.String() }),
-      // The ctx of an HTTP request, handed to another service's tool.
       execute: async ({ ctx }) => ({
         tracking: (await registry.callTool("billing_book", {}, ctx)) as string,
       }),
@@ -173,14 +171,12 @@ describe("service deps", () => {
       const orders = defineService("orders", {
         deps: { carrier: carrier("orders"), secret: "s" },
         ...(hook && {
-          // The types refuse a hook that returns deps; a JavaScript caller can still write one.
           context: (base: { deps: object }): any => ({
             user: "u",
             ...(hook.endsWith("deps") && { deps: { ...base.deps, clock: 1 } }),
           }),
         }),
       });
-      // Every way an action can hand its ctx, or a copy of it, to another service's action.
       orders.action({
         name: "ship",
         output: t.Array(t.String()),
@@ -201,7 +197,6 @@ describe("service deps", () => {
       });
       const seen = await (await postJson(app, "/api/orders/ship", {})).json();
       expect(seen).toEqual(Array(5).fill("billing_x carrier"));
-      // In-process too, even when the caller was given a test's deps.
       expect(
         await orders.getAction("ship")!.execute({
           ctx: { deps: { carrier: carrier("fake") } } as any,
@@ -298,7 +293,6 @@ describe("service deps", () => {
               void seen.push(
                 useDeps<{ carrier: Carrier }>().carrier.book("x"),
                 useDeps(service).carrier.book("y"),
-                // The union handed on is not a test's override.
                 await names.execute({ ctx: { deps: useDeps() } }),
               ),
           }),
@@ -337,7 +331,6 @@ describe("service deps", () => {
               const deps = useDeps<{ carrier: Carrier; shared: Carrier }>();
               seen.push(deps.shared);
               seen.push(() => deps.carrier);
-              // Spreading skips the ambiguous name instead of throwing.
               seen.push(Object.keys({ ...deps }));
               seen.push(useDeps(second).carrier.book("x"));
             },

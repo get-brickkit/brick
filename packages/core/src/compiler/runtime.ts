@@ -313,10 +313,13 @@ function requestContext(
       ? plan.service.deps
       : (plan.deps ?? plan.service.deps),
   });
-  // As in process: a call within this service that passes ctx on reuses it, and identity resolves once.
   markResolved(ctx, plan.service, plan.service.deps);
   if (!plan.contextHook) ctx.deps = scopeFiles(ctx.deps, ctx);
   return ctx as ActionContext & { requestId: string };
+}
+
+function restoreServiceDeps(ctx: any, plan: CompiledRoutePlan) {
+  ctx.deps = scopeFiles(plan.deps ?? plan.service.deps, ctx);
 }
 
 /** The HTTP handler of one route: the pipeline's stages, synchronous when no stage needs to wait. */
@@ -354,8 +357,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
         if (contextHook) {
           const extra = await contextHook(ctx);
           if (extra) Object.assign(ctx, extra);
-          // A hook's own `deps` would look like a test's override to the actions this one calls.
-          ctx.deps = scopeFiles(plan.deps ?? plan.service.deps, ctx);
+          restoreServiceDeps(ctx, plan);
         }
         return await runStages(stages, input, ctx);
       } catch (err) {

@@ -6,23 +6,26 @@ import { portOf } from "./service-port";
 /** Where a listener a plugin added keeps the plugin's deps, for its handler and workflow steps; global so a second core copy finds it. */
 export const PLUGIN_DEPS: unique symbol = Symbol.for("brickkit.plugin.deps");
 
-/** Every deps object Brick built (a service's, an install's, a merged override): never a direct call's override. Global so a second core copy shares it. */
-const built: WeakSet<object> = ((globalThis as any)[
-  Symbol.for("brickkit.deps.built")
-] ??= new WeakSet<object>());
+function sharedAcrossCoreCopies<T>(key: string, create: () => T): T {
+  const store = globalThis as any;
+  return (store[Symbol.for(key)] ??= create());
+}
 
-/** Freeze a deps object Brick built and remember it, so a context carrying it never overrides another's deps. */
-export function brickDeps<T extends object>(deps: T): Readonly<T> {
-  built.add(Object.freeze(deps));
+const depsBuiltByBrick = sharedAcrossCoreCopies(
+  "brickkit.deps.built",
+  () => new WeakSet<object>(),
+);
+
+export function freezeAsBuiltDeps<T extends object>(deps: T): Readonly<T> {
+  depsBuiltByBrick.add(Object.freeze(deps));
   return deps;
 }
 
-/** The deps a direct call (a unit test) passes in its context: only an object the caller wrote, never one Brick built. */
 export function depsOverride(
   callCtx: unknown,
 ): Record<string, unknown> | undefined {
   const deps = (callCtx as { deps?: unknown } | undefined)?.deps;
-  return deps && typeof deps === "object" && !built.has(deps)
+  return deps && typeof deps === "object" && !depsBuiltByBrick.has(deps)
     ? (deps as Record<string, unknown>)
     : undefined;
 }
@@ -34,7 +37,6 @@ export function runWithDeps<T>(deps: Record<string, unknown>, fn: () => T): T {
   return running.run(deps, fn);
 }
 
-/** The deps a service was defined with, typed from it. */
 export type ServiceDeps<S> =
   S extends Service<any, infer C, any>
     ? C extends { deps: infer D }
@@ -78,7 +80,22 @@ export function useDeps(service?: Service<any, any, any>): unknown {
   return deps;
 }
 
-/** What `useDeps()` returns in an app's own listeners, schedules and workflow steps: every service's deps, by name. */
+function makeAmbiguous(
+  deps: Record<string, unknown>,
+  name: string,
+  firstService: string | undefined,
+  otherService: string,
+) {
+  Object.defineProperty(deps, name, {
+    enumerable: false,
+    get() {
+      throw new Error(
+        `useDeps().${name} is ambiguous: services "${firstService}" and "${otherService}" both declare dep "${name}" with different values. Call useDeps(service) with the service you mean.`,
+      );
+    },
+  });
+}
+
 export function appDeps(
   services: readonly Service<any, any>[],
 ): Record<string, unknown> {
@@ -92,15 +109,7 @@ export function appDeps(
         owner.set(name, service.name);
         deps[name] = value;
       } else if ("value" in seen && seen.value !== value)
-        // Not enumerable, so spreading the deps skips it instead of throwing.
-        Object.defineProperty(deps, name, {
-          enumerable: false,
-          get() {
-            throw new Error(
-              `useDeps().${name} is ambiguous: services "${first}" and "${service.name}" both declare dep "${name}" with different values. Call useDeps(service) with the service you mean.`,
-            );
-          },
-        });
+        makeAmbiguous(deps, name, first, service.name);
     }
-  return brickDeps(deps);
+  return freezeAsBuiltDeps(deps);
 }
