@@ -208,11 +208,7 @@ function validate(
   throw invalid(
     action,
     stage,
-    Array.from(check.Errors(value)).map((err: any) => ({
-      path: err.path,
-      message: err.message,
-      value: err.value,
-    })),
+    Array.from(check.Errors(value), ({ path, message }) => ({ path, message })),
   );
 }
 
