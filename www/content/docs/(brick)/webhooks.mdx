@@ -230,7 +230,7 @@ A webhook is not for callers of your API, so it is left out of the [typed client
 
 ## Logs and traces
 
-The raw body, the signature headers and the secrets are never logged and never put on a span. A verifier that throws, or a missing or unusable secret, logs one warning with the service, the webhook and the error's class name, so a misconfigured secret is not mistaken for forged traffic; the error's message is not logged. A delivery that a verifier refuses by returning `false`, as the built-in ones do for a wrong signature, is not logged; one warning is logged for every delivery a verifier throws on, with no limit on how many. The span records the webhook's name, the event id, and the outcome (`processed`, `duplicate`, `in_flight`, `refused`, `invalid`, `too_large`, `no_event_id`, `unavailable` or `failed`).
+The raw body, the signature headers and the secrets are never logged and never put on a span. A field of the input marked [`t.Sensitive`](/docs/sensitive-fields) is redacted from the delivery's logs, spans and error responses once the signature is checked, as in an action. A verifier that throws, or a missing or unusable secret, logs one warning with the service, the webhook and the error's class name, so a misconfigured secret is not mistaken for forged traffic; the error's message is not logged. A delivery that a verifier refuses by returning `false`, as the built-in ones do for a wrong signature, is not logged; one warning is logged for every delivery a verifier throws on, with no limit on how many. The span records the webhook's name, the event id, and the outcome (`processed`, `duplicate`, `in_flight`, `refused`, `invalid`, `too_large`, `no_event_id`, `unavailable` or `failed`).
 
 ## Testing
 

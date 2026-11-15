@@ -121,6 +121,38 @@ function integrations(
   return { service, webhook, calls };
 }
 
+describe("sensitive fields", () => {
+  it("redacts a t.Sensitive field of a webhook's input in its logs and its error response", async () => {
+    const TOKEN = "sk_live_webhook_token_9f3a";
+    const logged: string[] = [];
+    const error = spyOn(console, "error").mockImplementation((...args) => {
+      logged.push(Bun.inspect(args));
+    });
+    try {
+      const { service } = integrations({
+        config: {
+          input: t.Object({
+            action: t.String(),
+            token: t.Sensitive(t.String()),
+          }),
+          execute: ({ input }: any) => {
+            throw new Error(`could not use ${input.token}`);
+          },
+        },
+      });
+      const base = serve(service);
+      const body = JSON.stringify({ action: "opened", token: TOKEN });
+      const response = await post(base, body, signed("s1")(body));
+      expect(response.status).toBe(500);
+      expect(await response.text()).not.toContain(TOKEN);
+      expect(logged.join("\n")).toContain("could not use");
+      expect(logged.join("\n")).not.toContain(TOKEN);
+    } finally {
+      error.mockRestore();
+    }
+  });
+});
+
 describe("hmacSignature", () => {
   it("refuses an unsigned and a wrongly signed delivery, and accepts a signed one", async () => {
     const { service, calls } = integrations();

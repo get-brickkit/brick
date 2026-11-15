@@ -410,7 +410,7 @@ function bindWebhook(plan: CompiledRoutePlan): CompiledHandler {
     throw new Error(
       `Webhook '${name}' remembers the events it has handled, but its service has no key-value storage`,
     );
-  return async function brickWebhook(context) {
+  const brickWebhook = async (context: any) => {
     const delivery: Delivery = {
       plan,
       webhook,
@@ -425,6 +425,7 @@ function bindWebhook(plan: CompiledRoutePlan): CompiledHandler {
       const rawBody = rawBodyOf(context.body);
       await verifyDelivery(delivery, rawBody);
       const input = parseAndCheckInput(delivery, rawBody);
+      plan.sensitive?.input(input);
       await resolveEventId(delivery, input);
       if ((await claimEvent(delivery)) === ALREADY_HANDLED)
         return { duplicate: true };
@@ -439,6 +440,8 @@ function bindWebhook(plan: CompiledRoutePlan): CompiledHandler {
           error: plan.errorBuilder,
           eventId: delivery.eventId,
         });
+        if (plan.sensitive && !(result instanceof Response))
+          result = await plan.sensitive.output(result, input, delivery.ctx);
       } catch (error) {
         await releaseClaim(delivery);
         throw error;
@@ -451,6 +454,9 @@ function bindWebhook(plan: CompiledRoutePlan): CompiledHandler {
       recordWebhook(name, delivery.eventId, delivery.outcome);
     }
   };
+  return plan.sensitive
+    ? (context) => withRedaction(() => brickWebhook(context))
+    : brickWebhook;
 }
 
 interface Claim {
