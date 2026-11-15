@@ -27,21 +27,21 @@ export const login = auth.action({
 auth.action({
   name: "a",
   input,
-  // @ts-expect-error not a field of the input
+  // @ts-expect-error
   rateLimit: { per: ({ input }) => input.password, max: 5, windowMs: 1000 },
   execute: () => 1,
 });
 
 auth.action({
   name: "b",
-  // @ts-expect-error a key is a string
+  // @ts-expect-error
   rateLimit: { per: () => 1, max: 5, windowMs: 1000 },
   execute: () => 1,
 });
 
 auth.action({
   name: "c",
-  // @ts-expect-error not a kind of key
+  // @ts-expect-error
   rateLimit: { per: "user", max: 3, windowMs: 1000 },
   execute: () => 1,
 });
@@ -71,6 +71,6 @@ const sendOtp = auth.action({
   execute: () => 1,
 });
 const code: InferActionFailure<typeof sendOtp>["code"] = "RATE_LIMITED";
-// @ts-expect-error not a code the client knows
+// @ts-expect-error
 const other: InferActionFailure<typeof sendOtp>["code"] = "RATE_LIMITED_X";
 void [code, other];

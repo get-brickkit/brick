@@ -286,7 +286,6 @@ export interface Stages {
   readonly dashboardOnly?: boolean;
   /** @throws The input's validation error. */
   readonly checkInput: (input: unknown) => void;
-  /** Counts the call against the action's `rateLimit`; throws `RATE_LIMITED` over it. */
   readonly rateLimit?: (input: unknown, ctx: any) => Promise<void>;
   readonly authorize?: (params: any) => unknown;
   readonly execute: (params: any) => unknown;
@@ -308,7 +307,6 @@ export async function runStages(
       401,
     );
   stages.checkInput(input);
-  // After validation, so a malformed call does not count; before authorize, so a refused one does.
   if (stages.rateLimit) await stages.rateLimit(input, ctx);
   await authorizeCall(stages.authorize, ctx, input, stages.name);
   return stages.checkOutput(
@@ -352,7 +350,6 @@ function requestContext(
       ? plan.service.deps
       : (plan.deps ?? plan.service.deps),
   });
-  // As in process: a call within this service that passes ctx on reuses it, and identity resolves once.
   markResolved(ctx, plan.service, plan.service.deps);
   return ctx as ActionContext & { requestId: string };
 }
@@ -536,7 +533,7 @@ function bindWebhook(plan: CompiledRoutePlan): CompiledHandler {
         if (contextHook) {
           const extra = await contextHook(ctx);
           if (extra) Object.assign(ctx, extra);
-          ctx.deps = plan.deps ?? plan.service.deps;
+          restoreServiceDeps(ctx, plan);
         }
         if (limits)
           await enforceRateLimits(
@@ -582,6 +579,10 @@ function bindWebhook(plan: CompiledRoutePlan): CompiledHandler {
       recordWebhook(name, eventId, outcome);
     }
   };
+}
+
+function restoreServiceDeps(ctx: any, plan: CompiledRoutePlan) {
+  ctx.deps = plan.deps ?? plan.service.deps;
 }
 
 /** The HTTP handler of one route: the pipeline's stages, synchronous when no stage needs to wait. */
@@ -634,8 +635,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
         if (contextHook) {
           const extra = await contextHook(ctx);
           if (extra) Object.assign(ctx, extra);
-          // A hook's own `deps` would look like a test's override to the actions this one calls.
-          ctx.deps = plan.deps ?? plan.service.deps;
+          restoreServiceDeps(ctx, plan);
         }
         return await runStages(stages, input, ctx);
       } catch (err) {

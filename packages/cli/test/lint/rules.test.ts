@@ -435,7 +435,7 @@ const CASES: Record<string, Case[]> = {
   "public-rate-limit": [
     {
       file: "src/a.ts",
-      code: `s.action({ name: "a", authorize: () => true });\ns.action({ name: "b", rateLimit: { per: "ip", max: 5, windowMs: 60_000 } });\nr.action({ name: "c", record: true, access: { scope } });\nr.command("d", { access: "public", rateLimit: [{ per: "ip", max: 5, windowMs: 60_000 }] });\ns.tool({ name: "e", authorize: () => true });\ns.action({ name: "f", dashboard: true });\ns.webhook({ name: "w", verify, input: t.Object({}) });\n`,
+      code: `s.action({ name: "a", authorize: () => true });\ns.action({ name: "b", rateLimit: { per: "ip", max: 5, windowMs: 60_000 } });\nr.action({ name: "c", record: true, access: { scope } });\nr.command("d", { access: "public", rateLimit: [{ per: "ip", max: 5, windowMs: 60_000 }] });\ns.tool({ name: "e", authorize: () => true });\ns.action({ name: "f", dashboard: true });\ns.webhook({ name: "w", verify, input: t.Object({}) });\ns.action({ name: "g", ...secured });\n`,
       errors: 0,
     },
     {

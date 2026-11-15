@@ -15,8 +15,10 @@ export default auth.action({
   rateLimit: [
     { per: "ip", max: 20, windowMs: 60_000 },
     {
-      per: ({ input, ctx }) =>
-        `${clientAddress(ctx)} ${input.email.toLowerCase()}`,
+      per: ({ input, ctx }) => {
+        const ip = clientAddress(ctx);
+        return ip && `${ip} ${input.email.toLowerCase()}`;
+      },
       max: 5,
       windowMs: 15 * 60_000,
     },
@@ -32,7 +34,7 @@ export default auth.action({
 });
 ```
 
-Each address may try 20 times a minute, and 5 times in 15 minutes for one email. Each email may be tried 100 times an hour from all addresses together, which stops a slow guess spread over many addresses. One address cannot use that budget up, but someone with twenty or more addresses can, and then the owner's own login is refused until the hour ends; see [Choosing keys](#choosing-keys).
+Each address may try 20 times a minute, and 5 times in 15 minutes for one email. Each email may be tried 100 times an hour from all addresses together, which stops a slow guess spread over many addresses. One address cannot use that budget up, but someone with five or more addresses can, and then the owner's own login is refused until the hour ends; see [Choosing keys](#choosing-keys).
 
 `rateLimit` takes one limit or a list. It works on every kind of action: `service.action`, `defineAction`, `resource.action`, `resource.command`, tools and [provider webhooks](/docs/webhooks), where it runs after the check for a repeated delivery.
 
@@ -83,7 +85,7 @@ An address is counted in one form, whatever its spelling: an IPv4-mapped (`::fff
 
 ## Choosing keys
 
-The limit runs before `execute`, so it counts every call, not only failed ones. A key that anyone can name, such as an email, a username or a phone number, lets anyone use up its budget: five calls with someone's email from any address would refuse that person's own login until the window ends. Key a tight limit on the address together with the target (`${clientAddress(ctx)} ${email}`), and keep a looser cap on the target alone, high enough that a stranger's calls do not lock its owner out, but low enough to stop a guess spread over many addresses.
+The limit runs before `execute`, so it counts every call, not only failed ones. A key that anyone can name, such as an email, a username or a phone number, lets anyone use up its budget: five calls with someone's email from any address would refuse that person's own login until the window ends. Key a tight limit on the address together with the target, as in the login example above, and keep a looser cap on the target alone, high enough that a stranger's calls do not lock its owner out, but low enough to stop a guess spread over many addresses.
 
 ## When a call counts
 
@@ -95,7 +97,7 @@ The limit runs after input validation and before `authorize`:
 
 Each limit is a fixed window: the counter starts with the first call and resets `windowMs` later.
 
-In-process calls (`action.run`, `useService`) go through the same stage. A call made while handling a request keeps that request's client address when it passes its `ctx` on: `action.run(input, ctx)`, `useService(crm).login(input, ctx)` or `useService(crm, { context: ctx })`. Then `per: "ip"` and an anonymous `per: "actor"` count it as if the client had called the limited action itself. A call that passes no `ctx` (`action.run(input)`, `useService(crm).login(input)`), like a script or a test, has no request behind it: `per: "ip"` skips it and `per: "actor"` counts it only when the identity hook returns an id. So put the limit on the action the client calls, or pass `ctx`; a limit on an inner action alone does not guard an outer one that calls it without `ctx`.
+In-process calls (`action.run`, `useService`) go through the same stage. A call made while handling a request keeps that request's client address when it passes its `ctx` on: `action.run(input, ctx)`, `useService(auth).login(input, ctx)` or `useService(auth, { context: ctx })`. Then `per: "ip"` and an anonymous `per: "actor"` count it as if the client had called the limited action itself. A call that passes no `ctx` (`action.run(input)`, `useService(auth).login(input)`), like a script or a test, has no request behind it: `per: "ip"` skips it and `per: "actor"` counts it only when the identity hook returns an id. So put the limit on the action the client calls, or pass `ctx`; a limit on an inner action alone does not guard an outer one that calls it without `ctx`.
 
 The address is read from the live request. It is gone once the response has ended, so a call made later (from a timer, or after the action returned) has none, and neither does a [socket](/docs/websockets) handler: `per: "ip"` skips those calls too. An action without `rateLimit` costs nothing; an action with one always answers asynchronously.
 
