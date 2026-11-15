@@ -7,6 +7,7 @@ import type { ResourcePlugin } from "./plugin-types";
 import { buildErrorHelpers, defineAction } from "./action";
 import { kebabCase } from "./kebab";
 import { actionMeta, type ResourceActionInfo } from "./action-meta";
+import { setActionAudit } from "./access";
 import { portOf } from "./service-port";
 import { Type } from "./typebox";
 import { runInTransaction } from "./events/transaction";
@@ -223,7 +224,6 @@ function defineCommand(
   config: CommandConfig<any, any, any, any, any, any, any, readonly string[]>,
 ) {
   const where = `Command '${resource.name}.${name}'`;
-  // The log is append-only: a command could rewrite one of its rows.
   if (isAuditTable(resource.table))
     throw new Error(
       `${where} is over the audit table, so it could rewrite audit rows. The audit log takes no commands.`,
@@ -342,7 +342,6 @@ function defineCommand(
             .where(eq(child.parent, id));
         reply = Value.Clean(config.output, updated);
       }
-      // In the command's transaction: the row exists exactly when the write committed.
       const audit = inlineAudit();
       if (audit)
         await recordInline(audit, tx, ctx, entryOf(audit, input, reply));
@@ -379,8 +378,7 @@ function defineCommand(
     } as ResourceActionConfig<any, any, any, any, any, boolean>,
     run,
   );
-  // The command records itself, in its own transaction.
-  actionMeta(action).audit = "inline";
+  setActionAudit(action, "inline");
   Object.assign(action, { decide });
   return action;
 }

@@ -108,10 +108,6 @@ export class ServiceImpl<
     this.watchAudit();
   }
 
-  /**
-   * Finds the audit table of the database. A service that has one records CRUD
-   * writes through a host hook, which runs in each write's transaction.
-   */
   private watchAudit(): void {
     this.auditTable = Object.values(this.database?.tables ?? {}).find(
       isAuditTable,

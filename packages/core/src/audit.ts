@@ -13,6 +13,7 @@ import {
 } from "drizzle-orm/sqlite-core";
 import { actionMeta } from "./action-meta";
 import { serviceOf } from "./context";
+import { sharedAcrossCoreCopies } from "./deps";
 import {
   inTransaction,
   isSqliteDatabase,
@@ -115,28 +116,20 @@ export function isAuditTable(value: unknown): value is AuditTable {
   return typeof value === "object" && value !== null && AUDIT in value;
 }
 
-/** What an action's `audit` option says; see `AuditConfig`. */
 interface AuditOptions {
   resource?: string;
   record?: (args: { input: any; result: any }) => unknown;
 }
 
-/** How one action is recorded, worked out once the service has its audit table. */
 export interface AuditStage {
   readonly service: ServicePort<any, any>;
   readonly table: AuditTable;
   readonly action: string;
-  /** The write records itself in its own transaction (a CRUD write, a command); else Brick records it after the action succeeds. */
-  readonly inline: boolean;
+  readonly recordsInOwnTransaction: boolean;
   readonly resource?: string;
   readonly record?: AuditOptions["record"];
 }
 
-/**
- * How a call to the action is recorded, or `undefined` when it is not: the
- * service has no audit table, the action says `audit: false` or reads
- * (`GET`, or a plugin that never writes).
- */
 export function auditStage(
   service: ServicePort<any, any>,
   action: Action<any, any, any, any>,
@@ -151,7 +144,7 @@ export function auditStage(
     service,
     table,
     action: action.name,
-    inline: mode === "inline",
+    recordsInOwnTransaction: mode === "inline",
     resource: config.audit?.resource ?? resourceAction?.resource,
     record:
       config.audit?.record ??
@@ -161,15 +154,17 @@ export function auditStage(
 
 interface Call {
   readonly audit: AuditStage;
-  /** The action recorded itself with `recordAudit(…, { tx })` and `tx` committed, so Brick does not. */
   written: boolean;
 }
-/** The audited call being run. Global so a second core copy finds it. */
-const calls = ((globalThis as Record<symbol, unknown>)[
-  Symbol.for("brickkit.audit.calls")
-] ??= new AsyncLocalStorage<Call>()) as AsyncLocalStorage<Call>;
+const calls = sharedAcrossCoreCopies(
+  "brickkit.audit.calls",
+  () => new AsyncLocalStorage<Call>(),
+);
 
-/** What a row says about one change; the actor, trace and time are added. */
+export function runUnaudited<T>(run: () => T): T {
+  return calls.getStore() ? calls.exit(run) : run();
+}
+
 export interface Entry {
   action: string;
   resource?: string;
@@ -177,7 +172,6 @@ export interface Entry {
   meta?: unknown;
 }
 
-/** A record id as text: a string or number as itself, anything else (a composite key) as JSON. */
 function recordIdText(id: unknown): string | null {
   if (id === undefined || id === null) return null;
   if (typeof id === "string") return id;
@@ -185,7 +179,6 @@ function recordIdText(id: unknown): string | null {
   return JSON.stringify(id) ?? null;
 }
 
-/** The row of one change: the entry, the actor and the trace. */
 async function auditRow(
   ctx: { traceId?: string; requestId?: string },
   target: Pick<AuditStage, "service">,
@@ -208,18 +201,15 @@ async function auditRow(
   };
 }
 
-/**
- * Runs an insert so another request's rollback cannot take it. Only SQLite needs a
- * transaction opened for that: its one connection would put the row in whatever
- * transaction is open. Inside the caller's own transaction the row joins it.
- */
-function own<T>(db: any, fn: (handle: any) => Promise<T>): Promise<T> {
+function insertOutsideOtherRequestsTransactions<T>(
+  db: any,
+  fn: (handle: any) => Promise<T>,
+): Promise<T> {
   return isSqliteDatabase(db) && !inTransaction(db)
     ? runInTransaction(db, fn)
     : fn(db);
 }
 
-/** Inserts a row through `handle`: a transaction, or the database. */
 async function writeAudit(
   handle: any,
   ctx: { traceId?: string; requestId?: string },
@@ -229,33 +219,44 @@ async function writeAudit(
   await handle.insert(target.table).values(await auditRow(ctx, target, entry));
 }
 
-/**
- * Runs one audited call of an action: the actor is resolved before it runs, so
- * a write can record itself in its transaction without waiting on the
- * `identity` hook; a plain action is recorded after it succeeded, in a statement
- * of its own, unless it recorded itself with `recordAudit(…, { tx })`.
- */
+function resolveActorBeforeAction(ctx: ActionContext) {
+  return identityOf(ctx);
+}
+
+function buildRow(audit: AuditStage, ctx: ActionContext) {
+  return auditRow(ctx, audit, {
+    action: audit.action,
+    resource: audit.resource,
+  });
+}
+
+function setRecordIdOf(
+  row: Awaited<ReturnType<typeof auditRow>>,
+  audit: AuditStage,
+  input: unknown,
+  result: unknown,
+) {
+  row.recordId = recordIdText(audit.record?.({ input, result }));
+}
+
 export async function runAudited(
   audit: AuditStage,
   input: unknown,
   ctx: ActionContext,
   run: () => Promise<unknown>,
 ): Promise<unknown> {
-  await identityOf(ctx);
+  await resolveActorBeforeAction(ctx);
   const call: Call = { audit, written: false };
   const result = await calls.run(call, run);
-  if (!audit.inline && !call.written) {
+  if (!audit.recordsInOwnTransaction && !call.written) {
     let row: Awaited<ReturnType<typeof auditRow>> | undefined;
     try {
-      // The row first, so a `record` that throws still leaves the rest of it for the log.
-      row = await auditRow(ctx, audit, {
-        action: audit.action,
-        resource: audit.resource,
-      });
-      row.recordId = recordIdText(audit.record?.({ input, result }));
-      await own(ctx.db, (tx) => tx.insert(audit.table).values(row));
+      row = await buildRow(audit, ctx);
+      setRecordIdOf(row, audit, input, result);
+      await insertOutsideOtherRequestsTransactions(ctx.db, (tx) =>
+        tx.insert(audit.table).values(row),
+      );
     } catch (error) {
-      // The action's effects are done: keep its result, and log the whole row so it can be rebuilt.
       ctx.logger?.error?.(
         `audit: '${audit.action}' ran but its audit row was not written`,
         row,
@@ -266,7 +267,6 @@ export async function runAudited(
   return result;
 }
 
-/** The row of a call of `audit`'s action, from its input and result. */
 export function entryOf(
   audit: AuditStage,
   input: unknown,
@@ -279,13 +279,11 @@ export function entryOf(
   };
 }
 
-/** The audit of the current call when its write records itself, as a CRUD write or a command does. */
 export function inlineAudit(): AuditStage | undefined {
   const audit = calls.getStore()?.audit;
-  return audit?.inline ? audit : undefined;
+  return audit?.recordsInOwnTransaction ? audit : undefined;
 }
 
-/** Inserts the row of a write through its own transaction `tx`. */
 export function recordInline(
   audit: AuditStage,
   tx: unknown,
@@ -293,6 +291,10 @@ export function recordInline(
   entry: Entry,
 ): Promise<void> {
   return writeAudit(tx, ctx, audit, entry);
+}
+
+function commitsWithBrickTransaction(tx: unknown, ctx: ActionContext) {
+  return tx === ctx.db || inTransaction(tx);
 }
 
 /**
@@ -342,12 +344,12 @@ export async function recordAudit(
   const target = { service: portOf(service), table };
   const named = { ...entry, action };
   if (options.tx === undefined)
-    await own(ctx.db, (tx) => writeAudit(tx, ctx, target, named));
+    await insertOutsideOtherRequestsTransactions(ctx.db, (tx) =>
+      writeAudit(tx, ctx, target, named),
+    );
   else {
     await writeAudit(options.tx, ctx, target, named);
-    // Only a commit makes it the call's record: a rolled-back `tx` leaves the automatic row to Brick.
-    // A transaction Brick did not open (Drizzle's own) never reports its commit, so it cannot stand in for the automatic row.
-    if (call && (options.tx === ctx.db || inTransaction(options.tx)))
+    if (call && commitsWithBrickTransaction(options.tx, ctx))
       await onTransactionCommit(options.tx, () => (call.written = true));
   }
 }

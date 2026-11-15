@@ -10,7 +10,12 @@ import { toErrorResponse } from "../error-response";
 import { baseContext, markResolved, requestIds } from "../context";
 import type { ServicePort } from "../service-port";
 import { enforceRateLimits, rateLimitsOf } from "../rate-limit";
-import { auditStage, runAudited, type AuditStage } from "../audit";
+import {
+  auditStage,
+  runAudited,
+  runUnaudited,
+  type AuditStage,
+} from "../audit";
 import type { Coercion, RouteIR } from "./ir";
 
 /*
@@ -261,7 +266,6 @@ export interface Stages {
   readonly checkInput: (input: unknown) => void;
   readonly rateLimit?: (input: unknown, ctx: any) => Promise<void>;
   readonly authorize?: (params: any) => unknown;
-  /** How the call is recorded in the audit log; absent when it is not. */
   readonly audit?: AuditStage;
   readonly execute: (params: any) => unknown;
   readonly errorBuilder: unknown;
@@ -286,7 +290,9 @@ export async function runStages(
   await authorizeCall(stages.authorize, ctx, input, stages.name);
   if (!stages.audit)
     return stages.checkOutput(
-      await stages.execute({ input, ctx, error: stages.errorBuilder }),
+      await runUnaudited(() =>
+        stages.execute({ input, ctx, error: stages.errorBuilder }),
+      ),
     );
   return runAudited(stages.audit, input, ctx as ActionContext, async () =>
     stages.checkOutput(

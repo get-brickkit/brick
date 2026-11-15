@@ -5,6 +5,7 @@ import {
   brick,
   defineDatabase,
   defineService,
+  recordAudit,
   resetGlobalRegistry,
   syncSchema,
 } from "@brickkit/core";
@@ -74,7 +75,6 @@ const as = (session?: string, extra: object = {}) => ({
   ...extra,
 });
 
-/** Makes every insert into the audit table fail at COMMIT, after the insert itself succeeded. */
 function failAtCommit(sqlite: Database) {
   sqlite.run("PRAGMA foreign_keys = ON");
   sqlite.run("CREATE TABLE guard_parent (id INTEGER PRIMARY KEY)");
@@ -107,7 +107,6 @@ describe("CRUD writes are recorded", () => {
       (await call("PATCH", "/1", { data: { name: "Ada L." } })).status,
     ).toBe(200);
     expect((await call("DELETE", "/1")).status).toBe(200);
-    // Reads leave no row.
     await call("POST", "/query", {});
     await call("POST", "/count", {});
     await call("POST", "/find-one", {});
@@ -382,5 +381,53 @@ describe("a CRUD write and its row commit or roll back together", () => {
     ).rejects.toThrow();
     expect(names()).toEqual([]);
     expect(rows()).toEqual([]);
+  });
+});
+
+describe("an action that is not recorded, called inside a recorded write", () => {
+  function nested(inside: (ctx: any, made: ReturnType<typeof fixture>) => any) {
+    const holder: { made?: ReturnType<typeof fixture> } = {};
+    const made = fixture({
+      hooks: {
+        hooks: {
+          afterCreate: ({ ctx }: { ctx: any }) => inside(ctx, holder.made!),
+        },
+      },
+    });
+    holder.made = made;
+    return made;
+  }
+
+  it("a command with audit: false adds no row of its own to the outer write's row", async () => {
+    const made = nested((ctx, { quiet }: any) =>
+      quiet.run({ id: 1, name: "renamed" }, ctx),
+    );
+    const quiet = made.resource.command("quiet", {
+      access: "public",
+      audit: false,
+      input: { type: "object" } as never,
+      decide: () => ({ set: { name: "renamed" } }),
+    });
+    Object.assign(made, { quiet });
+    await made.resource.create.run({ name: "a" }, as("u1"));
+    expect(made.names()).toEqual(["renamed"]);
+    expect(made.rows().map((row) => row.action)).toEqual(["person.create"]);
+  });
+
+  it("recordAudit in a GET inside the write is not the write's record", async () => {
+    const made = nested((ctx, { peek }: any) => peek.run(undefined, ctx));
+    const peek = made.service.action({
+      name: "peek",
+      method: "GET",
+      execute: async ({ ctx }: any) => {
+        await recordAudit(ctx, { action: "peeked" });
+      },
+    });
+    Object.assign(made, { peek });
+    await made.resource.create.run({ name: "a" }, as("u1"));
+    expect(made.rows().map((row) => row.action)).toEqual([
+      "peeked",
+      "person.create",
+    ]);
   });
 });

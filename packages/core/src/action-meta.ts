@@ -46,10 +46,6 @@ export interface ActionMeta {
   resourceAction?: ResourceActionInfo;
   /** How the action is protected, when a plugin checks access inside `execute`. */
   access?: ActionAccessInfo;
-  /**
-   * Set by a plugin that records its own writes in their transaction (`"inline"`) or
-   * that never writes (`"none"`); else the action is recorded after it runs.
-   */
   audit?: "inline" | "none";
   /** The deps of the plugin install that created the action, and when they were bound. */
   deps?: { values: Readonly<Record<string, unknown>>; at: number };

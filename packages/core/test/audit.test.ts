@@ -31,7 +31,6 @@ const auditLog = auditTable("sqlite");
 
 beforeEach(resetGlobalRegistry);
 
-/** A service with a notes table; its session comes from `x-session`, and nothing in it is called `user`. */
 function fixture(
   options: {
     table?: boolean;
@@ -54,7 +53,6 @@ function fixture(
   const sqlite: Database = db.$client;
   const service = defineService(name, {
     database,
-    // `user` is what an in-process caller's envelope carries.
     ...(context && {
       context: ({ request, user }) => ({
         session: request.headers.get("x-session") ?? (user as string) ?? null,
@@ -98,7 +96,6 @@ const post = (
 const serve = (...services: Service<any, any>[]) =>
   track(brick({ services, requestLogging: false, docs: false }));
 
-/** The notes service, with a plain action that changes a note. */
 function withRename(options: Parameters<typeof fixture>[0] = {}) {
   const made = fixture(options);
   const rename = made.service.action({
@@ -201,7 +198,6 @@ describe("a plain action is recorded", () => {
       method: "GET",
       execute: () => "ok",
     });
-    // A name that looks like a read does not make a POST one.
     const getReport = service.action({
       name: "getReport",
       execute: () => "ok",
@@ -273,7 +269,6 @@ describe("a plain action is recorded", () => {
       expect(error).toHaveBeenCalledTimes(1);
       expect(String(error.mock.calls[0]![0])).toContain("rename");
 
-      // The same over HTTP: the caller still gets its 200.
       error.mockClear();
       const http = withRename({ name: "again" });
       http.sqlite.run("DROP TABLE brick_audit");
@@ -377,11 +372,9 @@ describe("a plain action is recorded", () => {
     syncSchema([auditLog], database.getDb() as any);
     const service = defineService("whoami", {
       database,
-      // The app's own user shape: no `id`, a secret, and not called `user`.
       context: () => ({ account: { sub: "s-9", pw: "hunter2", org: "o-1" } }),
       identity: ({ account }) => ({ id: account.sub, tenant: account.org }),
     });
-    // A `user` Brick might be tempted to read.
     const act = service.action({ name: "act", execute: () => "ok" });
     await act.run(undefined, {
       user: { id: "wrong", email: "wrong@x" },
@@ -399,7 +392,6 @@ describe("a plain action is recorded", () => {
   it("takes the actor from identity alone: a ctx.user is not a fallback", async () => {
     const { service, rows } = fixture({ context: false });
     const act = service.action({ name: "act", execute: () => "ok" });
-    // The hook says anonymous; the caller's `user` must not stand in.
     await act.run(undefined, { user: { id: "wrong" } } as never);
     expect(rows()).toEqual([
       expect.objectContaining({
@@ -509,7 +501,6 @@ describe("a plain action is recorded", () => {
     });
     let fail!: () => void;
     const gate = new Promise<void>((_, reject) => (fail = reject));
-    // Another request's transaction, open while the action returns, then rolled back.
     const other = runInTransaction(db, async () => gate).catch(() => {});
     await Promise.resolve();
     const running = [act, manual].map((one) => one.run(undefined, as("u1")));
@@ -669,7 +660,6 @@ describe("recordAudit", () => {
           );
           throw new Error("rolled back");
         }).catch(() => {});
-        // The action carries on, changes data anyway, and returns.
         await ctx.db.update(notes).set({ status: "refunded" });
       },
     });
@@ -699,7 +689,6 @@ describe("recordAudit", () => {
   });
 
   it("with a tx Brick did not open does not stand in for the automatic row", async () => {
-    // Drizzle's own transaction never reports its commit, so a rollback of it could otherwise leave no row.
     const made = fixture();
     const untracked = drizzle(made.sqlite);
     const act = made.service.action({
@@ -755,7 +744,6 @@ describe("recordAudit", () => {
 
   it("needs an action name where no recorded action is running, and a service with an audit table", async () => {
     const made = fixture();
-    // The error the action sees; a thrown one would reach its caller as a 500.
     const failure = (run: () => Promise<void>) =>
       run().then(
         () => "recorded",
@@ -788,6 +776,50 @@ describe("recordAudit", () => {
       await failure(() => recordAudit({} as never, { action: "x" })),
     ).toContain("audit table");
   });
+});
+
+describe("an action that is not recorded, called inside a recorded one", () => {
+  function outerAndPeek(
+    peekBody: (ctx: any) => Promise<unknown>,
+    peekMethod: "GET" | "POST" = "GET",
+  ) {
+    const made = fixture();
+    const peek = made.service.action({
+      name: "peek",
+      method: peekMethod,
+      ...(peekMethod === "POST" && { audit: false as const }),
+      execute: ({ ctx }: any) => peekBody(ctx),
+    });
+    const outer = made.service.action({
+      name: "outer",
+      execute: async ({ ctx }: any) => {
+        await peek.run(undefined, ctx);
+        return "ok";
+      },
+    });
+    return { ...made, outer };
+  }
+
+  it("cannot take the outer action's name in recordAudit", async () => {
+    const { outer, rows } = outerAndPeek((ctx) => recordAudit(ctx, {}));
+    await expect(outer.run(undefined, as("u1"))).rejects.toMatchObject({
+      code: "INTERNAL_SERVER_ERROR",
+    });
+    expect(rows()).toEqual([]);
+  });
+
+  for (const method of ["GET", "POST"] as const)
+    it(`keeps the outer action's own row when a nested ${method} commits a recordAudit row`, async () => {
+      const { outer, rows } = outerAndPeek(
+        (ctx) =>
+          runInTransaction(ctx.db, async (tx) => {
+            await recordAudit(ctx, { action: "peeked" }, { tx });
+          }),
+        method,
+      );
+      await outer.run(undefined, as("u1"));
+      expect(rows().map((row) => row.action)).toEqual(["peeked", "outer"]);
+    });
 });
 
 describe("commands are recorded in their transaction", () => {
@@ -925,7 +957,6 @@ describe("commands are recorded in their transaction", () => {
   });
 });
 
-/** Makes every insert into the audit table fail at COMMIT, after the insert itself succeeded. */
 function failAtCommit(sqlite: Database) {
   sqlite.run("PRAGMA foreign_keys = ON");
   sqlite.run("CREATE TABLE guard_parent (id INTEGER PRIMARY KEY)");
@@ -950,7 +981,6 @@ describe("when a service records, and what it costs", () => {
 
   it("records nothing, and needs no identity, in a service without the table", async () => {
     const { service, db } = fixture({ table: false, identity: false });
-    // `audit` on an action of such a service is ignored.
     const act = service.action({
       name: "act",
       audit: { resource: "note" },
@@ -1014,7 +1044,6 @@ describe("the append-only triggers in the docs", () => {
     new URL("../../../www/content/docs/(brick)/audit-log.mdx", import.meta.url),
     "utf8",
   );
-  /** The SQL block of the docs titled `title`. */
   const block = (title: string) =>
     docs.match(
       new RegExp('```sql title="' + title + '"\\n([\\s\\S]*?)```'),
@@ -1039,7 +1068,6 @@ describe("the append-only triggers in the docs", () => {
     expect(() =>
       made.sqlite.run("DELETE FROM brick_audit WHERE seq = 1"),
     ).toThrow(/append-only/);
-    // A replacing insert is refused too, by seq or by id.
     for (const statement of [
       "INSERT OR REPLACE INTO brick_audit (seq, id, at, service, action) VALUES (1, 'forged', 0, 's', 'a')",
       "INSERT OR REPLACE INTO brick_audit (id, at, service, action) SELECT id, 0, 's', 'a' FROM brick_audit WHERE seq = 1",

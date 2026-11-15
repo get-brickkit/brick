@@ -307,7 +307,6 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
         const writes =
           ["create", "update", "delete"].includes(operation) ||
           operation in bulkOperations;
-        // The log is append-only: a write through the API could forge or erase rows.
         if (writes && isAuditTable(resource.table))
           throw new Error(
             `CRUD resource '${resource.name}' is over the audit table, so its writes would let callers forge or delete audit rows. Make it read-only: operations: { create: false, update: false, delete: false }`,
@@ -350,7 +349,6 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
               : perform(operation as Operation, input, ctx, error),
         });
         setActionAccess(action, crudAccess);
-        // A write is recorded in its transaction by the service's audit hook; a read is not.
         setActionAudit(action, writes ? "inline" : "none");
         api[operation] = action;
       }

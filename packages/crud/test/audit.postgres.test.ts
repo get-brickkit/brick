@@ -8,11 +8,13 @@ import { suite, url } from "./postgres";
 
 const databases: { getDb(): any; close?(): void | Promise<void> }[] = [];
 const dropped: string[] = [];
+const droppedFunctions: string[] = [];
 afterAll(async () => {
+  const client = databases[0]?.getDb().$client;
   if (dropped.length)
-    await databases[0]!
-      .getDb()
-      .$client.unsafe(`DROP TABLE IF EXISTS ${dropped.join(", ")} CASCADE`);
+    await client.unsafe(`DROP TABLE IF EXISTS ${dropped.join(", ")} CASCADE`);
+  for (const fn of droppedFunctions)
+    await client.unsafe(`DROP FUNCTION IF EXISTS ${fn} CASCADE`);
   await Promise.all(databases.map((database) => database.close?.()));
 });
 
@@ -117,6 +119,7 @@ suite("CRUD writes are recorded on Postgres", () => {
       CREATE FUNCTION ${guard}_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO ${guard} VALUES (999); RETURN NEW; END $$;
       CREATE TRIGGER ${guard}_trg AFTER INSERT ON ${auditName} FOR EACH ROW EXECUTE FUNCTION ${guard}_fn();`);
     dropped.push(`${guard}, ${guard}_parent`);
+    droppedFunctions.push(`${guard}_fn()`);
     await expect(
       resource.create.run({ name: "a" }, as("u1")),
     ).rejects.toThrow();
@@ -128,7 +131,6 @@ suite("CRUD writes are recorded on Postgres", () => {
     ).rejects.toThrow();
     expect(await names()).toEqual([]);
     expect(await rows()).toEqual([]);
-    await db.$client.unsafe(`DROP FUNCTION ${guard}_fn() CASCADE`);
   });
 
   it("keeps no row of a bulk write that fails on a later item, nor the earlier items", async () => {

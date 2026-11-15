@@ -142,7 +142,6 @@ suite("audit log on Postgres", () => {
       }),
     ]);
 
-    // The write fails at COMMIT, after the audit insert.
     const g = `guard_${made.suffix}`;
     await made.sql(`
       CREATE TABLE ${g}_parent (id int PRIMARY KEY);
@@ -186,7 +185,6 @@ suite("audit log on Postgres", () => {
     expect(await made.rows()).toEqual([]);
     expect(await made.status()).toBe("paid");
     await make(false).run(undefined, as("u1"));
-    // One row, the explicit one: the automatic row was suppressed.
     expect(await made.rows()).toEqual([
       expect.objectContaining({ action: "refund", meta: { why: "x" } }),
     ]);
@@ -278,13 +276,11 @@ suite("audit log on Postgres", () => {
     };
     const ctx = { logger } as never;
 
-    // INSERT and SELECT alone: the plain action succeeds, and its row is lost.
     await made.sql(`GRANT INSERT, SELECT ON ${made.auditName} TO ${role}`);
     expect(await act.run(undefined, ctx)).toBe("ok");
     expect(errors).toHaveLength(1);
     expect(await made.rows()).toEqual([]);
 
-    // Exactly the grants of the docs: it records.
     await made.sql(
       grants!
         .replaceAll("brick_audit", made.auditName)

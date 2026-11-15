@@ -24,7 +24,6 @@ export interface ServicePort<
   setRecorder(recorder: ServiceEvents | undefined): void;
   getOutbox(): OutboxTable | undefined;
   getScheduleTable(): ScheduleTable | undefined;
-  /** The audit table of the service's database, if it holds one. */
   getAuditTable(): AuditTable | undefined;
   /** @throws When the event is not in the catalog or its payload does not match. */
   checkEvent(name: string, payload: unknown): void;

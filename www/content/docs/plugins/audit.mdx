@@ -26,7 +26,7 @@ export const history = definePlugin({
         .primaryKey()
         .$defaultFn(() => crypto.randomUUID()),
       recordId: text("record_id").notNull(),
-      changes: json("changes").notNull(), // the fields the update wrote
+      changes: json("changes").notNull(), // the fields as this hook saw them
       traceId: text("trace_id").notNull(),
       at: timestamp("at")
         .notNull()
@@ -37,9 +37,11 @@ export const history = definePlugin({
   resource: ({ tables, hooks }) => {
     // Inside the write's transaction: the row commits or rolls back with it.
     hooks.beforeUpdate(async ({ id, data, ctx, tx }) => {
+      // A copy: `data` is what the update writes, so deleting from it would drop the field from the write.
+      const { password: _password, ...changes } = data;
       await tx.insert(tables.history).values({
         recordId: String(id),
-        changes: data,
+        changes,
         traceId: ctx.traceId,
       });
     });
@@ -79,7 +81,8 @@ The audit log says who and when; the history says what. Join them on the trace a
 ```ts
 const changes = await db
   .select({
-    at: auditLog.at,
+    id: account.history.id,
+    at: account.history.at,
     actor: auditLog.actorId,
     changes: account.history.changes,
   })
@@ -91,12 +94,16 @@ const changes = await db
       eq(auditLog.recordId, account.history.recordId),
     ),
   )
-  .where(eq(auditLog.action, "account.update"));
+  .where(eq(auditLog.action, "account.update"))
+  .orderBy(account.history.at);
 ```
+
+One trace can update the same record more than once, for example a `bulkUpdate` with the same id twice. Each audit row of the record then matches each of its history rows, so the join repeats every change. Keep one row per history `id`, and order by the history row's own `at`.
 
 ## Considerations
 
 - **Atomic writes**: the hook runs inside the write's transaction and writes through `tx`, so a history row exists exactly when its write committed. A hook that throws rolls the write back. Side effects outside the database belong in `hooks.afterCommit`.
-- **The values are data**: they can include anything the update wrote. Do not copy passwords, payment details or personal data into the table, and give it the access rules of the table it describes. Strip such fields in the hook before inserting.
+- **The values are data**: they can include anything the update wrote. Do not copy passwords, payment details or personal data into the table, and give it the access rules of the table it describes. Leave such fields out of the copy you insert, as the example does with `password`; never delete them from `data`, which is what the update writes.
+- **When it looks**: the row holds `data` as it stood when this hook ran. Hooks that run after it (plugins installed later, hooks of the service) can still add fields to the write, and the row does not show them. Install `history()` after the plugins that change `data`; hooks of the service always run after those of the resource.
 - **Reading it**: expose `history` through a separate resource with restricted access, not through the resource it describes.
 - **Append-only**: the [audit log's triggers](/docs/audit-log#making-it-append-only) work on this table too, with its name in place of `brick_audit`.

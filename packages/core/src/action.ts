@@ -16,6 +16,7 @@ import { baseContext } from "./context";
 import { invalid, runStages, type Stages } from "./compiler/runtime";
 import { enforceRateLimits, rateLimitsOf } from "./rate-limit";
 import { auditStage, type AuditStage, type AuditTable } from "./audit";
+import type { ServicePort } from "./service-port";
 
 /**
  * The `error` helpers an action receives: one function per error code that
@@ -198,9 +199,7 @@ export function defineAction(config: any): any {
     },
   };
 
-  let audited:
-    | { service?: unknown; table?: AuditTable; stage?: AuditStage }
-    | undefined;
+  const auditStageOf = memoizedPerAuditTable(actionFn);
   actionFn.execute = async (params: { input?: any; ctx?: any }) => {
     const meta = actionMeta(actionFn);
     // The registered service resolves the context once per request, and
@@ -209,15 +208,7 @@ export function defineAction(config: any): any {
       ? await meta.service.resolveContext(params?.ctx, meta.deps?.values)
       : { ...baseContext(params?.ctx ?? {}), ...params?.ctx };
     try {
-      // Worked out once per audit table: a service without one pays a field read.
-      const table = meta.service?.getAuditTable();
-      if (table !== audited?.table || meta.service !== audited?.service)
-        audited = {
-          service: meta.service,
-          table,
-          stage: meta.service && auditStage(meta.service, actionFn),
-        };
-      const audit = audited?.stage;
+      const audit = auditStageOf(meta.service);
       return await runStages(
         audit ? { ...stages, audit } : stages,
         params?.input,
@@ -229,4 +220,18 @@ export function defineAction(config: any): any {
   };
 
   return actionFn;
+}
+
+function memoizedPerAuditTable(action: Action<any, any, any, any>) {
+  let memo:
+    | { service?: unknown; table?: AuditTable; stage?: AuditStage }
+    | undefined;
+  return (service: ServicePort<any, any> | undefined) => {
+    const table = service?.getAuditTable();
+    if (memo && table === memo.table && service === memo.service)
+      return memo.stage;
+    const stage = service && auditStage(service, action);
+    memo = { service, table, stage };
+    return stage;
+  };
 }

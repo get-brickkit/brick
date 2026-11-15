@@ -11,7 +11,6 @@ export const refund = shop.action({
   output,
   audit: {
     resource: "order",
-    // Typed from the action: the validated input and the result.
     record: ({ input, result }) => {
       const done: boolean = result.refunded;
       return done ? input.orderId : undefined;
@@ -25,21 +24,21 @@ shop.action({ name: "search", method: "POST", audit: false, execute: () => 1 });
 shop.action({
   name: "a",
   input,
-  // @ts-expect-error not a field of the input
+  // @ts-expect-error
   audit: { record: ({ input }) => input.missing },
   execute: () => 1,
 });
 
 shop.action({
   name: "b",
-  // @ts-expect-error a record id is a string or a number
+  // @ts-expect-error
   audit: { record: () => ({}) },
   execute: () => 1,
 });
 
 shop.action({
   name: "c",
-  // @ts-expect-error only `false` or an object
+  // @ts-expect-error
   audit: true,
   execute: () => 1,
 });
@@ -49,7 +48,6 @@ const order = shop.resource({ name: "order", table: orders });
 order.command("ship", {
   access: "public",
   input: t.Object({ carrier: t.String() }),
-  // The command's `id` joins its input.
   audit: { record: ({ input }) => `${input.id}/${input.carrier}` },
   decide: () => ({}),
 });

@@ -90,7 +90,6 @@ export function resolvedDeps(
   return marked?.[RESOLVED] === service ? marked[OWN_DEPS] : undefined;
 }
 
-/** The service that resolved this context, or `undefined` for one no service resolved. */
 export function serviceOf(ctx: object): Service<any, any> | undefined {
   return (ctx as Record<PropertyKey, any>)[RESOLVED];
 }

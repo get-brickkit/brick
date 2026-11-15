@@ -105,7 +105,6 @@ export function getActionRoute(
   return actionRoute(action, action.serviceName ?? "", prefix);
 }
 
-/** The HTTP method an action's route gets: a plugin's, else its own, else POST. */
 export function actionMethod(action: Action<any, any, any, any>): HttpMethod {
   return actionMeta(action).route?.method ?? action.config.method ?? "POST";
 }
