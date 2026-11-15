@@ -15,6 +15,7 @@ import { actionMeta } from "./action-meta";
 import { baseContext } from "./context";
 import { invalid, runStages, type Stages } from "./compiler/runtime";
 import { enforceRateLimits, rateLimitsOf } from "./rate-limit";
+import { sensitivity, withRedaction } from "./sensitive";
 
 /**
  * The `error` helpers an action receives: one function per error code that
@@ -195,9 +196,10 @@ export function defineAction(config: any): any {
         throw invalid(config.name, "output", checked.errors);
       return result;
     },
+    sensitive: sensitivity(config),
   };
 
-  actionFn.execute = async (params: { input?: any; ctx?: any }) => {
+  const run = async (params: { input?: any; ctx?: any }) => {
     const meta = actionMeta(actionFn);
     // The registered service resolves the context once per request, and
     // recognizes one it already resolved.
@@ -210,6 +212,9 @@ export function defineAction(config: any): any {
       throw normalizeActionError(err, ctx);
     }
   };
+  actionFn.execute = stages.sensitive
+    ? (params: { input?: any; ctx?: any }) => withRedaction(() => run(params))
+    : run;
 
   return actionFn;
 }
