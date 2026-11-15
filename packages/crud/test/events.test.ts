@@ -143,6 +143,38 @@ describe("sensitive fields", () => {
     await app!.events!.drain();
     expect(seen[0]!.payload).toEqual({ id: 1, row: { id: 1, name: "Ada" } });
   });
+  it("runs listeners outside the emitting call's redaction set", async () => {
+    const database = defineDatabase({ tables: { people, outbox } });
+    const db: any = database.getDb();
+    syncSchema([people, outbox], db);
+    const service = defineService(`crud_events_${++serial}`, { database });
+    const resource: any = service
+      .resource({ name: "person", table: people, id: people.id })
+      .use(crud({ access: "public", fields: fields({ create: true }) }));
+    const store = (globalThis as Record<symbol, any>)[
+      Symbol.for("brickkit.redactions")
+    ];
+    const sets: unknown[] = [];
+    const app = brick({
+      services: [service],
+      events: {
+        listeners: [
+          defineListener({
+            name: "recorder",
+            on: ["person.create"],
+            run: () => void sets.push(store.getStore()),
+          }),
+        ],
+      },
+      requestLogging: false,
+      docs: false,
+    });
+    stoppers.push(() => app.events!.stop());
+    await resource.create.run({ name: "Ada", secret: SECRET });
+    for (let wait = 0; !sets.length && wait < 200; wait++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(sets).toEqual([undefined]);
+  });
 });
 
 describe("generated writes emit events", () => {

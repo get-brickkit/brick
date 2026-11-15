@@ -155,7 +155,7 @@ export function recordFailure(
   span.setAttributes({
     [ATTR.errorCode]: failure.code,
     [ATTR.errorStatus]: failure.status,
-    [ATTR.errorMessage]: truncate(redactText(failure.message)),
+    [ATTR.errorMessage]: truncate(failure.message),
   });
   if (failure.status >= 500) recordThrown(span, error);
 }

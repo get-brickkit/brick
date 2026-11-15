@@ -31,10 +31,12 @@ interface SensitivePath {
 
 interface Analysis {
   paths: SensitivePath[];
-  /** Pointers of the unmarked required properties, to catch a mark that another union branch requires. */
-  required: Set<string>;
+  /** The unmarked properties and array items, which a mark path that also matches them would remove. */
+  publics: { segments: Segment[]; required: boolean }[];
   /** Where a `$ref` would leave a mark half-followed or unseen. */
   ref?: string;
+  /** Where a mark sits under a keyword the walk does not follow, such as `$defs` or `not`. */
+  hidden?: string;
 }
 
 /** What the walk notes besides the paths: the `$id`s around a mark, and where each `$ref` is. */
@@ -47,19 +49,22 @@ interface Walk extends Analysis {
 const analyses = new WeakMap<object, Analysis>();
 
 function analyze(schema: unknown): Analysis {
-  if (!schema || typeof schema !== "object")
-    return { paths: [], required: new Set() };
+  if (!schema || typeof schema !== "object") return { paths: [], publics: [] };
   let analysis = analyses.get(schema);
   if (!analysis) {
     const walk: Walk = {
       paths: [],
-      required: new Set(),
+      publics: [],
       markedIds: new Set(),
       loops: new Map(),
     };
     collect(schema, [], false, [], walk);
-    analysis = { paths: walk.paths, required: walk.required };
-    if (walk.paths.length)
+    analysis = {
+      paths: walk.paths,
+      publics: walk.publics,
+      hidden: walk.hidden,
+    };
+    if (walk.paths.length || walk.hidden)
       analysis.ref =
         walk.external ??
         [...walk.markedIds].map((id) => walk.loops.get(id)).find(Boolean);
@@ -68,13 +73,23 @@ function analyze(schema: unknown): Analysis {
   return analysis;
 }
 
-/** The marked nodes of a schema, worked out once per schema object. */
+/** The marked nodes of a schema, worked out once per schema object. Every startup check reads this. */
 export function sensitivePaths(schema: unknown): SensitivePath[] {
   return analyze(schema).paths;
 }
 
-// shortcut: `$ref` is not followed: `sensitivity` throws for a mark inside a `t.Recursive`
-// or beside a `t.Ref`. Follow `$ref`/`$id` when an app needs a sensitive field there.
+/** Whether a schema node, or anything under it, is marked. */
+const holdsMark = (node: unknown, seen = new Set<unknown>()): boolean => {
+  if (!node || typeof node !== "object" || seen.has(node)) return false;
+  seen.add(node);
+  return (
+    isSensitive(node) ||
+    Object.values(node).some((child) => holdsMark(child, seen))
+  );
+};
+
+// shortcut: `$ref` is not followed: `sensitivity` throws for a mark inside a `t.Recursive`,
+// a `t.Module` or beside a `t.Ref`. Follow `$ref`/`$id` when an app needs a sensitive field there.
 function collect(
   schema: any,
   segments: Segment[],
@@ -94,6 +109,14 @@ function collect(
       walk.loops.set(schema.$ref, pointer(segments));
   }
   if (typeof schema.$id === "string") ids = [...ids, schema.$id];
+  const list = schema.type === "array" && !Array.isArray(schema.items);
+  // A mark anywhere the walk does not go is not protected, so it is refused.
+  for (const key of Object.keys(schema))
+    if (
+      !WALKED.has(key) ||
+      (key === "items" && !list && !Array.isArray(schema.items))
+    )
+      if (holdsMark(schema[key])) walk.hidden ??= pointer([...segments, key]);
   // shortcut: union branches are walked by path, so a mark in one branch removes the same path from all;
   // check which branch the value matched when a union needs the same name both secret and public.
   for (const branch of [
@@ -103,15 +126,29 @@ function collect(
   ])
     collect(branch, segments, optional, ids, walk);
   const declared = Object.keys(schema.properties ?? {});
+  const required = new Set<string>(schema.required ?? []);
+  // An object under `minProperties` can lose a property only if what it requires still meets it.
+  const removable = !(
+    schema.minProperties >
+    declared.filter(
+      (key) => required.has(key) && !isSensitive(schema.properties[key]),
+    ).length
+  );
   for (const key of declared) {
     const child = schema.properties[key];
-    const required = !!schema.required?.includes(key);
-    if (required && !isSensitive(child))
-      walk.required.add(pointer([...segments, key]));
-    collect(child, [...segments, key], !required, ids, walk);
+    if (!isSensitive(child))
+      walk.publics.push({
+        segments: [...segments, key],
+        required: required.has(key),
+      });
+    collect(
+      child,
+      [...segments, key],
+      removable && !required.has(key),
+      ids,
+      walk,
+    );
   }
-  // A record under `minProperties` cannot lose a value and stay valid.
-  const removable = !(schema.minProperties > 0);
   for (const child of Object.values(schema.patternProperties ?? {}))
     collect(child, [...segments, null], removable, ids, walk);
   if (
@@ -125,17 +162,60 @@ function collect(
       ids,
       walk,
     );
-  if (Array.isArray(schema.items))
-    schema.items.forEach((child: unknown, index: number) =>
-      collect(child, [...segments, String(index)], false, ids, walk),
-    );
-  else if (schema.type === "array")
-    collect(schema.items, [...segments, null], false, ids, walk);
+  const before = walk.paths.length;
+  const items: [unknown, Segment][] = Array.isArray(schema.items)
+    ? schema.items.map((child: unknown, index: number) => [
+        child,
+        String(index),
+      ])
+    : list
+      ? [[schema.items, null]]
+      : [];
+  for (const [child, segment] of items) {
+    if (!isSensitive(child))
+      walk.publics.push({ segments: [...segments, segment], required: true });
+    collect(child, [...segments, segment], false, ids, walk);
+  }
+  // Two items that differ only in a removed field would be equal.
+  if (schema.uniqueItems)
+    for (const path of walk.paths.slice(before)) path.optional = false;
 }
+
+const WALKED = new Set([
+  "anyOf",
+  "allOf",
+  "oneOf",
+  "properties",
+  "patternProperties",
+  "additionalProperties",
+  "items",
+]);
+
+/** Whether a segment matches an object key. */
+const admits = (segment: Segment, key: string): boolean =>
+  segment === null ||
+  (typeof segment === "string"
+    ? segment === key
+    : !segment.except.includes(key));
+
+/** Whether two segments can match the same key. */
+const overlap = (a: Segment, b: Segment): boolean =>
+  typeof a === "string"
+    ? admits(b, a)
+    : typeof b === "string"
+      ? admits(a, b)
+      : true;
+
+/** Whether a value's top-level `key` is, or holds, a sensitive value. */
+export const marksKey = (schema: unknown, key: string): boolean =>
+  sensitivePaths(schema).some(
+    ({ segments: [first] }) => first === undefined || admits(first, key),
+  );
 
 /** Whether any part of a schema is marked sensitive. */
 export function hasSensitive(schema: unknown): boolean {
-  return sensitivePaths(schema).length > 0;
+  const { paths, hidden } = analyze(schema);
+  return paths.length > 0 || hidden !== undefined;
 }
 
 /** A copy of an input schema with `writeOnly` on its sensitive parts, for OpenAPI. */
@@ -159,8 +239,8 @@ const pointer = (segments: Segment[]) =>
 
 /** The JSON pointer of a schema's first sensitive mark, if it has one. */
 export function sensitivePointer(schema: unknown): string | undefined {
-  const [first] = sensitivePaths(schema);
-  return first && pointer(first.segments);
+  const { paths, hidden } = analyze(schema);
+  return paths[0] ? pointer(paths[0].segments) : hidden;
 }
 
 const escape = (key: string) => key.replaceAll("~", "~0").replaceAll("/", "~1");
@@ -253,25 +333,45 @@ export function sensitivity(
   const output = analyze(config.output);
   const inputs = input.paths;
   const outputs = output.paths;
-  if (!inputs.length && !outputs.length) return undefined;
+  if (!hasSensitive(config.input) && !hasSensitive(config.output))
+    return undefined;
   const owner = service
     ? `Service '${service}' action '${config.name}'`
     : `Action '${config.name}'`;
-  for (const [kind, { ref }] of [
+  for (const [kind, { ref, hidden }] of [
     ["input", input],
     ["output", output],
-  ] as const)
+  ] as const) {
     if (ref !== undefined)
       throw new Error(
-        `${owner}: the ${kind} schema marks a field t.Sensitive and has a $ref at '${ref}' (t.Recursive or t.Ref), which sensitive fields do not follow; move the secret out of the recursive or referenced schema`,
+        `${owner}: the ${kind} schema marks a field t.Sensitive and has a $ref at '${ref}' (t.Recursive, t.Module or t.Ref), which sensitive fields do not follow; move the secret out of the recursive or referenced schema`,
       );
+    if (hidden !== undefined)
+      throw new Error(
+        `${owner}: the ${kind} schema marks a field t.Sensitive under '${hidden}', which sensitive fields do not follow; mark it in properties, items, records or union branches`,
+      );
+  }
   const { reveal = false } = config;
   if (reveal !== true)
     for (const path of outputs) {
       const at = pointer(path.segments);
-      if (!path.optional || output.required.has(at))
+      if (!path.optional)
         throw new Error(
-          `${owner}: sensitive output field '${at}' is removed unless \`reveal\` allows it, so the schema must let it be absent: make it t.Optional in every union or intersect branch, not an array item nor a record value under minProperties (or set \`reveal: true\`)`,
+          `${owner}: sensitive output field '${at}' is removed unless \`reveal\` allows it, so the schema must let it be absent: make it t.Optional in every union or intersect branch, not an array item, a record value or a property under minProperties, nor inside a uniqueItems array (or set \`reveal: true\`)`,
+        );
+      // A public field this path also matches would be removed with it.
+      const exact = JSON.stringify(path.segments);
+      const hit = output.publics.find(
+        ({ segments, required }) =>
+          segments.length === path.segments.length &&
+          segments.every((segment, index) =>
+            overlap(segment, path.segments[index]!),
+          ) &&
+          (required || JSON.stringify(segments) !== exact),
+      );
+      if (hit)
+        throw new Error(
+          `${owner}: sensitive output field '${at}' is removed unless \`reveal\` allows it, and that path also matches the unmarked field '${pointer(hit.segments)}', which would be removed with it; give the secret a name of its own (or set \`reveal: true\`)`,
         );
     }
   const values = (value: unknown, paths: SensitivePath[]) => {
@@ -285,10 +385,10 @@ export function sensitivity(
   };
   return {
     input(input) {
-      for (const value of values(input, inputs)) redactAll(value);
+      for (const value of values(input, inputs)) redact(value);
     },
     async output(output, input, ctx) {
-      for (const value of values(output, outputs)) redactAll(value);
+      for (const value of values(output, outputs)) redact(value);
       if (reveal === true) return output;
       let result = output;
       for (const { segments } of outputs) {
@@ -312,17 +412,24 @@ export function sensitivity(
  * argument equal to it is still redacted.
  */
 const MIN_REDACTED_LENGTH = 8;
+/** A number with fewer digits is not registered: `1` or `42` would blank out counts and pages. */
+const MIN_REDACTED_DIGITS = 4;
 /**
  * The most values one set holds. A nested call joins the enclosing set, so a
  * timer started inside a sensitive call can keep adding to it; past this, the
  * set withholds whole lines rather than forget a value.
  */
-const MAX_REDACTED_VALUES = 1000;
+const MAX_REDACTED_VALUES = 10_000;
+/** How many entries of an array, `Map` or `Set` a log line's walk looks at; the formatter prints 50. */
+const MAX_WALKED_ENTRIES = 100;
 const REDACTED = "[REDACTED]";
 const WITHHELD = "[REDACTED: too many sensitive values in this call]";
 
 interface Redactions {
+  /** Each value, and its JSON-escaped form when that differs. */
   values: Set<string>;
+  /** How many values were added, counting a value and its escaped form once. */
+  count: number;
   /** The values for the text pass, longest first; dropped when a value is added. */
   sorted?: string[];
   /** Set when a value did not fit: every line is then withheld. */
@@ -334,42 +441,51 @@ const redactions = ((globalThis as Record<symbol, unknown>)[
   Symbol.for("brickkit.redactions")
 ] ??= new AsyncLocalStorage<Redactions>()) as AsyncLocalStorage<Redactions>;
 
+let warned = false;
+
 function add(set: Redactions, value: string): void {
   if (set.values.has(value)) return;
-  if (set.values.size >= MAX_REDACTED_VALUES) {
-    if (!set.full)
+  if (set.count >= MAX_REDACTED_VALUES) {
+    if (!warned)
       console.warn(
-        `[brick] A call's redaction set reached ${MAX_REDACTED_VALUES} values, so its log lines are now withheld. A timer or task started inside a call with t.Sensitive fields joins that call's set.`,
+        `[brick] A call's redaction set reached ${MAX_REDACTED_VALUES} values, so its log lines are now withheld. A timer or task started inside a call with t.Sensitive fields joins that call's set; bound an input's sensitive records and arrays with maxProperties or maxItems.`,
       );
+    warned = true;
     set.full = true;
     return;
   }
+  set.count++;
   set.values.add(value);
+  // As it appears inside a JSON or inspected string, when that differs.
+  set.values.add(JSON.stringify(value).slice(1, -1));
   set.sorted = undefined;
 }
+
+const longNumber = (value: number | bigint) =>
+  String(value).replace(/\D/g, "").length >= MIN_REDACTED_DIGITS;
 
 /**
  * Keep a secret out of what Brick logs and traces for the rest of the running
  * call: the logger, the span recorder and error responses replace it with
  * `[REDACTED]`. Call it as soon as `execute` loads a secret, before it can be
- * logged. Outside a call with `t.Sensitive` fields it does nothing.
+ * logged. It takes each string and number in the value, as a `t.Sensitive`
+ * field's value is taken: booleans, and numbers under 4 digits, are left out.
+ * Outside a call with `t.Sensitive` fields it does nothing.
  */
-export function redact(value: string): void {
+export function redact(value: unknown): void {
   const set = redactions.getStore();
-  if (!set || !value) return;
-  add(set, value);
-  // As it appears inside a JSON or inspected string, when that differs.
-  const quoted = JSON.stringify(value).slice(1, -1);
-  if (quoted !== value) add(set, quoted);
+  if (set) register(set, value, new Set());
 }
 
-/** Every string and number in a value. */
-function redactAll(value: unknown): void {
-  if (typeof value === "string") redact(value);
-  else if (typeof value === "number" || typeof value === "bigint")
-    redact(String(value));
-  else if (value && typeof value === "object")
-    for (const child of Object.values(value)) redactAll(child);
+function register(set: Redactions, value: unknown, seen: Set<object>): void {
+  if (typeof value === "string") {
+    if (value) add(set, value);
+  } else if (typeof value === "number" || typeof value === "bigint") {
+    if (longNumber(value)) add(set, String(value));
+  } else if (value && typeof value === "object" && !seen.has(value)) {
+    seen.add(value);
+    for (const child of Object.values(value)) register(set, child, seen);
+  }
 }
 
 /** Whether the running call has values to redact. */
@@ -392,55 +508,157 @@ export function redactText(text: string): string {
   return text;
 }
 
+/** A logged leaf: replaced when it equals a value at any length, else through the text pass. */
+function redactLeaf(set: Redactions, value: unknown): unknown {
+  if (typeof value === "string")
+    return set.values.has(value) ? REDACTED : redactText(value);
+  if (typeof value === "number" || typeof value === "bigint")
+    return longNumber(value) && set.values.has(String(value))
+      ? REDACTED
+      : value;
+  return value;
+}
+
 /** Deeper than `util.inspect` prints for a log line (depth 3), so every printed leaf is seen. */
 const LEAF_DEPTH = 5;
 
 /**
  * Values as they are about to be formatted, with each string or number that
  * equals a redacted value (at any length) replaced, and each string that
- * contains one passed through `redactText`. Walks plain objects, arrays, `Map`
- * and `Set`, copying only what changes; other objects are left to the text pass.
+ * contains one passed through `redactText`; keys too. It fails safe: what it
+ * does not look inside is replaced by a marker, never passed on as it is. It
+ * walks plain objects, class instances, arrays, `Map` and `Set` (their first
+ * 100 entries); an `Error` becomes its redacted stack; a getter, a cycle, an
+ * object past depth 5 and anything else (a `Buffer`, a `URL`) become markers.
+ * It never throws.
  */
 export function redactValues<T>(value: T): T {
   const set = redactions.getStore();
   if (!set || (!set.full && !set.values.size)) return value;
-  const seen = new Map<object, unknown>();
+  const walking = new Set<object>();
+  const done = new Map<object, unknown>();
   const visit = (value: any, depth: number): any => {
-    if (typeof value === "string")
-      return set.values.has(value) ? REDACTED : redactText(value);
-    if (typeof value === "number" || typeof value === "bigint")
-      return set.values.has(String(value)) ? REDACTED : value;
-    if (!value || typeof value !== "object" || depth > LEAF_DEPTH) return value;
-    if (seen.has(value)) return seen.get(value);
-    seen.set(value, value);
-    let copy: any = value;
-    if (Array.isArray(value)) {
-      value.forEach((item, index) => {
-        const next = visit(item, depth + 1);
-        if (next === item) return;
-        if (copy === value) copy = [...value];
-        copy[index] = next;
-      });
-    } else if (value instanceof Map || value instanceof Set) {
-      // A Map's entries are [key, value] arrays, walked as arrays.
-      const items = [...value];
-      const next = items.map((item) => visit(item, depth + 1));
-      if (next.some((item, index) => item !== items[index]))
-        copy = value instanceof Map ? new Map(next) : new Set(next);
-    } else {
-      const proto = Object.getPrototypeOf(value);
-      if (proto !== Object.prototype && proto !== null) return value;
-      for (const key of Object.keys(value)) {
-        const next = visit(value[key], depth + 1);
-        if (next === value[key]) continue;
-        if (copy === value) copy = Object.assign(Object.create(proto), value);
-        copy[key] = next;
-      }
+    if (typeof value === "function")
+      return Object.keys(value).length ? "[Function]" : value;
+    if (!value || typeof value !== "object") return redactLeaf(set, value);
+    if (value instanceof Date) return value;
+    if (walking.has(value)) return "[Circular]";
+    if (done.has(value)) return done.get(value);
+    if (depth > LEAF_DEPTH) return "[Object]";
+    walking.add(value);
+    let copy: unknown;
+    try {
+      copy = inside(value, depth);
+    } catch {
+      copy = "[Unreadable]";
     }
-    seen.set(value, copy);
+    walking.delete(value);
+    done.set(value, copy);
+    return copy;
+  };
+  const entries = (value: Iterable<unknown>, size: number, depth: number) => {
+    const items: unknown[] = [];
+    for (const item of value) {
+      if (items.length === MAX_WALKED_ENTRIES) break;
+      items.push(item);
+    }
+    // A Map's entries are [key, value] arrays, walked as arrays at the Map's own depth.
+    const next = items.map((item) =>
+      visit(item, value instanceof Map ? depth : depth + 1),
+    );
+    const more = size - items.length;
+    const changed = more > 0 || next.some((item, i) => item !== items[i]);
+    return { next, more, changed };
+  };
+  const inside = (value: object, depth: number): unknown => {
+    if (Array.isArray(value)) {
+      const { next, more, changed } = entries(value, value.length, depth);
+      if (more) next.push(`... ${more} more items not shown`);
+      return changed ? next : value;
+    }
+    if (value instanceof Map || value instanceof Set) {
+      const { next, more, changed } = entries(value, value.size, depth);
+      if (!changed) return value;
+      if (value instanceof Set) {
+        if (more) next.push(`... ${more} more items not shown`);
+        return new Set(next);
+      }
+      const map = new Map(next as [unknown, unknown][]);
+      if (more) map.set("...", `${more} more entries not shown`);
+      return map;
+    }
+    if (value instanceof Error)
+      return redactText(
+        String(value.stack || `${value.name}: ${value.message}`),
+      );
+    const tag = Object.prototype.toString.call(value);
+    if (tag !== "[object Object]") return `[${tag.slice(8, -1)}]`;
+    // Plain objects and class instances: own enumerable keys, getters left uncalled.
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    let changed = false;
+    const props: [PropertyKey, unknown][] = [];
+    for (const key of Reflect.ownKeys(descriptors)) {
+      const descriptor = descriptors[key as any]!;
+      if (!descriptor.enumerable) continue;
+      const name = typeof key === "string" ? redactLeaf(set, key) : key;
+      const next =
+        "value" in descriptor ? visit(descriptor.value, depth + 1) : "[Getter]";
+      if (name !== key || next !== descriptor.value) changed = true;
+      props.push([name as PropertyKey, next]);
+    }
+    if (!changed) return value;
+    // The prototype is kept, so a class instance still prints its name.
+    const copy = Object.create(Object.getPrototypeOf(value));
+    for (const [key, next] of props)
+      Object.defineProperty(copy, key, {
+        value: next,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     return copy;
   };
   return visit(value, 0);
+}
+
+/**
+ * An error's `details` with the running call's values redacted at full depth,
+ * keys included, as they will be serialized; the whole of it once the set is
+ * full. The original when nothing changes.
+ */
+export function redactDetails(details: unknown): unknown {
+  const set = redactions.getStore();
+  if (!set || details === undefined || (!set.full && !set.values.size))
+    return details;
+  if (set.full) return WITHHELD;
+  try {
+    const text = JSON.stringify(details);
+    if (text === undefined) return details;
+    const copy = JSON.parse(text, (_key, value) =>
+      value && typeof value === "object" && !Array.isArray(value)
+        ? Object.fromEntries(
+            Object.entries(value).map(([key, child]) => [
+              redactLeaf(set, key),
+              child,
+            ]),
+          )
+        : redactLeaf(set, value),
+    );
+    return JSON.stringify(copy) === text ? details : copy;
+  } catch {
+    // A cycle or a BigInt: it could not be checked.
+    return REDACTED;
+  }
+}
+
+/** Run `fn` outside any call's redaction set, so the timers it starts do not join one. */
+export const outsideRedaction = <T>(fn: () => T): T => redactions.exit(fn);
+
+/** Set a property of an error, unless it is read-only (a `DOMException`, a frozen error). */
+function assign(target: any, key: string, value: unknown): void {
+  try {
+    target[key] = value;
+  } catch {}
 }
 
 /**
@@ -451,7 +669,7 @@ export function redactValues<T>(value: T): T {
  */
 export async function withRedaction<T>(fn: () => Promise<T>): Promise<T> {
   if (redactions.getStore()) return fn();
-  const set: Redactions = { values: new Set() };
+  const set: Redactions = { values: new Set(), count: 0 };
   try {
     return await redactions.run(set, fn);
   } catch (err) {
@@ -462,9 +680,9 @@ export async function withRedaction<T>(fn: () => Promise<T>): Promise<T> {
         e instanceof Error && n < 8;
         e = e.cause, n++
       ) {
-        e.message = redactText(e.message);
-        if (e.stack) e.stack = redactText(e.stack);
-        if ("details" in e) e.details = redactValues(e.details);
+        assign(e, "message", redactText(e.message));
+        if (e.stack) assign(e, "stack", redactText(e.stack));
+        if ("details" in e) assign(e, "details", redactDetails(e.details));
       }
     });
     throw err;

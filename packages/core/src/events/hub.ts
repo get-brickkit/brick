@@ -20,6 +20,7 @@ import { DuplicateNameError, type Service } from "../types";
 import type { Schedule } from "../schedules/schedule";
 import { Scheduler, type ScheduleState } from "../schedules/scheduler";
 import type { ScheduleTable } from "../schedules/table";
+import { outsideRedaction } from "../sensitive";
 
 export function matchesEvent(pattern: string, name: string): boolean {
   if (pattern === "*") return true;
@@ -411,10 +412,12 @@ export class EventsHub {
     table: OutboxTable,
     check: (name: string, payload: unknown) => void,
   ): ServiceEvents {
-    const startAndNotify = () => {
-      this.start();
-      this.dispatchers.get(table)?.notify();
-    };
+    // Often called inside a call: its timers must not join that call's redaction set.
+    const startAndNotify = () =>
+      outsideRedaction(() => {
+        this.start();
+        this.dispatchers.get(table)?.notify();
+      });
     const insert = async (
       tx: any,
       context: { traceId?: string; source?: string },

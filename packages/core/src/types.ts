@@ -280,11 +280,6 @@ export interface ActionConfigWithAuthorize<
   TContext extends ActionContext = ActionContext,
 > extends BaseActionConfig<TInputSchema, TOutputSchema, TErrors> {
   /**
-   * `true` refuses (401) any HTTP call that did not come through the
-   * dashboard's `/app/*` proxy, so only the dashboard's pages can reach it.
-   * `ctx.dashboard` is then set.
-   */
-  /**
    * Whether this call may receive the output's `t.Sensitive` fields; by default
    * they are removed. `field` is the JSON pointer (`/items/0/token`). With
    * anything but `true`, a sensitive output field must be `t.Optional`.
@@ -293,6 +288,11 @@ export interface ActionConfigWithAuthorize<
     TInputSchema extends TSchema ? Static<TInputSchema> : any,
     TContext
   >;
+  /**
+   * `true` refuses (401) any HTTP call that did not come through the
+   * dashboard's `/app/*` proxy, so only the dashboard's pages can reach it.
+   * `ctx.dashboard` is then set.
+   */
   dashboard?: boolean;
   authorize: (params: {
     user?: TContext extends { user: infer U } ? U : any;
@@ -318,11 +318,6 @@ export interface ActionConfigWithoutAuthorize<
   TContext extends ActionContext = ActionContext,
 > extends BaseActionConfig<TInputSchema, TOutputSchema, TErrors> {
   /**
-   * `true` refuses (401) any HTTP call that did not come through the
-   * dashboard's `/app/*` proxy, so only the dashboard's pages can reach it.
-   * `ctx.dashboard` is then set.
-   */
-  /**
    * Whether this call may receive the output's `t.Sensitive` fields; by default
    * they are removed. `field` is the JSON pointer (`/items/0/token`). With
    * anything but `true`, a sensitive output field must be `t.Optional`.
@@ -331,6 +326,11 @@ export interface ActionConfigWithoutAuthorize<
     TInputSchema extends TSchema ? Static<TInputSchema> : any,
     TContext
   >;
+  /**
+   * `true` refuses (401) any HTTP call that did not come through the
+   * dashboard's `/app/*` proxy, so only the dashboard's pages can reach it.
+   * `ctx.dashboard` is then set.
+   */
   dashboard?: boolean;
   authorize?: undefined;
   execute: (params: {

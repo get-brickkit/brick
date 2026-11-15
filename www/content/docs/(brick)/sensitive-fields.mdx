@@ -55,7 +55,13 @@ keys.action({
 
 ### A sensitive output field must be optional
 
-A removed field must not break the response's schema or the typed client's types. So unless `reveal` is `true`, every sensitive output field must be `t.Optional` (or a record value). Defining the action fails for an array item, a required property, a field that is optional in one `t.Union` or `t.Intersect` branch but required and unmarked in another, and a record value under `minProperties`:
+A removed field must not break the response's schema or the typed client's types. So unless `reveal` is `true`, every sensitive output field must be `t.Optional` (or a record value). Defining the action fails for:
+
+- an array item, or a field anywhere inside the items of a `uniqueItems` array, whose items could become equal;
+- a required property;
+- a field that is optional in one `t.Union` or `t.Intersect` branch but required and unmarked in another;
+- a record value, or an optional property, of an object whose `minProperties` its required properties do not meet on their own;
+- a record value or `additionalProperties` that would also match an unmarked property of another branch, such as `t.Intersect([t.Record(t.String(), t.Sensitive(t.String())), t.Object({ id: t.String() })])`, since that public field would be removed with it.
 
 ```
 Service 'integrations' action 'getCredential': sensitive output field '/accessToken' is removed unless `reveal` allows it, so the schema must let it be absent: make it t.Optional in every union or intersect branch, not an array item nor a record value under minProperties (or set `reveal: true`)
@@ -75,14 +81,16 @@ execute: ({ input, ctx }) => {
 };
 ```
 
-An error's message and `details` are redacted in the HTTP error response, and an error that leaves an in-process or MCP call has its message, stack and `details` redacted, since whoever logs it next is outside the call. A call made in-process from inside another call adds its values to the outer call's set, so they stay redacted until the outer call ends.
+An error's message and `details` are redacted in the HTTP error response, and an error that leaves an in-process or MCP call has its message, stack and `details` redacted, since whoever logs it next is outside the call. `details` is redacted at full depth, keys included, as it will be serialized. An error whose message cannot be written, such as a `DOMException` from an aborted `fetch` or a frozen error, is passed on unchanged. A call made in-process from inside another call adds its values to the outer call's set, so they stay redacted until the outer call ends.
 
 Redaction runs in two passes:
 
-- **Values.** Before a line is formatted, the strings and numbers in its arguments, and in the plain objects, arrays, `Map`s and `Set`s inside them as deep as the line prints, are checked. One that **equals** a sensitive value is replaced at any length, so a 6-digit code or a PIN logged with `ctx.logger.info(input)` shows `[REDACTED]`. One that **contains** a sensitive value has it replaced, which covers a PEM key, a JSON string or a very long value inside an object.
+- **Values.** Before a line is formatted, the strings, numbers and keys in its arguments, and in the objects, class instances, arrays, `Map`s and `Set`s inside them as deep as the line prints, are checked. One that **equals** a sensitive value is replaced at any length, so a 6-digit code or a PIN logged with `ctx.logger.info(input)` shows `[REDACTED]`. One that **contains** a sensitive value has it replaced, which covers a PEM key, a JSON string or a very long value inside an object. What this pass does not look inside is not printed as it is: a cycle prints `[Circular]`, a getter `[Getter]`, an object deeper than five levels `[Object]`, entries of an array, `Map` or `Set` past the first 100 one `... N more items not shown`, an `Error` its redacted stack, and anything else (a `Buffer`, a typed array, a `URL`, `Headers`) its type, such as `[Uint8Array]`. These markers apply only while the call has sensitive values.
 - **Text.** The formatted line is then searched for each value, which covers interpolated strings such as `` `retrying with ${input.password}` ``. Here a value shorter than **8 characters** is not matched, since a short value such as `42` or `true` would blank out unrelated parts of every line. So log a short secret as its own value, not inside a string.
 
-A call keeps at most 1,000 values. Past that, its log lines and error messages are replaced whole with `[REDACTED: too many sensitive values in this call]` and Brick warns once, rather than drop a value and print it. A timer or task started inside a call with sensitive fields joins that call's set, so this is where such a task ends up.
+A number is registered only when it has at least 4 digits, so a sensitive `1` does not blank out every page number and count; a boolean is never redacted from logs. Both are still removed from the output.
+
+A call keeps at most 10,000 values (a value and its escaped form count once). Past that, its log lines and error messages are replaced whole with `[REDACTED: too many sensitive values in this call]`, and so is the whole of an error's `details`, rather than drop a value and print it. Brick warns once per process. A client can fill the set only through an input that marks an unbounded record or array, such as `t.Record(t.String(), t.Sensitive(t.String()))`: give such an input `maxProperties` or `maxItems`. A timer or task started inside a call with sensitive fields joins that call's set, so this is where such a task ends up. Event listeners do not: Brick starts its delivery timers outside the call, so a listener runs with no set of its own.
 
 ### Secrets that `execute` loads
 
@@ -126,9 +134,24 @@ crud({
 
 These fail when the app starts, naming the service, the action and the path:
 
-- a sensitive input field that is a path parameter (`path: "/reset/:token"`), since the request log and the trace record the path; take it in the request body. A mark on a record action's whole input covers its `id`, so it is refused too;
-- a mark inside a `t.Recursive` schema, or in a schema that has a `t.Ref`, since `$ref` is not followed. A `t.Json()` field beside a sensitive one is fine;
+- a sensitive input field that is a path parameter (`path: "/reset/:token"`), since the request log and the trace record the path; take it in the request body. This holds in every branch of a `t.Union` or `t.Intersect`, and for a record or `additionalProperties` that would match the parameter. A mark on a record action's whole input covers its `id`, so it is refused too;
+- a mark inside a `t.Recursive` schema, a `t.Module`, or in a schema that has a `t.Ref`, since `$ref` is not followed. A `t.Json()` field beside a sensitive one is fine;
+- a mark under a keyword other than `properties`, `items`, records and union or intersect branches, such as `not` or `$defs`, which the walk does not follow;
 - a mark in a socket's input or output schema, or in an event payload schema, which are not supported yet.
+
+## What is covered
+
+| Value logged or returned     | Response      | Error response                       | Logger                                                            | Span          | Dashboard     | Direct `console.log` |
+| ---------------------------- | ------------- | ------------------------------------ | ----------------------------------------------------------------- | ------------- | ------------- | -------------------- |
+| String, 8 characters or more | Removed       | Redacted, at any depth               | Redacted, also inside text                                        | Redacted      | Redacted      | Not covered          |
+| Longer than 1,000 characters | Removed       | Redacted                             | Redacted                                                          | Redacted      | Redacted      | Not covered          |
+| String under 8 characters    | Removed       | Redacted when equal, not inside text | Redacted when equal, not inside text                              | As the logger | As the logger | Not covered          |
+| Number, 4 digits or more     | Removed       | Redacted when equal                  | Redacted when equal                                               | As the logger | As the logger | Not covered          |
+| Number under 4 digits        | Removed       | Not redacted                         | Not redacted                                                      | Not redacted  | Not redacted  | Not covered          |
+| Boolean                      | Removed       | Not redacted                         | Not redacted                                                      | Not redacted  | Not redacted  | Not covered          |
+| Object                       | Removed whole | Its strings and numbers, as above    | Its strings and numbers, as above; markers for what is not walked | As the logger | As the logger | Not covered          |
+
+"When equal" means a value that is the whole string or number, such as `{ pin: "4821" }`; inside a longer string, such as `` `pin=${pin}` ``, a short value is not matched.
 
 ## Limits
 

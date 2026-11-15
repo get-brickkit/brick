@@ -433,13 +433,36 @@ it("keeps a sensitive call's dashboard log line at depth 3", async () => {
     input: t.Object({ secret: t.Sensitive(t.String()) }),
     execute: ({ ctx }) => {
       ctx.logger.info({ a: { b: { c: { d: "deepest" } } } });
+      ctx.logger.info({ a: { b: { c: { d: { e: "too deep" } } } } });
       return true;
     },
   });
   const seen = await observe(() =>
     postJson(appOf(service), "/api/deep/log", { secret: TOKEN }),
   );
-  expect(seen.spans).toContain("deepest");
+  expect(seen.spans).toContain("d: 'deepest'");
+  expect(seen.spans).toContain("d: [Object]");
+  expect(seen.spans).not.toContain("too deep");
+});
+
+it("redacts a logged JSON string of the input whose secret needs escaping", async () => {
+  const secret = `line one\nwith "quotes" and \\ back`;
+  const service = defineService("keys");
+  service.action({
+    name: "store",
+    input: t.Object({ key: t.Sensitive(t.String()) }),
+    execute: ({ input, ctx }) => {
+      ctx.logger.info(JSON.stringify(input));
+      return true;
+    },
+  });
+  const seen = await observe(() =>
+    postJson(appOf(service), "/api/keys/store", { key: secret }),
+  );
+  for (const text of [seen.console, seen.spans]) {
+    expect(text).toContain("[REDACTED]");
+    expect(text).not.toContain("quotes");
+  }
 });
 
 it("redacts an HTTP error's message and details, as in-process", async () => {
@@ -756,8 +779,9 @@ it("withholds whole lines once a set is full, and redacts a value added after a 
       ctx.logger.info("first line");
       redact("later-secret-1");
       ctx.logger.info("saw later-secret-1");
-      for (let index = 0; index < 1100; index++) redact(`bulk-secret-${index}`);
-      ctx.logger.info("saw bulk-secret-1099 and bulk-secret-5");
+      for (let index = 0; index < 10_100; index++)
+        redact(`bulk-secret-${index}`);
+      ctx.logger.info("saw bulk-secret-10099 and bulk-secret-5");
       return true;
     },
   });
@@ -776,8 +800,31 @@ it("withholds whole lines once a set is full, and redacts a value added after a 
     expect(text).toContain(
       "[REDACTED: too many sensitive values in this call]",
     );
-    expect(text).not.toContain("bulk-secret-1099");
+    expect(text).not.toContain("bulk-secret-10099");
     expect(text).not.toContain("bulk-secret-5");
+  }
+  // Two calls overflowed; the warning is printed once per process.
+  expect(seen.console.split("redaction set reached").length - 1).toBe(1);
+});
+
+it("keeps every line of a call with 6,000 values, counting a value and its escaped form once", async () => {
+  const service = defineService("bulk");
+  service.action({
+    name: "load",
+    input: t.Object({ secret: t.Sensitive(t.String()) }),
+    execute: ({ ctx }) => {
+      for (let index = 0; index < 6000; index++)
+        redact(`quoted "secret" ${index}`);
+      ctx.logger.info('saw quoted "secret" 5999 and a public line');
+      return true;
+    },
+  });
+  const seen = await observe(() =>
+    postJson(appOf(service), "/api/bulk/load", { secret: TOKEN }),
+  );
+  for (const text of [seen.console, seen.spans]) {
+    expect(text).toContain("[REDACTED] and a public line");
+    expect(text).not.toContain("too many sensitive values");
   }
 });
 
@@ -796,4 +843,349 @@ it("keeps the redaction store on globalThis, shared with another copy of core", 
   });
   await action.run({ secret: TOKEN });
   expect(values?.has(TOKEN)).toBe(true);
+});
+
+it("rejects an in-process call with the action's own error when it cannot be redacted", async () => {
+  const errors: Record<string, () => Error> = {
+    dom: () => new DOMException("The operation timed out.", "TimeoutError"),
+    frozen: () => Object.freeze(new Error("frozen")),
+    abort: () => {
+      const controller = new AbortController();
+      controller.abort();
+      return controller.signal.reason;
+    },
+  };
+  for (const [kind, make] of Object.entries(errors)) {
+    const original = make();
+    const action = defineAction({
+      name: `fail_${kind}`,
+      input: t.Object({ secret: t.Sensitive(t.String()) }),
+      execute: () => {
+        throw original;
+      },
+    });
+    const thrown: any = await action.run({ secret: TOKEN }).catch((e) => e);
+    expect(thrown).not.toBeInstanceOf(TypeError);
+    expect(thrown === original || thrown.cause === original).toBe(true);
+  }
+});
+
+it("refuses at startup a mark under a keyword the walk does not follow, in actions, sockets and events", () => {
+  const Cred = t.Object({
+    id: t.String(),
+    accessToken: t.Optional(t.Sensitive(t.String())),
+  });
+  const Mod = t.Module({ Cred, Wrap: t.Object({ cred: t.Ref("Cred") }) });
+  const service = defineService("refs");
+  for (const output of [Mod.Import("Wrap"), Mod.Import("Cred")])
+    expect(() =>
+      service.action({ name: "get", output, execute: () => ({}) as any }),
+    ).toThrow(
+      "Service 'refs' action 'get': the output schema marks a field t.Sensitive and has a $ref at '/'",
+    );
+  expect(() =>
+    service.action({
+      name: "not",
+      input: t.Object({ a: t.Not(t.Sensitive(t.String())) }),
+      execute: () => true,
+    }),
+  ).toThrow(
+    "Service 'refs' action 'not': the input schema marks a field t.Sensitive under '/a/not'",
+  );
+  expect(() =>
+    defineService("chat").socket({
+      name: "live",
+      input: {
+        say: t.Object(
+          { a: t.String() },
+          { $defs: { key: t.Sensitive(t.String()) } },
+        ),
+      },
+      output: {},
+      handlers: { say: () => {} },
+    }),
+  ).toThrow("which sockets do not support yet");
+  expect(() =>
+    defineService("hooks", { events: { rotated: Mod.Import("Wrap") } }),
+  ).toThrow("which event payloads do not support yet");
+});
+
+it("keeps a short secret out of every kind of logged object, and never throws", async () => {
+  class Cred {
+    constructor(public token: string) {}
+  }
+  const secret = "4821";
+  const service = defineService("auth");
+  service.action({
+    name: "connect",
+    input: t.Object({ secret: t.Sensitive(t.String()) }),
+    execute: ({ input, ctx }) => {
+      const s = input.secret;
+      const circular: any = { token: s, child: {} };
+      circular.child.parent = circular;
+      const ring: any = { token: s, items: [] };
+      ring.items.push(ring);
+      ctx.logger.info(circular, ring);
+      ctx.logger.info(
+        new Cred(s),
+        { cred: new Cred(s) },
+        new Set([new Cred(s)]),
+      );
+      ctx.logger.info({ [Symbol("token")]: s }, { [s]: 1 });
+      ctx.logger.info("%j", { a: { b: { c: { d: { e: { f: { g: s } } } } } } });
+      ctx.logger.info(new Map([["a", new Map([["b", new Map([["c", s]])]])]]));
+      ctx.logger.info(
+        Buffer.from(s),
+        new TextEncoder().encode(s),
+        new String(s),
+      );
+      redact(TOKEN);
+      ctx.logger.info({ err: new Error(`failed for ${TOKEN}`) });
+      ctx.logger.info({
+        get boom(): string {
+          throw new Error("getter ran");
+        },
+      });
+      return true;
+    },
+  });
+  const seen = await observe(async () => {
+    const response = await postJson(appOf(service), "/api/auth/connect", {
+      secret,
+    });
+    return response.status;
+  });
+  expect(seen.results).toEqual([200, 200]);
+  for (const text of [seen.console, seen.spans]) {
+    expect(text).not.toContain(secret);
+    expect(text).not.toContain(TOKEN);
+    expect(text).not.toContain("34 38 32 31");
+    for (const marker of [
+      "[Circular]",
+      "Cred { token: '[REDACTED]' }",
+      "[Uint8Array]",
+      "[String]",
+      "[Getter]",
+      "failed for [REDACTED]",
+      "[Object]",
+    ])
+      expect(text).toContain(marker);
+  }
+});
+
+it("walks the first 100 entries of an array, Map or Set and replaces the rest with a marker", async () => {
+  const service = defineService("bulk");
+  service.action({
+    name: "log",
+    input: t.Object({ secret: t.Sensitive(t.String()) }),
+    execute: ({ ctx }) => {
+      const rows = Array.from({ length: 150 }, (_, i) => `row-${i}`);
+      ctx.logger.info("%j", rows);
+      ctx.logger.info("%j", [...new Map(rows.map((row) => [row, 1]))].length);
+      ctx.logger.info(new Set(rows).size, new Set(rows));
+      return true;
+    },
+  });
+  const seen = await observe(() =>
+    postJson(appOf(service), "/api/bulk/log", { secret: TOKEN }),
+  );
+  expect(seen.console).toContain("... 50 more items not shown");
+  expect(seen.console).not.toContain("row-120");
+});
+
+it("refuses at startup a sensitive path parameter in a union, intersect or record input", () => {
+  const inputs = {
+    intersect: t.Intersect([
+      t.Object({ token: t.Sensitive(t.String()) }),
+      t.Object({ note: t.Optional(t.String()) }),
+    ]),
+    union: t.Union([
+      t.Object({ token: t.Sensitive(t.String()) }),
+      t.Object({ token: t.Sensitive(t.String()), y: t.String() }),
+    ]),
+    rest: t.Object({}, { additionalProperties: t.Sensitive(t.String()) }),
+    record: t.Record(t.String(), t.Sensitive(t.String())),
+  };
+  for (const [name, input] of Object.entries(inputs)) {
+    const service = defineService(`reset_${name}`);
+    service.action({
+      name: "reset",
+      path: "/reset/:token",
+      input: input as any,
+      execute: () => true,
+    });
+    expect(() =>
+      brick({ services: [service], requestLogging: false, docs: false }),
+    ).toThrow("sensitive input field '/token' is a path parameter");
+  }
+  // A wildcard that excludes the parameter's own declared name is fine.
+  const ok = defineService("reset_ok");
+  ok.action({
+    name: "reset",
+    path: "/reset/:token",
+    input: t.Object(
+      { token: t.String() },
+      { additionalProperties: t.Sensitive(t.String()) },
+    ),
+    execute: () => true,
+  });
+  expect(() =>
+    brick({ services: [ok], requestLogging: false, docs: false }),
+  ).not.toThrow();
+});
+
+it("redacts error details at full depth, in instances and keys, and withholds them when the set is full", async () => {
+  class Wrapper {
+    constructor(public token: string) {}
+  }
+  const service = defineService("fail");
+  const fail = service.action({
+    name: "fail",
+    input: t.Object({
+      secret: t.Sensitive(t.String()),
+      pin: t.Sensitive(t.Number()),
+      flood: t.Boolean(),
+    }),
+    execute: ({ input, error }) => {
+      if (input.flood)
+        for (let index = 0; index < 10_001; index++) redact(`flood-${index}`);
+      const s = input.secret;
+      throw error.BAD_REQUEST("nope", {
+        deep: { a: { b: { c: { d: { e: { f: { g: { token: s } } } } } } } },
+        instance: new Wrapper(s),
+        key: { [s]: true },
+        pin: input.pin,
+        tried: [input.pin],
+        page: 1,
+      });
+    },
+  });
+  const app = brick({
+    services: [service],
+    requestLogging: false,
+    docs: false,
+  });
+  const call = async (flood: boolean) =>
+    (
+      await postJson(app, "/api/fail/fail", {
+        secret: TOKEN,
+        pin: 482913,
+        flood,
+      })
+    ).json();
+  const body = await call(false);
+  expect(JSON.stringify(body)).not.toContain(TOKEN);
+  expect(body.details).toEqual({
+    deep: {
+      a: { b: { c: { d: { e: { f: { g: { token: "[REDACTED]" } } } } } } },
+    },
+    instance: { token: "[REDACTED]" },
+    key: { "[REDACTED]": true },
+    pin: "[REDACTED]",
+    tried: ["[REDACTED]"],
+    page: 1,
+  });
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    expect((await call(true)).details).toBe(
+      "[REDACTED: too many sensitive values in this call]",
+    );
+    const thrown: any = await fail
+      .run({ secret: TOKEN, pin: 482913, flood: true })
+      .catch((e) => e);
+    expect(thrown.details).toBe(
+      "[REDACTED: too many sensitive values in this call]",
+    );
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+it("refuses at startup an output whose stripping would break its schema or remove a public field", () => {
+  const S = () => t.Optional(t.Sensitive(t.String()));
+  const refused = {
+    unionRest: t.Union([
+      t.Object(
+        { id: t.String() },
+        { additionalProperties: t.Sensitive(t.String()) },
+      ),
+      t.Object({ n: t.Number() }),
+    ]),
+    unionRecord: t.Union([
+      t.Record(t.String(), t.Sensitive(t.String())),
+      t.Object({ n: t.Optional(t.Number()) }),
+    ]),
+    intersectRecord: t.Intersect([
+      t.Record(t.String(), t.Sensitive(t.String())),
+      t.Object({ id: t.String() }),
+    ]),
+    nestedWildcard: t.Union([
+      t.Record(t.String(), t.Object({ token: S() })),
+      t.Object({ a: t.Object({ token: t.Optional(t.String()) }) }),
+    ]),
+    arrayItems: t.Union([
+      t.Record(t.String(), t.Sensitive(t.String())),
+      t.Array(t.String()),
+    ]),
+    minProperties: t.Object({ accessToken: S() }, { minProperties: 1 }),
+    uniqueItems: t.Array(t.Object({ kind: t.String(), accessToken: S() }), {
+      uniqueItems: true,
+    }),
+    uniqueTuple: t.Tuple([t.Object({ accessToken: S() })], {
+      uniqueItems: true,
+    }),
+  };
+  for (const [name, output] of Object.entries(refused)) {
+    const service = defineService(`shape_${name}`);
+    expect(() =>
+      service.action({ name: "get", output, execute: () => ({}) as any }),
+    ).toThrow(/sensitive output field '[^']+' is removed unless `reveal`/);
+  }
+  const accepted = {
+    rest: t.Object(
+      { id: t.String() },
+      { additionalProperties: t.Sensitive(t.String()) },
+    ),
+    nullable: t.Object({
+      accessToken: t.Optional(t.Union([t.Sensitive(t.String()), t.Null()])),
+    }),
+    minPropertiesMet: t.Object(
+      { id: t.String(), accessToken: S() },
+      { minProperties: 1 },
+    ),
+    items: t.Array(t.Object({ id: t.String(), accessToken: S() })),
+  };
+  for (const [name, output] of Object.entries(accepted)) {
+    const service = defineService(`shape_ok_${name}`);
+    expect(() =>
+      service.action({ name: "get", output, execute: () => ({}) as any }),
+    ).not.toThrow();
+  }
+});
+
+it("registers what redact() is given as schema values are, and leaves booleans and short numbers in logs", async () => {
+  const service = defineService("nums");
+  service.action({
+    name: "log",
+    input: t.Object({
+      small: t.Sensitive(t.Number()),
+      flag: t.Sensitive(t.Boolean()),
+    }),
+    execute: ({ ctx }) => {
+      redact(123456789);
+      redact({ nested: ["nested-secret-1"] });
+      ctx.logger.info({ page: 1, count: "1", isAdmin: true });
+      ctx.logger.info({ id: 123456789 }, "id 2345678", "nested-secret-1");
+      return true;
+    },
+  });
+  const seen = await observe(() =>
+    postJson(appOf(service), "/api/nums/log", { small: 1, flag: true }),
+  );
+  for (const text of [seen.console, seen.spans]) {
+    expect(text).toContain("page: 1, count: '1', isAdmin: true");
+    expect(text).toContain("id: '[REDACTED]'");
+    expect(text).toContain("id 2345678");
+    expect(text).not.toContain("nested-secret-1");
+  }
 });
