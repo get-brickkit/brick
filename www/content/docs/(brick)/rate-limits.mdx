@@ -6,7 +6,7 @@ description: Refuse calls over a limit per IP, per caller or per any key you cho
 `rateLimit` on an action caps how often it runs: at most `max` calls per `windowMs` milliseconds, per key. A call over the limit is refused with `RATE_LIMITED` (HTTP 429) before `authorize` and `execute` run.
 
 ```ts title="src/services/auth/actions/login.action.ts"
-import { t } from "@brickkit/core";
+import { clientAddress, t } from "@brickkit/core";
 import { auth } from "../auth.service";
 
 export default auth.action({
@@ -15,9 +15,15 @@ export default auth.action({
   rateLimit: [
     { per: "ip", max: 20, windowMs: 60_000 },
     {
-      per: ({ input }) => input.email.toLowerCase(),
+      per: ({ input, ctx }) =>
+        `${clientAddress(ctx)} ${input.email.toLowerCase()}`,
       max: 5,
       windowMs: 15 * 60_000,
+    },
+    {
+      per: ({ input }) => input.email.toLowerCase(),
+      max: 100,
+      windowMs: 60 * 60_000,
     },
   ],
   execute: async ({ input, ctx }) => {
@@ -26,7 +32,7 @@ export default auth.action({
 });
 ```
 
-Each address may try 20 times a minute, and each email 5 times in 15 minutes, whoever sends it.
+Each address may try 20 times a minute, and 5 times in 15 minutes for one email. Each email may be tried 100 times an hour from all addresses together, which stops a slow guess spread over many addresses without letting one stranger lock its owner out; see [Choosing keys](#choosing-keys).
 
 `rateLimit` takes one limit or a list. It works on every kind of action: `service.action`, `defineAction`, `resource.action`, `resource.command` and tools.
 
@@ -48,7 +54,7 @@ An action that declares `rateLimit` on a service without one fails at startup, n
 
 | `per`                        | Counts together                                                                                                                                                                       |
 | :--------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `"ip"`                       | Calls from one client address. A call without an address (in-process, or a test through `app.handle`) skips this limit.                                                               |
+| `"ip"`                       | Calls from one client address. A call without an address (in-process without a request, or a test through `app.handle`) skips this limit.                                             |
 | `"actor"`                    | Calls from one caller, by the `id` the service's [`identity`](/docs/context) hook returns. An anonymous caller counts by IP, so the limit is never skipped where there is an address. |
 | `({ input, ctx }) => string` | Calls with the same key. `input` is validated and typed from the action's schema. Return `null` or `undefined` to skip this limit for the call.                                       |
 
@@ -69,7 +75,15 @@ export const exportContacts = crm.action({
 });
 ```
 
-Keys are opaque strings. Each action, each limit in its list and each kind of key has its own counter, so a key that contains separators or newlines never reaches another's count, and a user whose id looks like an address is not counted with that address.
+Keys are opaque strings. Each action, each tool, each limit in its list and each kind of key has its own counter, so a key that contains separators or newlines never reaches another's count, a user whose id looks like an address is not counted with that address, and a tool and an action of the same name count apart. A key longer than 128 characters is stored as its SHA-256 hash, so a client cannot fill the storage with a huge input.
+
+An address is counted in one form, whatever its spelling: an IPv4-mapped IPv6 address (`::ffff:1.2.3.4`) as its IPv4 address, and an IPv6 address by its /64, because one client is usually given a whole /64 and could otherwise pick a fresh address on every call. `127.0.0.1` and `::1` are two addresses. A value that is not an address is used as given.
+
+`clientAddress(ctx)` returns the address in that form, or `undefined` without one, for a custom key that combines it with something else, as in the login example.
+
+## Choosing keys
+
+The limit runs before `execute`, so it counts every call, not only failed ones. A key that anyone can name, such as an email, a username or a phone number, lets anyone use up its budget: five calls with someone's email from any address would refuse that person's own login until the window ends. Key a tight limit on the address together with the target (`${clientAddress(ctx)} ${email}`), and keep a looser cap on the target alone, high enough that a stranger's calls do not lock its owner out, but low enough to stop a guess spread over many addresses.
 
 ## When a call counts
 
@@ -81,7 +95,11 @@ The limit runs after input validation and before `authorize`:
 
 Each limit is a fixed window: the counter starts with the first call and resets `windowMs` later.
 
-In-process calls (`action.run`, `useService`) go through the same stage, so `per: "actor"` and custom keys count there too. An action without `rateLimit` costs nothing; an action with one always answers asynchronously.
+In-process calls (`action.run`, `useService`) go through the same stage. A call made while handling a request, from another action through `action.run(input, ctx)` or `useService`, keeps that request's client address, so `per: "ip"` and an anonymous `per: "actor"` count it as if the client had called the limited action itself: an action without a limit cannot be used to reach a limited one around it. A call with no request behind it (a script, a test) has no address, so `per: "ip"` skips it and `per: "actor"` counts it only when the identity hook returns an id. An action without `rateLimit` costs nothing; an action with one always answers asynchronously.
+
+[Tools](/docs/tools-and-mcp) called through `createMcpHandler` count the same way. A handler mounted on the app (`app.post("/mcp", ...)`) uses the app's client address and `clientIp`; a handler served on its own takes `createMcpHandler({ ..., clientIp })`.
+
+An action that a [plugin](/docs/plugins/build-plugin) adds counts in the key-value storage of the plugin's install when it has one, else in the service's.
 
 ## The response
 
@@ -100,7 +118,9 @@ Content-Type: application/json
 }
 ```
 
-`Retry-After` is in whole seconds, and at least 1. In-process, the same `ActionExecutionError` is thrown. `RATE_LIMITED` is a standard error code, so the [typed client](/docs/typed-client) knows it, and an action can refuse a call itself with `error.RATE_LIMITED(message, { retryAfterSeconds })`, which sets `Retry-After` the same way.
+`Retry-After` is in whole seconds, and at least 1. In-process, the same `ActionExecutionError` is thrown. `RATE_LIMITED` is a standard error code, so the [typed client](/docs/typed-client) knows it, and an action can refuse a call itself with `error.RATE_LIMITED(message, { retryAfterSeconds })`, which sets `Retry-After` the same way: rounded up to a whole number of at least 1, and only when `retryAfterSeconds` is a finite number.
+
+With [`cors`](/docs/reference/configuration#cors) on, allowed origins can read `Retry-After` from browser code; it is in `details.retryAfterSeconds` too.
 
 OpenAPI lists a 429 response with its `Retry-After` header on every limited action, and `introspect()` shows each limit's `max` and `windowMs`.
 
@@ -115,11 +135,15 @@ export default brick({
 });
 ```
 
-`clientIp` receives the request and the peer address (`undefined` without one), and returns the address to count by. Read only a header your proxy sets and overwrites; a header the client could set lets it pick a fresh key on every call.
+`clientIp` receives the request and the peer address (`undefined` without one), and returns the address to count by: a non-empty string, or `undefined` when there is none. Anything else, such as `null`, `""`, an object or a promise (an `async` function), fails the call with a 500 naming `clientIp`, because it would count every client in one bucket or skip the limit. Read only a header your proxy sets and overwrites; a header the client could set lets it pick a fresh key on every call.
 
 ## When Redis is down
 
-When the storage rejects with `StorageUnavailableError`, the call is neither failed nor let through unlimited: Brick counts it in the process's memory instead, and logs one warning when that starts and one when Redis is back. During an outage the limits hold per process, not across processes: with four processes, a caller can make up to four times `max` calls. The count starts over in memory when the outage starts, and continues from Redis's count when it ends.
+When the storage rejects with `StorageUnavailableError`, the call is neither failed nor let through unlimited: Brick counts it in the process's memory instead, and logs one warning when that starts and one when Redis is back. That covers a Redis that cannot be reached or stops answering, and one that is up but cannot serve, such as while it loads its data after a restart or during a failover (see [storage](/docs/storage#redis)).
+
+While counting in memory, Brick tries Redis at most once a second, without making any call wait for it. It counts there again only after Redis has answered every try for 10 seconds, so a Redis that keeps flapping stays on the memory count rather than switching back and forth. The memory counts are never reset when Redis is back: each lasts until its window ends, and is used again if Redis goes down again within it.
+
+So per window, a key passes at most `max` in each process's memory plus `max` in Redis: about twice `max` with one process, and with four processes up to five times `max`.
 
 Any other storage error fails the call with a 500.
 
@@ -155,4 +179,6 @@ With `clientIp`, `app.handle` sees the address it returns, so a test can send th
 
 ## Lint
 
-The `public-rate-limit` rule of [`brick lint`](/docs/brick-cli/lint) warns on an action, command or tool that anyone may call (no `authorize`, and no `access` or `access: "public"`) and has no `rateLimit`.
+The `public-rate-limit` rule of [`brick lint`](/docs/brick-cli/lint) warns on an action, command or tool that anyone may call (no `authorize`, no `access` or `access: "public"`, and not `dashboard: true`) and has no `rateLimit`, or an empty list. An empty `rateLimit: []` fails when the action is defined, because it limits nothing.
+
+The operations of a public [`crud()`](/docs/api-reference/crud) cannot take a `rateLimit` yet, and the rule does not see them.

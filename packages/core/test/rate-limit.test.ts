@@ -5,14 +5,19 @@ import {
   describe,
   expect,
   it,
+  setSystemTime,
   spyOn,
 } from "bun:test";
 import {
   ActionExecutionError,
   brick,
+  clientAddress,
   compileBrickApplication,
+  createMcpHandler,
+  createMcpRegistry,
   defineAction,
   defineDatabase,
+  definePlugin,
   defineService,
   defineStorage,
   memory,
@@ -116,6 +121,56 @@ function suite(name: string, driver: () => StorageDriver, skip = false) {
       const refused = await login(app);
       expect(refused.status).toBe(429);
       expect(refused.headers.get("retry-after")).toBe("60");
+    });
+
+    it("lets exactly max of many concurrent calls through", async () => {
+      const { service } = limited(
+        { per: () => "k", max: 5, windowMs: 60_000 },
+        { storage },
+      );
+      const app = brick({ services: [service], requestLogging: false });
+      const statuses = await Promise.all(
+        Array.from({ length: 40 }, () => login(app).then((r) => r.status)),
+      );
+      expect(statuses.filter((status) => status === 200)).toHaveLength(5);
+      expect(statuses.filter((status) => status === 429)).toHaveLength(35);
+    });
+
+    it("hashes a key part longer than 128 characters", async () => {
+      const raw = driver() as KeyValueDriver;
+      const keys: string[] = [];
+      const recorded = defineStorage({
+        driver: {
+          ...raw,
+          increment: (key, ttlMs) => (
+            keys.push(key),
+            raw.increment(key, ttlMs)
+          ),
+        },
+      });
+      try {
+        const { service } = limited(
+          [
+            { per: ({ input }) => input.email, max: 1, windowMs: 60_000 },
+            { per: "ip", max: 5, windowMs: 60_000 },
+          ],
+          { storage: recorded },
+        );
+        const app = brick({
+          services: [service],
+          requestLogging: false,
+          clientIp: ({ request }) => request.headers.get("x-ip") ?? undefined,
+        });
+        const huge = "a".repeat(1_000_000);
+        const via = { "x-ip": `not-an-address-${"b".repeat(1000)}` };
+        expect((await login(app, huge, via)).status).toBe(200);
+        expect((await login(app, huge, via)).status).toBe(429);
+        expect((await login(app, `${huge}b`, via)).status).toBe(200);
+        expect(keys).toHaveLength(5);
+        for (const key of keys) expect(key.length).toBeLessThan(200);
+      } finally {
+        await recorded.close();
+      }
     });
   });
 }
@@ -267,7 +322,7 @@ describe('per: "ip"', () => {
       requestLogging: false,
       clientIp: ({ request, peer }) => {
         peers.push(peer);
-        return request.headers.get("fly-client-ip");
+        return request.headers.get("fly-client-ip") ?? undefined;
       },
     });
     const via = { "fly-client-ip": "1.1.1.1" };
@@ -337,7 +392,15 @@ describe('per: "actor"', () => {
       rateLimit: { per: "actor", max: 2, windowMs: 60_000 },
       execute: () => "ok",
     });
-    brick({ services: [service], requestLogging: false });
+    service.action({
+      name: "relay",
+      execute: ({ ctx }) => exportAll.run(undefined, ctx),
+    });
+    const app = brick({
+      services: [service],
+      requestLogging: false,
+      clientIp: ({ request }) => request.headers.get("x-ip") ?? undefined,
+    });
     const ctx = {
       request: new Request("http://x", { headers: { "x-user": "u1" } }),
     };
@@ -346,7 +409,13 @@ describe('per: "actor"', () => {
     const refused = await exportAll.run(undefined, ctx).catch((error) => error);
     expect(refused).toBeInstanceOf(ActionExecutionError);
     expect(refused).toMatchObject({ code: "RATE_LIMITED", status: 429 });
-    // Anonymous and in-process: no IP, so not counted.
+    // Anonymous, in-process inside a request the app received: counted by its address.
+    const relay = () =>
+      postJson(app, "/api/crm/relay", {}, { "x-ip": "1.1.1.1" });
+    expect((await relay()).status).toBe(200);
+    expect((await relay()).status).toBe(200);
+    expect((await relay()).status).toBe(429);
+    // With no request behind it there is no address to count by.
     for (let i = 0; i < 3; i++) expect(await exportAll.run()).toBe("ok");
   });
 });
@@ -414,7 +483,7 @@ describe("rate limits at startup", () => {
 });
 
 describe("rate limits while the storage is down", () => {
-  it("counts in process memory, and warns once when it starts and once when the storage is back", async () => {
+  it("counts in process memory, keeps those counts when the storage is back, and warns once each way", async () => {
     const real = memory();
     let down = false;
     const flaky: KeyValueDriver = {
@@ -426,30 +495,84 @@ describe("rate limits while the storage is down", () => {
       },
     };
     const { service } = limited(
-      { per: () => "k", max: 2, windowMs: 60_000 },
+      { per: () => "k", max: 2, windowMs: 600_000 },
       { storage: defineStorage({ driver: flaky }) },
     );
     const app = brick({ services: [service], requestLogging: false });
     const warn = spyOn(console, "warn").mockImplementation(() => {});
+    let now = Date.now();
+    const after = (ms: number) => setSystemTime((now += ms));
+    after(0);
     try {
       expect((await login(app)).status).toBe(200);
       down = true;
-      // A fresh count in memory: two more pass, then the limit holds.
+      // Counted in memory: two more pass, then the limit holds.
       expect((await login(app)).status).toBe(200);
       expect((await login(app)).status).toBe(200);
-      expect((await login(app)).status).toBe(429);
       expect((await login(app)).status).toBe(429);
       expect(warn).toHaveBeenCalledTimes(1);
       expect(String(warn.mock.calls[0]![0])).toContain(
         "counting in this process's memory",
       );
       down = false;
-      // Back on the storage, whose count is 2 (one before, this one).
-      expect((await login(app)).status).toBe(200);
+      // Still on memory until the storage has answered for 10 s.
+      after(1_000);
+      expect((await login(app)).status).toBe(429);
+      after(5_000);
+      expect((await login(app)).status).toBe(429);
+      expect(warn).toHaveBeenCalledTimes(1);
+      after(5_000);
       expect((await login(app)).status).toBe(429);
       expect(warn).toHaveBeenCalledTimes(2);
       expect(String(warn.mock.calls[1]![0])).toContain("storage is back");
+      // A flap does not reset the memory count.
+      down = true;
+      expect((await login(app)).status).toBe(429);
+      expect(warn).toHaveBeenCalledTimes(3);
     } finally {
+      setSystemTime();
+      warn.mockRestore();
+    }
+  });
+
+  it("holds about twice max on a storage that flaps", async () => {
+    const real = memory();
+    let up = (_at: number) => true;
+    const flapping: KeyValueDriver = {
+      ...real,
+      increment: async (key, ttlMs) => {
+        if (!up(Date.now()))
+          throw new StorageUnavailableError("Storage: Redis is unreachable");
+        return real.increment(key, ttlMs);
+      },
+    };
+    const { service, action } = limited(
+      { per: () => "k", max: 5, windowMs: 3_600_000 },
+      { storage: defineStorage({ driver: flapping }) },
+    );
+    brick({ services: [service], requestLogging: false });
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const start = Date.now();
+    // Up 1 s in 3, and now and then up for 20 s.
+    up = (at) => {
+      const t = (at - start) % 60_000;
+      return t > 30_000 && t < 50_000 ? true : t % 3_000 < 1_000;
+    };
+    let passed = 0;
+    try {
+      for (let i = 0; i < 2_000; i++) {
+        setSystemTime(start + i * 100);
+        await action.run({ email: "a" }).then(
+          () => passed++,
+          (error) => expect(error.code).toBe("RATE_LIMITED"),
+        );
+      }
+      expect(passed).toBeGreaterThanOrEqual(5);
+      expect(passed).toBeLessThanOrEqual(10);
+      // One warning each way in and out of a long outage, not two per flap.
+      expect(warn.mock.calls.length).toBe(7);
+    } finally {
+      setSystemTime();
       warn.mockRestore();
     }
   });
@@ -561,5 +684,474 @@ describe("rate limits elsewhere", () => {
     } finally {
       await cleanup();
     }
+  });
+});
+
+describe("rate limits on a Redis that is down", () => {
+  const quiet = () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    return () => warn.mockRestore();
+  };
+
+  /** A server that completes the handshake, then answers every command with `reply`, or never. */
+  function fakeRedis(reply?: string) {
+    const fake = {
+      commands: 0,
+      reply,
+      server: Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(socket, data) {
+            if (data.toString().includes("HELLO"))
+              socket.write("%1\r\n$6\r\nserver\r\n$5\r\nredis\r\n");
+            else {
+              fake.commands++;
+              if (fake.reply) socket.write(`${fake.reply}\r\n`);
+            }
+          },
+        },
+      }),
+    };
+    return fake;
+  }
+
+  it("counts in memory while the real driver cannot connect", async () => {
+    const restore = quiet();
+    const storage = defineStorage({
+      driver: redis({ url: "redis://127.0.0.1:1" }),
+    });
+    try {
+      const { service } = limited(
+        { per: () => "k", max: 2, windowMs: 60_000 },
+        { storage },
+      );
+      const app = brick({ services: [service], requestLogging: false });
+      expect((await login(app)).status).toBe(200);
+      const started = performance.now();
+      expect((await login(app)).status).toBe(200);
+      expect((await login(app)).status).toBe(429);
+      expect(performance.now() - started).toBeLessThan(200);
+    } finally {
+      await storage.close();
+      restore();
+    }
+  });
+
+  it("tries a Redis that stops answering at most once a second, and no call waits for it", async () => {
+    const restore = quiet();
+    const fake = fakeRedis();
+    const storage = defineStorage({
+      driver: redis({ url: `redis://127.0.0.1:${fake.server.port}` }),
+    });
+    try {
+      const { service } = limited(
+        [
+          { per: () => "a", max: 50, windowMs: 60_000 },
+          { per: ({ input }) => input.email, max: 50, windowMs: 60_000 },
+        ],
+        { storage },
+      );
+      const app = brick({ services: [service], requestLogging: false });
+      // The first call waits for the timeout once.
+      expect((await login(app)).status).toBe(200);
+      const commands = fake.commands;
+      const started = performance.now();
+      for (let i = 0; i < 20; i++)
+        expect((await login(app, `${i}`)).status).toBe(200);
+      expect(performance.now() - started).toBeLessThan(300);
+      expect(fake.commands - commands).toBeLessThanOrEqual(1);
+    } finally {
+      await storage.close();
+      fake.server.stop(true);
+      restore();
+    }
+  });
+
+  it("treats a reply that means Redis cannot serve right now as unavailable", async () => {
+    const fake = fakeRedis();
+    const storage = defineStorage({
+      driver: redis({ url: `redis://127.0.0.1:${fake.server.port}` }),
+    });
+    try {
+      for (const code of [
+        "LOADING",
+        "READONLY",
+        "OOM",
+        "BUSY",
+        "MASTERDOWN",
+        "CLUSTERDOWN",
+        "NOREPLICAS",
+        "MISCONF",
+        "TRYAGAIN",
+      ]) {
+        fake.reply = `-${code} cannot serve`;
+        const error = await storage.increment("k", 1000).catch((e) => e);
+        expect(error).toBeInstanceOf(StorageUnavailableError);
+        expect(String(error.cause?.message)).toContain(code);
+      }
+      fake.reply = "-ERR unknown command";
+      const other = await storage.get("k").catch((e) => e);
+      expect(other).not.toBeInstanceOf(StorageUnavailableError);
+      expect(String(other.message)).toContain("ERR unknown command");
+
+      fake.reply = "-READONLY You can't write against a read only replica.";
+      const restore = quiet();
+      try {
+        const { service } = limited(
+          { per: () => "k", max: 1, windowMs: 60_000 },
+          { storage },
+        );
+        const app = brick({ services: [service], requestLogging: false });
+        expect((await login(app)).status).toBe(200);
+        expect((await login(app)).status).toBe(429);
+      } finally {
+        restore();
+      }
+    } finally {
+      await storage.close();
+      fake.server.stop(true);
+    }
+  });
+
+  it("sweeps expired counts from memory", async () => {
+    const restore = quiet();
+    const down: KeyValueDriver = {
+      ...memory(),
+      increment: async () => {
+        throw new StorageUnavailableError("Storage: Redis is unreachable");
+      },
+    };
+    const { service, action } = limited(
+      { per: ({ input }) => input.email, max: 5, windowMs: 1_000 },
+      { storage: defineStorage({ driver: down }) },
+    );
+    brick({ services: [service], requestLogging: false });
+    const start = Date.now();
+    setSystemTime(start);
+    try {
+      const pad = "x".repeat(100);
+      for (let i = 0; i < 50_000; i++)
+        await action.run({ email: `${i}${pad}` });
+      Bun.gc(true);
+      const full = process.memoryUsage().heapUsed;
+      setSystemTime(start + 5_000);
+      await action.run({ email: "late" });
+      Bun.gc(true);
+      const swept = process.memoryUsage().heapUsed;
+      expect(full - swept).toBeGreaterThan(5_000_000);
+    } finally {
+      setSystemTime();
+      restore();
+    }
+  });
+});
+
+describe("rate limits reached through another action", () => {
+  const ipFromHeader = {
+    requestLogging: false,
+    clientIp: ({ request }: { request: Request }) =>
+      request.headers.get("x-ip") ?? undefined,
+  };
+
+  it("counts a nested call and a useService call by the request's address", async () => {
+    const crm = defineService("crm", {
+      deps: { cache: cache() },
+      context: ({ request }) => ({
+        user: request?.headers.get("x-user") ?? undefined,
+      }),
+      identity: (ctx) => (ctx.user ? { id: ctx.user } : null),
+    });
+    const inner = crm.action({
+      name: "inner",
+      rateLimit: { per: "ip", max: 2, windowMs: 60_000 },
+      execute: () => "ok",
+    });
+    crm.action({
+      name: "byActor",
+      rateLimit: { per: "actor", max: 2, windowMs: 60_000 },
+      execute: () => "ok",
+    });
+    crm.action({
+      name: "outer",
+      execute: ({ ctx }) => inner.run(undefined, ctx),
+    });
+    const web = defineService("web", {});
+    web.action({
+      name: "via",
+      execute: ({ ctx }) =>
+        useService(crm, { from: "web" }).byActor(undefined, ctx),
+    });
+    const app = brick({ services: [crm, web], ...ipFromHeader });
+    const call = (path: string, ip: string, user?: string) =>
+      postJson(
+        app,
+        path,
+        {},
+        { "x-ip": ip, ...(user && { "x-user": user }) },
+      ).then((response) => response.status);
+    for (const [path, user] of [
+      ["/api/crm/outer", undefined],
+      // Signed in to web, but anonymous to crm: counted by the address.
+      ["/api/web/via", "u9"],
+    ] as const) {
+      expect(await call(path, "1.1.1.1", user)).toBe(200);
+      expect(await call(path, "1.1.1.1", user)).toBe(200);
+      expect(await call(path, "1.1.1.1", user)).toBe(429);
+      expect(await call(path, "2.2.2.2", user)).toBe(200);
+    }
+  });
+
+  it("counts MCP tool calls by the client address, mounted on the app or alone", async () => {
+    const service = defineService("s", { deps: { cache: cache() } });
+    service.tool({
+      name: "lookup",
+      rateLimit: { per: "ip", max: 2, windowMs: 60_000 },
+      execute: () => "x",
+    });
+    const registry = createMcpRegistry({ services: [service] });
+    const serverInfo = { name: "t", version: "1" };
+    const mounted = createMcpHandler({ registry, serverInfo });
+    const app = brick({ services: [service], ...ipFromHeader });
+    app.post("/mcp", ({ request }: { request: Request }) => mounted(request));
+    const alone = createMcpHandler({
+      registry,
+      serverInfo,
+      clientIp: ipFromHeader.clientIp,
+    });
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "lookup", arguments: {} },
+    });
+    const call = async (
+      handle: (request: Request) => Response | Promise<Response>,
+      ip: string,
+    ) => {
+      const response = await handle(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-ip": ip },
+          body,
+        }),
+      );
+      return ((await response.json()) as any).result.isError === true;
+    };
+    for (const [handle, ip] of [
+      [(request: Request) => app.handle(request), "1.1.1.1"],
+      [alone, "2.2.2.2"],
+    ] as const) {
+      expect(await call(handle, ip)).toBe(false);
+      expect(await call(handle, ip)).toBe(false);
+      expect(await call(handle, ip)).toBe(true);
+    }
+  });
+});
+
+describe("rate limits, other cases", () => {
+  it("refuses an empty list when the action is defined", () => {
+    expect(() =>
+      defineAction({ name: "a", rateLimit: [], execute: () => 1 }),
+    ).toThrow("Action 'a': rateLimit is an empty list, which limits nothing");
+    const service = defineService("s", { deps: { cache: cache() } });
+    expect(() =>
+      service.action({ name: "b", rateLimit: [], execute: () => 1 }),
+    ).toThrow("limits nothing");
+  });
+
+  it("counts a plugin's action in its install's storage, else in the service's", async () => {
+    const keysOf = () => {
+      const raw = memory();
+      const keys: string[] = [];
+      const storage = defineStorage({
+        driver: {
+          ...raw,
+          increment: (key, ttlMs) => (
+            keys.push(key),
+            raw.increment(key, ttlMs)
+          ),
+        },
+      });
+      return { storage, keys };
+    };
+    const limit = { per: () => "k", max: 1, windowMs: 60_000 };
+    for (const own of [false, true]) {
+      resetGlobalRegistry();
+      const host = keysOf();
+      const install = keysOf();
+      let pluginAction: any;
+      const plugin = definePlugin({
+        name: "@acme/p",
+        ...(own && { deps: { kv: null as any } }),
+        service: ({ service }: any) => {
+          pluginAction = service.action({
+            name: "pluginAct",
+            rateLimit: limit,
+            execute: () => 1,
+          });
+        },
+      } as any);
+      const service = defineService("svc", { deps: { cache: host.storage } });
+      service.use(
+        own
+          ? (plugin as any)({}, { deps: { kv: install.storage } })
+          : (plugin as any)({}),
+      );
+      brick({ services: [service], requestLogging: false });
+      expect(await pluginAction.run()).toBe(1);
+      await expect(pluginAction.run()).rejects.toMatchObject({
+        code: "RATE_LIMITED",
+      });
+      expect(install.keys).toHaveLength(own ? 2 : 0);
+      expect(host.keys).toHaveLength(own ? 0 : 2);
+    }
+  });
+
+  it("counts a tool and an action of the same name apart", async () => {
+    const service = defineService("s", { deps: { cache: cache() } });
+    const limit = { per: () => "k", max: 1, windowMs: 60_000 };
+    const action = service.action({
+      name: "same",
+      rateLimit: limit,
+      execute: () => 1,
+    });
+    const tool = service.tool({
+      name: "same",
+      rateLimit: limit,
+      execute: () => "x",
+    });
+    brick({ services: [service], requestLogging: false });
+    expect(await action.run()).toBe(1);
+    expect(await tool.run({})).toBe("x");
+    await expect(action.run()).rejects.toMatchObject({ code: "RATE_LIMITED" });
+  });
+
+  it("fails the call when clientIp returns anything but a non-empty string or undefined", async () => {
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (const value of [null, "", 42, { ip: "1.1.1.1" }]) {
+        resetGlobalRegistry();
+        const { service } = limited({ per: "ip", max: 5, windowMs: 60_000 });
+        const app = brick({
+          services: [service],
+          requestLogging: false,
+          clientIp: () => value as any,
+        });
+        expect((await login(app)).status).toBe(500);
+      }
+      resetGlobalRegistry();
+      const { service } = limited({ per: "ip", max: 5, windowMs: 60_000 });
+      const app = brick({
+        services: [service],
+        requestLogging: false,
+        clientIp: (async () => "1.1.1.1") as any,
+      });
+      expect((await login(app)).status).toBe(500);
+      expect(Bun.inspect(error.mock.calls)).toContain(
+        "clientIp must return a non-empty string, or undefined when there is no address; it returned a promise",
+      );
+      // undefined: no address, so the limit is skipped.
+      resetGlobalRegistry();
+      const skipped = limited({ per: "ip", max: 1, windowMs: 60_000 });
+      const none = brick({
+        services: [skipped.service],
+        requestLogging: false,
+        clientIp: () => undefined,
+      });
+      for (let i = 0; i < 3; i++) expect((await login(none)).status).toBe(200);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("counts every spelling of an address, an IPv6 /64 and a mapped IPv4 address as one", async () => {
+    const { service } = limited({ per: "ip", max: 1, windowMs: 60_000 });
+    const app = brick({
+      services: [service],
+      requestLogging: false,
+      clientIp: ({ request }) => request.headers.get("x-ip") ?? undefined,
+    });
+    const status = async (ip: string) =>
+      (await login(app, "a", { "x-ip": ip })).status;
+    expect(await status("2001:db8::1")).toBe(200);
+    for (const same of [
+      "2001:DB8::1",
+      "2001:db8:0:0:0:0:0:1",
+      "2001:0db8::0001",
+      " 2001:db8::1",
+      "2001:db8::ffff:2",
+    ])
+      expect(await status(same)).toBe(429);
+    expect(await status("2001:db8:0:1::1")).toBe(200);
+    expect(await status("::ffff:1.2.3.4")).toBe(200);
+    expect(await status("1.2.3.4")).toBe(429);
+    expect(await status("::ffff:102:304")).toBe(429);
+    expect(await status("127.0.0.1")).toBe(200);
+    expect(await status("::1")).toBe(200);
+    expect(await status("not an address")).toBe(200);
+    expect(await status("not an address")).toBe(429);
+  });
+
+  it("keys the documented login example so a stranger cannot lock an email out", async () => {
+    const { service } = limited([
+      {
+        per: ({ input, ctx }) => `${clientAddress(ctx)} ${input.email}`,
+        max: 2,
+        windowMs: 60_000,
+      },
+      { per: ({ input }) => input.email, max: 5, windowMs: 60_000 },
+    ]);
+    const app = brick({
+      services: [service],
+      requestLogging: false,
+      clientIp: ({ request }) => request.headers.get("x-ip") ?? undefined,
+    });
+    const from = async (ip: string) =>
+      (await login(app, "victim@x.io", { "x-ip": ip })).status;
+    expect(await from("6.6.6.6")).toBe(200);
+    expect(await from("6.6.6.6")).toBe(200);
+    expect(await from("6.6.6.6")).toBe(429);
+    expect(await from("1.1.1.1")).toBe(200);
+  });
+
+  it("sends Retry-After from an app's own RATE_LIMITED only as a whole number of at least 1", async () => {
+    const service = defineService("s");
+    service.action({
+      name: "own",
+      input: t.Object({ v: t.Any() }),
+      execute: ({ input, error }) =>
+        error.RATE_LIMITED("slow down", { retryAfterSeconds: input.v }),
+    });
+    const app = brick({ services: [service], requestLogging: false });
+    for (const [v, header] of [
+      [0.5, "1"],
+      [-3, "1"],
+      [0, "1"],
+      [2.1, "3"],
+      [1e21, "1000000000000000000000"],
+      ["7", null],
+      [null, null],
+    ] as const) {
+      const response = await postJson(app, "/api/s/own", { v });
+      expect(response.status).toBe(429);
+      expect(response.headers.get("retry-after")).toBe(header);
+    }
+  });
+
+  it("lets browser code read Retry-After when CORS is on", async () => {
+    const { service } = limited({ per: () => "k", max: 1, windowMs: 60_000 });
+    const app = brick({
+      services: [service],
+      requestLogging: false,
+      cors: "https://app.example.com",
+    });
+    const origin = { origin: "https://app.example.com" };
+    await login(app, "a", origin);
+    const refused = await login(app, "a", origin);
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get("access-control-expose-headers")).toBe(
+      "Retry-After",
+    );
   });
 });

@@ -390,7 +390,7 @@ export class ServiceImpl<
           hasScope: access.hasScope,
           accessPolicy: access.policy,
           errors: act.config.errors,
-          ...(act.config.rateLimit && {
+          ...(rateLimitsOf(act.config) && {
             rateLimit: rateLimitsOf(act.config)!.map(({ max, windowMs }) => ({
               max,
               windowMs,

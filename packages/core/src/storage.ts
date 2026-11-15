@@ -200,6 +200,8 @@ return {n, t}`;
 const PUT_IF_ABSENT = `if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'PX', ARGV[2]) then return {1, ARGV[1]} end
 return {0, redis.call('GET', KEYS[1])}`;
 const TIMED_OUT = Symbol("timed out");
+const UNAVAILABLE_REPLY =
+  /^(LOADING|READONLY|OOM|BUSY|MASTERDOWN|CLUSTERDOWN|NOREPLICAS|MISCONF|TRYAGAIN)\b/;
 
 /**
  * Key-value storage in Redis, through Bun's built-in client. Connects on first
@@ -249,7 +251,15 @@ export function redis(options: RedisStorageOptions = {}): KeyValueDriver {
           `Storage: Redis did not answer within ${REDIS_WAIT_MS} ms`,
         );
       }
-      if (client.connected) throw error;
+      if (client.connected) {
+        // Replies that mean Redis cannot serve right now (restart, failover, out of memory, a busy script).
+        if (UNAVAILABLE_REPLY.test(String((error as Error)?.message)))
+          throw new StorageUnavailableError(
+            `Storage: Redis cannot serve the command right now (${(error as Error).message})`,
+            { cause: error },
+          );
+        throw error;
+      }
       throw new StorageUnavailableError(
         "Storage: the Redis connection was lost",
         { cause: error },

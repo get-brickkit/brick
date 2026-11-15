@@ -45,7 +45,7 @@ import { corsHook, type CorsOptions } from "./cors";
 import { useStorages } from "./storage";
 import { portOf } from "./service-port";
 import { bodyLimitParser } from "./compiler/runtime";
-import { APP_CLIENT_IP, type ClientIp } from "./rate-limit";
+import { markAddressSource, type ClientIp } from "./rate-limit";
 
 export interface CreateServerOptions {
   port?: number;
@@ -189,9 +189,17 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     services.flatMap((service) => installedPlugins(service)),
     options.plugins ?? [],
   );
+  // Every request knows where its client address comes from, for rate limits reached by any route.
+  const addressSource = {
+    clientIp: options.clientIp,
+    server: () => app.server,
+  };
   // CORS first, so preflights are answered and its headers reach responses
   // from middleware, which skips the later lifecycle hooks.
-  app.onRequest(({ request }) => markDashboardArrival(request));
+  app.onRequest(({ request }) => {
+    markDashboardArrival(request);
+    markAddressSource(request, addressSource);
+  });
   if (options.cors) app.onRequest(corsHook(options.cors));
   for (const handler of plugins.middleware) app.onRequest(handler);
 
@@ -406,19 +414,8 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     );
   }
   const mountedRoutes: RouteIR[] = [];
-  const { clientIp } = options;
   for (const route of compilation.routes) {
-    // Only a rate-limited route reads the client address.
-    const handler =
-      clientIp &&
-      portOf(byName.get(route.ir.service) as Service)?.getAction(
-        route.ir.action,
-      )?.config.rateLimit
-        ? (context: any) => {
-            context[APP_CLIENT_IP] = clientIp;
-            return route.handler(context);
-          }
-        : route.handler;
+    const { handler } = route;
     const invoke = (context: any) => {
       const result = telemetry
         ? withSpan(

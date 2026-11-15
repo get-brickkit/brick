@@ -20,7 +20,7 @@ import { enforceRateLimits, rateLimitsOf } from "./rate-limit";
  * The `error` helpers an action receives: one function per error code that
  * throws an `ActionExecutionError` with that code and status. The standard HTTP
  * codes (`BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`,
- * `INTERNAL_SERVER_ERROR`) are always there; the action's own `errors` add to
+ * `RATE_LIMITED`, `INTERNAL_SERVER_ERROR`) are always there; the action's own `errors` add to
  * them or replace one.
  *
  * @param errorsDef - The action's `errors`: for each code, its `message` and
@@ -179,6 +179,7 @@ export function defineAction(config: any): any {
       ((input, ctx) =>
         enforceRateLimits(
           actionMeta(actionFn).service,
+          (actionFn as { kind?: string }).kind === "tool" ? "tool" : "action",
           config.name,
           limits,
           input,

@@ -405,13 +405,13 @@ const CASES: Record<string, Case[]> = {
   "public-rate-limit": [
     {
       file: "src/a.ts",
-      code: `s.action({ name: "a", authorize: () => true });\ns.action({ name: "b", rateLimit: { per: "ip", max: 5, windowMs: 60_000 } });\nr.action({ name: "c", record: true, access: { scope } });\nr.command("d", { access: "public", rateLimit: [] });\ns.tool({ name: "e", authorize: () => true });\n`,
+      code: `s.action({ name: "a", authorize: () => true });\ns.action({ name: "b", rateLimit: { per: "ip", max: 5, windowMs: 60_000 } });\nr.action({ name: "c", record: true, access: { scope } });\nr.command("d", { access: "public", rateLimit: [{ per: "ip", max: 5, windowMs: 60_000 }] });\ns.tool({ name: "e", authorize: () => true });\ns.action({ name: "f", dashboard: true });\n`,
       errors: 0,
     },
     {
       file: "src/b.ts",
-      code: `s.action({ name: "a" });\ns.action({ name: "b", access: "public" });\nr.command("d", { access: "public" });\ns.tool({ name: "e" });\n`,
-      errors: 4,
+      code: `s.action({ name: "a" });\ns.action({ name: "b", access: "public" });\nr.command("d", { access: "public" });\ns.tool({ name: "e" });\ns.action({ name: "f", rateLimit: [] });\ns.action({ name: "g", dashboard: false });\n`,
+      errors: 6,
     },
   ],
   "socket-authorize": [

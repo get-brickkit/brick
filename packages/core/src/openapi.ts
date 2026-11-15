@@ -7,6 +7,7 @@ import {
 } from "./routes";
 import { analyzeDeclaredApplication } from "./compiler/ir";
 import { getActionAccess } from "./access";
+import { rateLimitsOf } from "./rate-limit";
 import { fileFields } from "./typebox";
 import { getGlobalRegistry } from "./registry";
 import type { Service, ActionErrorDefinition } from "./types";
@@ -219,7 +220,7 @@ export function generateOpenApiSpec(
       }
       if ((action.config as { dashboard?: boolean }).dashboard === true)
         addError("UNAUTHORIZED", 401, "Only for the dashboard");
-      if (action.config.rateLimit) {
+      if (rateLimitsOf(action.config)) {
         addError(
           "RATE_LIMITED",
           429,

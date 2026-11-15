@@ -603,10 +603,18 @@ export const checkRules: Record<string, Rule> = {
           const definition = definitionOf(node);
           if (!definition || !HANDLERS.includes(definition.kind)) return;
           const access = getProperty(definition.config, "access")?.value;
+          // A dashboard: true action is reachable only through the dashboard, so it is not public.
           const isPublic =
             !getProperty(definition.config, "authorize") &&
+            getProperty(definition.config, "dashboard")?.value?.value !==
+              true &&
             (!access || stringValue(access) === "public");
-          if (isPublic && !getProperty(definition.config, "rateLimit"))
+          const limit = getProperty(definition.config, "rateLimit")?.value;
+          // An empty list limits nothing.
+          const limited =
+            limit &&
+            !(limit.type === "ArrayExpression" && limit.elements.length === 0);
+          if (isPublic && !limited)
             context.report({
               node: definition.nameNode ?? node,
               message: `Anyone can call this ${definition.kind} as often as they like; add rateLimit: { per: "ip", max, windowMs }, or authorize.`,

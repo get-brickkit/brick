@@ -5,6 +5,7 @@ import {
   type Tool,
   type ToolAnnotations,
 } from "./types";
+import { withClientIp, type ClientIp } from "./rate-limit";
 
 export interface McpToolDefinition {
   name: string;
@@ -97,6 +98,12 @@ export interface McpHandlerOptions {
   serverInfo: { name: string; version: string; title?: string };
   /** Versions supported by this transport, newest first. */
   protocolVersions?: readonly string[];
+  /**
+   * Where the client address is, for a tool's `rateLimit: { per: "ip" }`, as
+   * `brick({ clientIp })`. Mounted on a Brick app, the handler already uses
+   * the app's; this one replaces it.
+   */
+  clientIp?: ClientIp;
 }
 
 function result(id: unknown, value: unknown) {
@@ -120,6 +127,7 @@ export function createMcpHandler(options: McpHandlerOptions) {
   ): Promise<Response> => {
     if (request.method !== "POST")
       return new Response(null, { status: 405, headers: { Allow: "POST" } });
+    if (options.clientIp) withClientIp(request, options.clientIp);
     let body: unknown;
     try {
       body = await request.json();

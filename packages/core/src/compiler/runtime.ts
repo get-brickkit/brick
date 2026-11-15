@@ -9,13 +9,7 @@ import {
 import { toErrorResponse } from "../error-response";
 import { baseContext, markResolved, requestIds } from "../context";
 import type { ServicePort } from "../service-port";
-import {
-  APP_CLIENT_IP,
-  CLIENT_IP,
-  enforceRateLimits,
-  rateLimitsOf,
-  type ClientIp,
-} from "../rate-limit";
+import { enforceRateLimits, rateLimitsOf } from "../rate-limit";
 import type { Coercion, RouteIR } from "./ir";
 
 /*
@@ -304,8 +298,10 @@ function mapError(
   const retry = (
     response.details as { retryAfterSeconds?: unknown } | undefined
   )?.retryAfterSeconds;
-  if (response.status === 429 && typeof retry === "number")
-    set.headers["retry-after"] = String(retry);
+  if (response.status === 429 && Number.isFinite(retry))
+    set.headers["retry-after"] = String(
+      BigInt(Math.max(1, Math.ceil(retry as number))),
+    );
   return response;
 }
 
@@ -333,15 +329,6 @@ function requestContext(
   return ctx as ActionContext & { requestId: string };
 }
 
-/** The client address of a request: `brick({ clientIp })` when the app set it on the route's context, else the socket peer. */
-function clientIpOf(context: any): string | undefined {
-  const request: Request = context.request;
-  const peer: string | undefined =
-    context.server?.requestIP(request)?.address ?? undefined;
-  const resolve: ClientIp | undefined = context[APP_CLIENT_IP];
-  return (resolve ? resolve({ request, peer }) : peer) ?? undefined;
-}
-
 /** The HTTP handler of one route: the pipeline's stages, synchronous when no stage needs to wait. */
 export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
   const {
@@ -365,7 +352,16 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
     rateLimit:
       limits &&
       ((input, ctx) =>
-        enforceRateLimits(plan.service, name, limits, input, ctx)),
+        enforceRateLimits(
+          plan.service,
+          (plan.action as { kind?: string }).kind === "tool"
+            ? "tool"
+            : "action",
+          name,
+          limits,
+          input,
+          ctx,
+        )),
     authorize,
     execute,
     errorBuilder,
@@ -377,7 +373,6 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
   if (contextHook || authorize || stages.dashboardOnly || limits) {
     return async function brickAction(context) {
       const ctx = requestContext(plan, context);
-      if (limits) (ctx as any)[CLIENT_IP] = () => clientIpOf(context);
       try {
         const input = readInput(route, context);
         if (contextHook) {
