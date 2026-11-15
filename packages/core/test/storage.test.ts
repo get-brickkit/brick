@@ -345,6 +345,23 @@ describe("redis driver, failing", () => {
   });
 });
 
+describe.skipIf(!url)("redis driver, increment script", () => {
+  it("passes on an INCR error that does not mean 'not a counter'", async () => {
+    // Redis refuses the INCR inside the script, as it does on a read-only replica or out of memory.
+    const storage = defineStorage({ driver: redis({ url }) });
+    const k = `overflow:${crypto.randomUUID()}`;
+    try {
+      await storage.put(k, "9223372036854775807", 5000);
+      const error = await storage.increment(k, 5000).catch((e) => e);
+      expect(String(error.message)).toContain("overflow");
+      expect(String(error.message)).not.toContain("does not hold a counter");
+    } finally {
+      await storage.delete(k);
+      await storage.close();
+    }
+  });
+});
+
 describe.skipIf(!url)("redis driver, prefix", () => {
   it("keeps two prefixes on one database apart, Brick's keys included", async () => {
     const a = defineStorage({ driver: redis({ url, prefix: "a:" }) });

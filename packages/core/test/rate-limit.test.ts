@@ -1065,7 +1065,7 @@ describe("rate limits, other cases", () => {
     }
   });
 
-  it("counts every spelling of an address, an IPv6 /64 and a mapped IPv4 address as one", async () => {
+  it("counts every spelling of an address, an IPv6 /64 and a mapped or NAT64 IPv4 address as one", async () => {
     const { service } = limited({ per: "ip", max: 1, windowMs: 60_000 });
     const app = brick({
       services: [service],
@@ -1087,6 +1087,9 @@ describe("rate limits, other cases", () => {
     expect(await status("::ffff:1.2.3.4")).toBe(200);
     expect(await status("1.2.3.4")).toBe(429);
     expect(await status("::ffff:102:304")).toBe(429);
+    // NAT64: the IPv4 address inside, not one /64 for every IPv4 client.
+    expect(await status("64:ff9b::1.2.3.4")).toBe(429);
+    expect(await status("64:ff9b::5.6.7.8")).toBe(200);
     expect(await status("127.0.0.1")).toBe(200);
     expect(await status("::1")).toBe(200);
     expect(await status("not an address")).toBe(200);

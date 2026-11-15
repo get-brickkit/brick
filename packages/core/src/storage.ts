@@ -191,9 +191,13 @@ export interface RedisStorageOptions {
 }
 
 // Sets the counter's expiry whenever it has none, so it never lives forever.
+// Only a wrong type or a non-integer value means "not a counter"; READONLY, OOM and the like stay as Redis sent them.
 const NOT_A_COUNTER = "BRICK_NOT_A_COUNTER";
 const INCREMENT = `local n = redis.pcall('INCR', KEYS[1])
-if type(n) == 'table' and n.err then return redis.error_reply('${NOT_A_COUNTER}') end
+if type(n) == 'table' and n.err then
+  if string.find(n.err, '^WRONGTYPE') or string.find(n.err, 'not an integer') then return redis.error_reply('${NOT_A_COUNTER}') end
+  return n
+end
 local t = redis.call('PTTL', KEYS[1])
 if t < 0 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) t = tonumber(ARGV[1]) end
 return {n, t}`;

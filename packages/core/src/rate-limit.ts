@@ -104,7 +104,7 @@ export function clientAddress(ctx: object): string | undefined {
 }
 
 /**
- * The key of a client address: an IPv4-mapped IPv6 address as IPv4, any other
+ * The key of a client address: an IPv4-mapped or NAT64 (`64:ff9b::/96`) IPv6 address as IPv4, any other
  * IPv6 address by its /64 (one client often holds a whole /64), and every
  * spelling of one address the same. An address that does not parse is kept as given.
  */
@@ -125,7 +125,9 @@ function addressKey(address: string): string {
   const l = groups(left);
   const r = groups(right);
   const all = [...l, ...Array(8 - l.length - r.length).fill(0), ...r];
-  if (all.slice(0, 5).every((g) => g === 0) && all[5] === 0xffff)
+  // Mapped (::ffff:a.b.c.d) and translated (64:ff9b::a.b.c.d, RFC 6052) IPv4.
+  const head6 = all.slice(0, 6).join(":");
+  if (head6 === "0:0:0:0:0:65535" || head6 === "100:65435:0:0:0:0")
     return [all[6]! >> 8, all[6]! & 255, all[7]! >> 8, all[7]! & 255].join(".");
   return `${all
     .slice(0, 4)

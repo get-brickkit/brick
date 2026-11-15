@@ -32,7 +32,7 @@ export default auth.action({
 });
 ```
 
-Each address may try 20 times a minute, and 5 times in 15 minutes for one email. Each email may be tried 100 times an hour from all addresses together, which stops a slow guess spread over many addresses without letting one stranger lock its owner out; see [Choosing keys](#choosing-keys).
+Each address may try 20 times a minute, and 5 times in 15 minutes for one email. Each email may be tried 100 times an hour from all addresses together, which stops a slow guess spread over many addresses. One address cannot use that budget up, but someone with twenty or more addresses can, and then the owner's own login is refused until the hour ends; see [Choosing keys](#choosing-keys).
 
 `rateLimit` takes one limit or a list. It works on every kind of action: `service.action`, `defineAction`, `resource.action`, `resource.command` and tools.
 
@@ -77,7 +77,7 @@ export const exportContacts = crm.action({
 
 Keys are opaque strings. Each action, each tool, each limit in its list and each kind of key has its own counter, so a key that contains separators or newlines never reaches another's count, a user whose id looks like an address is not counted with that address, and a tool and an action of the same name count apart. A key longer than 128 characters is stored as its SHA-256 hash, so a client cannot fill the storage with a huge input.
 
-An address is counted in one form, whatever its spelling: an IPv4-mapped IPv6 address (`::ffff:1.2.3.4`) as its IPv4 address, and an IPv6 address by its /64, because one client is usually given a whole /64 and could otherwise pick a fresh address on every call. `127.0.0.1` and `::1` are two addresses. A value that is not an address is used as given.
+An address is counted in one form, whatever its spelling: an IPv4-mapped (`::ffff:1.2.3.4`) or NAT64 (`64:ff9b::1.2.3.4`) IPv6 address as its IPv4 address, and any other IPv6 address by its /64, because one client is usually given a whole /64 and could otherwise pick a fresh address on every call. `127.0.0.1` and `::1` are two addresses. A value that is not an address is used as given.
 
 `clientAddress(ctx)` returns the address in that form, or `undefined` without one, for a custom key that combines it with something else, as in the login example.
 
@@ -95,7 +95,9 @@ The limit runs after input validation and before `authorize`:
 
 Each limit is a fixed window: the counter starts with the first call and resets `windowMs` later.
 
-In-process calls (`action.run`, `useService`) go through the same stage. A call made while handling a request, from another action through `action.run(input, ctx)` or `useService`, keeps that request's client address, so `per: "ip"` and an anonymous `per: "actor"` count it as if the client had called the limited action itself: an action without a limit cannot be used to reach a limited one around it. A call with no request behind it (a script, a test) has no address, so `per: "ip"` skips it and `per: "actor"` counts it only when the identity hook returns an id. An action without `rateLimit` costs nothing; an action with one always answers asynchronously.
+In-process calls (`action.run`, `useService`) go through the same stage. A call made while handling a request keeps that request's client address when it passes its `ctx` on: `action.run(input, ctx)`, `useService(crm).login(input, ctx)` or `useService(crm, { context: ctx })`. Then `per: "ip"` and an anonymous `per: "actor"` count it as if the client had called the limited action itself. A call that passes no `ctx` (`action.run(input)`, `useService(crm).login(input)`), like a script or a test, has no request behind it: `per: "ip"` skips it and `per: "actor"` counts it only when the identity hook returns an id. So put the limit on the action the client calls, or pass `ctx`; a limit on an inner action alone does not guard an outer one that calls it without `ctx`.
+
+The address is read from the live request. It is gone once the response has ended, so a call made later (from a timer, or after the action returned) has none, and neither does a [socket](/docs/websockets) handler: `per: "ip"` skips those calls too. An action without `rateLimit` costs nothing; an action with one always answers asynchronously.
 
 [Tools](/docs/tools-and-mcp) called through `createMcpHandler` count the same way. A handler mounted on the app (`app.post("/mcp", ...)`) uses the app's client address and `clientIp`; a handler served on its own takes `createMcpHandler({ ..., clientIp })`.
 
