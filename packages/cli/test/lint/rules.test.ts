@@ -57,6 +57,16 @@ const CASES: Record<string, Case[]> = {
       code: `export const t = pgTable("outbox", {});\n`,
       errors: 1,
     },
+    {
+      file: `${S}/orders/webhooks/stripe.webhook.ts`,
+      code: `orders.webhook({ name: "stripe", verify, input: t.Object({}), execute: () => ({}) });\n`,
+      errors: 0,
+    },
+    {
+      file: "src/hooks.ts",
+      code: `orders.webhook({ name: "stripe", verify, input: t.Object({}), execute: () => ({}) });\n`,
+      errors: 1,
+    },
   ],
   "kind-folders": [
     { file: `${S}/orders/orders.service.ts`, code: "export {};\n", errors: 0 },
@@ -92,6 +102,16 @@ const CASES: Record<string, Case[]> = {
     },
     {
       file: `${S}/orders/resources/order/actions/x.tool.ts`,
+      code: "export {};\n",
+      errors: 1,
+    },
+    {
+      file: `${S}/orders/webhooks/stripe.webhook.ts`,
+      code: "export {};\n",
+      errors: 0,
+    },
+    {
+      file: `${S}/orders/stripe.webhook.ts`,
       code: "export {};\n",
       errors: 1,
     },
@@ -278,6 +298,16 @@ const CASES: Record<string, Case[]> = {
       code: `s.action({ name: "a", execute: ({ error }) => error.NOT_PAID() });\n`,
       errors: 1,
     },
+    {
+      file: "src/c.ts",
+      code: `s.webhook({ name: "a", errors: { NOT_PAID: {} }, execute: ({ error }) => { if (x) return error.NOT_PAID(); return error.NOT_FOUND(); } });\n`,
+      errors: 0,
+    },
+    {
+      file: "src/d.ts",
+      code: `s.webhook({ name: "a", execute: ({ error }) => error.NOT_PAID() });\n`,
+      errors: 1,
+    },
   ],
   "return-error": [
     {
@@ -393,7 +423,7 @@ const CASES: Record<string, Case[]> = {
   "explicit-access": [
     {
       file: "src/a.ts",
-      code: `s.action({ name: "a", authorize: () => true });\ns.action({ name: "b", access: "public" });\nr.use(crud({ access: "public" }));\nr.action({ name: "c", record: true, access: "public" });\nr.command("d", { access: { scope } });\n`,
+      code: `s.action({ name: "a", authorize: () => true });\ns.action({ name: "b", access: "public" });\nr.use(crud({ access: "public" }));\nr.action({ name: "c", record: true, access: "public" });\nr.command("d", { access: { scope } });\ns.webhook({ name: "w", verify, input: t.Object({}) });\n`,
       errors: 0,
     },
     {
@@ -405,7 +435,7 @@ const CASES: Record<string, Case[]> = {
   "public-rate-limit": [
     {
       file: "src/a.ts",
-      code: `s.action({ name: "a", authorize: () => true });\ns.action({ name: "b", rateLimit: { per: "ip", max: 5, windowMs: 60_000 } });\nr.action({ name: "c", record: true, access: { scope } });\nr.command("d", { access: "public", rateLimit: [{ per: "ip", max: 5, windowMs: 60_000 }] });\ns.tool({ name: "e", authorize: () => true });\ns.action({ name: "f", dashboard: true });\ns.action({ name: "g", ...secured });\n`,
+      code: `s.action({ name: "a", authorize: () => true });\ns.action({ name: "b", rateLimit: { per: "ip", max: 5, windowMs: 60_000 } });\nr.action({ name: "c", record: true, access: { scope } });\nr.command("d", { access: "public", rateLimit: [{ per: "ip", max: 5, windowMs: 60_000 }] });\ns.tool({ name: "e", authorize: () => true });\ns.action({ name: "f", dashboard: true });\ns.webhook({ name: "w", verify, input: t.Object({}) });\ns.action({ name: "g", ...secured });\n`,
       errors: 0,
     },
     {
@@ -461,6 +491,11 @@ const CASES: Record<string, Case[]> = {
       file: "src/b.ts",
       code: `s.socket({ name: "a" });\ndefineService("o", { events: { placed: t.Object({}) } });\n`,
       errors: 2,
+    },
+    {
+      file: "src/c.ts",
+      code: `s.webhook({ name: "a", description: "A", verify, input });\ns.webhook({ name: "b", verify, input });\n`,
+      errors: 1,
     },
   ],
   naming: [

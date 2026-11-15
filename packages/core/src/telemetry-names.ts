@@ -18,6 +18,10 @@ export const ATTR = {
   urlPath: "url.path",
   service: "brick.service",
   action: "brick.action",
+  /** A webhook delivery: the webhook's name, its event id and what became of it. Never the body or the signature. */
+  webhook: "brick.webhook",
+  webhookEventId: "brick.webhook.event_id",
+  webhookOutcome: "brick.webhook.outcome",
   traceId: "brick.trace_id",
   errorCode: "brick.error.code",
   errorMessage: "brick.error.message",

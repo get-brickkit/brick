@@ -449,3 +449,21 @@ it("types file input fields as Blob", () => {
   expect(source).toContain('"file": Blob;');
   expect(source).toContain('"name": string;');
 });
+
+it("leaves webhooks out of the browser contract and the useService types", () => {
+  const service = defineService("billing");
+  service.action({ name: "charge", execute: () => "ok" });
+  service.webhook({
+    name: "payments",
+    replay: false,
+    verify: () => true,
+    input: t.Object({ type: t.String() }),
+    execute: () => {},
+  });
+  const source = generateClientContract(
+    brick({ services: [service], requestLogging: false }),
+  );
+  expect(source).toContain('"charge"');
+  expect(source).not.toContain("payments");
+  expect(source).not.toContain("/api/billing/payments");
+});
