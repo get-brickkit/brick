@@ -9,6 +9,7 @@ import {
   resetGlobalRegistry,
   StorageUnavailableError,
   t,
+  type KeyValueDriver,
   type StorageDriver,
 } from "../src";
 import { serviceStorage } from "../src/storage";
@@ -21,7 +22,7 @@ if (url && !(await redisReachable(url)))
 beforeEach(resetGlobalRegistry);
 
 /** The same behaviour from every key-value driver. */
-function suite(name: string, driver: () => StorageDriver, skip = false) {
+function suite(name: string, driver: () => KeyValueDriver, skip = false) {
   describe.skipIf(skip)(`${name} storage`, () => {
     const storage = defineStorage({ driver: driver() });
     const key = (label: string) => `${label}:${crypto.randomUUID()}`;

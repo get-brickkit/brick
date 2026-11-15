@@ -8,6 +8,7 @@ import {
 } from "../types";
 import { toErrorResponse } from "../error-response";
 import { baseContext, markResolved, requestIds } from "../context";
+import { scopeFiles } from "../file-storage";
 import type { ServicePort } from "../service-port";
 import type { Coercion, RouteIR } from "./ir";
 
@@ -314,6 +315,7 @@ function requestContext(
   });
   // As in process: a call within this service that passes ctx on reuses it, and identity resolves once.
   markResolved(ctx, plan.service, plan.service.deps);
+  if (!plan.contextHook) ctx.deps = scopeFiles(ctx.deps, ctx);
   return ctx as ActionContext & { requestId: string };
 }
 
@@ -353,7 +355,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
           const extra = await contextHook(ctx);
           if (extra) Object.assign(ctx, extra);
           // A hook's own `deps` would look like a test's override to the actions this one calls.
-          ctx.deps = plan.deps ?? plan.service.deps;
+          ctx.deps = scopeFiles(plan.deps ?? plan.service.deps, ctx);
         }
         return await runStages(stages, input, ctx);
       } catch (err) {

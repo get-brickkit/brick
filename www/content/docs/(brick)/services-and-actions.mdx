@@ -143,7 +143,10 @@ Put `t.File()` or `t.Files()` in an action's `input` to take a `multipart/form-d
 export const uploadFile = filesService.action({
   name: "uploadFile",
   input: t.Object({
-    file: t.File({ maxSize: 25 * 1024 * 1024 }),
+    file: t.File({
+      maxSize: 25 * 1024 * 1024,
+      accept: ["application/pdf", "image/*"],
+    }),
     folder: t.Optional(t.String()),
   }),
   execute: async ({ input }) => {
@@ -154,6 +157,8 @@ export const uploadFile = filesService.action({
 ```
 
 When every file field declares `maxSize` (and `t.Files` also `maxItems`), a request whose `Content-Length` is over their sum plus 1 MiB is refused with `PAYLOAD_TOO_LARGE` (413) before its body is read. A body without `Content-Length` is still capped by Bun's `maxRequestBodySize` (128 MB by default) and checked against `maxSize` once read. The typed client sends `FormData` when a field holds a `Blob`, and OpenAPI describes the field as `format: binary`. MCP carries JSON only, so a tool can't take files: `defineTool` throws for a file field.
+
+`accept` lists the content types a file may have, with `type/*` wildcards; a file of another type fails validation (400) before `execute`. It checks the type the client declared, not the file's bytes. To keep uploads, see [File Storage](/docs/files).
 
 ## Path Parameters and Custom Routes
 

@@ -1,0 +1,171 @@
+---
+title: File Storage
+description: Store uploaded files in S3 or an S3-compatible store, kept per tenant, with keys Brick builds and short-lived download links.
+---
+
+`defineStorage` with the `s3()` driver declares a file storage. Like a [key-value storage](/docs/storage), it is a [dep](/docs/dependencies) of the services that use it. Every file belongs to a tenant, taken from the service's [`identity` hook](/docs/context#identity), and your code never builds or passes a storage key: `put` returns an id, and every other method takes that id.
+
+```ts title="src/storage.ts"
+import { defineStorage, s3 } from "@brickkit/core";
+
+export const files = defineStorage({
+  driver: s3({
+    bucket: "crm-uploads",
+    prefix: "files/",
+    // A directory: store there instead of S3, for local development and tests.
+    local: process.env.S3_BUCKET ? undefined : ".brick/files",
+  }),
+});
+```
+
+```ts title="src/services/crm/crm.service.ts"
+import { defineService } from "@brickkit/core";
+import { files } from "../../storage";
+
+export const crm = defineService("crm", {
+  database,
+  deps: { files },
+  context: async ({ request }) => ({ user: await readUser(request) }),
+  identity: (ctx) => ctx.user && { id: ctx.user.id, tenant: ctx.user.orgId },
+});
+```
+
+Accept an upload with [`t.File`](/docs/services-and-actions#file-uploads), with its limits on the field, and store it:
+
+```ts title="src/services/crm/actions/attach-file.action.ts"
+export const attach = crm.action({
+  name: "attachFile",
+  input: t.Object({
+    file: t.File({
+      maxSize: 10 * 1024 * 1024,
+      accept: ["application/pdf", "image/*"],
+    }),
+    contactId: t.String(),
+  }),
+  authorize: ({ user }) => !!user,
+  execute: async ({ input, ctx }) => {
+    const stored = await ctx.deps.files.put(input.file); // Brick builds the key
+    await ctx.db.insert(attachments).values({
+      fileId: stored.id,
+      contactId: input.contactId,
+      name: input.file.name,
+    });
+    return { fileId: stored.id };
+  },
+});
+```
+
+Read it back, inside the caller's tenant:
+
+```ts
+const url = await ctx.deps.files.url(row.fileId, { download: row.name }); // short-lived signed GET
+const blob = await ctx.deps.files.get(row.fileId); // server-side read
+await ctx.deps.files.delete(row.fileId);
+```
+
+Keep the id in your database, next to the record the file belongs to, and check that the caller may see that record before you hand out a link.
+
+## Methods
+
+| Method                                 | Returns                     | Does                                                                                                                 |
+| :------------------------------------- | :-------------------------- | :------------------------------------------------------------------------------------------------------------------- |
+| `put(file, { contentType? })`          | `{ id, size, contentType }` | Stores the `Blob` or `File` under a new id. `contentType` defaults to the file's own type, the one `t.File` checked. |
+| `url(id, { expiresInMs?, download? })` | `string`                    | A signed GET, valid for 5 minutes by default, served as an attachment named `download`.                              |
+| `get(id)`                              | `Blob \| undefined`         | The file, with its content type, or `undefined` when the tenant has no file with that id.                            |
+| `delete(id)`                           | `void`                      | Removes the file; does nothing when the tenant has no file with that id.                                             |
+| `in(tenant)`                           | the four methods above      | The files of one tenant, for code outside a request.                                                                 |
+
+`ctx.deps.files` is typed from the driver: these methods, and none of a key-value storage's.
+
+## Tenants and keys
+
+A file is stored at `<prefix><encodeURIComponent(tenant)>/<id>`, where the id is a `crypto.randomUUID()` Brick generates. No method takes a key, a path or a URL.
+
+Every method checks that the id is a UUID, then builds the key under the current tenant. So another tenant's id, a URL someone pasted, `../` or an encoded `/` resolves to a file that does not exist in the caller's own tenant: `get` returns `undefined`, `delete` does nothing, and `url` refuses an id that is not a UUID and, for another tenant's id, signs a link to nothing.
+
+In a call, `ctx.deps.files` is scoped to the tenant of that call's identity. The tenant is resolved when a method is first called, so a call that never touches files never runs the `identity` hook. A call with no tenant (an anonymous caller, or an identity without `tenant`) throws; nothing falls back to an unscoped prefix. A service that has a file storage in its deps but no `identity` hook fails at startup.
+
+Handing `ctx` to another service's action does not hand it your files: that service sees its own deps, as always.
+
+### Outside a request
+
+A listener, a schedule or a webhook has no caller. Name the tenant:
+
+```ts
+import { files } from "../storage";
+
+const blob = await files.in(event.payload.orgId).get(event.payload.fileId);
+```
+
+`in()` throws on an empty tenant, and on `.` and `..`. The handle's own methods (`files.get(id)` without `in`) throw, and say to use `in`.
+
+## Credentials
+
+`s3()` takes `bucket`, `prefix`, `local`, and the settings of Bun's built-in S3 client: `accessKeyId`, `secretAccessKey`, `sessionToken`, `region` and `endpoint`. Each of the last five is a string or a [`defineSecret`](/docs/reference/configuration#secrets-management-brickkitcore) reference. Any you leave out comes from Bun's environment variables: `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_SESSION_TOKEN`, `S3_REGION`, `S3_ENDPOINT`, `S3_BUCKET`, or their `AWS_*` equivalents.
+
+```ts
+import { defineSecret, defineStorage, s3 } from "@brickkit/core";
+
+export const files = defineStorage({
+  driver: s3({
+    bucket: "crm-uploads",
+    prefix: "files/",
+    endpoint: "https://<account-id>.r2.cloudflarestorage.com", // R2, MinIO, any S3-compatible store
+    accessKeyId: defineSecret("R2_ACCESS_KEY_ID"),
+    secretAccessKey: defineSecret("R2_SECRET_ACCESS_KEY"),
+  }),
+});
+```
+
+Static keys, environment variables and a session token are supported. A credentials callback (to refresh IAM role credentials) is not.
+
+Nothing connects and no credential is read when the module is imported: deps are created at import, and `brick info` and `brick gen` import the app without starting it. The client is created on the first call.
+
+Give the credentials `s3:ListBucket` on the bucket as well as `s3:GetObject`, `s3:PutObject` and `s3:DeleteObject`: without it, S3 answers a read of a missing file with 403 instead of 404, and `get` throws instead of returning `undefined`.
+
+## Download links
+
+`url()` returns a presigned GET that S3 serves with `Content-Disposition: attachment` and the `download` name, so a stored file is downloaded, never rendered inline from the storage origin. It is valid for 5 minutes unless you pass `expiresInMs`.
+
+A signed URL is a bearer credential until it expires: anyone holding it can download the file. Don't log it.
+
+## Local mode
+
+With `local` set to a directory, files are written under it instead of S3, in the same key layout, with the same id and tenant checks and the same limits. Only the last write differs, so a test in local mode exercises the checks that matter. Nothing touches the directory until the first `put`.
+
+`url()` then returns a link to `/_brick/files?token=…`, a route Brick mounts when an app has a file storage in local mode. The token is signed over the key and an expiry with a key generated per process, so links stop working when the process restarts. The route refuses an expired or altered token, and never serves a symlink or a path outside the directory. The token is in the query string because the request log and traces record only the path.
+
+The link is relative to the app's origin. Brick warns once at startup when `local` is set and `NODE_ENV` is `production`.
+
+## Upload limits
+
+Declare the limits on the input field:
+
+```ts
+t.File({ maxSize: 10 * 1024 * 1024, accept: ["application/pdf", "image/*"] });
+t.Files({ maxSize: 5 * 1024 * 1024, maxItems: 10, accept: ["image/*"] });
+```
+
+`accept` lists content types; `type/*` matches any subtype, and the match ignores case and parameters such as `charset`. A file over `maxSize` or of a type not listed fails input validation with `VALIDATION_FAILED` (400) before `execute` runs.
+
+The type checked is the one the client declared in the multipart body. It is not content inspection: a client can send any bytes under `image/png`. `put` stores the type that was checked, and links are served as attachments, so a mislabeled file is downloaded, not rendered.
+
+## Testing
+
+Run tests against `local` with a temporary directory: they need no network and check the same tenant and id rules as S3. To replace the storage in a unit test, pass a fake in the call's deps; it is used as given:
+
+```ts
+await attach.execute({
+  input: { file, contactId: "c1" },
+  ctx: { deps: { files: fakeFiles } },
+});
+```
+
+## Not covered
+
+- Uploads straight from the browser to S3 with a presigned PUT: files pass through your action.
+- Inspecting a file's bytes to find its real type.
+- A credentials callback for IAM roles.
+- A key namespace per service: services that share a storage share each tenant's files.
+- Listing a tenant's files: keep the ids in your database.
+- Image processing, rate limits on uploads, and an audit log of file access.

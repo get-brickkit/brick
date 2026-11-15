@@ -39,6 +39,7 @@ import {
   resolvedDeps,
 } from "./context";
 import { brickDeps, depsOverride } from "./deps";
+import { scopeFiles } from "./file-storage";
 import type { NamedService } from "./rpc";
 import { defineServiceSocket } from "./socket";
 import type {
@@ -456,11 +457,12 @@ async function resolveServiceContext<
   const ownDeps = resolvedDeps(callCtx, service);
   if (ownDeps) {
     const deps = pluginDeps ?? ownDeps;
-    return (
-      (callCtx as { deps?: unknown }).deps === deps
-        ? callCtx
-        : { ...callCtx, deps }
-    ) as BaseContext<TDb> & TServiceContext;
+    if ((callCtx as { deps?: unknown }).deps === deps)
+      return callCtx as BaseContext<TDb> & TServiceContext;
+    // A per-call deps object is never `deps` itself: a file storage's view is built again for this ctx.
+    const ctx: any = { ...callCtx };
+    ctx.deps = scopeFiles(deps, ctx);
+    return ctx;
   }
   // A direct call (a unit test) may replace some deps by name; a deps object Brick built never does.
   const override = depsOverride(callCtx);
@@ -498,6 +500,7 @@ async function resolveServiceContext<
   };
   // Like `context`, the identity hook sees the service's own deps, never a plugin's.
   markResolved(finalCtx, service, framework.deps);
+  finalCtx.deps = scopeFiles(finalCtx.deps, finalCtx);
   return finalCtx;
 }
 

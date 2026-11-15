@@ -43,6 +43,12 @@ import { DEFAULT_PREFIX, routeKey } from "./routes";
 import type { SocketBroker } from "./socket-types";
 import { corsHook, type CorsOptions } from "./cors";
 import { useStorages } from "./storage";
+import {
+  checkFileStorages,
+  LOCAL_FILES_ROUTE,
+  localFileDirs,
+  localFilesRoute,
+} from "./file-storage";
 import { portOf } from "./service-port";
 import { bodyLimitParser } from "./compiler/runtime";
 
@@ -248,6 +254,12 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
 
   // Close declarations before anything reads them.
   for (const service of services) service.build();
+  for (const service of services) checkFileStorages(service);
+  const localDirs = localFileDirs([
+    ...services.map((service) => portOf(service).deps),
+    ...plugins.deps,
+  ]);
+  if (localDirs.size) builtIn(LOCAL_FILES_ROUTE, localFilesRoute(localDirs));
 
   const endpointDefs: EndpointDefinition[] = [];
   let endpointRevision = 0;

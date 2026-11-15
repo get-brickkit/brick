@@ -25,7 +25,7 @@ export default brick({ services: [orders] });
 
 `deps` holds real values, as a plain object of values by name. A class instance or a `Map` is refused at startup. `ctx.deps` is typed from that object, so there is nothing to declare twice. A dep set to `undefined` fails at startup: `Service "orders": dep "carrier" is undefined; pass a value or leave it out`.
 
-A [storage](/docs/storage) from `defineStorage` is a dep like any other: `deps: { cache }`, read as `ctx.deps.cache`.
+A [storage](/docs/storage) from `defineStorage` is a dep like any other: `deps: { cache }`, read as `ctx.deps.cache`. A [file storage](/docs/files) is read the same way, scoped to the caller's tenant for each call.
 
 ### When deps are created
 
