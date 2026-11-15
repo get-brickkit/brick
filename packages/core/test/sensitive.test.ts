@@ -171,7 +171,6 @@ it("follows nested objects and arrays, naming each field by its JSON pointer", a
     "/items/1/token",
     "/owner/key",
   ]);
-  // The value `execute` returned is not changed.
   expect(rows[0]!.token).toBe("token-a-123456");
 });
 
@@ -216,13 +215,11 @@ it("keeps a sensitive input value out of logs, error logs and spans", async () =
     }),
   );
   try {
-    // Printed to the console.
     let response = await postJson(app, "/api/auth/connect", {
       user: "ada",
       password: TOKEN,
     });
     expect(response.status).toBe(500);
-    // Recorded on the span, as with a dashboard.
     (globalThis as Record<symbol, unknown>)[CAPTURE] = true;
     response = await postJson(app, "/api/auth/connect", {
       user: "ada",
@@ -287,7 +284,6 @@ it("marks a sensitive input write-only in OpenAPI", () => {
   expect(body.properties.password).toEqual({ type: "string", writeOnly: true });
 });
 
-/** What `fn` printed to the console, and what its spans recorded when it ran again under a dashboard capture. */
 async function observe(fn: () => Promise<unknown>) {
   const lines: string[] = [];
   const spies = (["log", "warn", "error", "debug"] as const).map((level) =>
@@ -314,7 +310,6 @@ async function observe(fn: () => Promise<unknown>) {
   return { console: lines.join("\n"), spans, results };
 }
 
-/** An app over one service, traced, without request logs. */
 const appOf = (service: Service<any, any, any>) =>
   brick({
     services: [service],
@@ -349,7 +344,6 @@ it("redacts a secret registered with redact() before execute logs it or throws i
   expect(seen.console).toContain("accessToken: '[REDACTED]'");
   expect(seen.console).not.toContain(TOKEN);
   expect(seen.spans).not.toContain(TOKEN);
-  // Outside a call it does nothing.
   expect(() => redact(TOKEN)).not.toThrow();
 });
 
@@ -402,7 +396,6 @@ it("redacts a short logged value equal to a sensitive one, but not short text in
   );
   for (const text of [seen.console, seen.spans]) {
     expect(text).toContain("otp: '[REDACTED]'");
-    // Text shorter than 8 characters is not matched inside a line.
     expect(text).toContain("otp=493817");
   }
 });
@@ -485,7 +478,6 @@ it("redacts an HTTP error's message and details, as in-process", async () => {
     tried: "[REDACTED]",
     nested: { hint: "was [REDACTED]" },
   });
-  // An error that leaves an in-process call.
   const thrown: any = await login.run({ p: TOKEN }).catch((err) => err);
   expect(thrown.message).toBe("bad password [REDACTED]");
   expect(JSON.stringify(thrown.details)).not.toContain(TOKEN);
@@ -728,7 +720,6 @@ it("keeps a record action's mark on its whole input, and passes a command's reve
   const response = await postJson(app, "/api/things/thing/t1/rotate");
   expect(await response.json()).toEqual({ id: "t1", apiKey: TOKEN });
 
-  // A mark on the input itself covers the `id` from the path, which is logged.
   const other = thingFixture();
   other.thing.action({
     name: "note",
@@ -741,7 +732,6 @@ it("keeps a record action's mark on its whole input, and passes a command's reve
     brick({ services: [other.service], requestLogging: false, docs: false }),
   ).toThrow("sensitive input field '/id' is a path parameter");
 
-  // A mark on a `t.Record` input's values is kept by the rebuilt input, so it is refused the same way.
   const third = thingFixture();
   third.thing.action({
     name: "tag",
@@ -816,7 +806,6 @@ it("withholds whole lines once a set is full, and redacts a value added after a 
     expect(text).not.toContain("bulk-secret-10099");
     expect(text).not.toContain("bulk-secret-5");
   }
-  // Two calls overflowed; the warning is printed once per process.
   expect(seen.console.split("redaction set reached").length - 1).toBe(1);
 });
 
@@ -867,7 +856,6 @@ it("rejects an in-process call with the action's own error when it cannot be red
       controller.abort();
       return controller.signal.reason;
     },
-    // `Object.assign(new Error(), apiBody)` with a numeric message.
     numeric: () => Object.assign(new Error("x"), { message: 404 as any }),
   };
   for (const [kind, make] of Object.entries(errors)) {
@@ -882,6 +870,59 @@ it("rejects an in-process call with the action's own error when it cannot be red
     const thrown: any = await action.run({ secret: TOKEN }).catch((e) => e);
     expect(thrown).not.toBeInstanceOf(TypeError);
     expect(thrown === original || thrown.cause === original).toBe(true);
+  }
+});
+
+it("keeps a secret out of an escaping error's own properties and causes, whatever was thrown", async () => {
+  const shapes: Record<string, () => unknown> = {
+    property: () =>
+      Object.assign(new Error("duplicate key"), {
+        detail: `Key (p)=(${TOKEN}) exists`,
+        row: { p: TOKEN },
+      }),
+    stringCause: () => new Error("failed", { cause: `bad ${TOKEN}` }),
+    objectCause: () => new Error("failed", { cause: { value: TOKEN } }),
+    deepCause: () =>
+      new Error("failed", {
+        cause: new Error("inner", { cause: { value: TOKEN } }),
+      }),
+    plainObject: () => ({ value: TOKEN }),
+    plainString: () => `bad ${TOKEN}`,
+  };
+  for (const [kind, make] of Object.entries(shapes)) {
+    const service = defineService(`escape${kind.toLowerCase()}`);
+    service.action({
+      name: "go",
+      input: t.Object({ secret: t.Sensitive(t.String()) }),
+      execute: () => {
+        throw make();
+      },
+    });
+    const seen = await observe(async () => {
+      const response = await postJson(
+        appOf(service),
+        `/api/escape${kind.toLowerCase()}/go`,
+        { secret: TOKEN },
+      );
+      expect(response.status).toBe(500);
+      return response.text();
+    });
+    expect(seen.results.join()).not.toContain(TOKEN);
+    expect(seen.console).not.toContain(TOKEN);
+    expect(seen.spans).not.toContain(TOKEN);
+
+    const action = defineAction({
+      name: `escape_${kind}`,
+      input: t.Object({ secret: t.Sensitive(t.String()) }),
+      execute: () => {
+        throw make();
+      },
+    });
+    const thrown = await action.run({ secret: TOKEN }).catch((e) => e);
+    expect(inspect(thrown, { depth: 6 })).not.toContain(TOKEN);
+    expect(
+      JSON.stringify(thrown, Object.getOwnPropertyNames(thrown)),
+    ).not.toContain(TOKEN);
   }
 });
 
@@ -996,8 +1037,8 @@ it("walks the first 100 entries of an array, Map or Set and replaces the rest wi
     execute: ({ ctx }) => {
       const rows = Array.from({ length: 150 }, (_, i) => `row-${i}`);
       ctx.logger.info("%j", rows);
-      ctx.logger.info("%j", [...new Map(rows.map((row) => [row, 1]))].length);
-      ctx.logger.info(new Set(rows).size, new Set(rows));
+      ctx.logger.info(new Map(rows.map((row) => [row, 1])));
+      ctx.logger.info(new Set(rows));
       return true;
     },
   });
@@ -1005,6 +1046,9 @@ it("walks the first 100 entries of an array, Map or Set and replaces the rest wi
     postJson(appOf(service), "/api/bulk/log", { secret: TOKEN }),
   );
   expect(seen.console).toContain("... 50 more items not shown");
+  expect(seen.console).toContain("Map(101)");
+  expect(seen.console).toContain("Set(101)");
+  expect(seen.console).not.toContain("row-100");
   expect(seen.console).not.toContain("row-120");
 });
 
@@ -1033,7 +1077,6 @@ it("refuses at startup a sensitive path parameter in a union, intersect or recor
       brick({ services: [service], requestLogging: false, docs: false }),
     ).toThrow("sensitive input field '/token' is a path parameter");
   }
-  // A wildcard that excludes the parameter's own declared name is fine.
   const ok = defineService("reset_ok");
   ok.action({
     name: "reset",
@@ -1223,9 +1266,7 @@ it("logs a class with private fields, an error's cause and a regex match without
     name: "connect",
     input: t.Object({ secret: t.Sensitive(t.String()) }),
     execute: ({ input, ctx }) => {
-      // The redacted copy has no private field, so the class's own inspect throws on it.
       ctx.logger.info(new Priv(input.secret));
-      // A match array carries the whole string as an extra `input` property.
       ctx.logger.info(input.secret.match(/Q/));
       const driver = Object.assign(new Error("duplicate key"), {
         code: "23505",

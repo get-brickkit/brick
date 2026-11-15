@@ -2,14 +2,6 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { inspect } from "node:util";
 import type { TSchema } from "@sinclair/typebox";
 
-/*
- * Sensitive fields: `t.Sensitive(schema)` marks part of an input or output
- * schema. The pipeline removes marked output fields unless `reveal` allows
- * them, and the values at marked paths join the call's redaction set, which
- * the logger and the span recorder apply before anything is printed or kept.
- */
-
-// Shared by name, so a second copy of core recognizes the marker.
 const SENSITIVE = Symbol.for("brickkit.sensitive");
 
 /** The schema, unchanged in type and validation, marked sensitive. */
@@ -20,27 +12,20 @@ export function Sensitive<T extends TSchema>(schema: T): T {
 export const isSensitive = (schema: any): boolean =>
   schema?.[SENSITIVE] === true;
 
-/** Any key of an object (`null`), or any key but its declared properties (`{ except }`). */
 type Segment = string | null | { except: string[] };
 
-/** A marked node: the property names that lead to it. */
 interface SensitivePath {
   segments: Segment[];
-  /** Whether the node can be removed without breaking the schema: an optional property or a record value. */
   optional: boolean;
 }
 
 interface Analysis {
   paths: SensitivePath[];
-  /** The unmarked properties and array items, which a mark path that also matches them would remove. */
   publics: { segments: Segment[]; required: boolean }[];
-  /** Where a `$ref` would leave a mark half-followed or unseen. */
   ref?: string;
-  /** Where a mark sits under a keyword the walk does not follow, such as `$defs` or `not`. */
   hidden?: string;
 }
 
-/** What the walk notes besides the paths: the `$id`s around a mark, and where each `$ref` is. */
 interface Walk extends Analysis {
   markedIds: Set<string>;
   loops: Map<string, string>;
@@ -74,12 +59,10 @@ function analyze(schema: unknown): Analysis {
   return analysis;
 }
 
-/** The marked nodes of a schema, worked out once per schema object. Every startup check reads this. */
 export function sensitivePaths(schema: unknown): SensitivePath[] {
   return analyze(schema).paths;
 }
 
-/** Whether a schema node, or anything under it, is marked. */
 const holdsMark = (node: unknown, seen = new Set<unknown>()): boolean => {
   if (!node || typeof node !== "object" || seen.has(node)) return false;
   seen.add(node);
@@ -89,8 +72,6 @@ const holdsMark = (node: unknown, seen = new Set<unknown>()): boolean => {
   );
 };
 
-// shortcut: `$ref` is not followed: `sensitivity` throws for a mark inside a `t.Recursive`,
-// a `t.Module` or beside a `t.Ref`. Follow `$ref`/`$id` when an app needs a sensitive field there.
 function collect(
   schema: any,
   segments: Segment[],
@@ -111,24 +92,21 @@ function collect(
   }
   if (typeof schema.$id === "string") ids = [...ids, schema.$id];
   const list = schema.type === "array" && !Array.isArray(schema.items);
-  // A mark anywhere the walk does not go is not protected, so it is refused.
   for (const key of Object.keys(schema))
     if (
       !WALKED.has(key) ||
       (key === "items" && !list && !Array.isArray(schema.items))
     )
       if (holdsMark(schema[key])) walk.hidden ??= pointer([...segments, key]);
-  // shortcut: union branches are walked by path, so a mark in one branch removes the same path from all;
-  // check which branch the value matched when a union needs the same name both secret and public.
-  for (const branch of [
+  const branchesSharingOnePath = [
     ...(schema.anyOf ?? []),
     ...(schema.allOf ?? []),
     ...(schema.oneOf ?? []),
-  ])
+  ];
+  for (const branch of branchesSharingOnePath)
     collect(branch, segments, optional, ids, walk);
   const declared = Object.keys(schema.properties ?? {});
   const required = new Set<string>(schema.required ?? []);
-  // An object under `minProperties` can lose a property only if what it requires still meets it.
   const removable = !(
     schema.minProperties >
     declared.filter(
@@ -177,7 +155,6 @@ function collect(
       walk.publics.push({ segments: [...segments, segment], required: true });
     collect(child, [...segments, segment], false, ids, walk);
   }
-  // Two items that differ only in a removed field would be equal.
   if (schema.uniqueItems)
     for (const path of walk.paths.slice(before)) path.optional = false;
 }
@@ -192,14 +169,12 @@ const WALKED = new Set([
   "items",
 ]);
 
-/** Whether a segment matches an object key. */
 const admits = (segment: Segment, key: string): boolean =>
   segment === null ||
   (typeof segment === "string"
     ? segment === key
     : !segment.except.includes(key));
 
-/** Whether two segments can match the same key. */
 const overlap = (a: Segment, b: Segment): boolean =>
   typeof a === "string"
     ? admits(b, a)
@@ -207,7 +182,6 @@ const overlap = (a: Segment, b: Segment): boolean =>
       ? admits(a, b)
       : true;
 
-/** Whether a value's top-level `key` is, or holds, a sensitive value. */
 export const marksKey = (schema: unknown, key: string): boolean =>
   sensitivePaths(schema).some(
     ({ segments: [first] }) => first === undefined || admits(first, key),
@@ -219,13 +193,11 @@ export function hasSensitive(schema: unknown): boolean {
   return paths.length > 0 || hidden !== undefined;
 }
 
-/** A copy of an input schema with `writeOnly` on its sensitive parts, for OpenAPI. */
 export function writeOnly<T>(schema: T): T {
   if (!hasSensitive(schema)) return schema;
   const visit = (node: any): any => {
     if (Array.isArray(node)) return node.map(visit);
     if (!node || typeof node !== "object") return node;
-    // A spread keeps TypeBox's symbol keys, which `fileFields` reads.
     const copy = { ...node };
     for (const key of Object.keys(copy)) copy[key] = visit(copy[key]);
     if (isSensitive(node)) copy.writeOnly = true;
@@ -238,7 +210,6 @@ const pointer = (segments: Segment[]) =>
   segments.map((key) => `/${typeof key === "string" ? key : "*"}`).join("") ||
   "/";
 
-/** The JSON pointer of a schema's first sensitive mark, if it has one. */
 export function sensitivePointer(schema: unknown): string | undefined {
   const { paths, hidden } = analyze(schema);
   return paths[0] ? pointer(paths[0].segments) : hidden;
@@ -255,7 +226,6 @@ const keysAt = (value: object, segment: Segment): string[] =>
         ? [segment]
         : [];
 
-/** Each value at a path: its parent, its key, and its JSON pointer. */
 function* found(
   value: any,
   segments: Segment[],
@@ -270,7 +240,6 @@ function* found(
   }
 }
 
-/** `value` without the hidden fields, copying only the objects on the way to one. */
 function omit(
   value: any,
   segments: Segment[],
@@ -304,23 +273,11 @@ export type Reveal<TInput = unknown, TContext = any> =
       ctx: TContext;
     }) => boolean | Promise<boolean>);
 
-/** What a call of an action with sensitive fields does besides its stages. */
 export interface Sensitivity {
-  /** Adds the validated input's sensitive values to the call's redaction set. */
   input(input: unknown): void;
-  /** Redacts the output's sensitive values and removes those `reveal` refuses. */
   output(output: unknown, input: unknown, ctx: unknown): Promise<unknown>;
 }
 
-/**
- * The sensitive-field handling of an action, or `undefined` when its schemas
- * mark nothing, so such an action keeps its fast path.
- *
- * @param service - The owning service's name, for the error message, when known.
- * @throws When a mark cannot be kept: an output field removed although its
- * schema requires it (unless `reveal` is `true`), or a mark a `$ref` would
- * leave half-followed.
- */
 export function sensitivity(
   config: {
     name: string;
@@ -360,7 +317,6 @@ export function sensitivity(
         throw new Error(
           `${owner}: sensitive output field '${at}' is removed unless \`reveal\` allows it, so the schema must let it be absent: make it t.Optional in every union or intersect branch, not an array item, a record value or a property under minProperties, nor inside a uniqueItems array (or set \`reveal: true\`)`,
         );
-      // A public field this path also matches would be removed with it.
       const exact = JSON.stringify(path.segments);
       const hit = output.publics.find(
         ({ segments, required }) =>
@@ -407,37 +363,20 @@ export function sensitivity(
   };
 }
 
-/**
- * Below this length a value is not redacted from log text: a short value such
- * as `"42"` or `"true"` would blank out unrelated parts of every line. A log
- * argument equal to it is still redacted.
- */
 const MIN_REDACTED_LENGTH = 8;
-/** A number with fewer digits is not registered: `1` or `42` would blank out counts and pages. */
 const MIN_REDACTED_DIGITS = 4;
-/**
- * The most values one set holds. A nested call joins the enclosing set, so a
- * timer started inside a sensitive call can keep adding to it; past this, the
- * set withholds whole lines rather than forget a value.
- */
 const MAX_REDACTED_VALUES = 10_000;
-/** How many entries of an array, `Map` or `Set` a log line's walk looks at; the formatter prints 50. */
 const MAX_WALKED_ENTRIES = 100;
 const REDACTED = "[REDACTED]";
 const WITHHELD = "[REDACTED: too many sensitive values in this call]";
 
 interface Redactions {
-  /** Each value, and its JSON-escaped form when that differs. */
   values: Set<string>;
-  /** How many values were added, counting a value and its escaped form once. */
   count: number;
-  /** The values for the text pass, longest first; dropped when a value is added. */
   sorted?: string[];
-  /** Set when a value did not fit: every line is then withheld. */
   full?: boolean;
 }
 
-// Shared by name, like the marker, so a second copy of core sees the same call's set.
 const redactions = ((globalThis as Record<symbol, unknown>)[
   Symbol.for("brickkit.redactions")
 ] ??= new AsyncLocalStorage<Redactions>()) as AsyncLocalStorage<Redactions>;
@@ -457,7 +396,6 @@ function add(set: Redactions, value: string): void {
   }
   set.count++;
   set.values.add(value);
-  // As it appears inside a JSON or inspected string, when that differs.
   set.values.add(JSON.stringify(value).slice(1, -1));
   set.sorted = undefined;
 }
@@ -489,28 +427,27 @@ function register(set: Redactions, value: unknown, seen: Set<object>): void {
   }
 }
 
-/** Whether the running call has values to redact. */
 export function redacting(): boolean {
   const set = redactions.getStore();
   return !!set && (set.full || set.values.size > 0);
 }
 
-/** `text` with the running call's redacted values replaced. */
-export function redactText(text: string): string {
+export function redactText(text: string): string;
+export function redactText(text: unknown): unknown;
+export function redactText(text: unknown): unknown {
   const set = redactions.getStore();
-  // An error's `message` can hold a number or null, despite its type.
   if (!set || typeof text !== "string") return text;
   if (set.full) return WITHHELD;
-  // Longest first, so a value that contains another is replaced whole.
   set.sorted ??= [...set.values]
     .filter((value) => value.length >= MIN_REDACTED_LENGTH)
     .sort((a, b) => b.length - a.length);
+  let redacted: string = text;
   for (const value of set.sorted)
-    if (text.includes(value)) text = text.split(value).join(REDACTED);
-  return text;
+    if (redacted.includes(value))
+      redacted = redacted.split(value).join(REDACTED);
+  return redacted;
 }
 
-/** A logged leaf: replaced when it equals a value at any length, else through the text pass. */
 function redactLeaf(set: Redactions, value: unknown): unknown {
   if (typeof value === "string")
     return set.values.has(value) ? REDACTED : redactText(value);
@@ -521,20 +458,23 @@ function redactLeaf(set: Redactions, value: unknown): unknown {
   return value;
 }
 
-/** Deeper than `util.inspect` prints for a log line (depth 3), so every printed leaf is seen. */
 const LEAF_DEPTH = 5;
 
-/**
- * Values as they are about to be formatted, with each string or number that
- * equals a redacted value (at any length) replaced, and each string that
- * contains one passed through `redactText`; keys too. It fails safe: what it
- * does not look inside is replaced by a marker, never passed on as it is. It
- * walks plain objects, class instances, arrays, `Map` and `Set` (their first
- * 100 entries); an `Error` becomes its redacted stack, own properties and
- * cause chain; a getter, a cycle, an
- * object past depth 5 and anything else (a `Buffer`, a `URL`) become markers.
- * It never throws.
- */
+function publicFieldsCopy(
+  original: object,
+  props: [PropertyKey, unknown][],
+): object {
+  const copy = Object.create(Object.getPrototypeOf(original));
+  for (const [key, next] of props)
+    Object.defineProperty(copy, key, {
+      value: next,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  return copy;
+}
+
 export function redactValues<T>(value: T): T {
   const set = redactions.getStore();
   if (!set || (!set.full && !set.values.size)) return value;
@@ -565,7 +505,6 @@ export function redactValues<T>(value: T): T {
       if (items.length === MAX_WALKED_ENTRIES) break;
       items.push(item);
     }
-    // A Map's entries are [key, value] arrays, walked as arrays at the Map's own depth.
     const next = items.map((item) =>
       visit(item, value instanceof Map ? depth : depth + 1),
     );
@@ -577,7 +516,6 @@ export function redactValues<T>(value: T): T {
     if (Array.isArray(value)) {
       const { next, more, changed } = entries(value, value.length, depth);
       if (more) next.push(`... ${more} more items not shown`);
-      // Extra properties (a regex match's `input`) are not walked: the copy leaves them out.
       return changed || Object.keys(value).length !== value.length
         ? next
         : value;
@@ -594,7 +532,6 @@ export function redactValues<T>(value: T): T {
       return map;
     }
     if (value instanceof Error) {
-      // As text, so the stack keeps its lines; then its own properties (a driver's `code`) and its cause.
       let text = redactText(
         String(value.stack || `${value.name}: ${value.message}`),
       );
@@ -608,7 +545,6 @@ export function redactValues<T>(value: T): T {
     }
     const tag = Object.prototype.toString.call(value);
     if (tag !== "[object Object]") return `[${tag.slice(8, -1)}]`;
-    // Plain objects and class instances: own enumerable keys, getters left uncalled.
     const descriptors = Object.getOwnPropertyDescriptors(value);
     let changed = false;
     const props: [PropertyKey, unknown][] = [];
@@ -621,26 +557,11 @@ export function redactValues<T>(value: T): T {
       if (name !== key || next !== descriptor.value) changed = true;
       props.push([name as PropertyKey, next]);
     }
-    if (!changed) return value;
-    // The prototype is kept, so a class instance still prints its name.
-    const copy = Object.create(Object.getPrototypeOf(value));
-    for (const [key, next] of props)
-      Object.defineProperty(copy, key, {
-        value: next,
-        enumerable: true,
-        writable: true,
-        configurable: true,
-      });
-    return copy;
+    return changed ? publicFieldsCopy(value, props) : value;
   };
   return visit(value, 0);
 }
 
-/**
- * An error's `details` with the running call's values redacted at full depth,
- * keys included, as they will be serialized; the whole of it once the set is
- * full. The original when nothing changes.
- */
 export function redactDetails(details: unknown): unknown {
   const set = redactions.getStore();
   if (!set || details === undefined || (!set.full && !set.values.size))
@@ -661,12 +582,10 @@ export function redactDetails(details: unknown): unknown {
     );
     return JSON.stringify(copy) === text ? details : copy;
   } catch {
-    // A cycle or a BigInt: it could not be checked.
     return REDACTED;
   }
 }
 
-/** Run `fn` outside any call's redaction set, so the timers it starts do not join one. */
 export const outsideRedaction = <T>(fn: () => T): T => redactions.exit(fn);
 
 /** Set a property of an error, unless it is read-only (a `DOMException`, a frozen error). */
@@ -676,30 +595,41 @@ function assign(target: any, key: string, value: unknown): void {
   } catch {}
 }
 
-/**
- * Run a call with a redaction set: its own, or the enclosing call's so that
- * values stay redacted for as long as the outermost call runs. An error that
- * leaves the set has its messages and stacks redacted, since whoever logs it
- * next is outside the call.
- */
+const ESCAPED_ERROR_FIELDS = new Set(["message", "stack", "cause", "details"]);
+const MAX_CAUSE_DEPTH = 8;
+
+/** `err`, redacted in place along its cause chain, for whoever logs it outside the call. */
+function redactEscaped(err: unknown): unknown {
+  if (!(err instanceof Error)) return redactValues(err);
+  let e: any = err;
+  for (let n = 0; n < MAX_CAUSE_DEPTH; n++) {
+    assign(e, "message", redactText(e.message));
+    if (e.stack) assign(e, "stack", redactText(e.stack));
+    if ("details" in e) assign(e, "details", redactDetails(e.details));
+    for (const [key, descriptor] of Object.entries(
+      Object.getOwnPropertyDescriptors(e),
+    ))
+      if (
+        descriptor.enumerable &&
+        "value" in descriptor &&
+        !ESCAPED_ERROR_FIELDS.has(key)
+      )
+        assign(e, key, redactValues(descriptor.value));
+    if (!(e.cause instanceof Error)) {
+      if (e.cause !== undefined) assign(e, "cause", redactValues(e.cause));
+      break;
+    }
+    e = e.cause;
+  }
+  return err;
+}
+
 export async function withRedaction<T>(fn: () => Promise<T>): Promise<T> {
   if (redactions.getStore()) return fn();
   const set: Redactions = { values: new Set(), count: 0 };
   try {
     return await redactions.run(set, fn);
   } catch (err) {
-    redactions.run(set, () => {
-      // A few levels of `cause`, which can form a cycle.
-      for (
-        let e: any = err, n = 0;
-        e instanceof Error && n < 8;
-        e = e.cause, n++
-      ) {
-        assign(e, "message", redactText(e.message));
-        if (e.stack) assign(e, "stack", redactText(e.stack));
-        if ("details" in e) assign(e, "details", redactDetails(e.details));
-      }
-    });
-    throw err;
+    throw redactions.run(set, () => redactEscaped(err));
   }
 }

@@ -412,7 +412,6 @@ export class EventsHub {
     table: OutboxTable,
     check: (name: string, payload: unknown) => void,
   ): ServiceEvents {
-    // Often called inside a call: its timers must not join that call's redaction set.
     const startAndNotify = () =>
       outsideRedaction(() => {
         this.start();

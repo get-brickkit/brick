@@ -105,6 +105,26 @@ describe("sensitive fields", () => {
     );
   });
 
+  it("refuses a sensitive derived field, which has no `read` to drop", () => {
+    expect(() =>
+      fixture({
+        crud: {
+          fields: {
+            id: { read: true, filter: ["eq"] },
+            name: { read: true, create: true },
+            token: {
+              read: true,
+              schema: t.Sensitive(t.String()),
+              resolve: ({ rows }: any) => rows.map(() => "x"),
+            },
+          },
+        },
+      }),
+    ).toThrow(
+      /Derived CRUD field 'token' on 'person' in service 'crud_events_\d+' cannot be t\.Sensitive/,
+    );
+  });
+
   it("refuses a filter or a sort on a sensitive field, which would reveal it through counts", () => {
     expect(() =>
       fixture({

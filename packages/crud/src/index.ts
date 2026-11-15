@@ -145,10 +145,12 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
         if (policy.sort && !SORTABLE_TYPES.has(columns[key].dataType))
           throw new Error(`Sorting is unsupported for '${key}'`);
       }
-      // Reads and event payloads carry the readable fields only, and a filter or a sort
-      // reveals a value through what it matches, so a secret gets none of them.
       for (const [key, policy] of Object.entries(fields)) {
         if (!hasSensitive(schemas[key])) continue;
+        if (policy.resolve)
+          throw new Error(
+            `Derived CRUD field '${key}' on '${resource.name}' in service '${service.name}' cannot be t.Sensitive: a derived field is always read`,
+          );
         const option = policy.read
           ? "read: true"
           : policy.filter?.length

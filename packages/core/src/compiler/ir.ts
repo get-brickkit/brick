@@ -207,7 +207,6 @@ export function describeRoute(
   method: RouteMethod,
   path: string,
 ): RouteIR {
-  // The request log and the span record the path, outside the call's redaction.
   for (const name of pathParamNames(path)) {
     if (marksKey(action.config.input, name))
       throw new Error(

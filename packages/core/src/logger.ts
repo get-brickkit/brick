@@ -37,13 +37,19 @@ export function stripAnsi(text: string): string {
   return text.includes("\u001b") ? text.replace(ANSI, "") : text;
 }
 
-/** A redacted copy of a class instance has no private fields, so the class's own `inspect.custom` or `toString` can throw on it. */
-function printable(print: () => string): string {
+const REDACTED_COPY_NOT_PRINTABLE = "[Unreadable]";
+
+function formatRedacted(
+  print: (...args: unknown[]) => string,
+  args: unknown[],
+): string {
+  let printed: string;
   try {
-    return print();
+    printed = print(...redactValues(args));
   } catch {
-    return "[Unreadable]";
+    printed = REDACTED_COPY_NOT_PRINTABLE;
   }
+  return redactText(printed);
 }
 
 /**
@@ -51,22 +57,21 @@ function printable(print: () => string): string {
  * at a sensible size.
  */
 function render(args: unknown[]): string {
-  let text = stripAnsi(
-    printable(() =>
-      formatWithOptions(
-        {
-          depth: 3,
-          breakLength: 120,
-          maxArrayLength: 50,
-          maxStringLength: 1000,
-        },
-        ...redactValues(args),
+  const text = formatRedacted(
+    (...values) =>
+      stripAnsi(
+        formatWithOptions(
+          {
+            depth: 3,
+            breakLength: 120,
+            maxArrayLength: 50,
+            maxStringLength: 1000,
+          },
+          ...values,
+        ),
       ),
-    ),
+    args,
   );
-  // Before the cut, so a value cut in half is still found. Values first, then
-  // text: a value inside an object can be escaped or cut when printed.
-  text = redactText(text);
   return text.length > MAX_MESSAGE_LENGTH
     ? `${text.slice(0, MAX_MESSAGE_LENGTH)}…`
     : text;
@@ -118,15 +123,12 @@ export function createLogger(prefix: string | Record<Level, string>): Logger {
   const level =
     (name: Level, print: (...args: unknown[]) => void) =>
     (...args: unknown[]): void => {
-      // `render` redacts what is recorded.
       if (
         (globalThis as Record<symbol, unknown>)[CAPTURE] === true &&
         recordActive(name, args)
       )
         return;
-      // One redacted string while the call has sensitive values, at console.log's own depth.
-      if (redacting())
-        args = [redactText(printable(() => format(...redactValues(args))))];
+      if (redacting()) args = [formatRedacted(format, args)];
       print(typeof prefix === "string" ? prefix : prefix[name], ...args);
     };
   return {

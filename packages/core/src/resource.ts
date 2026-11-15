@@ -128,13 +128,11 @@ function defineResourceAction(
         ...(own?.additionalProperties !== undefined && {
           additionalProperties: own.additionalProperties,
         }),
-        // A `t.Record` input: kept, so a mark on its values is seen and not silently dropped.
         ...(own?.patternProperties !== undefined && {
           patternProperties: own.patternProperties,
         }),
       },
     );
-    // The rebuilt object would drop a mark on the input itself.
     if (isSensitive(own)) input = Sensitive(input);
   }
   sensitivity({ ...rest, name, input }, service.name);

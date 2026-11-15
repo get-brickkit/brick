@@ -227,7 +227,6 @@ export class ServiceImpl<
   action(actionOrConfig: any): any {
     const isActionFunction =
       typeof actionOrConfig === "function" && "config" in actionOrConfig;
-    // Checked here first, so an error names the service.
     if (!isActionFunction) sensitivity(actionOrConfig, this.name);
     const actionInstance: Action<any, any, any, any> = isActionFunction
       ? actionOrConfig

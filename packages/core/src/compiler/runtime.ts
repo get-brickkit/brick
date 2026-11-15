@@ -40,7 +40,6 @@ export interface CompiledRoutePlan {
   readonly contextHook?: (baseCtx: any) => unknown;
   readonly inputChecker?: Checker;
   readonly outputChecker?: Checker;
-  /** The action's sensitive-field handling, when its schemas mark any. */
   readonly sensitive?: Sensitivity;
   /** A plugin's check that runs before `inputChecker`. */
   readonly checkInput?: (input: unknown) => ValidationErrorItem[] | undefined;
@@ -261,7 +260,6 @@ export interface Stages {
   readonly errorBuilder: unknown;
   /** @throws The output's validation error; else returns the output. */
   readonly checkOutput: (result: unknown) => unknown;
-  /** Set when the input or output marks a field `t.Sensitive`; the call then runs in `withRedaction`. */
   readonly sensitive?: Sensitivity;
 }
 

@@ -44,12 +44,15 @@ export function toErrorResponse(
   err: unknown,
   context: ErrorContext,
 ): ErrorEnvelope {
-  const envelope = buildErrorEnvelope(err, context);
-  // An HTTP error is answered inside its call, before `withRedaction` sees it.
+  const envelope = redactAnsweredEnvelope(buildErrorEnvelope(err, context));
+  recordFailure(err, envelope);
+  return envelope;
+}
+
+function redactAnsweredEnvelope(envelope: ErrorEnvelope): ErrorEnvelope {
   envelope.message = redactText(envelope.message);
   if (envelope.details !== undefined)
     envelope.details = redactDetails(envelope.details);
-  recordFailure(err, envelope);
   return envelope;
 }
 
