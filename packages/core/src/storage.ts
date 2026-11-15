@@ -92,13 +92,14 @@ function ttl(ttlMs: number | undefined, required: boolean): void {
 /**
  * The key of a stored value for one feature: the parts as JSON, so whatever
  * separators or newlines a part holds, it never reaches another key. A part
- * over 128 characters is hashed, so a client cannot fill the storage with it.
+ * over 128 characters is hashed, so a client cannot fill the storage with it;
+ * the hash is an object, which no literal part can be, so it never equals one.
  */
 export function storageKey(feature: string, parts: unknown[]): string {
   return `${feature}:${JSON.stringify(
     parts.map((part) =>
       typeof part === "string" && part.length > 128
-        ? createHash("sha256").update(part).digest("hex")
+        ? { sha256: createHash("sha256").update(part).digest("hex") }
         : part,
     ),
   )}`;

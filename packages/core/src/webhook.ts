@@ -29,6 +29,8 @@ export type WebhookVerifier = ((
   request: WebhookRequest,
 ) => boolean | { eventId: string } | Promise<boolean | { eventId: string }>) & {
   suppliesEventId?: true;
+  /** Set on a verifier that signs the body (a GET has none, so it cannot serve one). */
+  signsBody?: true;
 };
 
 /** What `service.webhook` takes. */
@@ -49,15 +51,16 @@ export interface WebhookConfig<
   /** The payload: JSON, or a form (`application/x-www-form-urlencoded`). Properties it does not declare are dropped. */
   input: TInput;
   /**
-   * The delivery's id, so one sent twice runs once; `undefined` when the
-   * delivery has none. Not needed when the verifier supplies one.
+   * The delivery's id, so one sent twice runs once: a non-empty string or a
+   * finite number (`7` and `"7"` are one id); anything else, `undefined`
+   * included, is no id. Not needed when the verifier supplies one.
    */
   eventId?: (args: {
     input: Static<TInput>;
     headers: Headers;
     url: string;
     method: string;
-  }) => string | undefined | Promise<string | undefined>;
+  }) => string | number | undefined | Promise<string | number | undefined>;
   /** `false` runs every delivery, with no check for repeats. Else `ttlMs` is how long a handled id is remembered (default 7 days). */
   replay?: false | { ttlMs?: number };
   /** Largest body accepted, in bytes (default 1 MiB). */
@@ -114,6 +117,15 @@ export function defineWebhookMeta(
     );
   if (config.method !== undefined && !["POST", "GET"].includes(config.method))
     throw new Error(`${where}: method must be "POST" or "GET".`);
+  if (config.method === "GET" && config.verify.signsBody)
+    throw new Error(
+      `${where}: method "GET" has no body, and this verifier signs the body, so it would accept one signature for every query. Use twilioSignature (it signs the URL) or a verifier of your own, or method "POST".`,
+    );
+  for (const option of ["authorize", "output"])
+    if ((config as object as Record<string, unknown>)[option] !== undefined)
+      throw new Error(
+        `${where}: ${option} is not an option of a webhook, and would be ignored. verify is the check.`,
+      );
   const { maxBodyBytes = DEFAULT_MAX_BODY_BYTES, replay } = config;
   if (!Number.isSafeInteger(maxBodyBytes) || maxBodyBytes < 1)
     throw new Error(`${where}: maxBodyBytes must be a positive integer.`);

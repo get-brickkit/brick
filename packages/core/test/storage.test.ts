@@ -11,7 +11,8 @@ import {
   t,
   type StorageDriver,
 } from "../src";
-import { serviceStorage } from "../src/storage";
+import { createHash } from "node:crypto";
+import { serviceStorage, storageKey } from "../src/storage";
 import { redisReachable, requireService } from "./helpers";
 
 const url = requireService("REDIS_URL", "redis storage");
@@ -182,6 +183,24 @@ function suite(name: string, driver: () => StorageDriver, skip = false) {
 
 suite("memory", memory);
 suite("redis", () => redis({ url }), !url);
+
+describe("storageKey", () => {
+  it("keeps short parts as JSON, and the key of a part apart from a neighbour that holds its separators", () => {
+    expect(storageKey("rate-limit", ["svc", 1, "a\nb"])).toBe(
+      'rate-limit:["svc",1,"a\\nb"]',
+    );
+    expect(storageKey("f", ["a,b"])).not.toBe(storageKey("f", ["a", "b"]));
+  });
+
+  it("hashes a part over 128 characters into a form no literal part has", () => {
+    const long = "x".repeat(200);
+    const hash = createHash("sha256").update(long).digest("hex");
+    expect(storageKey("f", [long])).not.toBe(storageKey("f", [hash]));
+    expect(storageKey("f", [long])).toBe(storageKey("f", [long]));
+    expect(storageKey("f", [long])).not.toBe(storageKey("f", [`${long}y`]));
+    expect(storageKey("f", [long]).length).toBeLessThan(200);
+  });
+});
 
 describe("defineStorage", () => {
   it("is a dep, typed as ctx.deps.<name>", async () => {

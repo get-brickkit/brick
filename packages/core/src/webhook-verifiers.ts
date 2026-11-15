@@ -60,7 +60,9 @@ export function hmacSignature(options: HmacSignatureOptions): WebhookVerifier {
     algorithm = "sha256",
     encoding = "hex",
   } = options;
-  return ({ rawBody, headers }) => {
+  const verify: WebhookVerifier = ({ rawBody, headers, method }) => {
+    // A GET has no body, so one constant signature would pass for every query.
+    if (method !== "POST") return false;
     const value = headers.get(header);
     if (value === null || !value.startsWith(prefix)) return false;
     const given = value.slice(prefix.length);
@@ -69,6 +71,18 @@ export function hmacSignature(options: HmacSignatureOptions): WebhookVerifier {
     );
     return anyMatch(encoding === "hex" ? given.toLowerCase() : given, expected);
   };
+  return Object.assign(verify, { signsBody: true as const });
+}
+
+/** The key of a `whsec_` secret: its base64 bytes. Anything else throws, so a misread secret never becomes a key an attacker can sign with. */
+function keyOf(secret: string): Buffer {
+  const encoded = secret.replace(/^whsec_/, "");
+  const key = /^[A-Za-z0-9+/]+={0,2}$/.test(encoded)
+    ? Buffer.from(encoded, "base64")
+    : Buffer.alloc(0);
+  if (!key.length)
+    throw new Error("A Standard Webhooks secret is not base64, or is empty");
+  return key;
 }
 
 export interface StandardWebhooksOptions {
@@ -91,7 +105,8 @@ export function standardWebhooks(
   options: StandardWebhooksOptions,
 ): WebhookVerifier {
   const toleranceMs = options.toleranceMs ?? 5 * 60_000;
-  const verify: WebhookVerifier = ({ rawBody, headers }) => {
+  const verify: WebhookVerifier = ({ rawBody, headers, method }) => {
+    if (method !== "POST") return false;
     const id = headers.get("webhook-id");
     const timestamp = headers.get("webhook-timestamp");
     const signatures = headers.get("webhook-signature");
@@ -100,11 +115,8 @@ export function standardWebhooks(
     if (Math.abs(Date.now() - Number(timestamp) * 1000) > toleranceMs)
       return false;
     const signed = Buffer.concat([Buffer.from(`${id}.${timestamp}.`), rawBody]);
-    // The key is the secret's bytes: base64, after the optional `whsec_`.
     const expected = valuesOf(options.secret).map((secret) =>
-      createHmac("sha256", Buffer.from(secret.replace(/^whsec_/, ""), "base64"))
-        .update(signed)
-        .digest("base64"),
+      createHmac("sha256", keyOf(secret)).update(signed).digest("base64"),
     );
     let ok = false;
     for (const entry of signatures.split(" ")) {
@@ -115,7 +127,10 @@ export function standardWebhooks(
     }
     return ok ? { eventId: id } : false;
   };
-  return Object.assign(verify, { suppliesEventId: true as const });
+  return Object.assign(verify, {
+    suppliesEventId: true as const,
+    signsBody: true as const,
+  });
 }
 
 export interface TwilioSignatureOptions {
@@ -134,10 +149,10 @@ export interface TwilioSignatureOptions {
  * auth token, of the URL followed by the form parameters sorted by name, each
  * as name and value. For a JSON body, Twilio signs the URL alone and puts the
  * body's SHA-256 (hex) in its `bodySHA256` query parameter, which is checked
- * against the body. It supplies no event id: give the webhook an `eventId`.
+ * against the body. For a GET, it signs the URL alone. It supplies no event id: give the webhook an `eventId`.
  *
  * @example
- * verify: twilioSignature({ authToken, url: (request) => publicUrl(request) })
+ * verify: twilioSignature({ authToken, url: "https://api.example.com/api/telephony/voice-status" })
  */
 export function twilioSignature(
   options: TwilioSignatureOptions,

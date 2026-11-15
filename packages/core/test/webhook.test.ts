@@ -263,6 +263,30 @@ describe("hmacSignature", () => {
     }
     expect(calls).toHaveLength(0);
   });
+
+  it("accepts a hex signature written in upper case", async () => {
+    const { service, calls } = integrations();
+    const base = serve(service);
+    const body = JSON.stringify({ action: "a" });
+    const upper = `sha256=${sign(body).slice("sha256=".length).toUpperCase()}`;
+    const response = await post(base, body, {
+      "x-hub-signature-256": upper,
+      "x-delivery": "1",
+    });
+    expect(response.status).toBe(200);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("refuses a request that is not a POST, which has no body to sign", async () => {
+    const request = (method: string) => ({
+      rawBody: new Uint8Array(),
+      headers: new Headers({ "x-hub-signature-256": sign("") }),
+      url: "http://localhost/hook?a=1",
+      method,
+    });
+    expect(await github(request("POST"))).toBe(true);
+    expect(await github(request("GET"))).toBe(false);
+  });
 });
 
 describe("standardWebhooks", () => {
@@ -346,6 +370,61 @@ describe("standardWebhooks", () => {
     at(Number(TIMESTAMP) + 299);
     expect((await send(base)).status).toBe(200);
     expect(calls).toHaveLength(1);
+  });
+
+  it("refuses a secret that is no key, and a delivery signed with an empty one", async () => {
+    setSystemTime(new Date(Number(TIMESTAMP) * 1000));
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // Each secret with the key a lenient decoder would have taken from it.
+      for (const [secret, key] of [
+        ["whsec_", Buffer.alloc(0)],
+        ["whsec_!!!", Buffer.alloc(0)],
+        ["whsec_A", Buffer.alloc(0)],
+        ["my-plain-secret", Buffer.from("my-plain-secret", "base64")],
+      ] as const) {
+        resetGlobalRegistry();
+        const signature = createHmac("sha256", key)
+          .update(`${ID}.${TIMESTAMP}.${BODY}`)
+          .digest("base64");
+        const service = defineService("billing", {
+          deps: { cache: defineStorage({ driver: memory() }) },
+        });
+        const calls: unknown[] = [];
+        service.webhook({
+          name: "payments",
+          verify: standardWebhooks({ secret }),
+          input: t.Object({ test: t.Number() }),
+          execute: ({ input }) => {
+            calls.push(input);
+          },
+        });
+        const response = await send(
+          serve(service),
+          { "webhook-signature": `v1,${signature}` },
+          BODY,
+        );
+        expect([secret, response.status]).toEqual([secret, 401]);
+        expect(calls).toHaveLength(0);
+      }
+      // The misconfiguration is logged, not left to look like forged traffic.
+      expect(warn).toHaveBeenCalledTimes(4);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("refuses a request that is not a POST, which has no body to sign", async () => {
+    setSystemTime(new Date(Number(TIMESTAMP) * 1000));
+    const verify = standardWebhooks({ secret: SW_SECRET });
+    const request = (method: string) => ({
+      rawBody: new TextEncoder().encode(BODY),
+      headers: new Headers(headers()),
+      url: "http://localhost/hook",
+      method,
+    });
+    expect(await verify(request("POST"))).toEqual({ eventId: ID });
+    expect(await verify(request("GET"))).toBe(false);
   });
 
   it("takes the tolerance from toleranceMs", async () => {
@@ -502,6 +581,143 @@ describe("twilioSignature", () => {
   });
 });
 
+describe("a GET webhook", () => {
+  const get = {
+    name: "hook",
+    method: "GET",
+    replay: false,
+    input: t.Object({ CallSid: t.String() }),
+    execute: () => {},
+  };
+
+  it("cannot take a verifier that signs the body, and says why", () => {
+    const service = defineService("billing", {});
+    for (const verify of [github, standardWebhooks({ secret: "whsec_AAAA" })])
+      expect(() => service.webhook({ ...get, verify } as never)).toThrow(
+        /Service "billing": webhook 'hook': method "GET" has no body, and this verifier signs the body/,
+      );
+    const twilio = twilioSignature({ authToken: "t", url: "https://x.test" });
+    expect(() =>
+      service.webhook({ ...get, verify: twilio } as never),
+    ).not.toThrow();
+  });
+
+  it("is not authenticated by a wrapper that signs the body either: one signature for every query is refused", async () => {
+    const calls: unknown[] = [];
+    const service = defineService("billing", {});
+    service.webhook({
+      ...get,
+      input: t.Object({ a: t.String() }),
+      // Not marked as signing the body, so only the verifier's own refusal stands.
+      verify: (request: Parameters<WebhookVerifier>[0]) => github(request),
+      execute: ({ input }: any) => {
+        calls.push(input);
+      },
+    } as never);
+    const base = serve(service);
+    for (const a of ["1", "999", "31337"]) {
+      const response = await fetch(`${base}/api/billing/hook?a=${a}`, {
+        headers: { "x-hub-signature-256": sign("") },
+      });
+      expect(response.status).toBe(401);
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it("is signed by Twilio over its URL, query included, and the body is not part of it", async () => {
+    const token = "12345";
+    const url = "https://example.com/hook?CallSid=CA1";
+    const urlSignature = createHmac("sha1", token).update(url).digest("base64");
+    const calls: unknown[] = [];
+    const service = defineService("telephony", {});
+    service.webhook({
+      ...get,
+      name: "status",
+      verify: twilioSignature({ authToken: token, url }),
+      execute: ({ input }: any) => {
+        calls.push(input);
+      },
+    } as never);
+    const base = serve(service);
+    const call = (signature: string) =>
+      fetch(`${base}/api/telephony/status?CallSid=CA1`, {
+        headers: { "x-twilio-signature": signature },
+      });
+    expect((await call(urlSignature)).status).toBe(200);
+    expect(calls).toEqual([{ CallSid: "CA1" }]);
+    expect((await call("AAAA/OH5YylLD5NRKLltdqwSvS0BnU=")).status).toBe(401);
+    // A form in the body of a GET is not signed: the URL alone is.
+    const verify = twilioSignature({ authToken: token, url });
+    const request = (method: string) => ({
+      rawBody: new TextEncoder().encode("a=1"),
+      headers: new Headers({
+        "content-type": "application/x-www-form-urlencoded",
+        "x-twilio-signature": urlSignature,
+      }),
+      url,
+      method,
+    });
+    expect(await verify(request("GET"))).toBe(true);
+    expect(await verify(request("POST"))).toBe(false);
+  });
+});
+
+describe("a webhook's route", () => {
+  const webhook = {
+    name: "stripe",
+    path: "/hooks/stripe",
+    verify: () => false,
+    replay: false,
+    input: t.Object({}),
+    execute: () => "unverified",
+  };
+  const action = {
+    name: "legacyStripe",
+    path: "/hooks/stripe",
+    method: "POST",
+    execute: () => "unverified",
+  };
+
+  it("is not taken by an action, or taken from one, whichever is defined first", () => {
+    for (const webhookFirst of [true, false]) {
+      resetGlobalRegistry();
+      const service = defineService("billing", {});
+      const addWebhook = () => service.webhook(webhook as never);
+      const addAction = () => service.action(action as never);
+      for (const add of webhookFirst
+        ? [addWebhook, addAction]
+        : [addAction, addWebhook])
+        add();
+      const start = () => brick({ services: [service] });
+      expect(start).toThrow(/'billing\.stripe'/);
+      expect(start).toThrow(/'billing\.legacyStripe'/);
+      expect(start).toThrow(/a webhook cannot share its route/);
+    }
+  });
+
+  it("is not taken by an endpoint, defined before or after", () => {
+    const service = defineService("billing", {});
+    service.webhook(webhook as never);
+    const endpoint = {
+      method: "POST" as const,
+      path: "/api/billing/hooks/stripe",
+      handler: () => "unverified",
+    };
+    expect(() => brick({ services: [service], endpoints: [endpoint] })).toThrow(
+      /webhook 'billing\.stripe'.*cannot share/,
+    );
+    const app = brick({ services: [service] });
+    expect(() => app.endpoint(endpoint)).toThrow(/webhook 'billing\.stripe'/);
+  });
+
+  it("leaves two plain actions on one route as they were: the later is shadowed", () => {
+    const service = defineService("billing", {});
+    service.action({ ...action, name: "a" } as never);
+    service.action({ ...action, name: "b" } as never);
+    expect(() => brick({ services: [service] })).not.toThrow();
+  });
+});
+
 describe("a custom verifier", () => {
   const verifier = (verify: WebhookVerifier) => {
     const calls: unknown[] = [];
@@ -574,6 +790,39 @@ describe("a custom verifier", () => {
       expect(JSON.stringify(envelope)).not.toContain("secret-looking-detail");
       expect(calls).toHaveLength(0);
       resetGlobalRegistry();
+    }
+  });
+
+  it("warns, once, of a verifier that throws: the webhook and the error's class, never its message", async () => {
+    class VaultError extends Error {}
+    const spies = (["warn", "error", "log", "info", "debug"] as const).map(
+      (level) => spyOn(console, level).mockImplementation(() => {}),
+    );
+    try {
+      const { base } = verifier(() => {
+        throw new VaultError("bad signature body-and-secret-detail");
+      });
+      expect((await send(base)).status).toBe(401);
+      const [warn] = spies;
+      expect(warn!).toHaveBeenCalledTimes(1);
+      const logged = JSON.stringify(spies.flatMap((spy) => spy.mock.calls));
+      expect(logged).toContain("custom");
+      expect(logged).toContain("events");
+      expect(logged).toContain("VaultError");
+      expect(logged).not.toContain("body-and-secret-detail");
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  });
+
+  it("does not log a delivery whose signature is merely wrong: anyone can send those", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { base } = verifier(() => false);
+      expect((await send(base)).status).toBe(401);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
     }
   });
 });
@@ -696,6 +945,42 @@ describe("the body", () => {
     const small = big(100);
     expect((await post(base, small, signed("2")(small))).status).toBe(200);
     expect(calls).toHaveLength(1);
+  });
+
+  it("refuses by Content-Length without waiting for a body that never comes", async () => {
+    const { service, calls } = integrations({ config: { maxBodyBytes: 1000 } });
+    const port = Number(new URL(serve(service)).port);
+    let text = "";
+    const closed = Promise.withResolvers<void>();
+    const socket = await Bun.connect({
+      hostname: "localhost",
+      port,
+      socket: {
+        data: (_socket, chunk) => {
+          text += chunk.toString();
+        },
+        close: () => closed.resolve(),
+        error: () => closed.resolve(),
+      },
+    });
+    // Declares 5000 bytes and sends none: only the declared length can be refused.
+    socket.write(
+      "POST /api/integrations/github HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 5000\r\n\r\n",
+    );
+    await Promise.race([
+      new Promise((resolve) => {
+        const timer = setInterval(() => {
+          if (!text.includes("\r\n\r\n")) return;
+          clearInterval(timer);
+          resolve(0);
+        }, 10);
+      }),
+      new Promise((resolve) => setTimeout(resolve, 2000)),
+    ]);
+    socket.end();
+    await closed.promise;
+    expect(text).toStartWith("HTTP/1.1 413");
+    expect(calls).toHaveLength(0);
   });
 
   it("holds the cap for a chunked body that declares no length", async () => {
@@ -1128,6 +1413,60 @@ function replaySuite(
       expect(calls).toHaveLength(0);
     });
 
+    it('takes 0 as an id, and 7 and "7" as one', async () => {
+      const ids: Record<string, unknown> = { zero: 0, number: 7, string: "7" };
+      const { service, calls } = integrations({
+        storage,
+        config: { eventId: ({ headers }: any) => ids[headers.get("x-id")] },
+      });
+      const base = serve(service);
+      const go = (id: string) =>
+        post(base, body, { "x-hub-signature-256": sign(body), "x-id": id });
+      expect((await go("zero")).status).toBe(200);
+      expect(await (await go("zero")).json()).toEqual({ duplicate: true });
+      expect((await go("number")).status).toBe(200);
+      expect(await (await go("string")).json()).toEqual({ duplicate: true });
+      expect(calls.map((call) => call.eventId)).toEqual(["0", "7"]);
+    });
+
+    it("answers an id that is not a non-empty string or a finite number as no id", async () => {
+      const ids: Record<string, unknown> = {
+        empty: "",
+        object: { id: 1 },
+        array: ["a"],
+        flag: true,
+        nan: Number.NaN,
+        infinity: Number.POSITIVE_INFINITY,
+        none: null,
+      };
+      const { service, calls } = integrations({
+        storage,
+        config: { eventId: ({ headers }: any) => ids[headers.get("x-id")] },
+      });
+      const base = serve(service);
+      for (const id of Object.keys(ids)) {
+        const response = await post(base, body, {
+          "x-hub-signature-256": sign(body),
+          "x-id": id,
+        });
+        expect([id, response.status]).toEqual([id, 400]);
+      }
+      expect(calls).toHaveLength(0);
+    });
+
+    it("does not take the hash of a long id for an id of its own", async () => {
+      const { service, calls } = integrations({ storage });
+      const base = serve(service);
+      const long = "x".repeat(200);
+      const hash = createHash("sha256").update(long).digest("hex");
+      expect((await send(base, long)).status).toBe(200);
+      expect(await (await send(base, hash)).json()).toEqual({ ok: true });
+      expect(await (await send(base, long)).json()).toEqual({
+        duplicate: true,
+      });
+      expect(calls).toHaveLength(2);
+    });
+
     it("hashes a long event id into the key, and still tells ids apart", async () => {
       const { service, calls } = integrations({ storage });
       const base = serve(service);
@@ -1172,6 +1511,24 @@ replaySuite(
   },
   !redisUrl,
 );
+
+describe("a handled id", () => {
+  it("is kept for replay.ttlMs, not only for the lease", async () => {
+    const { service, calls } = integrations({
+      config: { replay: { ttlMs: 60 * 60_000 } },
+    });
+    const base = serve(service);
+    const body = JSON.stringify({ action: "a" });
+    const send = () => post(base, body, signed("evt")(body));
+    expect((await send()).status).toBe(200);
+    // Past the 5-minute lease, inside the ttl.
+    setSystemTime(new Date(Date.now() + 6 * 60_000));
+    expect(await (await send()).json()).toEqual({ duplicate: true });
+    setSystemTime(new Date(Date.now() + 60 * 60_000));
+    expect(await (await send()).json()).toEqual({ ok: true });
+    expect(calls).toHaveLength(2);
+  });
+});
 
 describe("when the storage cannot answer", () => {
   const unavailable = (): StorageUnavailableError =>
@@ -1374,6 +1731,33 @@ describe("startup errors", () => {
     expect(() =>
       service.webhook({ ...config, replay: { ttlMs: -1 } } as never),
     ).toThrow(/replay.ttlMs/);
+  });
+
+  it("fails on authorize and output, which a webhook would silently ignore", () => {
+    const service = defineService("billing", {});
+    for (const [option, value] of [
+      ["authorize", () => false],
+      ["output", t.Object({})],
+    ] as const)
+      expect(() =>
+        service.webhook({ ...config, [option]: value } as never),
+      ).toThrow(
+        new RegExp(
+          `webhook 'hook': ${option} is not an option of a webhook.*verify is the check`,
+        ),
+      );
+  });
+
+  it("checks the rateLimit of a webhook, also when replay is off", () => {
+    const service = defineService("billing", {});
+    service.webhook({
+      ...config,
+      replay: false,
+      rateLimit: { per: () => "k", max: 1, windowMs: 1000 },
+    });
+    expect(() => service.build()).toThrow(
+      /Service "billing": action 'hook' declares rateLimit, but the service has no key-value storage/,
+    );
   });
 
   it("shares the name and URL rules of actions", () => {

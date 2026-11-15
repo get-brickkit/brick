@@ -367,6 +367,14 @@ const HANDLED = "handled";
  */
 const LEASE_MS = 5 * 60_000;
 
+/** A delivery's id: a non-empty string or a finite number (`7` and `"7"` are one id); anything else is none. */
+const idOf = (value: unknown): string | undefined =>
+  typeof value === "number" && Number.isFinite(value)
+    ? String(value)
+    : typeof value === "string" && value
+      ? value
+      : undefined;
+
 const refuse = (code: string, message: string, status: number) =>
   new ActionExecutionError(code, message, status);
 
@@ -445,8 +453,18 @@ function bindWebhook(plan: CompiledRoutePlan): CompiledHandler {
           url: request.url,
           method: request.method,
         });
-      } catch {
-        // Not logged: what a verifier throws may quote the signature or the body.
+      } catch (error) {
+        // The class name only: what a verifier throws may quote the signature or the body. A failed signature (false) is not logged: anyone can send those.
+        plan.logger.warn(
+          "A webhook verifier threw, so its delivery was refused",
+          {
+            service: plan.service.name,
+            webhook: name,
+            error:
+              error instanceof Error ? error.constructor.name : typeof error,
+            requestId: ctx.requestId,
+          },
+        );
         verdict = false;
       }
       const given = (verdict as { eventId?: unknown } | null)?.eventId;
@@ -462,13 +480,14 @@ function bindWebhook(plan: CompiledRoutePlan): CompiledHandler {
       input = Value.Clean(plan.action.config.input, input);
       outcome = "failed";
 
-      eventId ||=
-        (await webhook.eventId?.({
+      eventId ??= idOf(
+        await webhook.eventId?.({
           input,
           headers: request.headers,
           url: request.url,
           method: request.method,
-        })) || undefined;
+        }),
+      );
       let claim: { key: string; mine: string } | undefined;
       if (storage) {
         if (!eventId) {

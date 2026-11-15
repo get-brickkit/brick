@@ -110,7 +110,10 @@ export function analyzeDeclaredApplication(
   }
   const routes: RouteIR[] = [];
   const bindings: RouteBinding[] = [];
-  const registered = new Map<string, { name: string; plugin: boolean }>();
+  const registered = new Map<
+    string,
+    { name: string; plugin: boolean; webhook: boolean }
+  >();
   const diagnostics: string[] = [];
   const add = (
     service: Service<any, any>,
@@ -124,6 +127,11 @@ export function analyzeDeclaredApplication(
     const key = routeKey(method, path);
     const previous = registered.get(key);
     if (previous) {
+      // A plain action must never take the place of a webhook's check, or the reverse.
+      if (route.kind === "webhook" || previous.webhook)
+        throw new DuplicateNameError(
+          `Brick compiler: '${service.name}.${action.name}' and '${previous.name}' both claim '${method} ${path}', and a webhook cannot share its route`,
+        );
       if (route.plugin || previous.plugin)
         throw new DuplicateNameError(
           `Brick compiler: duplicate plugin route '${method} ${path}'`,
@@ -140,6 +148,7 @@ export function analyzeDeclaredApplication(
     registered.set(key, {
       name: `${service.name}.${action.name}`,
       plugin: Boolean(route.plugin),
+      webhook: route.kind === "webhook",
     });
     routes.push(route);
     bindings.push({ service, action });
