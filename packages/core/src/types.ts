@@ -20,6 +20,7 @@ import type { Reveal } from "./sensitive";
 import type { StandardErrorCode } from "./protocol";
 import type { DashboardIdentity } from "./dashboard-identity";
 import type { Identity } from "./identity";
+import type { RateLimit } from "./rate-limit";
 import type { ServiceEvents } from "./events/types";
 import type { EventCatalog, EventRefs } from "./events/catalog";
 import type { EventsDefinition } from "./events/hub";
@@ -216,6 +217,11 @@ export interface StandardErrorMap {
     details?: unknown,
     options?: ErrorOptions,
   ) => never;
+  RATE_LIMITED: (
+    overrideMessage?: string,
+    details?: unknown,
+    options?: ErrorOptions,
+  ) => never;
   INTERNAL_SERVER_ERROR: (
     overrideMessage?: string,
     details?: unknown,
@@ -272,6 +278,11 @@ export interface BaseActionConfig<
   tags?: string[];
 }
 
+/** One rate limit or several; see `RateLimit`. */
+export type RateLimits<TInput = any, TCtx = ActionContext> =
+  | RateLimit<TInput, TCtx>
+  | readonly RateLimit<TInput, TCtx>[];
+
 export interface ActionConfigWithAuthorize<
   TInputSchema extends TSchema | undefined = undefined,
   TOutputSchema extends TSchema | undefined = undefined,
@@ -296,6 +307,14 @@ export interface ActionConfigWithAuthorize<
    * `ctx.dashboard` is then set.
    */
   dashboard?: boolean;
+  /**
+   * Refuse calls over a limit (429, `RATE_LIMITED`), counted per caller in the
+   * service's key-value storage. Runs after input validation, before `authorize`.
+   */
+  rateLimit?: RateLimits<
+    TInputSchema extends TSchema ? Static<TInputSchema> : any,
+    TContext
+  >;
   authorize: (params: {
     user?: TContext extends { user: infer U } ? U : any;
     input: TInputSchema extends TSchema ? Static<TInputSchema> : any;
@@ -334,6 +353,14 @@ export interface ActionConfigWithoutAuthorize<
    * `ctx.dashboard` is then set.
    */
   dashboard?: boolean;
+  /**
+   * Refuse calls over a limit (429, `RATE_LIMITED`), counted per caller in the
+   * service's key-value storage. Runs after input validation, before `authorize`.
+   */
+  rateLimit?: RateLimits<
+    TInputSchema extends TSchema ? Static<TInputSchema> : any,
+    TContext
+  >;
   authorize?: undefined;
   execute: (params: {
     input: TInputSchema extends TSchema ? Static<TInputSchema> : any;
@@ -685,6 +712,11 @@ export interface CommandConfig<
   load?: { children?: TLoad };
   /** For a resource without `crud`: which rows the command may load. */
   access?: ResourceActionAccess<TCtx>;
+  /**
+   * Refuse calls over a limit (429, `RATE_LIMITED`), counted per caller in the
+   * service's key-value storage. Runs after input validation, before `authorize`.
+   */
+  rateLimit?: RateLimits<ResourceActionInput<TIn, true>, TCtx>;
   authorize?: (params: {
     user?: TCtx extends { user: infer U } ? U : any;
     input: ResourceActionInput<TIn, true>;
@@ -779,6 +811,11 @@ export interface ResourceActionConfig<
   reveal?: Reveal<ResourceActionInput<TIn, TRecord>, TCtx>;
   /** For a record action on a resource without `crud`: which rows it may load. */
   access?: ResourceActionAccess<TCtx>;
+  /**
+   * Refuse calls over a limit (429, `RATE_LIMITED`), counted per caller in the
+   * service's key-value storage. Runs after input validation, before `authorize`.
+   */
+  rateLimit?: RateLimits<ResourceActionInput<TIn, TRecord>, TCtx>;
   authorize?: (params: {
     user?: TCtx extends { user: infer U } ? U : any;
     input: ResourceActionInput<TIn, TRecord>;
@@ -849,6 +886,8 @@ export interface ActionSchema {
   hasAuthorize: boolean;
   hasScope?: boolean;
   accessPolicy?: ActionAccessPolicy;
+  /** The action's rate limits, without their keys. */
+  rateLimit?: { max: number; windowMs: number }[];
   errors?: Record<string, ActionErrorDefinition>;
   emits?: string[];
   tags?: string[];

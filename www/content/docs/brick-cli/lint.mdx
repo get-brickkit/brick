@@ -101,6 +101,7 @@ export default defineConfig({
 | Rule                  | Enforces                                                                                                                    | Preset      | Kind |
 | :-------------------- | :-------------------------------------------------------------------------------------------------------------------------- | :---------- | :--- |
 | `explicit-access`     | Every action sets `authorize` or `access`, every record action and command sets `access`, and every `crud()` sets `access`. | recommended | file |
+| `public-rate-limit`   | Warns on an action, command or tool anyone may call that has no [`rateLimit`](/docs/rate-limits).                           | recommended | file |
 | `socket-authorize`    | Sockets declare `authorize` and `join`.                                                                                     | recommended | file |
 | `no-wildcard-origins` | No `"*"` in `allowedOrigins` or `trustedOrigins`.                                                                           | recommended | file |
 | `strict-input`        | Input objects set `additionalProperties: false`. Fix: adds it.                                                              | strict      | file |

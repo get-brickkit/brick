@@ -126,7 +126,7 @@ hooks: {
 
 ## Aborting Writes with Error Helpers
 
-Hooks receive the standard `error` builder (`BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`, `INTERNAL_SERVER_ERROR`). Calling a helper throws an `ActionExecutionError` with that code and status.
+Hooks receive the standard `error` builder (`BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`, `RATE_LIMITED`, `INTERNAL_SERVER_ERROR`). Calling a helper throws an `ActionExecutionError` with that code and status.
 
 A hook runs inside the write's transaction, so throwing in any `before*` or `after*` hook rolls back the whole operation: the row, anything the hook wrote through `tx`, and, for a bulk operation, every other item in the batch. Error helpers return their code and status to the client. Any other error is a 500.
 

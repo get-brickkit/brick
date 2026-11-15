@@ -74,6 +74,10 @@ function notACounter(key: string): Error {
   return new Error(`Storage: "${key}" does not hold a counter`);
 }
 
+function counterOverflow(key: string): Error {
+  return new Error(`Storage: incrementing "${key}" would overflow`);
+}
+
 function ttl(ttlMs: number | undefined, required: boolean): void {
   if (ttlMs === undefined && !required) return;
   if (!Number.isSafeInteger(ttlMs) || ttlMs! <= 0)
@@ -177,13 +181,18 @@ export interface RedisStorageOptions {
 
 const NOT_A_COUNTER = "BRICK_NOT_A_COUNTER";
 const INCREMENT = `local n = redis.pcall('INCR', KEYS[1])
-if type(n) == 'table' and n.err then return redis.error_reply('${NOT_A_COUNTER}') end
+if type(n) == 'table' and n.err then
+  if string.find(n.err, '^WRONGTYPE') or string.find(n.err, 'not an integer') then return redis.error_reply('${NOT_A_COUNTER}') end
+  return n
+end
 local t = redis.call('PTTL', KEYS[1])
 if t < 0 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) t = tonumber(ARGV[1]) end
 return {n, t}`;
 const PUT_IF_ABSENT = `if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'PX', ARGV[2]) then return {1, ARGV[1]} end
 return {0, redis.call('GET', KEYS[1])}`;
 const TIMED_OUT = Symbol("timed out");
+const UNAVAILABLE_REPLY =
+  /^(LOADING|READONLY|OOM|BUSY|MASTERDOWN|CLUSTERDOWN|NOREPLICAS|MISCONF|TRYAGAIN)\b/;
 
 /**
  * Key-value storage in Redis, through Bun's built-in client. Connects on first
@@ -231,7 +240,14 @@ export function redis(options: RedisStorageOptions = {}): KeyValueDriver {
           `Storage: Redis did not answer within ${REDIS_WAIT_MS} ms`,
         );
       }
-      if (client.connected) throw error;
+      if (client.connected) {
+        if (UNAVAILABLE_REPLY.test(String((error as Error)?.message)))
+          throw new StorageUnavailableError(
+            `Storage: Redis cannot serve the command right now (${(error as Error).message})`,
+            { cause: error },
+          );
+        throw error;
+      }
       throw new StorageUnavailableError(
         "Storage: the Redis connection was lost",
         { cause: error },
@@ -319,11 +335,8 @@ export function memory(): KeyValueDriver {
       const entry = readEvictingExpired(key) ?? { value: "0" };
       // What Redis's INCR takes: a plain integer, no spaces, signs, exponents or leading zeros.
       const count = Number(entry.value) + 1;
-      if (
-        !/^(0|-?[1-9][0-9]*)$/.test(entry.value) ||
-        !Number.isSafeInteger(count)
-      )
-        throw notACounter(key);
+      if (!/^(0|-?[1-9][0-9]*)$/.test(entry.value)) throw notACounter(key);
+      if (!Number.isSafeInteger(count)) throw counterOverflow(key);
       const expiresAt = entry.expiresAt ?? Date.now() + ttlMs;
       entries.set(key, { value: String(count), expiresAt });
       return { count, expiresInMs: Math.max(1, expiresAt - Date.now()) };

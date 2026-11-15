@@ -129,6 +129,8 @@ export {
 } from "./rpc";
 export { useDeps } from "./deps";
 export type { Identity } from "./identity";
+export type { ClientIp, RateLimit } from "./rate-limit";
+export { clientAddress } from "./rate-limit";
 export {
   defineStorage,
   redis,
