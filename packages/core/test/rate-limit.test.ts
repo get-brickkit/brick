@@ -1062,6 +1062,29 @@ describe("rate limits, other cases", () => {
       expect(Bun.inspect(error.mock.calls)).toContain(
         "rateLimit per must return a string, null or undefined; it returned a promise",
       );
+
+      resetGlobalRegistry();
+      let unhandled = 0;
+      const count = () => unhandled++;
+      process.on("unhandledRejection", count);
+      try {
+        const rejecting = limited({
+          per: (async () => {
+            throw new Error("lookup failed");
+          }) as any,
+          max: 1,
+          windowMs: 60_000,
+        });
+        const failing = brick({
+          services: [rejecting.service],
+          requestLogging: false,
+        });
+        expect((await login(failing, "a")).status).toBe(500);
+        await Bun.sleep(10);
+        expect(unhandled).toBe(0);
+      } finally {
+        process.off("unhandledRejection", count);
+      }
     } finally {
       error.mockRestore();
     }

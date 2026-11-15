@@ -321,10 +321,12 @@ async function keyOf(
 ): Promise<string[] | undefined> {
   if (typeof limit.per === "function") {
     const key: unknown = limit.per({ input, ctx });
-    if (typeof (key as { then?: unknown } | null)?.then === "function")
+    if (typeof (key as { then?: unknown } | null)?.then === "function") {
+      Promise.resolve(key).catch(() => {});
       throw new Error(
         "rateLimit per must return a string, null or undefined; it returned a promise (it must not be async)",
       );
+    }
     return key == null ? undefined : ["key", String(key)];
   }
   if (limit.per === "actor") {
