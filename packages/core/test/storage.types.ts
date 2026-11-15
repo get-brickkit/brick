@@ -20,11 +20,11 @@ auth.action({
     const claim: { stored: boolean; value: string } =
       await ctx.deps.cache.putIfAbsent("k", "v", 1000);
     void claim;
-    // @ts-expect-error values are strings
+    // @ts-expect-error
     await ctx.deps.cache.put("k", 1);
-    // @ts-expect-error putIfAbsent needs ttlMs
+    // @ts-expect-error
     await ctx.deps.cache.putIfAbsent("k", "v");
-    // @ts-expect-error not a declared dep
+    // @ts-expect-error
     void ctx.deps.other;
     return { value, count: counter.count };
   },

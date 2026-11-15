@@ -502,7 +502,6 @@ async function resolveServiceContext<
         : pluginDeps
       : framework.deps,
   };
-  // Like `context`, the identity hook sees the service's own deps, never a plugin's.
   markResolved(finalCtx, service, framework.deps);
   return finalCtx;
 }

@@ -312,7 +312,6 @@ function requestContext(
       ? plan.service.deps
       : (plan.deps ?? plan.service.deps),
   });
-  // As in process: a call within this service that passes ctx on reuses it, and identity resolves once.
   markResolved(ctx, plan.service, plan.service.deps);
   return ctx as ActionContext & { requestId: string };
 }

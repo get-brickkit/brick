@@ -22,6 +22,8 @@ export const auth = defineService("auth", { deps: { cache } });
 
 ```ts title="src/services/auth/actions/send-code.action.ts"
 import { randomInt } from "node:crypto";
+import { t } from "@brickkit/core";
+import { auth } from "../auth.service";
 
 export default auth.action({
   name: "sendCode",
@@ -89,7 +91,7 @@ try {
 
 ### `memory()`
 
-Keeps values in this process, for tests and local development. They are lost on restart and not shared between processes.
+Keeps values in this process, for tests and local development. They are lost on restart and not shared between processes. An expired key leaves memory the next time it is used, so a long-running process that writes many keys and never reads them again keeps them.
 
 ## Keys
 
