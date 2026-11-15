@@ -56,3 +56,13 @@ export function getActionAccess(action: Action | object): ActionAccessInfo {
   else if (policy === "scoped" && !hasScope) policy = "authorized";
   return { hasAuthorize, hasScope, policy };
 }
+
+/**
+ * Say how the audit log records an action a plugin owns: `"inline"` when the
+ * plugin writes in its own transaction and records the write there with a
+ * host hook, `"none"` when it never writes. Without this, an action that is not
+ * a `GET` is recorded after it runs, as a plain action is.
+ */
+export function setActionAudit(action: object, mode: "inline" | "none"): void {
+  actionMeta(action).audit = mode;
+}

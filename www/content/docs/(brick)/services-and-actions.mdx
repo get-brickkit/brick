@@ -108,6 +108,7 @@ Actions are the core unit of compute in Brick-TS. Every action is registered wit
 | `path`        | `string`                                          | `${prefix}/${service}/${action}` | Route relative to the service: `"/:id/summary"` on `orders` mounts at `/api/orders/:id/summary`. Don't repeat the prefix. The default uses kebab-case (`getUser` → `/api/users/get-user`). |
 | `authorize`   | `(params) => boolean \| Promise<boolean>`         | `undefined`                      | Guard run after input validation. Returning `false` rejects with `UNAUTHORIZED` (401) without `ctx.user`, `FORBIDDEN` (403) with one.                                                      |
 | `rateLimit`   | `RateLimit \| RateLimit[]`                        | `undefined`                      | At most `max` calls per `windowMs` per key (`per: "ip"`, `"actor"` or a function of the input). Over it: `RATE_LIMITED` (429). See [Rate Limits](/docs/rate-limits).                       |
+| `audit`       | `false \| { resource?, record? }`                 | recorded unless `GET`            | With an [audit table](/docs/audit-log): `false` leaves the action out, `resource` and `record: ({ input, result }) => id` say which record it changes. Ignored without a table.            |
 | `errors`      | `Record<string, { status?, message }>`            | `undefined`                      | Custom error catalog added to `error` helpers. `status` defaults to `400`.                                                                                                                 |
 | `tags`        | `string[]`                                        | `[service name]`                 | Extra OpenAPI tags, added after the service tag; also included in introspection.                                                                                                           |
 | `emits`       | `string[]`                                        | `undefined`                      | Metadata included in introspection.                                                                                                                                                        |
@@ -134,7 +135,7 @@ When the app is served via `brick()`, the gateway mounts the action as an HTTP e
 curl http://localhost:4000/api/users/usr_1
 ```
 
-Both invocations run the same steps in the same order: input validation, [`rateLimit`](/docs/rate-limits), `authorize`, `execute`, then output validation.
+Both invocations run the same steps in the same order: input validation, [`rateLimit`](/docs/rate-limits), `authorize`, `execute`, then output validation. With an [audit table](/docs/audit-log), a successful call that is not a `GET` then records its row.
 
 ### File Uploads
 

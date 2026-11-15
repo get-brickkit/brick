@@ -415,7 +415,13 @@ export function operations(model: CrudModel) {
     const { input, ctx, error, query, where } = call;
     const hooks = withHostHooks(options.hooks, resource, service);
     await transaction(call, hooks, async (target, record) => {
-      await hooks.beforeDelete?.({ id: input.id, ctx, error, tx: target });
+      await hooks.beforeDelete?.({
+        id: input.id,
+        ctx,
+        error,
+        tx: target,
+        resource,
+      });
       const rows = await query.run(
         target,
         record ? "delete-row" : "delete",
@@ -431,7 +437,13 @@ export function operations(model: CrudModel) {
           id: eventId(rows[0]),
           row: eventRow(rows[0]),
         } satisfies CrudEventPayload);
-      await hooks.afterDelete?.({ id: input.id, ctx, error, tx: target });
+      await hooks.afterDelete?.({
+        id: input.id,
+        ctx,
+        error,
+        tx: target,
+        resource,
+      });
     });
     await committed(call, hooks, { operation: "delete" });
     return { success: true };
@@ -449,7 +461,13 @@ export function operations(model: CrudModel) {
     const rows = await transaction(call, hooks, async (target, record) => {
       const data = { ...(operation === "create" ? input : input.data) };
       if (operation === "create")
-        await hooks.beforeCreate?.({ data, ctx, error, tx: target });
+        await hooks.beforeCreate?.({
+          data,
+          ctx,
+          error,
+          tx: target,
+          resource,
+        });
       else
         await hooks.beforeUpdate?.({
           id: input.id,
@@ -457,6 +475,7 @@ export function operations(model: CrudModel) {
           ctx,
           error,
           tx: target,
+          resource,
         });
       // Hooks are trusted and may set internal columns, but must use real table keys.
       for (const field of Object.keys(data))
@@ -515,7 +534,13 @@ export function operations(model: CrudModel) {
               }) satisfies CrudEventPayload,
         );
       if (operation === "create")
-        await hooks.afterCreate?.({ row: written[0], ctx, error, tx: target });
+        await hooks.afterCreate?.({
+          row: written[0],
+          ctx,
+          error,
+          tx: target,
+          resource,
+        });
       else
         await hooks.afterUpdate?.({
           id: input.id,
@@ -523,6 +548,7 @@ export function operations(model: CrudModel) {
           ctx,
           error,
           tx: target,
+          resource,
         });
       return written;
     });

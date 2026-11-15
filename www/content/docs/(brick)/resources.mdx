@@ -248,7 +248,7 @@ Each item goes through the same path as its single-row operation:
 
 - It is validated with the same schema, so the `create` and `update` field allow-lists apply per item. A validation error names the item in its path, such as `/items/2/name`.
 - `authorize` is called once per item with the single-row operation and input (`operation: "update"`, `input: { id, data }`), so a policy written for `update` also covers `bulkUpdate`. `scope` is applied to every row. A row outside the scope fails as a missing row would, with `NOT_FOUND`, and does not reveal that it exists.
-- [Lifecycle hooks](/docs/hooks) and [events](/docs/events) fire once per row, as for single writes.
+- [Lifecycle hooks](/docs/hooks) and [events](/docs/events) fire once per row, as for single writes, and so does the [audit log](/docs/audit-log): one row per record.
 
 The whole batch runs in one transaction. If any item fails, nothing is kept and the error names the failing item: its `code` and `status` are the item's, its message starts with `Item <index>:`, and `details` is `{ index, code, message }`. The result lists the written rows in input order, limited to readable fields as for `create` and `update`. A batch must hold between 1 and `maxBatchSize` items, and `bulkDelete` rejects repeated IDs.
 

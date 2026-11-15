@@ -158,6 +158,8 @@ hooks: {
 }
 ```
 
+The [audit log](/docs/audit-log) is built this way: a service whose database holds an audit table gets a hook of its own that inserts the row through `tx`, so you do not write one.
+
 A write made through `ctx.db` instead of `tx` is not part of the transaction on Postgres. On SQLite it joins anyway, because the database has one connection.
 
 ## Naming and Generated IDs

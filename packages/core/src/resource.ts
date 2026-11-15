@@ -7,10 +7,12 @@ import type { ResourcePlugin } from "./plugin-types";
 import { buildErrorHelpers, defineAction } from "./action";
 import { kebabCase } from "./kebab";
 import { actionMeta, type ResourceActionInfo } from "./action-meta";
+import { setActionAudit } from "./access";
 import { portOf } from "./service-port";
 import { Type } from "./typebox";
 import { isSensitive, Sensitive, sensitivity } from "./sensitive";
 import { runInTransaction } from "./events/transaction";
+import { entryOf, inlineAudit, isAuditTable, recordInline } from "./audit";
 import { checkPayload, crudEventSource, type EventRef } from "./events/catalog";
 import {
   ActionExecutionError,
@@ -230,6 +232,10 @@ function defineCommand(
   config: CommandConfig<any, any, any, any, any, any, any, readonly string[]>,
 ) {
   const where = `Command '${resource.name}.${name}'`;
+  if (isAuditTable(resource.table))
+    throw new Error(
+      `${where} is over the audit table, so it could rewrite audit rows. The audit log takes no commands.`,
+    );
   if (typeof config.decide !== "function")
     throw new Error(`${where} needs a decide function`);
   const loaded = (config.load?.children ?? []).map((child) => ({
@@ -330,18 +336,24 @@ function defineCommand(
       for (const [eventName, payload] of emits)
         await record!(eventName, payload);
 
-      if (!config.output) return { id };
-      const [updated] = await tx
-        .select()
-        .from(resource.table)
-        .where(eq(resource.id, id))
-        .limit(1);
-      for (const child of loaded)
-        updated[child.name] = await tx
+      let reply: unknown = { id };
+      if (config.output) {
+        const [updated] = await tx
           .select()
-          .from(child.table)
-          .where(eq(child.parent, id));
-      return Value.Clean(config.output, updated);
+          .from(resource.table)
+          .where(eq(resource.id, id))
+          .limit(1);
+        for (const child of loaded)
+          updated[child.name] = await tx
+            .select()
+            .from(child.table)
+            .where(eq(child.parent, id));
+        reply = Value.Clean(config.output, updated);
+      }
+      const audit = inlineAudit();
+      if (audit)
+        await recordInline(audit, tx, ctx, entryOf(audit, input, reply));
+      return reply;
     };
     return recorder
       ? recorder.transaction(
@@ -370,10 +382,12 @@ function defineCommand(
       ...(config.access === undefined ? {} : { access: config.access }),
       ...(config.authorize ? { authorize: config.authorize } : {}),
       ...(config.rateLimit ? { rateLimit: config.rateLimit } : {}),
+      ...(config.audit === undefined ? {} : { audit: config.audit }),
       execute: () => undefined,
     } as ResourceActionConfig<any, any, any, any, any, boolean>,
     run,
   );
+  setActionAudit(action, "inline");
   Object.assign(action, { decide });
   return action;
 }

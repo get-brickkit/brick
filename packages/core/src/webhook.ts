@@ -1,6 +1,7 @@
 import type { Static, TSchema } from "@sinclair/typebox";
 import { actionMeta } from "./action-meta";
 import type {
+  AuditConfig,
   Action,
   ActionErrorDefinition,
   ErrorBuilder,
@@ -69,6 +70,8 @@ export interface WebhookConfig<
   /** Largest body accepted, in bytes (default 1 MiB). */
   maxBodyBytes?: number;
   rateLimit?: RateLimits<Static<TInput>, TContext>;
+  /** The delivery's audit row when the service's database holds an audit table: written when the handler returns, not for a refused or repeated delivery or one whose handler throws. `false` leaves it out. */
+  audit?: AuditConfig<Static<TInput>>;
   errors?: TErrors;
   tags?: string[];
   /** What the provider is answered: the return value, which may be a `Response`; `{ ok: true }` for nothing. */

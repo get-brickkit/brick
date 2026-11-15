@@ -5,7 +5,7 @@ import { portOf } from "./service-port";
 /** Where a listener a plugin added keeps the plugin's deps, for its handler and workflow steps; global so a second core copy finds it. */
 export const PLUGIN_DEPS: unique symbol = Symbol.for("brickkit.plugin.deps");
 
-function sharedAcrossCoreCopies<T>(key: string, create: () => T): T {
+export function sharedAcrossCoreCopies<T>(key: string, create: () => T): T {
   const store = globalThis as any;
   return (store[Symbol.for(key)] ??= create());
 }

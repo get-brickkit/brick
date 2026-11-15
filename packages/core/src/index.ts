@@ -108,7 +108,7 @@ export type {
 } from "./socket-types";
 export { serializeSocketSchema } from "./socket-schema";
 export { redisBroker, type RedisBrokerOptions } from "./socket-redis";
-export { getActionAccess, setActionAccess } from "./access";
+export { getActionAccess, setActionAccess, setActionAudit } from "./access";
 export type { ActionAccessInfo } from "./access";
 export type { HttpMethod } from "./http";
 export { defineAction, errorsOf, buildErrorHelpers } from "./action";
@@ -129,6 +129,14 @@ export {
 } from "./rpc";
 export { useDeps } from "./deps";
 export type { Identity } from "./identity";
+export {
+  auditTable,
+  isAuditTable,
+  recordAudit,
+  type AuditTable,
+  type PostgresAuditTable,
+  type SQLiteAuditTable,
+} from "./audit";
 export type { ClientIp, RateLimit } from "./rate-limit";
 export { clientAddress } from "./rate-limit";
 export {
