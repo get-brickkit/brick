@@ -1,5 +1,6 @@
 import {
   defineResourcePlugin,
+  hasSensitive,
   idSchema as resourceIdSchema,
   t,
   setActionAccess,
@@ -144,6 +145,12 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
         if (policy.sort && !SORTABLE_TYPES.has(columns[key].dataType))
           throw new Error(`Sorting is unsupported for '${key}'`);
       }
+      // Reads and event payloads carry the readable fields only, so this keeps a secret out of both.
+      for (const key of [...readable, ...includable])
+        if (hasSensitive(schemas[key]))
+          throw new Error(
+            `CRUD field '${key}' on '${resource.name}' is t.Sensitive and cannot be read; drop \`read: true\``,
+          );
       const idColumn: Column = resource.id;
       if (!Object.values(columns).includes(idColumn))
         throw new Error("CRUD ID must belong to the resource table");

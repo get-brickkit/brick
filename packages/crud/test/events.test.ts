@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import {
   brick,
   defineDatabase,
@@ -7,6 +7,7 @@ import {
   defineService,
   outboxTable,
   syncSchema,
+  t,
   type EventDelivery,
 } from "@brickkit/core";
 import { eq } from "drizzle-orm";
@@ -81,6 +82,55 @@ function fixture(options: FixtureOptions = {}) {
   const outboxRows = () => db.select().from(outbox).all();
   return { resource, service, db, sqlite, app, seen, outboxRows };
 }
+
+describe("sensitive fields", () => {
+  const SECRET = "hunter2-sensitive-value";
+  const fields = (secret: {
+    read?: boolean;
+    create?: boolean;
+    update?: boolean;
+  }) => ({
+    id: { read: true, filter: ["eq"] as const },
+    name: { read: true, create: true, update: true },
+    secret: { ...secret, schema: t.Sensitive(t.String()) },
+  });
+
+  it("refuses a sensitive field that reads would return", () => {
+    expect(() =>
+      fixture({ crud: { fields: fields({ read: true, create: true }) } }),
+    ).toThrow(
+      "CRUD field 'secret' on 'person' is t.Sensitive and cannot be read",
+    );
+  });
+
+  it("writes a sensitive field without reading, emitting or logging it", async () => {
+    const { resource, app, seen, outboxRows } = fixture({
+      crud: {
+        fields: fields({ create: true, update: true }),
+        hooks: {
+          beforeCreate: ({ data, ctx }: any) =>
+            void ctx.logger.info("creating", data),
+        },
+      },
+    });
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const created = await resource.create.run({
+        name: "Ada",
+        secret: SECRET,
+      });
+      expect(created).toEqual({ id: 1, name: "Ada" });
+      expect(await resource.get.run({ id: 1 })).toEqual({ id: 1, name: "Ada" });
+      expect(JSON.stringify(log.mock.calls)).toContain("[REDACTED]");
+      expect(JSON.stringify(log.mock.calls)).not.toContain(SECRET);
+    } finally {
+      log.mockRestore();
+    }
+    expect(JSON.stringify(outboxRows())).not.toContain(SECRET);
+    await app!.events!.drain();
+    expect(seen[0]!.payload).toEqual({ id: 1, row: { id: 1, name: "Ada" } });
+  });
+});
 
 describe("generated writes emit events", () => {
   it("emits person.create with the readable fields only", async () => {

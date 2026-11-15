@@ -154,6 +154,8 @@ crud({
 | `schema` | `TSchema`                     | Custom TypeBox schema to override automatic Drizzle column schema inference.                                                                                                                                                                  |
 | `scrub`  | `({ value, ctx }) => unknown` | Transforms a readable field's value before it's returned. Scrubbed fields are typed `unknown` in the output schema.                                                                                                                           |
 
+A field whose `schema` is `t.Sensitive(...)` cannot have `read: true`, so it stays out of reads and event payloads; see [Sensitive Fields](/docs/sensitive-fields#crud-resources).
+
 Every key in `fields` must be a column of the table, or `crud()` throws at setup. The primary key can't have `update: true`.
 
 ## Operations Selection and Limits

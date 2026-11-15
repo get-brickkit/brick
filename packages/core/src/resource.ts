@@ -357,6 +357,7 @@ function defineCommand(
       tags: config.tags,
       input: config.input,
       output: config.output ?? Type.Object({ id: idSchema(resource.id) }),
+      reveal: config.reveal,
       errors: config.errors,
       ...(config.access === undefined ? {} : { access: config.access }),
       ...(config.authorize ? { authorize: config.authorize } : {}),

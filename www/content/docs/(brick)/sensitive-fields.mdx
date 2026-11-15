@@ -1,0 +1,104 @@
+---
+title: Sensitive Fields
+description: Mark tokens and credentials in a schema with t.Sensitive so Brick keeps them out of responses, logs and traces.
+---
+
+A field that holds a secret, such as an access token or a password, is marked once in its schema with `t.Sensitive`. Brick then removes it from every action response unless the action's `reveal` allows it, and keeps its value out of what Brick logs and traces for the length of the call. Nothing has to be remembered in each action.
+
+## Marking a field
+
+`t.Sensitive(schema)` wraps any schema. The value is validated and typed as before; only the mark is added. It works in input and output schemas, at any depth, inside arrays and records.
+
+```ts title="src/services/integrations.ts"
+import { defineService, t } from "@brickkit/core";
+
+export const integrations = defineService("integrations");
+
+const Credential = t.Object({
+  id: t.String(),
+  provider: t.String(),
+  accessToken: t.Optional(t.Sensitive(t.String())),
+});
+
+export const getCredential = integrations.action({
+  name: "getCredential",
+  input: t.Object({ id: t.String() }),
+  output: Credential,
+  authorize: ({ user }) => !!user,
+  // Default: never revealed.
+  reveal: ({ field, ctx }) =>
+    field === "/accessToken" && ctx.caller === "mailer",
+  execute: ({ input, ctx }) => loadCredential(ctx.db, input.id),
+});
+```
+
+## Output: removed unless revealed
+
+After the output is validated, each sensitive field is removed from the result unless `reveal` allows it for this call. This happens in the shared pipeline, so an HTTP call, an in-process call (`action.run`, `useService`) and an MCP tool call get the same result. The value `execute` returned is not changed.
+
+`reveal` is one of:
+
+- left out or `false`: sensitive fields are always removed;
+- `true`: they are always sent, for an action that exists to show a secret, such as creating an API key;
+- a function `({ field, input, ctx }) => boolean | Promise<boolean>`, called once for each sensitive field present in the result. `field` is its JSON pointer, in the same form as validation errors (`/accessToken`, `/items/0/token`). Check `ctx.caller` to allow one calling service.
+
+```ts
+keys.action({
+  name: "createApiKey",
+  output: t.Object({ id: t.String(), secret: t.Sensitive(t.String()) }),
+  reveal: true,
+  execute: createKey,
+});
+```
+
+### A sensitive output field must be optional
+
+A removed field must not break the response's schema or the typed client's types. So unless `reveal` is `true`, every sensitive output field must be `t.Optional` (or a record value). An array item or a required property marked sensitive fails when the action is defined:
+
+```
+Action 'getCredential': sensitive output field '/accessToken' is removed unless `reveal` allows it, so it must be t.Optional (or set `reveal: true`)
+```
+
+The client's types and OpenAPI then say what is sent: the field is optional, and with `reveal: true` it is required and always present.
+
+## Logs, traces and the dashboard
+
+For the length of a call, the values at sensitive paths of its validated input and of its output are replaced with `[REDACTED]` in everything Brick logs through `ctx.logger` or the action's logger, in the log events and exception messages recorded on spans, and so in the dev dashboard. This holds when app code logs them itself:
+
+```ts
+execute: ({ input, ctx }) => {
+  ctx.logger.info(input); // { user: 'ada', password: '[REDACTED]' }
+  ctx.logger.warn(`retrying with ${input.password}`); // retrying with [REDACTED]
+  throw new Error(`login failed for ${input.password}`); // logged and traced as [REDACTED]
+};
+```
+
+An error that leaves the call has its message and stack redacted, since whoever logs it next is outside the call. A call made in-process from inside another call adds its values to the outer call's set, so they stay redacted until the outer call ends.
+
+The values are matched as text: a value shorter than **8 characters** is not redacted from log lines, since a short value such as `42` or `true` would blank out unrelated parts of every line. It is still removed from responses.
+
+## OpenAPI
+
+A sensitive input field is marked `writeOnly: true`. A sensitive output field is not in `required`, since it must be `t.Optional`.
+
+## CRUD resources
+
+A `crud()` field whose `schema` is sensitive cannot be read: `read: true` on it throws at setup. Reads and the outbox event payloads (`<resource>.create`, `.update`, `.delete`) carry only readable fields, so the value leaves through neither. It can still be written with `create` and `update`, and its value is redacted from logs during those calls.
+
+```ts
+crud({
+  access: "public",
+  fields: {
+    id: { read: true },
+    name: { read: true, create: true },
+    apiToken: { create: true, update: true, schema: t.Sensitive(t.String()) },
+  },
+});
+```
+
+## Limits
+
+- `t.Recursive` and `$ref` schemas (including `t.Json()`) are not followed: a mark inside one is ignored.
+- Values are found in the validated input and in the output. A value logged inside `execute` before it returns, and that did not come in through the input, is not yet known and is not redacted.
+- Redaction applies to Brick's logger and spans. A direct `console.log` outside a dashboard capture, or a logger of your own, is not covered.
+- Fields are matched by path, not by union branch: when one branch of a `t.Union` marks `/token` sensitive, a `token` in any branch is removed.

@@ -1,6 +1,7 @@
 import type { Service, Action } from "./types";
 import { getCompiledCheck } from "./typebox";
 import { createLogger } from "./logger";
+import { sensitivity } from "./sensitive";
 import { actionMeta } from "./action-meta";
 import { describeRoute, type RouteIR } from "./compiler/ir";
 import { portOf } from "./service-port";
@@ -31,6 +32,7 @@ export function planRoute(
     logger: createLogger(`[${service.name}:${action.name}]`),
     cachedDb: service.getDb(),
     checkInput: meta.checkInput,
+    sensitive: sensitivity(action.config),
     deps: meta.deps?.values,
   };
 }

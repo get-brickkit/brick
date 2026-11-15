@@ -17,6 +17,7 @@ import type { BunSQLiteDatabase } from "./db/sqlite";
 import type { DatabaseHandle } from "./db/define";
 import type { Ports } from "./deps";
 import type { HttpMethod } from "./http";
+import type { Reveal } from "./sensitive";
 import type { StandardErrorCode } from "./protocol";
 import type { DashboardIdentity } from "./dashboard-identity";
 import type { ServiceEvents } from "./events/types";
@@ -264,6 +265,12 @@ export interface BaseActionConfig<
   method?: HttpMethod;
   input?: TInputSchema;
   output?: TOutputSchema;
+  /**
+   * Whether this call may receive the output's `t.Sensitive` fields; by default
+   * they are removed. `field` is the JSON pointer (`/items/0/token`). With
+   * anything but `true`, a sensitive output field must be `t.Optional`.
+   */
+  reveal?: Reveal;
   errors?: TErrors;
   emits?: string[];
   tags?: string[];
@@ -652,6 +659,8 @@ export interface CommandConfig<
    * schema's properties. Without it the reply is `{ id }`.
    */
   output?: TOut;
+  /** As an action's `reveal`: which `t.Sensitive` output fields this call may receive. */
+  reveal?: Reveal;
   errors?: TErr;
   /** Which child tables to load with the row, by their name on the resource. */
   load?: { children?: TLoad };

@@ -91,6 +91,8 @@ Each entry has the JSON pointer `path` and a `message`. The rejected value is ne
 
 Output validation runs after `execute()` resolves. If an action returns data that does not conform to its declared `output` schema, Brick throws `ValidationError` with HTTP status 500 and the message `Validation failed for action '<name>' output`.
 
+To keep a token or credential out of responses and logs, mark it with `t.Sensitive` in the schema; see [Sensitive Fields](/docs/sensitive-fields).
+
 ### Unexpected Errors
 
 Any other error thrown from an action is returned as HTTP 500 with `{ "name": "InternalServerError", "message": <error message>, "status": 500 }`.

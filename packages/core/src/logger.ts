@@ -1,7 +1,8 @@
 import { ATTR, GLOBAL_SYMBOL, SPAN } from "./telemetry-names";
-import { formatWithOptions } from "node:util";
+import { format, formatWithOptions } from "node:util";
 import { trace, type Span } from "@opentelemetry/api";
 import type { Logger } from "./types";
+import { redactText, redacting } from "./sensitive";
 
 type Level = keyof Logger;
 
@@ -41,12 +42,14 @@ export function stripAnsi(text: string): string {
  * at a sensible size.
  */
 function render(args: unknown[]): string {
-  const text = stripAnsi(
+  let text = stripAnsi(
     formatWithOptions(
       { depth: 3, breakLength: 120, maxArrayLength: 50, maxStringLength: 1000 },
       ...args,
     ),
   );
+  // Before the cut, so a value cut in half is still found.
+  text = redactText(text);
   return text.length > MAX_MESSAGE_LENGTH
     ? `${text.slice(0, MAX_MESSAGE_LENGTH)}…`
     : text;
@@ -98,6 +101,8 @@ export function createLogger(prefix: string | Record<Level, string>): Logger {
   const level =
     (name: Level, print: (...args: unknown[]) => void) =>
     (...args: unknown[]): void => {
+      // One redacted string while the call has sensitive values.
+      if (redacting()) args = [redactText(format(...args))];
       if (
         (globalThis as Record<symbol, unknown>)[CAPTURE] === true &&
         recordActive(name, args)
