@@ -79,16 +79,19 @@ Input validation runs before `execute()`. If an incoming payload violates the sc
   "errors": [
     {
       "path": "/amount",
-      "message": "Expected number to be greater or equal to 1",
-      "value": 0
+      "message": "Expected number to be greater or equal to 1"
     }
   ]
 }
 ```
 
+Each entry has the JSON pointer `path` and a `message`. The rejected value is never included, so a bad password or token is not echoed back or logged. Property names are included: `path` names the field, so an unexpected property or a record key sent by the client appears in it.
+
 ### Output Validation
 
 Output validation runs after `execute()` resolves. If an action returns data that does not conform to its declared `output` schema, Brick throws `ValidationError` with HTTP status 500 and the message `Validation failed for action '<name>' output`.
+
+To keep a token or credential out of responses and logs, mark it with `t.Sensitive` in the schema; see [Sensitive Fields](/docs/sensitive-fields).
 
 ### Unexpected Errors
 

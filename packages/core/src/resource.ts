@@ -9,6 +9,7 @@ import { kebabCase } from "./kebab";
 import { actionMeta, type ResourceActionInfo } from "./action-meta";
 import { portOf } from "./service-port";
 import { Type } from "./typebox";
+import { isSensitive, Sensitive, sensitivity } from "./sensitive";
 import { runInTransaction } from "./events/transaction";
 import { checkPayload, crudEventSource, type EventRef } from "./events/catalog";
 import {
@@ -123,11 +124,18 @@ function defineResourceAction(
       throw new Error(`Record action '${name}' input must be an object`);
     input = Type.Object(
       { ...own?.properties, id: idSchema(resource.id) },
-      own?.additionalProperties === undefined
-        ? {}
-        : { additionalProperties: own.additionalProperties },
+      {
+        ...(own?.additionalProperties !== undefined && {
+          additionalProperties: own.additionalProperties,
+        }),
+        ...(own?.patternProperties !== undefined && {
+          patternProperties: own.patternProperties,
+        }),
+      },
     );
+    if (isSensitive(own)) input = Sensitive(input);
   }
+  sensitivity({ ...rest, name, input }, service.name);
   const action = defineAction({
     ...rest,
     name,
@@ -357,6 +365,7 @@ function defineCommand(
       tags: config.tags,
       input: config.input,
       output: config.output ?? Type.Object({ id: idSchema(resource.id) }),
+      reveal: config.reveal,
       errors: config.errors,
       ...(config.access === undefined ? {} : { access: config.access }),
       ...(config.authorize ? { authorize: config.authorize } : {}),

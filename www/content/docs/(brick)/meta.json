@@ -22,6 +22,7 @@
     "routes",
     "access-control",
     "validation-and-errors",
+    "sensitive-fields",
     "hooks",
     "events",
     "schedules",

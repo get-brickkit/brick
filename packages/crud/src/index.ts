@@ -1,5 +1,6 @@
 import {
   defineResourcePlugin,
+  hasSensitive,
   idSchema as resourceIdSchema,
   t,
   setActionAccess,
@@ -143,6 +144,24 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
         checkFilters(key, columns[key], policy.filter ?? []);
         if (policy.sort && !SORTABLE_TYPES.has(columns[key].dataType))
           throw new Error(`Sorting is unsupported for '${key}'`);
+      }
+      for (const [key, policy] of Object.entries(fields)) {
+        if (!hasSensitive(schemas[key])) continue;
+        if (policy.resolve)
+          throw new Error(
+            `Derived CRUD field '${key}' on '${resource.name}' in service '${service.name}' cannot be t.Sensitive: a derived field is always read`,
+          );
+        const option = policy.read
+          ? "read: true"
+          : policy.filter?.length
+            ? "filter"
+            : policy.sort
+              ? "sort"
+              : undefined;
+        if (option)
+          throw new Error(
+            `CRUD field '${key}' on '${resource.name}' in service '${service.name}' is t.Sensitive and cannot have \`${option}\`; drop it`,
+          );
       }
       const idColumn: Column = resource.id;
       if (!Object.values(columns).includes(idColumn))

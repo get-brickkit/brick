@@ -38,7 +38,11 @@ export function decodeError(
   if (record.name === "ValidationError")
     return new ValidationError(
       typeof record.message === "string" ? record.message : "Validation failed",
-      Array.isArray(record.errors) ? record.errors : [],
+      Array.isArray(record.errors)
+        ? record.errors.filter(
+            (item) => item !== null && typeof item === "object",
+          )
+        : [],
       typeof record.status === "number" ? record.status : status,
     );
   if (typeof record.code !== "string") return undefined;

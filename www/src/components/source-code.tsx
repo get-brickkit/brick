@@ -1,6 +1,8 @@
 import * as React from "react";
 import { codeToHtml } from "shiki";
 
+import { codeThemes } from "@/lib/code-theme";
+
 /** Highlight actual source inside the site's plain code layout. */
 export function SourceCode({
   code,
@@ -15,7 +17,7 @@ export function SourceCode({
     setHtml("");
     codeToHtml(code, {
       lang,
-      themes: { light: "github-light", dark: "github-dark" },
+      themes: codeThemes,
       defaultColor: false,
     }).then((result) => {
       if (active) setHtml(result);

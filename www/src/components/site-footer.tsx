@@ -1,33 +1,36 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowUpRightIcon } from "lucide-react";
 import { Wordmark } from "@/components/logo";
+import {
+  DitherCanvas,
+  GlyphCanvas,
+  type Field,
+} from "@/components/pixel-field";
 import { site } from "@/lib/site";
+
+// Glow rises from the bottom edge, under the wordmark.
+const footerField: Field = (_x, y) => y ** 1.6 * 0.8;
 
 export function SiteFooter() {
   return (
     <footer className="frame home-footer">
-      <div className="home-footer-main">
+      <div className="home-footer-top">
         <div className="footer-brand">
           <Link to="/" aria-label="Brick home">
             <Wordmark />
           </Link>
-          <p>
-            TypeScript definitions.
-            <br />
-            Production execution.
-          </p>
-          <a
-            href={site.repo}
-            target="_blank"
-            rel="noreferrer"
-            data-umami-event="github-click"
-            data-umami-event-location="footer-brand"
-          >
-            Open source, built for Bun <ArrowUpRightIcon className="size-3" />
-          </a>
+          <p>TypeScript definitions. Production execution.</p>
         </div>
+        <div className="footer-chips">
+          <Link to="/docs/$" params={{ _splat: "for-ai-agents" }}>
+            For AI agents
+          </Link>
+          <a href="/llms.txt">llms.txt</a>
+          <a href="/llms-full.txt">llms-full.txt</a>
+        </div>
+      </div>
+      <div className="home-footer-main">
         <nav aria-label="Platform links">
-          <p className="label">Platform</p>
+          <h2>Platform</h2>
           <Link to="/docs/$" params={{ _splat: "resources" }}>
             Resources
           </Link>
@@ -42,23 +45,18 @@ export function SiteFooter() {
           </Link>
         </nav>
         <nav aria-label="Developer links">
-          <p className="label">Developers</p>
+          <h2>Developers</h2>
           <Link to="/docs/$" params={{ _splat: "quickstart" }}>
             Getting started
           </Link>
           <Link to="/docs/$" params={{ _splat: "" }}>
             Documentation
           </Link>
-          <Link to="/blog">Blog</Link>
-          <Link to="/docs/$" params={{ _splat: "for-ai-agents" }}>
-            For AI agents
-          </Link>
-          <a href="/llms.txt">llms.txt</a>
           <Link to="/examples">Examples</Link>
+          <Link to="/blog">Blog</Link>
         </nav>
         <nav aria-label="Project links">
-          <p className="label">Project</p>
-          <Link to="/brand">Brand assets</Link>
+          <h2>Project</h2>
           <a
             href={site.repo}
             target="_blank"
@@ -86,20 +84,33 @@ export function SiteFooter() {
           >
             Issues
           </a>
+          <Link to="/brand">Brand assets</Link>
+        </nav>
+      </div>
+      <div className="home-footer-bottom">
+        <p>
+          Brick v{site.version}
+          <span aria-hidden="true">·</span>
           <a
             href={`${site.repo}/blob/main/LICENSE`}
             target="_blank"
             rel="noreferrer"
           >
-            MIT License
+            MIT licensed
           </a>
-        </nav>
+        </p>
+        <p>
+          Privacy-friendly, cookieless analytics by Umami.
+          <span aria-hidden="true">·</span>
+          <a href="#site-top">Back to top ↑</a>
+        </p>
       </div>
-      <div className="home-footer-bottom">
-        <span>BRICK v{site.version}</span>
-        <span>TYPESCRIPT IN. BACKEND OUT.</span>
-        <span>Privacy-friendly, cookieless analytics by Umami.</span>
-        <a href="#site-top">BACK TO TOP ↑</a>
+      <div className="footer-wordmark" aria-hidden="true">
+        <DitherCanvas field={footerField} className="footer-dither" />
+        <GlyphCanvas className="footer-glyphs" />
+        <div className="footer-wordmark-clip">
+          <p>brick.ts</p>
+        </div>
       </div>
     </footer>
   );
