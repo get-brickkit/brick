@@ -1,4 +1,5 @@
 import type { BaseContext, PreparationContribution, Service } from "./types";
+import type { AuditTable } from "./audit";
 import type { OutboxTable } from "./events/outbox";
 import type { ScheduleTable } from "./schedules/table";
 import type { ServiceEvents } from "./events/types";
@@ -23,6 +24,7 @@ export interface ServicePort<
   setRecorder(recorder: ServiceEvents | undefined): void;
   getOutbox(): OutboxTable | undefined;
   getScheduleTable(): ScheduleTable | undefined;
+  getAuditTable(): AuditTable | undefined;
   /** @throws When the event is not in the catalog or its payload does not match. */
   checkEvent(name: string, payload: unknown): void;
   /** Adds events to the catalog (a plugin's). */

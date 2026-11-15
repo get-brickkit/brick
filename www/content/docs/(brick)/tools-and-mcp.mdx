@@ -67,6 +67,8 @@ app.listen(4000);
 
 `tools/list` gives each tool with an `output` schema an `outputSchema`, and `tools/call` returns the result as `structuredContent` as well as text. MCP requires an object schema, so a tool whose output is a string, array or union is described as `{ result: <schema> }` and returns `{ result: value }`.
 
+A [provider webhook](/docs/webhooks) is not a tool and is not listed by MCP.
+
 ## Tools (`defineTool` / `service.tool`)
 
 Tools are specialized actions designed for invocation by Large Language Models:
@@ -120,7 +122,7 @@ console.log(toolList.map((t) => t.name)); // ["search_docs", "delete_user"]
 
 ## JSON-RPC 2.0 Handler (`createMcpHandler`)
 
-`createMcpHandler({ registry, serverInfo, protocolVersions? })` returns a stateless `(request, ctx?) => Promise<Response>` handler for MCP JSON-RPC 2.0 over HTTP POST. Non-POST requests get `405`, and notifications (requests without an `id`) get `202` with no body. It handles:
+`createMcpHandler({ registry, serverInfo, protocolVersions?, clientIp? })` returns a stateless `(request, ctx?) => Promise<Response>` handler for MCP JSON-RPC 2.0 over HTTP POST. Non-POST requests get `405`, and notifications (requests without an `id`) get `202` with no body. It handles:
 
 - `initialize`: Returns `{ capabilities: { tools: {} }, protocolVersion, serverInfo }`. The client's requested version is echoed if it is in `protocolVersions` (default `["2025-06-18"]`); otherwise the first listed version is returned.
 - `ping`: Returns `{}`.
@@ -128,6 +130,8 @@ console.log(toolList.map((t) => t.name)); // ["search_docs", "delete_user"]
 - `tools/call`: Validates and executes the tool, returning `{ content: [{ type: "text", text }] }`, plus `structuredContent` when the tool has an `output`. Strings are returned as-is; other values are JSON-stringified. A thrown error becomes a result with `isError: true` and the error message as text. An unknown tool name returns JSON-RPC error `-32602`.
 
 The handler performs no authentication. Wrap it with your own auth, and pass an optional `ctx` (for example `{ user }`) as the second argument; it is forwarded to the tool's execution context along with the `request`.
+
+A tool's [`rateLimit`](/docs/rate-limits) counts by the client address of the `request`. Mounted on a Brick app, the handler gets it as the app's routes do, through the app's `clientIp`; served on its own, pass `clientIp: ({ request, peer }) => ...` (`peer` is then `undefined`), or `per: "ip"` is skipped.
 
 ### Connecting a Client
 

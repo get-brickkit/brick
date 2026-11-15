@@ -60,7 +60,7 @@ export default defineConfig({
 | Rule                  | Enforces                                                                                                                                                                                                       | Preset      | Kind |
 | :-------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------- | :--- |
 | `one-action-per-file` | A `*.action.ts` file defines exactly one action, and actions are defined nowhere else.                                                                                                                         | layout      | file |
-| `file-suffixes`       | Each kind of definition goes in a file with its suffix: `.service`, `.action`, `.command`, `.tool`, `.socket`, `.listener`, `.schedule`, `.resource`, `.table`.                                                | layout      | file |
+| `file-suffixes`       | Each kind of definition goes in a file with its suffix: `.service`, `.action`, `.command`, `.tool`, `.webhook`, `.socket`, `.listener`, `.schedule`, `.resource`, `.table`.                                    | layout      | file |
 | `kind-folders`        | Files sit in their kind's folder: `actions/`, `tools/`, `sockets/`, `listeners/`, `workflows/`, `tables/` at service level; the resource and its table, `actions/` and `commands/` inside `resources/<name>/`. | layout      | file |
 | `resource-folder`     | Each `.resource.ts` is alone in `resources/<name>/`, named after the resource. Resource actions and commands attach to their folder's resource; commands exist only in a resource folder.                      | layout      | file |
 | `file-name-matches`   | The file name is the kebab-case of the definition's name, without its owner: `get-summary.action.ts` defines `getSummary`.                                                                                     | layout      | file |
@@ -98,12 +98,13 @@ export default defineConfig({
 
 ### Security
 
-| Rule                  | Enforces                                                                                                                    | Preset      | Kind |
-| :-------------------- | :-------------------------------------------------------------------------------------------------------------------------- | :---------- | :--- |
-| `explicit-access`     | Every action sets `authorize` or `access`, every record action and command sets `access`, and every `crud()` sets `access`. | recommended | file |
-| `socket-authorize`    | Sockets declare `authorize` and `join`.                                                                                     | recommended | file |
-| `no-wildcard-origins` | No `"*"` in `allowedOrigins` or `trustedOrigins`.                                                                           | recommended | file |
-| `strict-input`        | Input objects set `additionalProperties: false`. Fix: adds it.                                                              | strict      | file |
+| Rule                  | Enforces                                                                                                                                                        | Preset      | Kind |
+| :-------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------- | :--- |
+| `explicit-access`     | Every action sets `authorize` or `access`, every record action and command sets `access`, and every `crud()` sets `access`.                                     | recommended | file |
+| `public-rate-limit`   | Warns on an action, command or tool anyone may call that has no [`rateLimit`](/docs/rate-limits). A [webhook](/docs/webhooks) is verified, so it is not public. | recommended | file |
+| `socket-authorize`    | Sockets declare `authorize` and `join`.                                                                                                                         | recommended | file |
+| `no-wildcard-origins` | No `"*"` in `allowedOrigins` or `trustedOrigins`.                                                                                                               | recommended | file |
+| `strict-input`        | Input objects set `additionalProperties: false`. Fix: adds it.                                                                                                  | strict      | file |
 
 ### Docs and style
 

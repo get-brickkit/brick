@@ -38,10 +38,14 @@ const rule = (
 const skip = (context: RuleContext) => fileInfo(context).ignored;
 
 const HANDLERS: Definition["kind"][] = ["action", "command", "tool"];
-/** What clients call: described in OpenAPI, MCP and the dashboard. */
-const ENDPOINTS: Definition["kind"][] = [...HANDLERS, "socket"];
+/** What outside callers reach, a client or a provider (a webhook): described in OpenAPI, MCP and the dashboard. */
+const OUTSIDE_ENDPOINTS: Definition["kind"][] = [
+  ...HANDLERS,
+  "socket",
+  "webhook",
+];
 /** What gets the error helpers. */
-const ERROR_KINDS: Definition["kind"][] = [...ENDPOINTS, "crud"];
+const ERROR_KINDS: Definition["kind"][] = [...OUTSIDE_ENDPOINTS, "crud"];
 /** What runs with a request or delivery context. */
 const CTX_KINDS: Definition["kind"][] = [...ERROR_KINDS, "listener"];
 const BUILT_IN_ERRORS = new Set(Object.keys(STANDARD_ERRORS));
@@ -228,7 +232,10 @@ export const checkRules: Record<string, Rule> = {
         CallExpression(node: Node) {
           const name = errorHelper(node);
           if (!name) return;
-          const definition = enclosingDefinition(node, HANDLERS);
+          const definition = enclosingDefinition(node, [
+            ...HANDLERS,
+            "webhook",
+          ]);
           if (!definition) return;
           const errors = getProperty(definition.config, "errors")?.value;
           const declared = errors ? objectKeys(errors) : [];
@@ -594,6 +601,35 @@ export const checkRules: Record<string, Rule> = {
     },
   ),
 
+  "public-rate-limit": rule(
+    "Public actions, commands and tools declare rateLimit.",
+    (context) => {
+      if (skip(context)) return {};
+      return {
+        CallExpression(node: Node) {
+          const definition = definitionOf(node);
+          if (!definition || !HANDLERS.includes(definition.kind)) return;
+          if (objectKeys(definition.config) === undefined) return;
+          const access = getProperty(definition.config, "access")?.value;
+          const isPublic =
+            !getProperty(definition.config, "authorize") &&
+            getProperty(definition.config, "dashboard")?.value?.value !==
+              true &&
+            (!access || stringValue(access) === "public");
+          const limit = getProperty(definition.config, "rateLimit")?.value;
+          const limited =
+            limit &&
+            !(limit.type === "ArrayExpression" && limit.elements.length === 0);
+          if (isPublic && !limited)
+            context.report({
+              node: definition.nameNode ?? node,
+              message: `Anyone can call this ${definition.kind} as often as they like; add rateLimit: { per: "ip", max, windowMs }, or authorize.`,
+            });
+        },
+      };
+    },
+  ),
+
   "socket-authorize": rule("Sockets declare authorize and join.", (context) => {
     if (skip(context)) return {};
     return {
@@ -687,7 +723,7 @@ export const checkRules: Record<string, Rule> = {
           const definition = definitionOf(node);
           if (!definition) return;
           if (
-            ENDPOINTS.includes(definition.kind) &&
+            OUTSIDE_ENDPOINTS.includes(definition.kind) &&
             !getProperty(definition.config, "description")
           )
             context.report({

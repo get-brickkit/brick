@@ -108,7 +108,7 @@ export type {
 } from "./socket-types";
 export { serializeSocketSchema } from "./socket-schema";
 export { redisBroker, type RedisBrokerOptions } from "./socket-redis";
-export { getActionAccess, setActionAccess } from "./access";
+export { getActionAccess, setActionAccess, setActionAudit } from "./access";
 export type { ActionAccessInfo } from "./access";
 export type { HttpMethod } from "./http";
 export { defineAction, errorsOf, buildErrorHelpers } from "./action";
@@ -129,6 +129,16 @@ export {
 } from "./rpc";
 export { useDeps } from "./deps";
 export type { Identity } from "./identity";
+export {
+  auditTable,
+  isAuditTable,
+  recordAudit,
+  type AuditTable,
+  type PostgresAuditTable,
+  type SQLiteAuditTable,
+} from "./audit";
+export type { ClientIp, RateLimit } from "./rate-limit";
+export { clientAddress } from "./rate-limit";
 export {
   defineStorage,
   redis,
@@ -277,3 +287,14 @@ export type {
 } from "./mcp";
 
 export type { ErrorEnvelope } from "./error-response";
+export {
+  hmacSignature,
+  standardWebhooks,
+  twilioSignature,
+  type HmacSignatureOptions,
+  type StandardWebhooksOptions,
+  type TwilioSignatureOptions,
+  type WebhookSecret,
+} from "./webhook-verifiers";
+export { isWebhook } from "./webhook";
+export type { WebhookConfig, WebhookRequest, WebhookVerifier } from "./webhook";

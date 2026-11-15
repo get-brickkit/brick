@@ -12,6 +12,7 @@ import type {
   Resource,
   PreparationContribution,
 } from "./types";
+import { DuplicateNameError } from "./types";
 import { defineTool, isTool } from "./tool";
 import { defineAction } from "./action";
 import { sensitivity } from "./sensitive";
@@ -41,6 +42,22 @@ import {
 } from "./context";
 import { freezeAsBuiltDeps, depsOverride } from "./deps";
 import { hasFilesView, scopeFiles, type CallDeps } from "./file-storage";
+import { checkRateLimits, rateLimitsOf } from "./rate-limit";
+import {
+  auditStage,
+  inlineAudit,
+  isAuditTable,
+  recordInline,
+  type AuditTable,
+} from "./audit";
+import { addHostHooks } from "./plugin-hooks";
+import { hasIdentity } from "./identity";
+import {
+  checkWebhook,
+  defineWebhookMeta,
+  isWebhook,
+  webhookOf,
+} from "./webhook";
 import type { NamedService } from "./rpc";
 import { defineServiceSocket } from "./socket";
 import type {
@@ -57,7 +74,10 @@ import type {
 export interface ServiceImpl<
   TDb = BunSQLiteDatabase<Record<string, unknown>>,
   TServiceContext extends Record<string, any> = Record<string, any>,
-> extends Pick<Service<TDb, TServiceContext>, "action" | "tool" | "resource"> {}
+> extends Pick<
+  Service<TDb, TServiceContext>,
+  "action" | "tool" | "resource" | "webhook"
+> {}
 export class ServiceImpl<
   TDb = BunSQLiteDatabase<Record<string, unknown>>,
   TServiceContext extends Record<string, any> = Record<string, any>,
@@ -76,6 +96,8 @@ export class ServiceImpl<
   /** Where each `kind:name` was defined, to reject duplicates from another file. */
   private readonly sites = new Map<string, string | undefined>();
   private database?: DatabaseHandle<TDb>;
+  private auditTable?: AuditTable;
+  private auditHooked = false;
   private _isBuilt = false;
   private _events: Readonly<Record<string, EventRef>>;
   /** What a write needs to record events. Set by `brick({ events })`. */
@@ -95,6 +117,34 @@ export class ServiceImpl<
       throw new Error("Service database must be created with defineDatabase()");
     }
     this.database = options.database;
+    this.watchAudit();
+  }
+
+  private watchAudit(): void {
+    this.auditTable = Object.values(this.database?.tables ?? {}).find(
+      isAuditTable,
+    );
+    if (!this.auditTable || this.auditHooked) return;
+    this.auditHooked = true;
+    const record = (
+      operation: "create" | "update" | "delete",
+      { ctx, tx, resource, row, id }: any,
+    ) => {
+      const audit = inlineAudit();
+      return (
+        audit &&
+        recordInline(audit, tx, ctx, {
+          action: `${resource.name}.${operation}`,
+          resource: resource.name,
+          recordId: row ? row[resource.idField] : id,
+        })
+      );
+    };
+    addHostHooks(this, {
+      afterCreate: [(args) => record("create", args)],
+      afterUpdate: [(args) => record("update", args)],
+      afterDelete: [(args) => record("delete", args)],
+    });
   }
 
   /** The declared events: `service.events.<name>`. */
@@ -169,6 +219,15 @@ export class ServiceImpl<
       const resource = info?.record && this.resources.get(info.resource);
       if (resource) checkRecordAccess(resource, info);
     }
+    for (const action of [...this.actions.values(), ...this.tools.values()]) {
+      const deps = actionMeta(action).deps?.values ?? this.deps;
+      if (webhookOf(action)) checkWebhook(this, action, deps);
+      else checkRateLimits(this, action, deps);
+    }
+    if (this.auditTable && !hasIdentity(this))
+      throw new Error(
+        `Service "${this.name}": its database holds an audit table, but the service declares no identity, so the log would not say who. Add identity: (ctx) => ctx.user && { id: ctx.user.id } to defineService("${this.name}", { ... }).`,
+      );
     this._isBuilt = true;
     return this;
   }
@@ -233,14 +292,36 @@ export class ServiceImpl<
       ? actionOrConfig
       : defineAction(actionOrConfig);
 
-    if (this.actions.get(actionInstance.name) !== actionInstance)
-      this.claim("action", actionInstance.name);
+    const previous = this.actions.get(actionInstance.name);
+    if (previous !== actionInstance) this.claim("action", actionInstance.name);
+    if (previous && isWebhook(previous) !== isWebhook(actionInstance))
+      throw new DuplicateNameError(
+        `Service '${this.name}': "${actionInstance.name}" is defined both as a webhook and as an action. Give one of them another name: an action of the same name would answer in place of the webhook, without its check.`,
+      );
     if (isTool(actionInstance)) actionInstance.config.http = true;
     actionInstance.serviceName = this.name;
     actionMeta(actionInstance).service = this;
     this.actions.set(actionInstance.name, actionInstance);
     this.touch();
     return isActionFunction ? this : actionInstance;
+  }
+
+  webhook(config: any): any {
+    const webhook = defineWebhookMeta(this.name, config);
+    const {
+      verify: _verify,
+      eventId: _eventId,
+      replay: _replay,
+      maxBodyBytes: _maxBodyBytes,
+      ...action
+    } = config;
+    const instance = defineAction({
+      ...action,
+      method: config.method ?? "POST",
+    });
+    actionMeta(instance).webhook = webhook;
+    this.action(instance);
+    return instance;
   }
 
   tool(toolOrConfig: any): any {
@@ -313,6 +394,10 @@ export class ServiceImpl<
     return Object.values(this.database?.tables ?? {}).find(isScheduleTable);
   }
 
+  getAuditTable(): AuditTable | undefined {
+    return this.auditTable;
+  }
+
   setRecorder(recorder: ServiceEvents | undefined): void {
     this.recorder = recorder;
   }
@@ -330,6 +415,7 @@ export class ServiceImpl<
     if (!isDatabaseHandle(database))
       throw new Error("Use defineDatabase() to set a service database");
     this.database = database;
+    this.watchAudit();
     this.touch();
   }
 
@@ -385,6 +471,16 @@ export class ServiceImpl<
           hasScope: access.hasScope,
           accessPolicy: access.policy,
           errors: act.config.errors,
+          ...(auditStage(this as ServicePort<any, any>, act) && {
+            audited: true,
+          }),
+          ...(rateLimitsOf(act.config) && {
+            rateLimit: rateLimitsOf(act.config)!.map(({ max, windowMs }) => ({
+              max,
+              windowMs,
+            })),
+          }),
+          ...(webhookOf(act) && { webhook: true as const }),
           emits: act.config.emits,
           tags: act.config.tags,
         };

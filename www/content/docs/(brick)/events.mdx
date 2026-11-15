@@ -396,6 +396,8 @@ Brick serves the route behind `webhook.url`, `/.well-known/workflow/v1/webhook/<
 
 The SDK builds the URL from the port the process listens on, which it finds with `@workflow/utils`. Add it to the app (`bun add -d @workflow/utils`): with a strict install the SDK cannot see it otherwise, and the URL points to `localhost:3000`. Behind a proxy or on another host, build the public URL yourself from `webhook.token`.
 
+These are the Workflow SDK's webhooks. To receive a callback from a payment, telephony or other provider, with the signature checked and each event handled once, see [Provider Webhooks](/docs/webhooks).
+
 ### Inspecting runs in the dev dashboard
 
 The `brick dev` dashboard gains a Workflows tab for an app with workflow listeners: the Workflow SDK's observability UI (a vendored copy of `@workflow/web` that ships with the CLI, without its own header, in the dashboard's theme), with every run, its trace of steps and sleeps, its events, streams and hooks, and the buttons to replay or cancel a run. It reads the world your app runs on, whichever `createWorld()` settings you gave it, and follows the app across reloads.

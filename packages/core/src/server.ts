@@ -50,7 +50,8 @@ import {
   localFilesRoute,
 } from "./file-storage";
 import { portOf } from "./service-port";
-import { bodyLimitParser } from "./compiler/runtime";
+import { bodyLimitParser, rawBodyParser } from "./compiler/runtime";
+import { markAddressSource, type ClientIp } from "./rate-limit";
 
 export interface CreateServerOptions {
   port?: number;
@@ -124,6 +125,15 @@ export interface CreateServerOptions {
    * Other origins get no `Access-Control-Allow-Origin`. Preflights are answered.
    */
   cors?: false | CorsOptions;
+  /**
+   * Where the client address is, for `rateLimit: { per: "ip" }`. By default it
+   * is the socket peer; behind a proxy, read the header your proxy sets. Brick
+   * never reads `X-Forwarded-For` or any other header itself.
+   *
+   * @example
+   * clientIp: ({ request, peer }) => request.headers.get("fly-client-ip") ?? peer,
+   */
+  clientIp?: ClientIp;
 }
 
 /**
@@ -185,14 +195,22 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     services.flatMap((service) => installedPlugins(service)),
     options.plugins ?? [],
   );
+  const addressSource = {
+    clientIp: options.clientIp,
+    server: () => app.server,
+  };
   // CORS first, so preflights are answered and its headers reach responses
   // from middleware, which skips the later lifecycle hooks.
-  app.onRequest(({ request }) => markDashboardArrival(request));
+  app.onRequest(({ request }) => {
+    markDashboardArrival(request);
+    markAddressSource(request, addressSource);
+  });
   if (options.cors) app.onRequest(corsHook(options.cors));
   for (const handler of plugins.middleware) app.onRequest(handler);
 
   // Mounted and registered in one call, so actions and sockets can't shadow them.
   const registeredRoutes = new Map<string, boolean>();
+  const webhookRoutes = new Map<string, string>();
   const builtIn = (path: string, handler: any) => {
     app.get(path, handler);
     registeredRoutes.set(routeKey("GET", path), false);
@@ -324,6 +342,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     handler: any,
     plugin = false,
     hook?: object,
+    webhook?: string,
   ) => {
     const key = routeKey(method, path);
     if (socketRoutes.has(key))
@@ -331,6 +350,11 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
         `Brick: route '${method} ${path}' conflicts with a socket`,
       );
     if (registeredRoutes.has(key)) {
+      const other = webhook ?? webhookRoutes.get(key);
+      if (other)
+        throw new DuplicateNameError(
+          `Brick: route '${method} ${path}' is claimed by webhook '${other}' and by another route; a webhook cannot share its route`,
+        );
       if (plugin || registeredRoutes.get(key))
         throw new DuplicateNameError(
           `Brick: duplicate plugin route '${method} ${path}'`,
@@ -340,6 +364,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     if (hook) app.route(method, path, hook, handler);
     else app.route(method, path, handler);
     registeredRoutes.set(key, plugin);
+    if (webhook) webhookRoutes.set(key, webhook);
     return true;
   };
 
@@ -413,6 +438,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   }
   const mountedRoutes: RouteIR[] = [];
   for (const route of compilation.routes) {
+    const { handler } = route;
     const invoke = (context: any) => {
       const result = telemetry
         ? withSpan(
@@ -421,9 +447,9 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
               [ATTR.service]: route.ir.service,
               [ATTR.action]: route.ir.action,
             },
-            () => route.handler(context),
+            () => handler(context),
           )
-        : route.handler(context);
+        : handler(context);
       return result &&
         typeof (result as PromiseLike<unknown>).then === "function"
         ? Promise.resolve(result).then(jsonActionResult)
@@ -439,8 +465,13 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
             )
         : invoke,
       Boolean(route.ir.plugin),
-      route.ir.bodyLimit
-        ? { parse: bodyLimitParser(route.ir.bodyLimit) }
+      route.ir.kind === "webhook"
+        ? { parse: rawBodyParser(route.ir.bodyLimit!) }
+        : route.ir.bodyLimit
+          ? { parse: bodyLimitParser(route.ir.bodyLimit) }
+          : undefined,
+      route.ir.kind === "webhook"
+        ? `${route.ir.service}.${route.ir.action}`
         : undefined,
     );
     if (mounted) mountedRoutes.push(route.ir);

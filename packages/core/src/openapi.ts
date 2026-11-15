@@ -7,6 +7,8 @@ import {
 } from "./routes";
 import { analyzeDeclaredApplication } from "./compiler/ir";
 import { getActionAccess } from "./access";
+import { rateLimitsOf } from "./rate-limit";
+import { webhookOf } from "./webhook";
 import { fileFields } from "./typebox";
 import { writeOnly } from "./sensitive";
 import { getGlobalRegistry } from "./registry";
@@ -156,6 +158,7 @@ export function generateOpenApiSpec(
           `Routes of resource '${resource}' in service '${service.name}'`,
         );
 
+      const webhook = webhookOf(action);
       const hasAuth = getActionAccess(action).hasAuthorize;
       if (hasAuth) {
         hasAnyAuthorizedAction = true;
@@ -218,8 +221,46 @@ export function generateOpenApiSpec(
         addError("UNAUTHORIZED", 401, "Authentication required");
         addError("FORBIDDEN", 403, "Access denied");
       }
+      if (webhook) {
+        addError("UNAUTHORIZED", 401, "Webhook verification failed");
+        addError(
+          "PAYLOAD_TOO_LARGE",
+          413,
+          `Body over ${webhook.maxBodyBytes} bytes`,
+        );
+        if (webhook.replay) {
+          addError(
+            "CONFLICT",
+            409,
+            "Another delivery of this event is being handled; retry later",
+          );
+          addError(
+            "SERVICE_UNAVAILABLE",
+            503,
+            "Webhook storage is unavailable; retry later",
+          );
+        }
+      }
       if ((action.config as { dashboard?: boolean }).dashboard === true)
         addError("UNAUTHORIZED", 401, "Only for the dashboard");
+      if (rateLimitsOf(action.config)) {
+        addError(
+          "RATE_LIMITED",
+          429,
+          "Too many calls; retry after Retry-After seconds",
+          {
+            type: "object",
+            properties: { retryAfterSeconds: { type: "integer", minimum: 1 } },
+            required: ["retryAfterSeconds"],
+          },
+        );
+        responses["429"].headers = {
+          "Retry-After": {
+            description: "Seconds until the window resets",
+            schema: { type: "integer", minimum: 1 },
+          },
+        };
+      }
       if (action.config.errors) {
         for (const [code, errorDef] of Object.entries(action.config.errors)) {
           const def = errorDef as ActionErrorDefinition;
@@ -237,6 +278,7 @@ export function generateOpenApiSpec(
           action.config.description ??
           `Execute action '${action.name}' on service '${service.name}'`,
         tags: [...new Set([group, ...(action.config.tags ?? [])])],
+        ...(webhook ? { "x-brick-webhook": true } : {}),
         ...(plugin ? { "x-brick-plugin": plugin } : {}),
         ...(resource ? { "x-brick-resource": resource } : {}),
         responses,
@@ -281,6 +323,9 @@ export function generateOpenApiSpec(
             [fileFields(inputSchema).length
               ? "multipart/form-data"
               : "application/json"]: { schema: bodySchema },
+            ...(webhook
+              ? { "application/x-www-form-urlencoded": { schema: bodySchema } }
+              : {}),
           },
         };
       }

@@ -2,6 +2,7 @@ import type { BaseContext, Logger, Service } from "./types";
 import { createLogger, DEFAULT_LOG_PREFIXES } from "./logger";
 import { dashboardIdentity } from "./dashboard-identity";
 import { attachIdentity } from "./identity";
+import { carryClientRequest } from "./rate-limit";
 
 const DEFAULT_REQUEST = new Request("http://localhost");
 const EMPTY = Object.freeze({});
@@ -63,6 +64,7 @@ export function pickContextEnvelope(
   if (context.tenantId !== undefined) envelope.tenantId = context.tenantId;
   // In process only: the identity was verified when the outer request arrived.
   if (context.dashboard !== undefined) envelope.dashboard = context.dashboard;
+  carryClientRequest(envelope, context);
   return envelope;
 }
 
@@ -86,4 +88,8 @@ export function resolvedDeps(
 ): Readonly<Record<string, unknown>> | undefined {
   const marked = ctx as Record<PropertyKey, any> | undefined;
   return marked?.[RESOLVED] === service ? marked[OWN_DEPS] : undefined;
+}
+
+export function serviceOf(ctx: object): Service<any, any> | undefined {
+  return (ctx as Record<PropertyKey, any>)[RESOLVED];
 }

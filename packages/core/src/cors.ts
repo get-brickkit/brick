@@ -71,6 +71,7 @@ export function corsHook(cors: CorsOptions) {
     if (allows(from, request)) {
       headers["access-control-allow-origin"] = from;
       if (credentials) headers["access-control-allow-credentials"] = "true";
+      headers["access-control-expose-headers"] = "Retry-After";
     }
     const preflight =
       request.method === "OPTIONS" &&

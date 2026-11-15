@@ -20,6 +20,8 @@ import type { Reveal } from "./sensitive";
 import type { StandardErrorCode } from "./protocol";
 import type { DashboardIdentity } from "./dashboard-identity";
 import type { Identity } from "./identity";
+import type { RateLimit } from "./rate-limit";
+import type { WebhookConfig } from "./webhook";
 import type { ServiceEvents } from "./events/types";
 import type { EventCatalog, EventRefs } from "./events/catalog";
 import type { EventsDefinition } from "./events/hub";
@@ -216,6 +218,11 @@ export interface StandardErrorMap {
     details?: unknown,
     options?: ErrorOptions,
   ) => never;
+  RATE_LIMITED: (
+    overrideMessage?: string,
+    details?: unknown,
+    options?: ErrorOptions,
+  ) => never;
   INTERNAL_SERVER_ERROR: (
     overrideMessage?: string,
     details?: unknown,
@@ -272,6 +279,26 @@ export interface BaseActionConfig<
   tags?: string[];
 }
 
+/** One rate limit or several; see `RateLimit`. */
+export type RateLimits<TInput = any, TCtx = ActionContext> =
+  | RateLimit<TInput, TCtx>
+  | readonly RateLimit<TInput, TCtx>[];
+
+/**
+ * How an action is recorded in the audit log: `false` leaves it out. `resource`
+ * names the record's kind and `record` returns its id, from the validated input
+ * and the result. Needs an audit table in the service's database; ignored without.
+ */
+export type AuditConfig<TInput = any, TResult = any> =
+  | false
+  | {
+      resource?: string;
+      record?: (args: {
+        input: TInput;
+        result: TResult;
+      }) => string | number | undefined;
+    };
+
 export interface ActionConfigWithAuthorize<
   TInputSchema extends TSchema | undefined = undefined,
   TOutputSchema extends TSchema | undefined = undefined,
@@ -296,6 +323,22 @@ export interface ActionConfigWithAuthorize<
    * `ctx.dashboard` is then set.
    */
   dashboard?: boolean;
+  /**
+   * Refuse calls over a limit (429, `RATE_LIMITED`), counted per caller in the
+   * service's key-value storage. Runs after input validation, before `authorize`.
+   */
+  rateLimit?: RateLimits<
+    TInputSchema extends TSchema ? Static<TInputSchema> : any,
+    TContext
+  >;
+  /**
+   * Recorded in the audit log when the service has an audit table and the
+   * action's HTTP method is not `GET`. `false` leaves it out, for a `POST` that only reads.
+   */
+  audit?: AuditConfig<
+    TInputSchema extends TSchema ? Static<TInputSchema> : any,
+    TOutputSchema extends TSchema ? Static<TOutputSchema> : any
+  >;
   authorize: (params: {
     user?: TContext extends { user: infer U } ? U : any;
     input: TInputSchema extends TSchema ? Static<TInputSchema> : any;
@@ -334,6 +377,22 @@ export interface ActionConfigWithoutAuthorize<
    * `ctx.dashboard` is then set.
    */
   dashboard?: boolean;
+  /**
+   * Refuse calls over a limit (429, `RATE_LIMITED`), counted per caller in the
+   * service's key-value storage. Runs after input validation, before `authorize`.
+   */
+  rateLimit?: RateLimits<
+    TInputSchema extends TSchema ? Static<TInputSchema> : any,
+    TContext
+  >;
+  /**
+   * Recorded in the audit log when the service has an audit table and the
+   * action's HTTP method is not `GET`. `false` leaves it out, for a `POST` that only reads.
+   */
+  audit?: AuditConfig<
+    TInputSchema extends TSchema ? Static<TInputSchema> : any,
+    TOutputSchema extends TSchema ? Static<TOutputSchema> : any
+  >;
   authorize?: undefined;
   execute: (params: {
     input: TInputSchema extends TSchema ? Static<TInputSchema> : any;
@@ -685,6 +744,19 @@ export interface CommandConfig<
   load?: { children?: TLoad };
   /** For a resource without `crud`: which rows the command may load. */
   access?: ResourceActionAccess<TCtx>;
+  /**
+   * Refuse calls over a limit (429, `RATE_LIMITED`), counted per caller in the
+   * service's key-value storage. Runs after input validation, before `authorize`.
+   */
+  rateLimit?: RateLimits<ResourceActionInput<TIn, true>, TCtx>;
+  /**
+   * Recorded in the audit log, with the resource and the record's `id`, in the
+   * command's transaction, when the service has an audit table. `false` leaves it out.
+   */
+  audit?: AuditConfig<
+    ResourceActionInput<TIn, true>,
+    TOut extends TSchema ? Static<TOut> : { id: string | number }
+  >;
   authorize?: (params: {
     user?: TCtx extends { user: infer U } ? U : any;
     input: ResourceActionInput<TIn, true>;
@@ -779,6 +851,20 @@ export interface ResourceActionConfig<
   reveal?: Reveal<ResourceActionInput<TIn, TRecord>, TCtx>;
   /** For a record action on a resource without `crud`: which rows it may load. */
   access?: ResourceActionAccess<TCtx>;
+  /**
+   * Refuse calls over a limit (429, `RATE_LIMITED`), counted per caller in the
+   * service's key-value storage. Runs after input validation, before `authorize`.
+   */
+  rateLimit?: RateLimits<ResourceActionInput<TIn, TRecord>, TCtx>;
+  /**
+   * Recorded in the audit log, with the resource and, for a record action, the
+   * `id`, when the service has an audit table and the action's HTTP method is not
+   * `GET`. `false` leaves it out.
+   */
+  audit?: AuditConfig<
+    ResourceActionInput<TIn, TRecord>,
+    TOut extends TSchema ? Static<TOut> : any
+  >;
   authorize?: (params: {
     user?: TCtx extends { user: infer U } ? U : any;
     input: ResourceActionInput<TIn, TRecord>;
@@ -849,6 +935,12 @@ export interface ActionSchema {
   hasAuthorize: boolean;
   hasScope?: boolean;
   accessPolicy?: ActionAccessPolicy;
+  /** The action's rate limits, without their keys. */
+  rateLimit?: { max: number; windowMs: number }[];
+  /** `true` when a call is recorded in the audit log; absent when it is not. */
+  audited?: boolean;
+  /** Set on a webhook (`service.webhook`): a verified provider callback, not an action callers invoke. */
+  webhook?: true;
   errors?: Record<string, ActionErrorDefinition>;
   emits?: string[];
   tags?: string[];
@@ -953,6 +1045,20 @@ export interface Service<
       BaseContext<TDb> & TServiceContext
     >,
   ): Action<TIn, TOut, TErr, BaseContext<TDb> & TServiceContext>;
+
+  /**
+   * Declare a provider webhook: an action in which `verify` accepts the
+   * delivery before anything else runs. See `WebhookConfig`.
+   */
+  webhook<
+    TIn extends TSchema,
+    TErr extends Record<string, ActionErrorDefinition> = Record<
+      string,
+      ActionErrorDefinition
+    >,
+  >(
+    config: WebhookConfig<TIn, TErr, BaseContext<TDb> & TServiceContext>,
+  ): Action<TIn, undefined, TErr, BaseContext<TDb> & TServiceContext>;
 
   tool<
     TIn extends TSchema | undefined = undefined,
