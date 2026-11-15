@@ -36,7 +36,7 @@ export default auth.action({
 
 Each address may try 20 times a minute, and 5 times in 15 minutes for one email. Each email may be tried 100 times an hour from all addresses together, which stops a slow guess spread over many addresses. One address cannot use that budget up, but someone with five or more addresses can, and then the owner's own login is refused until the hour ends; see [Choosing keys](#choosing-keys).
 
-`rateLimit` takes one limit or a list. It works on every kind of action: `service.action`, `defineAction`, `resource.action`, `resource.command` and tools.
+`rateLimit` takes one limit or a list. It works on every kind of action: `service.action`, `defineAction`, `resource.action`, `resource.command`, tools and [provider webhooks](/docs/webhooks), where it runs after the check for a repeated delivery.
 
 ## The counter needs a storage
 

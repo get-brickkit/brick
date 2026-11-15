@@ -44,7 +44,7 @@ import type { SocketBroker } from "./socket-types";
 import { corsHook, type CorsOptions } from "./cors";
 import { useStorages } from "./storage";
 import { portOf } from "./service-port";
-import { bodyLimitParser } from "./compiler/runtime";
+import { bodyLimitParser, rawBodyParser } from "./compiler/runtime";
 import { markAddressSource, type ClientIp } from "./rate-limit";
 
 export interface CreateServerOptions {
@@ -204,6 +204,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
 
   // Mounted and registered in one call, so actions and sockets can't shadow them.
   const registeredRoutes = new Map<string, boolean>();
+  const webhookRoutes = new Map<string, string>();
   const builtIn = (path: string, handler: any) => {
     app.get(path, handler);
     registeredRoutes.set(routeKey("GET", path), false);
@@ -325,6 +326,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     handler: any,
     plugin = false,
     hook?: object,
+    webhook?: string,
   ) => {
     const key = routeKey(method, path);
     if (socketRoutes.has(key))
@@ -332,6 +334,11 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
         `Brick: route '${method} ${path}' conflicts with a socket`,
       );
     if (registeredRoutes.has(key)) {
+      const other = webhook ?? webhookRoutes.get(key);
+      if (other)
+        throw new DuplicateNameError(
+          `Brick: route '${method} ${path}' is claimed by webhook '${other}' and by another route; a webhook cannot share its route`,
+        );
       if (plugin || registeredRoutes.get(key))
         throw new DuplicateNameError(
           `Brick: duplicate plugin route '${method} ${path}'`,
@@ -341,6 +348,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     if (hook) app.route(method, path, hook, handler);
     else app.route(method, path, handler);
     registeredRoutes.set(key, plugin);
+    if (webhook) webhookRoutes.set(key, webhook);
     return true;
   };
 
@@ -441,8 +449,13 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
             )
         : invoke,
       Boolean(route.ir.plugin),
-      route.ir.bodyLimit
-        ? { parse: bodyLimitParser(route.ir.bodyLimit) }
+      route.ir.kind === "webhook"
+        ? { parse: rawBodyParser(route.ir.bodyLimit!) }
+        : route.ir.bodyLimit
+          ? { parse: bodyLimitParser(route.ir.bodyLimit) }
+          : undefined,
+      route.ir.kind === "webhook"
+        ? `${route.ir.service}.${route.ir.action}`
         : undefined,
     );
     if (mounted) mountedRoutes.push(route.ir);

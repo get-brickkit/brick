@@ -3,6 +3,7 @@ import {
   actionOwners,
   getActionRoute,
   getPluginActionRoute,
+  isWebhook,
   serializeSocketSchema,
   type Service,
 } from "@brickkit/core";
@@ -90,6 +91,7 @@ function addServiceActions(
   contract[service.name] = namespace;
   types[service.name] = namespaceTypes;
   for (const action of service.listActions()) {
+    if (isWebhook(action)) continue;
     const route = getActionRoute(action, prefix);
     if (route === false) continue;
     const pluginRoute = getPluginActionRoute(action, prefix) || undefined;

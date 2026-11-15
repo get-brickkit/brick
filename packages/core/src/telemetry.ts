@@ -160,6 +160,18 @@ export function recordFailure(
   if (failure.status >= 500) recordThrown(span, error);
 }
 
+export function recordWebhook(
+  name: string,
+  eventId: string | undefined,
+  outcome: string,
+): void {
+  trace.getActiveSpan()?.setAttributes({
+    [ATTR.webhook]: name,
+    ...(eventId === undefined ? {} : { [ATTR.webhookEventId]: eventId }),
+    [ATTR.webhookOutcome]: outcome,
+  });
+}
+
 /**
  * Record SQL statements as client spans for the database behind a service.
  * Drizzle's logger has no timing, so the hook sits on the driver: each

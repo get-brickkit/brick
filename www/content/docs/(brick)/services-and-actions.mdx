@@ -5,7 +5,7 @@ description: Define modular backend services and typed actions with runtime sche
 
 Services structure backend domains in Brick-TS, while actions provide typed business logic executable both in-process and over HTTP.
 
-For bidirectional JSON messages, declare a [typed WebSocket](/docs/websockets) with `service.socket()`. Socket handlers use the owning service's context and appear in the generated browser client.
+For callbacks from a payment, telephony or other provider, declare a [provider webhook](/docs/webhooks) with `service.webhook()`: an action that runs only for deliveries the provider signed, and skips an event it has already handled. For bidirectional JSON messages, declare a [typed WebSocket](/docs/websockets) with `service.socket()`. Socket handlers use the owning service's context and appear in the generated browser client.
 
 ## Minimal Example
 

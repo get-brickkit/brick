@@ -11,7 +11,8 @@ import {
   t,
   type StorageDriver,
 } from "../src";
-import { serviceStorage } from "../src/storage";
+import { createHash } from "node:crypto";
+import { serviceStorage, storageKey } from "../src/storage";
 import { redisReachable, requireService, waitFor } from "./helpers";
 
 const url = requireService("REDIS_URL", "redis storage");
@@ -135,6 +136,37 @@ function suite(name: string, driver: () => StorageDriver, skip = false) {
       );
     });
 
+    it("compareAndDelete deletes a key only while it holds the expected value, and says whether it did", async () => {
+      const service = defineService(`cad_${crypto.randomUUID().slice(0, 8)}`, {
+        deps: { storage },
+      });
+      const brickSide = serviceStorage(service)!;
+      const k = key("claim");
+      expect(await brickSide.compareAndDelete(k, "mine")).toBe(false);
+      await brickSide.put(k, "mine", 5000);
+      expect(await brickSide.compareAndDelete(k, "theirs")).toBe(false);
+      expect(await brickSide.get(k)).toBe("mine");
+      expect(await brickSide.compareAndDelete(k, "mine")).toBe(true);
+      expect(await brickSide.get(k)).toBeNull();
+      expect(await brickSide.compareAndDelete(k, "mine")).toBe(false);
+      expect("compareAndDelete" in storage).toBe(false);
+    });
+
+    it("compareAndDelete lets exactly one of several racers delete", async () => {
+      const service = defineService(`cad_${crypto.randomUUID().slice(0, 8)}`, {
+        deps: { storage },
+      });
+      const brickSide = serviceStorage(service)!;
+      const k = key("race");
+      await brickSide.put(k, "token", 5000);
+      const results = await Promise.all(
+        Array.from({ length: 20 }, () =>
+          brickSide.compareAndDelete(k, "token"),
+        ),
+      );
+      expect(results.filter(Boolean)).toHaveLength(1);
+    });
+
     it("keeps Brick's keys and the app's keys apart", async () => {
       const service = defineService(`kv_${crypto.randomUUID().slice(0, 8)}`, {
         deps: { storage },
@@ -155,6 +187,24 @@ function suite(name: string, driver: () => StorageDriver, skip = false) {
 
 suite("memory", memory);
 suite("redis", () => redis({ url }), !url);
+
+describe("storageKey", () => {
+  it("keeps short parts as JSON, and the key of a part apart from a neighbour that holds its separators", () => {
+    expect(storageKey("rate-limit", ["svc", 1, "a\nb"])).toBe(
+      'rate-limit:["svc",1,"a\\nb"]',
+    );
+    expect(storageKey("f", ["a,b"])).not.toBe(storageKey("f", ["a", "b"]));
+  });
+
+  it("hashes a part over 128 characters into a form no literal part has", () => {
+    const long = "x".repeat(200);
+    const hash = createHash("sha256").update(long).digest("hex");
+    expect(storageKey("f", [long])).not.toBe(storageKey("f", [hash]));
+    expect(storageKey("f", [long])).toBe(storageKey("f", [long]));
+    expect(storageKey("f", [long])).not.toBe(storageKey("f", [`${long}y`]));
+    expect(storageKey("f", [long]).length).toBeLessThan(200);
+  });
+});
 
 describe("defineStorage", () => {
   it("is a dep, typed as ctx.deps.<name>", async () => {
