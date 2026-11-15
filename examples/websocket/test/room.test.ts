@@ -9,7 +9,6 @@ import type { ChatMessage } from "../src/store";
 import { createChatStore } from "../src/store";
 
 beforeEach(resetGlobalRegistry);
-// The next test file in the same process may define a service named "chat" too.
 afterAll(resetGlobalRegistry);
 const origin = "http://localhost:5178";
 

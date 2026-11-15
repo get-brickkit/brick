@@ -140,22 +140,22 @@ it("backs off Redis reconnects exponentially, capped at 30 s", () => {
 it("waits out the backoff instead of dialing Redis on every get()", async () => {
   const bun = Bun as any;
   const original = bun.RedisClient;
-  let dials = 0;
+  const unreachable = "redis://127.0.0.1:1";
+  let dialsToUnreachable = 0;
   bun.RedisClient = class extends original {
     constructor(...args: any[]) {
       super(...args);
-      // Only this test's connection: another client in the process may reconnect meanwhile.
-      if (args[0] === "redis://127.0.0.1:1") dials++;
+      if (args[0] === unreachable) dialsToUnreachable++;
     }
   };
   try {
     // Nothing listens on port 1, so every connection fails.
-    const redis = connection("redis://127.0.0.1:1", () => {});
+    const redis = connection(unreachable, () => {});
     redis.get();
     // Let the first dial fail; the backoff (at least 250 ms) is still running.
     await Bun.sleep(50);
     for (let i = 0; i < 100; i++) redis.get();
-    expect(dials).toBe(1);
+    expect(dialsToUnreachable).toBe(1);
     redis.close();
   } finally {
     bun.RedisClient = original;
