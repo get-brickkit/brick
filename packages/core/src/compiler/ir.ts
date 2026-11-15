@@ -127,7 +127,6 @@ export function analyzeDeclaredApplication(
     const key = routeKey(method, path);
     const previous = registered.get(key);
     if (previous) {
-      // A plain action must never take the place of a webhook's check, or the reverse.
       if (route.kind === "webhook" || previous.webhook)
         throw new DuplicateNameError(
           `Brick compiler: '${service.name}.${action.name}' and '${previous.name}' both claim '${method} ${path}', and a webhook cannot share its route`,

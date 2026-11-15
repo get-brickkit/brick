@@ -38,10 +38,14 @@ const rule = (
 const skip = (context: RuleContext) => fileInfo(context).ignored;
 
 const HANDLERS: Definition["kind"][] = ["action", "command", "tool"];
-/** What clients call: described in OpenAPI, MCP and the dashboard. A webhook is called by its provider, and is verified, not public. */
-const ENDPOINTS: Definition["kind"][] = [...HANDLERS, "socket", "webhook"];
+/** What outside callers reach, a client or a provider (a webhook): described in OpenAPI, MCP and the dashboard. */
+const OUTSIDE_ENDPOINTS: Definition["kind"][] = [
+  ...HANDLERS,
+  "socket",
+  "webhook",
+];
 /** What gets the error helpers. */
-const ERROR_KINDS: Definition["kind"][] = [...ENDPOINTS, "crud"];
+const ERROR_KINDS: Definition["kind"][] = [...OUTSIDE_ENDPOINTS, "crud"];
 /** What runs with a request or delivery context. */
 const CTX_KINDS: Definition["kind"][] = [...ERROR_KINDS, "listener"];
 const BUILT_IN_ERRORS = new Set(Object.keys(STANDARD_ERRORS));
@@ -719,7 +723,7 @@ export const checkRules: Record<string, Rule> = {
           const definition = definitionOf(node);
           if (!definition) return;
           if (
-            ENDPOINTS.includes(definition.kind) &&
+            OUTSIDE_ENDPOINTS.includes(definition.kind) &&
             !getProperty(definition.config, "description")
           )
             context.report({

@@ -46,10 +46,10 @@ afterAll(() => {
   propagation.disable();
 });
 
-const SECRET = "very-secret-signing-key";
+const TEST_ONLY_SIGNING_KEY = "very-secret-signing-key";
 const MARKER = "SENSITIVE-PAYLOAD-MARKER";
 const sign = (body: string) =>
-  `sha256=${createHmac("sha256", SECRET).update(body).digest("hex")}`;
+  `sha256=${createHmac("sha256", TEST_ONLY_SIGNING_KEY).update(body).digest("hex")}`;
 
 let app: BrickApp;
 const logged: unknown[][] = [];
@@ -77,7 +77,7 @@ function start() {
   service.webhook({
     name: "github",
     verify: hmacSignature({
-      secret: SECRET,
+      secret: TEST_ONLY_SIGNING_KEY,
       header: "x-hub-signature-256",
       prefix: "sha256=",
     }),
@@ -143,7 +143,11 @@ describe("what a webhook delivery leaves in logs and spans", () => {
       "x-hub-signature-256": "sha256=deadbeef",
       "x-delivery": "2",
     });
-    await send(`${MARKER} {not json`, { "x-hub-signature-256": "sha256=00" });
+    const broken = `${MARKER} {not json`;
+    await send(broken, {
+      "x-hub-signature-256": sign(broken),
+      "x-delivery": "5",
+    });
     const invalid = JSON.stringify({ action: MARKER, note: 5 });
     await send(invalid, {
       "x-hub-signature-256": sign(invalid),
@@ -154,7 +158,7 @@ describe("what a webhook delivery leaves in logs and spans", () => {
       "x-delivery": "4",
     });
     const everything = JSON.stringify({
-      logs: logged.map((args) => args.map(String)),
+      logs: logged.map((args) => args.map((arg) => Bun.inspect(arg))),
       spans: exporter.getFinishedSpans().map((span) => ({
         name: span.name,
         attributes: span.attributes,
@@ -162,9 +166,14 @@ describe("what a webhook delivery leaves in logs and spans", () => {
         status: span.status,
       })),
     });
-    for (const secret of [MARKER, SECRET, signature, "deadbeef", sign(invalid)])
+    for (const secret of [
+      MARKER,
+      TEST_ONLY_SIGNING_KEY,
+      signature,
+      "deadbeef",
+      sign(invalid),
+    ])
       expect(everything).not.toContain(secret);
-    // The failures were logged and traced, just without the delivery's content.
     expect(everything).toContain("handler failed");
     expect(action()).toHaveLength(6);
   });

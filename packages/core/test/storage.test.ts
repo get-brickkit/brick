@@ -149,7 +149,6 @@ function suite(name: string, driver: () => StorageDriver, skip = false) {
       expect(await brickSide.compareAndDelete(k, "mine")).toBe(true);
       expect(await brickSide.get(k)).toBeNull();
       expect(await brickSide.compareAndDelete(k, "mine")).toBe(false);
-      // Only Brick's side has it: the app's handle does not.
       expect("compareAndDelete" in storage).toBe(false);
     });
 

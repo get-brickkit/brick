@@ -40,11 +40,12 @@ if (redisUrl && !(await redisReachable(redisUrl)))
 
 beforeEach(resetGlobalRegistry);
 
-const SECRET = "whsec-test-secret";
-const sign = (body: string, secret = SECRET) =>
+const TEST_ONLY_SECRET = "whsec-test-secret";
+const TWILIO_DOCS_EXAMPLE_TOKEN = "12345";
+const sign = (body: string, secret = TEST_ONLY_SECRET) =>
   `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
 const github = hmacSignature({
-  secret: SECRET,
+  secret: TEST_ONLY_SECRET,
   header: "x-hub-signature-256",
   prefix: "sha256=",
 });
@@ -58,7 +59,6 @@ afterEach(async () => {
   for (const app of running.splice(0)) await app.stop(true);
 });
 
-/** Serves the services on a port, so every call below is a real HTTP request. */
 function serve(
   ...services: Parameters<typeof brick>[0] extends infer O
     ? O extends { services?: infer S }
@@ -76,7 +76,6 @@ function serve(
   return `http://localhost:${app.server!.port}`;
 }
 
-/** A signed (or not) delivery to the `github` webhook. */
 function post(
   base: string,
   body: string,
@@ -97,7 +96,6 @@ const signed =
     ...extra,
   });
 
-/** The `github` webhook on a service with a storage; what its handler saw is in `calls`. */
 function integrations(
   options: {
     storage?: ReturnType<typeof defineStorage>;
@@ -159,7 +157,7 @@ describe("hmacSignature", () => {
     const { service, calls } = integrations({
       config: {
         verify: hmacSignature({
-          secret: SECRET,
+          secret: TEST_ONLY_SECRET,
           header: "x-signature",
           algorithm: "sha1",
           encoding: "base64",
@@ -168,7 +166,9 @@ describe("hmacSignature", () => {
     });
     const base = serve(service);
     const body = JSON.stringify({ action: "a" });
-    const signature = createHmac("sha1", SECRET).update(body).digest("base64");
+    const signature = createHmac("sha1", TEST_ONLY_SECRET)
+      .update(body)
+      .digest("base64");
     expect(
       (await post(base, body, { "x-signature": signature, "x-delivery": "1" }))
         .status,
@@ -218,7 +218,6 @@ describe("hmacSignature", () => {
           })
         ).status,
       ).toBe(401);
-      // The ref is read at each request: rotating the value takes effect at once.
       overrideSecret("WEBHOOK_PREVIOUS", "newer-secret");
       expect(
         (
@@ -303,8 +302,8 @@ it("refuses an hmacSignature secret that is only whitespace", async () => {
 });
 
 describe("standardWebhooks", () => {
-  // The example of the Standard Webhooks and Svix documentation.
-  const SW_SECRET = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
+  const STANDARD_WEBHOOKS_DOCS_EXAMPLE_SECRET =
+    "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
   const ID = "msg_p5jXN8AQM9LWM0D4loKWxJek";
   const TIMESTAMP = "1614265330";
   const BODY = '{"test": 2432232314}';
@@ -322,7 +321,10 @@ describe("standardWebhooks", () => {
     });
     service.webhook({
       name: "payments",
-      verify: standardWebhooks({ secret: SW_SECRET, ...options }),
+      verify: standardWebhooks({
+        secret: STANDARD_WEBHOOKS_DOCS_EXAMPLE_SECRET,
+        ...options,
+      }),
       input: t.Object({ test: t.Number() }),
       execute: ({ input, eventId }) => {
         calls.push({ input, eventId });
@@ -341,7 +343,6 @@ describe("standardWebhooks", () => {
     const { base, calls } = payments();
     expect((await send(base)).status).toBe(200);
     expect(calls).toEqual([{ input: { test: 2432232314 }, eventId: ID }]);
-    // No eventId option, and the same id is not run twice.
     expect(await (await send(base)).json()).toEqual({ duplicate: true });
     expect(calls).toHaveLength(1);
   });
@@ -354,7 +355,9 @@ describe("standardWebhooks", () => {
     });
     service.webhook({
       name: "payments",
-      verify: standardWebhooks({ secret: ` ${SW_SECRET}\r\n` }),
+      verify: standardWebhooks({
+        secret: ` ${STANDARD_WEBHOOKS_DOCS_EXAMPLE_SECRET}\r\n`,
+      }),
       input: t.Object({ test: t.Number() }),
       execute: ({ eventId }) => {
         calls.push(eventId);
@@ -417,7 +420,6 @@ describe("standardWebhooks", () => {
     setSystemTime(new Date(Number(TIMESTAMP) * 1000));
     const warn = spyOn(console, "warn").mockImplementation(() => {});
     try {
-      // Each secret with the key a lenient decoder would have taken from it.
       for (const [secret, key] of [
         ["whsec_", Buffer.alloc(0)],
         ["whsec_!!!", Buffer.alloc(0)],
@@ -448,7 +450,6 @@ describe("standardWebhooks", () => {
         expect([secret, response.status]).toEqual([secret, 401]);
         expect(calls).toHaveLength(0);
       }
-      // The misconfiguration is logged, not left to look like forged traffic.
       expect(warn).toHaveBeenCalledTimes(4);
     } finally {
       warn.mockRestore();
@@ -457,7 +458,9 @@ describe("standardWebhooks", () => {
 
   it("refuses a request that is not a POST, which has no body to sign", async () => {
     setSystemTime(new Date(Number(TIMESTAMP) * 1000));
-    const verify = standardWebhooks({ secret: SW_SECRET });
+    const verify = standardWebhooks({
+      secret: STANDARD_WEBHOOKS_DOCS_EXAMPLE_SECRET,
+    });
     const request = (method: string) => ({
       rawBody: new TextEncoder().encode(BODY),
       headers: new Headers(headers()),
@@ -478,8 +481,6 @@ describe("standardWebhooks", () => {
 });
 
 describe("twilioSignature", () => {
-  // The worked example of Twilio's security documentation.
-  const TOKEN = "12345";
   const URL_SIGNED = "https://example.com/myapp.php?foo=1&bar=2";
   const FORM =
     "CallSid=CA1234567890ABCDE&Caller=%2B14158675310&Digits=1234&From=%2B14158675310&To=%2B18005551212";
@@ -493,7 +494,10 @@ describe("twilioSignature", () => {
     });
     service.webhook({
       name: "voiceStatus",
-      verify: twilioSignature({ authToken: TOKEN, url: url as never }),
+      verify: twilioSignature({
+        authToken: TWILIO_DOCS_EXAMPLE_TOKEN,
+        url: url as never,
+      }),
       eventId: ({ input }) => `${input.CallSid}:${input.Digits}`,
       input: t.Object({
         CallSid: t.String(),
@@ -530,7 +534,6 @@ describe("twilioSignature", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/xml");
     expect(await response.text()).toBe("<Response/>");
-    // The form's values are coerced by the schema; fields it does not declare are dropped.
     expect(calls).toEqual([{ CallSid: "CA1234567890ABCDE", Digits: 1234 }]);
   });
 
@@ -569,20 +572,20 @@ describe("twilioSignature", () => {
     const body = JSON.stringify({ CallSid: "CA1", Digits: 7 });
     const hash = createHash("sha256").update(body).digest("hex");
     const url = `https://example.com/hook?bodySHA256=${hash}`;
-    const signature = createHmac("sha1", TOKEN).update(url).digest("base64");
+    const signature = createHmac("sha1", TWILIO_DOCS_EXAMPLE_TOKEN)
+      .update(url)
+      .digest("base64");
     const { base, calls } = telephony(url);
     expect((await send(base, signature, body, "application/json")).status).toBe(
       200,
     );
     expect(calls).toEqual([{ CallSid: "CA1", Digits: 7 }]);
-    // The URL is signed, but a body that is not the one hashed is refused.
     const other = JSON.stringify({ CallSid: "CA1", Digits: 8 });
     expect(
       (await send(base, signature, other, "application/json")).status,
     ).toBe(401);
-    // A URL without the hash does not vouch for the body.
     const bare = "https://example.com/hook";
-    const bareSignature = createHmac("sha1", TOKEN)
+    const bareSignature = createHmac("sha1", TWILIO_DOCS_EXAMPLE_TOKEN)
       .update(bare)
       .digest("base64");
     expect(
@@ -602,13 +605,18 @@ describe("twilioSignature", () => {
     service.webhook({
       name: "multi",
       replay: false,
-      verify: twilioSignature({ authToken: TOKEN, url: "https://e.example/x" }),
+      verify: twilioSignature({
+        authToken: TWILIO_DOCS_EXAMPLE_TOKEN,
+        url: "https://e.example/x",
+      }),
       input: t.Object({ A: t.Array(t.String()), B: t.String() }),
       execute: ({ input }) => input,
     });
     const base = serve(service);
     const signed = "https://e.example/x" + "A1A2" + "Bx";
-    const signature = createHmac("sha1", TOKEN).update(signed).digest("base64");
+    const signature = createHmac("sha1", TWILIO_DOCS_EXAMPLE_TOKEN)
+      .update(signed)
+      .digest("base64");
     const response = await fetch(`${base}/api/tel2/multi`, {
       method: "POST",
       headers: {
@@ -649,7 +657,6 @@ describe("a GET webhook", () => {
     service.webhook({
       ...get,
       input: t.Object({ a: t.String() }),
-      // Not marked as signing the body, so only the verifier's own refusal stands.
       verify: (request: Parameters<WebhookVerifier>[0]) => github(request),
       execute: ({ input }: any) => {
         calls.push(input);
@@ -666,7 +673,7 @@ describe("a GET webhook", () => {
   });
 
   it("is signed by Twilio over its URL, query included, and the body is not part of it", async () => {
-    const token = "12345";
+    const token = TWILIO_DOCS_EXAMPLE_TOKEN;
     const url = "https://example.com/hook?CallSid=CA1";
     const urlSignature = createHmac("sha1", token).update(url).digest("base64");
     const calls: unknown[] = [];
@@ -686,7 +693,6 @@ describe("a GET webhook", () => {
       });
     expect((await call(urlSignature)).status).toBe(200);
     expect(calls).toEqual([{ CallSid: "CA1" }]);
-    // The input of a GET is its query, so the same signature over another query is refused.
     const forged = await fetch(
       `${base}/api/telephony/status?CallSid=CA999&Amount=1000000`,
       { headers: { "x-twilio-signature": urlSignature } },
@@ -694,7 +700,6 @@ describe("a GET webhook", () => {
     expect(forged.status).toBe(401);
     expect(calls).toHaveLength(1);
     expect((await call("AAAA/OH5YylLD5NRKLltdqwSvS0BnU=")).status).toBe(401);
-    // A form in the body of a GET is not signed: the URL alone is.
     const verify = twilioSignature({ authToken: token, url });
     const request = (method: string) => ({
       rawBody: new TextEncoder().encode("a=1"),
@@ -809,7 +814,6 @@ describe("a custom verifier", () => {
       };
       return true;
     });
-    // Spacing and key order survive: it is the body as it arrived.
     expect((await send(base, '{ "n" :  1 }')).status).toBe(200);
     expect(seen).toEqual({
       body: '{ "n" :  1 }',
@@ -851,7 +855,6 @@ describe("a custom verifier", () => {
       const response = await send(base);
       expect(response.status).toBe(401);
       const envelope = await response.json();
-      // A fixed message: what the verifier threw is not echoed.
       expect(envelope.message).toBe("Webhook verification failed");
       expect(JSON.stringify(envelope)).not.toContain("secret-looking-detail");
       expect(calls).toHaveLength(0);
@@ -922,7 +925,6 @@ describe("nothing runs before the verifier accepts", () => {
           max: 5,
           windowMs: 1000,
         },
-        // A body that would throw if parsed as JSON or as a form.
         input: t.Object({ action: t.String() }),
       },
     });
@@ -946,10 +948,8 @@ describe("nothing runs before the verifier accepts", () => {
     ).toBe(401);
     expect(ran).toEqual([]);
     expect(calls).toHaveLength(0);
-    // Not one JSON.parse for the unverified requests (the 401s are not parsed bodies).
     expect(parse.mock.calls.length).toBe(before);
     parse.mockRestore();
-    // The same poison body, once signed, is a 400 from the parser: it is the verifier that comes first.
     const signedPoison = await post(base, poison, signed("1")(poison));
     expect(signedPoison.status).toBe(400);
     expect(ran).toEqual([]);
@@ -1030,7 +1030,6 @@ describe("the body", () => {
         error: () => closed.resolve(),
       },
     });
-    // Declares 5000 bytes and sends none: only the declared length can be refused.
     socket.write(
       "POST /api/integrations/github HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 5000\r\n\r\n",
     );
@@ -1070,7 +1069,6 @@ describe("the body", () => {
     };
     expect((await chunked([600, 600])).status).toBe(413);
     expect((await chunked([5000])).status).toBe(413);
-    // Under the cap, the chunks are one body, verified as a whole.
     const text = '{"action":"chunked"}';
     const response = await fetch(`${base}/api/integrations/github`, {
       method: "POST",
@@ -1244,7 +1242,6 @@ describe("the payload", () => {
   });
 });
 
-/** The replay behaviour on every driver; Redis only when REDIS_URL is set. */
 function replaySuite(
   name: string,
   driver: () => StorageDriver,
@@ -1265,7 +1262,6 @@ function replaySuite(
       extra: Record<string, string> = {},
     ) => post(base, body, signed(id, extra)(body));
 
-    /** Lets a delivery's handler be held, and fail or finish when told. */
     function held() {
       const gates = new Map<string, PromiseWithResolvers<"ok" | "throw">>();
       const started: string[] = [];
@@ -1297,7 +1293,6 @@ function replaySuite(
       expect(again.status).toBe(200);
       expect(await again.json()).toEqual({ duplicate: true });
       expect(calls).toHaveLength(1);
-      // Another id is another event.
       expect((await send(base, "evt-2")).status).toBe(200);
       expect(calls).toHaveLength(2);
     });
@@ -1381,7 +1376,6 @@ function replaySuite(
       h.gate("B").resolve("ok");
       expect((await retry).status).toBe(200);
       expect(h.started).toEqual(["A", "B"]);
-      // And now it is handled.
       expect(await (await send(base, "evt", { "x-run": "C" })).json()).toEqual({
         duplicate: true,
       });
@@ -1415,7 +1409,6 @@ function replaySuite(
       });
       const second = serve(limited.service);
       expect((await send(second, "a")).status).toBe(503);
-      // The failing Response freed "a"; the limit has now counted two calls, so "a" is refused (429) and freed again.
       expect((await send(second, "a")).status).toBe(429);
       expect((await send(second, "b")).status).toBe(429);
       status = 200;
@@ -1436,15 +1429,12 @@ function replaySuite(
       const base = serve(service);
       const first = send(base, "evt", { "x-run": "A" });
       await settle();
-      // A's lease lapses while A still runs; the provider's retry claims the event.
       await lapse();
       const second = send(base, "evt", { "x-run": "B" });
       await settle();
       expect(h.started).toEqual(["A", "B"]);
-      // A fails late. It must not free B's claim...
       h.gate("A").resolve("throw");
       expect((await first).status).toBe(500);
-      // ...so a third delivery is held off, not run beside B.
       expect((await send(base, "evt", { "x-run": "C" })).status).toBe(409);
       expect(h.started).toEqual(["A", "B"]);
       h.gate("B").resolve("ok");
@@ -1551,7 +1541,6 @@ function replaySuite(
 }
 
 replaySuite("memory", memory, async () => {
-  // The memory driver reads Date.now(): move it past the lease.
   setSystemTime(new Date(Date.now() + 6 * 60_000));
 });
 
@@ -1563,7 +1552,6 @@ afterAll(async () => {
   if (keys.length) await raw.send("DEL", keys);
   raw.close();
 });
-// Each test has its own key prefix, so ids and leases of one never reach another's.
 let current = prefix;
 replaySuite(
   "redis",
@@ -1573,7 +1561,6 @@ replaySuite(
       prefix: (current = `${prefix}${crypto.randomUUID()}:`),
     }),
   async () => {
-    // Redis counts its own time: expire the claims and counters of this test.
     const keys: string[] = await raw!.send("KEYS", [`${current}*`]);
     for (const key of keys) await raw!.send("PEXPIRE", [key, "1"]);
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -1590,7 +1577,6 @@ describe("a handled id", () => {
     const body = JSON.stringify({ action: "a" });
     const send = () => post(base, body, signed("evt")(body));
     expect((await send()).status).toBe(200);
-    // Past the 5-minute lease, inside the ttl.
     setSystemTime(new Date(Date.now() + 6 * 60_000));
     expect(await (await send()).json()).toEqual({ duplicate: true });
     setSystemTime(new Date(Date.now() + 60 * 60_000));
@@ -1693,7 +1679,7 @@ describe("when the storage cannot answer", () => {
       expect(response.status).toBe(200);
       expect(calls).toHaveLength(1);
       expect(warn).toHaveBeenCalled();
-      expect(JSON.stringify(warn.mock.calls)).not.toContain(SECRET);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(TEST_ONLY_SECRET);
     } finally {
       warn.mockRestore();
     }
@@ -1744,7 +1730,7 @@ describe("startup errors", () => {
     });
     service.webhook(config);
     expect(() => service.build()).toThrow(
-      /Service "billing": webhook 'hook' has no event id .*eventId: \(\{ headers \}\).*standardWebhooks.*replay: false/,
+      /Service "billing": webhook 'hook' has no event id .*eventId: \(\{ input \}\).*signed.*standardWebhooks.*replay: false/,
     );
     expect(() => brick({ services: [service] })).toThrow(/no event id/);
   });
@@ -1830,14 +1816,12 @@ describe("startup errors", () => {
   });
 
   it("shares the name and URL rules of actions", () => {
-    // `fooBar` and `foo-bar` are two names on one URL segment.
     const service = defineService("billing", {});
     service.action({ name: "foo-bar", execute: () => 1 });
     service.webhook({ ...config, name: "fooBar", replay: false });
     expect(() => brick({ services: [service] })).toThrow(
       /duplicate name "foo-bar" in service "billing"/,
     );
-    // An explicit path moves it out of the way.
     const second = defineService("second", {});
     second.action({ name: "foo-bar", execute: () => 1 });
     second.webhook({ ...config, name: "fooBar", replay: false, path: "/x" });
@@ -1865,7 +1849,6 @@ describe("webhook.run", () => {
       { input: { action: "replayed" }, eventId: undefined },
     ]);
     expect(verify).not.toHaveBeenCalled();
-    // The input is still the schema's.
     await expect(webhook.run({ action: 3 } as never)).rejects.toThrow(
       /Validation failed/,
     );

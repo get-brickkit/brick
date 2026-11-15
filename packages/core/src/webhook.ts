@@ -42,7 +42,7 @@ export interface WebhookConfig<
   TErrors extends Record<string, ActionErrorDefinition>,
   TContext,
 > {
-  /** Its route is `POST /api/<service>/<name>`, as for an action. */
+  /** Its route is `<method> /api/<service>/<name>` (POST by default), as for an action. */
   name: string;
   description?: string;
   /** Relative to the service, as for an action. */
@@ -81,7 +81,6 @@ export interface WebhookConfig<
   }) => unknown;
 }
 
-/** What Brick keeps of a webhook besides its action: how a delivery is verified and remembered. */
 export interface WebhookDefinition {
   readonly verify: WebhookVerifier;
   readonly eventId?: WebhookConfig<any, any, any>["eventId"];
@@ -92,7 +91,6 @@ export interface WebhookDefinition {
 export const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 export const DEFAULT_REPLAY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** The webhook behind an action, if it is one. */
 export function webhookOf(
   action: object | undefined,
 ): WebhookDefinition | undefined {
@@ -104,7 +102,6 @@ export function isWebhook(action: object): boolean {
   return webhookOf(action) !== undefined;
 }
 
-/** @throws When the config is not one a webhook can run on. */
 export function defineWebhookMeta(
   service: string,
   config: WebhookConfig<any, any, any>,
@@ -144,10 +141,6 @@ export function defineWebhookMeta(
   };
 }
 
-/**
- * Checks at startup what a webhook's replay check needs: a way to name each
- * delivery, and a key-value storage to remember them in.
- */
 export function checkWebhook(
   service: Service<any, any>,
   action: Action<any, any, any, any>,
@@ -160,7 +153,7 @@ export function checkWebhook(
   const where = `Service "${service.name}": webhook '${action.name}'`;
   if (!webhook.eventId && !webhook.verify.suppliesEventId)
     throw new Error(
-      `${where} has no event id to tell deliveries apart by, so a delivery sent twice would run twice. Add eventId: ({ headers }) => headers.get("<the provider's delivery id header>") ?? undefined, use a verifier that supplies one (standardWebhooks), or set replay: false to run every delivery.`,
+      `${where} has no event id to tell deliveries apart by, so a delivery sent twice would run twice. Add eventId: ({ input }) => input.id, reading an id from a field of the signed payload (an id from a header the signature does not cover only removes accidental duplicates: anyone who captured a delivery can resend it with another id), use a verifier that supplies one (standardWebhooks), or set replay: false to run every delivery.`,
     );
   if (!serviceStorage(service))
     throw new Error(

@@ -159,7 +159,6 @@ export function recordFailure(
   if (failure.status >= 500) recordThrown(span, error);
 }
 
-/** Records on the active span what a webhook delivery was, and what became of it: its name, event id and outcome. */
 export function recordWebhook(
   name: string,
   eventId: string | undefined,

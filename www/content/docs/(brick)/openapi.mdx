@@ -123,7 +123,7 @@ bunx brick gen openapi src/server.ts --output openapi.json
 
 Each operation's path is the route Brick serves (see [URL Scheme](/docs/routes)), so `getUser` above is `GET /api/users/{id}`. Every operation is tagged with its service, here `users`. Resource routes (CRUD, [resource actions](/docs/resources#resource-actions) and resource plugins) are tagged `service · resource`, such as `pages · page`. An action's own `tags` are added after that tag, not in place of it.
 
-A [provider webhook](/docs/webhooks) is listed with its input (JSON, and form for a `POST`), no bearer security, and its `401` (verification failed), `409` (another delivery is being handled), `413` and `503` responses. The operation carries `x-brick-webhook: true`.
+A [provider webhook](/docs/webhooks) is listed with its input (JSON, and form for a `POST`), no bearer security, and its `401` (verification failed) and `413` responses, plus `409` (another delivery is being handled) and `503` when the replay check is on. The operation carries `x-brick-webhook: true`.
 
 ## Security Requirements in OpenAPI
 

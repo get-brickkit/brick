@@ -41,7 +41,12 @@ import {
 } from "./context";
 import { freezeAsBuiltDeps, depsOverride } from "./deps";
 import { checkRateLimits, rateLimitsOf } from "./rate-limit";
-import { checkWebhook, defineWebhookMeta, webhookOf } from "./webhook";
+import {
+  checkWebhook,
+  defineWebhookMeta,
+  isWebhook,
+  webhookOf,
+} from "./webhook";
 import type { NamedService } from "./rpc";
 import { defineServiceSocket } from "./socket";
 import type {
@@ -243,11 +248,7 @@ export class ServiceImpl<
 
     const previous = this.actions.get(actionInstance.name);
     if (previous !== actionInstance) this.claim("action", actionInstance.name);
-    // The same file may define a name again (a reload), but never swap a webhook's check away.
-    if (
-      previous &&
-      !actionMeta(previous).webhook !== !actionMeta(actionInstance).webhook
-    )
+    if (previous && isWebhook(previous) !== isWebhook(actionInstance))
       throw new DuplicateNameError(
         `Service '${this.name}': "${actionInstance.name}" is defined both as a webhook and as an action. Give one of them another name: an action of the same name would answer in place of the webhook, without its check.`,
       );
@@ -261,7 +262,6 @@ export class ServiceImpl<
 
   webhook(config: any): any {
     const webhook = defineWebhookMeta(this.name, config);
-    // What only the webhook runtime reads stays out of the action's config.
     const {
       verify: _verify,
       eventId: _eventId,

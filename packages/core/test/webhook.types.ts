@@ -25,7 +25,7 @@ const payments = billing.webhook({
     const amount: number = input.amount;
     const tenant: string = ctx.tenant;
     const id: string | undefined = eventId;
-    // @ts-expect-error input is the schema's, nothing else
+    // @ts-expect-error
     void input.email;
     void error.NOT_FOUND;
     void [amount, tenant, id];
@@ -49,15 +49,15 @@ billing.webhook({
 void hmacSignature({ secret: "s", header: "h" });
 void twilioSignature({ authToken: "t", url: ({ url }) => url });
 
-// @ts-expect-error verify is required: nothing runs unverified
+// @ts-expect-error
 billing.webhook({ name: "x", input: t.Object({}), execute: () => {} });
-// @ts-expect-error input is required
+// @ts-expect-error
 billing.webhook({ name: "y", verify: custom, execute: () => {} });
 billing.webhook({
   name: "z",
   verify: custom,
   input: t.Object({}),
-  // @ts-expect-error a webhook has no authorize: verification is the authorization
+  // @ts-expect-error
   authorize: () => true,
   execute: () => {},
 });
@@ -65,7 +65,7 @@ billing.webhook({
   name: "w",
   verify: custom,
   input: t.Object({}),
-  // @ts-expect-error only POST and GET
+  // @ts-expect-error
   method: "PUT",
   execute: () => {},
 });

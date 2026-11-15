@@ -322,7 +322,6 @@ export function generateOpenApiSpec(
             [fileFields(inputSchema).length
               ? "multipart/form-data"
               : "application/json"]: { schema: bodySchema },
-            // A webhook takes a form body as well, as Twilio sends.
             ...(webhook
               ? { "application/x-www-form-urlencoded": { schema: bodySchema } }
               : {}),

@@ -49,9 +49,7 @@ export interface KeyValueStorage extends KeyValueMethods {
   readonly kind: "key-value";
 }
 
-/** Brick's own side of a storage: the handle's methods, and what only the framework needs. */
 export interface FrameworkStorage extends KeyValueStorage {
-  /** Deletes the key only while it holds exactly `expected`, so a holder releases its own claim and no one else's. Says whether it deleted. Atomic. */
   compareAndDelete(key: string, expected: string): Promise<boolean>;
 }
 
@@ -94,12 +92,6 @@ function ttl(ttlMs: number | undefined, required: boolean): void {
     throw new Error(`Storage ttlMs must be a positive integer, got ${ttlMs}`);
 }
 
-/**
- * The key of a stored value for one feature: the parts as JSON, so whatever
- * separators or newlines a part holds, it never reaches another key. A part
- * over 128 characters is hashed, so a client cannot fill the storage with it;
- * the hash is an object, which no literal part can be, so it never equals one.
- */
 export function storageKey(feature: string, parts: unknown[]): string {
   return `${feature}:${JSON.stringify(
     parts.map((part) =>

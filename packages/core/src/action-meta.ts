@@ -49,7 +49,6 @@ export interface ActionMeta {
   access?: ActionAccessInfo;
   /** The deps of the plugin install that created the action, and when they were bound. */
   deps?: { values: Readonly<Record<string, unknown>>; at: number };
-  /** Set when the action is a webhook (`service.webhook`): how a delivery is verified and remembered. */
   webhook?: WebhookDefinition;
   runtimeOutput?: PluginActionChecks["runtimeOutput"];
   /** Runs before input validation; errors reject the input. */

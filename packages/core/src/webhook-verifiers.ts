@@ -2,32 +2,32 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type { SecretRef } from "./secrets";
 import type { WebhookRequest, WebhookVerifier } from "./webhook";
 
-/** A secret as the verifiers take it: its value, or a `defineSecret` ref read at each request. */
 type SecretInput = string | SecretRef<string>;
 /** One secret, or several so a secret can be rotated: any one that verifies accepts. */
 export type WebhookSecret = SecretInput | readonly SecretInput[];
 
-/** The values of the secrets now. A missing or empty one throws, so the request is refused, never accepted against an empty key. */
 function valuesOf(secret: WebhookSecret): string[] {
   const list = Array.isArray(secret) ? secret : [secret];
   const values = list.map((item: SecretInput) =>
     typeof item === "string" ? item : item.require(),
   );
-  // Whitespace alone is no secret either: an unset variable often arrives as one.
   if (!values.length || values.some((value) => !value.trim()))
     throw new Error("A webhook secret is empty");
   return values;
 }
 
-/** Equal strings, compared in constant time (the length is not secret). */
 function same(a: string, b: string): boolean {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
-/** Whether any candidate equals `given`; every candidate is compared. */
-function anyMatch(given: string, candidates: string[]): boolean {
+const hasBody = (method: string) => method === "POST";
+
+function matchesAnyWithoutShortCircuit(
+  given: string,
+  candidates: string[],
+): boolean {
   let found = false;
   for (const candidate of candidates) found = same(given, candidate) || found;
   return found;
@@ -62,22 +62,22 @@ export function hmacSignature(options: HmacSignatureOptions): WebhookVerifier {
     encoding = "hex",
   } = options;
   const verify: WebhookVerifier = ({ rawBody, headers, method }) => {
-    // A GET has no body, so one constant signature would pass for every query.
-    if (method !== "POST") return false;
+    if (!hasBody(method)) return false;
     const value = headers.get(header);
     if (value === null || !value.startsWith(prefix)) return false;
     const given = value.slice(prefix.length);
     const expected = valuesOf(options.secret).map((secret) =>
       createHmac(algorithm, secret).update(rawBody).digest(encoding),
     );
-    return anyMatch(encoding === "hex" ? given.toLowerCase() : given, expected);
+    return matchesAnyWithoutShortCircuit(
+      encoding === "hex" ? given.toLowerCase() : given,
+      expected,
+    );
   };
   return Object.assign(verify, { signsBody: true as const });
 }
 
-/** The key of a `whsec_` secret: its base64 bytes. Anything else throws, so a misread secret never becomes a key an attacker can sign with. */
 function keyOf(secret: string): Buffer {
-  // Trimmed: a secret read from a file or a variable often ends in a newline.
   const encoded = secret.trim().replace(/^whsec_/, "");
   const key = /^[A-Za-z0-9+/]+={0,2}$/.test(encoded)
     ? Buffer.from(encoded, "base64")
@@ -109,8 +109,7 @@ export function standardWebhooks(
 ): WebhookVerifier {
   const toleranceMs = options.toleranceMs ?? 5 * 60_000;
   const verify: WebhookVerifier = ({ rawBody, headers, method }) => {
-    if (method !== "POST") return false;
-    // Svix, and the providers built on it, send the same three as `svix-*`.
+    if (!hasBody(method)) return false;
     const header = (name: string) =>
       headers.get(`webhook-${name}`) ?? headers.get(`svix-${name}`);
     const id = header("id");
@@ -129,7 +128,7 @@ export function standardWebhooks(
       // Only `v1` is symmetric; other versions (`v1a`) are not ours to check.
       const [version, signature] = entry.split(",");
       if (version === "v1" && signature)
-        ok = anyMatch(signature, expected) || ok;
+        ok = matchesAnyWithoutShortCircuit(signature, expected) || ok;
     }
     return ok ? { eventId: id } : false;
   };
@@ -171,7 +170,6 @@ export function twilioSignature(
       typeof options.url === "string"
         ? options.url
         : await options.url(request);
-    // A GET's input is its query, so it must be the query that was signed.
     if (
       request.method !== "POST" &&
       new URL(url).search !== new URL(request.url).search
@@ -189,7 +187,7 @@ export function twilioSignature(
         for (const value of [...new Set(form.getAll(name))].sort())
           signed += name + value;
     }
-    return anyMatch(
+    return matchesAnyWithoutShortCircuit(
       given,
       valuesOf(options.authToken).map((token) =>
         createHmac("sha1", token).update(signed).digest("base64"),

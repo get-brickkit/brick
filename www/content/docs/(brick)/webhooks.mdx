@@ -165,7 +165,7 @@ A verifier that always returns `{ eventId }` can say so with `suppliesEventId = 
 
 A provider can deliver one event more than once, after a timeout or a retry, or a redelivery you ask for. A webhook claims each event id in the service's storage under a key that names the service, the webhook and the id, and `execute` runs at least once per id. It runs once, except when a handler outlives its lease (below), when the id could not be recorded after the handler succeeded (a warning is logged), or when the provider sends the event again after `replay.ttlMs`.
 
-The id comes from the verifier's `{ eventId }`, or from the `eventId` option: a function of `{ input, headers, url, method }` that returns the delivery's id: a non-empty string or a whole number up to 2^53 (`0` is an id, and `7` and `"7"` are the same one). The same holds for the id a verifier returns. Anything else, `undefined` included, is no id, and a verified delivery with no id is answered `400` and does not run. The verifier's own id wins: when it supplies one, `eventId` is not called. An id over 128 characters is stored as its hash, which cannot equal another id.
+The id comes from the verifier's `{ eventId }`, or from the `eventId` option: a function of `{ input, headers, url, method }` that returns the delivery's id: a non-empty string or a whole number up to 2^53 (`0` is an id, and `7` and `"7"` are the same one). The same holds for the id a verifier returns, but a verifier that returns `{ eventId }` with no valid id has not accepted the delivery: it is refused with `401`, as if its check had failed. Anything else, `undefined` included, is no id, and a delivery the verifier accepted without an id, when the `eventId` option names none, is answered `400` and does not run. The verifier's own id wins: when it supplies one, `eventId` is not called. An id over 128 characters is stored as its hash, which cannot equal another id.
 
 | What the claim finds                                                    | The answer                                                                                               |
 | :---------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------- |
@@ -226,7 +226,7 @@ Brick compares routes exactly. It does not see a pattern that overlaps a webhook
 
 ## Where a webhook shows
 
-A webhook is not for callers of your API, so it is left out of the [typed client](/docs/typed-client), the `useService` types and [MCP](/docs/tools-and-mcp). [OpenAPI](/docs/openapi) lists its route with its input and its `401`, `409` and `413` responses (marked `x-brick-webhook`), and `introspect()` and the dashboard mark it as a webhook. [`brick lint`](/docs/brick-cli/lint) treats `.webhook(` as its own kind: it is not an unprotected public action, and goes in a `*.webhook.ts` file under `webhooks/`.
+A webhook is not for callers of your API, so it is left out of the [typed client](/docs/typed-client), the `useService` types and [MCP](/docs/tools-and-mcp). [OpenAPI](/docs/openapi) lists its route with its input and its `401` and `413` responses, plus `409` and `503` when `replay` is on (marked `x-brick-webhook`), and `introspect()` and the dashboard mark it as a webhook. [`brick lint`](/docs/brick-cli/lint) treats `.webhook(` as its own kind: it is not an unprotected public action, and goes in a `*.webhook.ts` file under `webhooks/`.
 
 ## Logs and traces
 
