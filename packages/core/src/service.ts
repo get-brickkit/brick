@@ -34,6 +34,7 @@ import { getActionAccess } from "./access";
 import { pluginOwner } from "./plugin-tables";
 import { baseContext, pickContextEnvelope } from "./context";
 import { brickDeps, depsOverride } from "./deps";
+import { attachIdentity } from "./identity";
 import type { NamedService } from "./rpc";
 import { defineServiceSocket } from "./socket";
 import type {
@@ -497,6 +498,13 @@ async function resolveServiceContext<
     [RESOLVED_SYMBOL]: service,
     [OWN_DEPS]: framework.deps,
   };
+  const identity = service.options.identity;
+  // Like `context`, the hook sees the service's own deps, never a plugin's.
+  attachIdentity(
+    finalCtx,
+    service.name,
+    identity && (() => identity({ ...finalCtx, deps: framework.deps })),
+  );
   return finalCtx;
 }
 
@@ -514,6 +522,8 @@ async function resolveServiceContext<
  * @param options - `database` (a handle from `defineDatabase`), `deps` (the
  * values the service's code uses, such as clients, read as `ctx.deps`),
  * `context` (adds fields such as the signed-in user to every action's `ctx`),
+ * `identity` (who the caller is and their tenant, from that `ctx`, for the
+ * features that need it),
  * `events` (the event catalog: a payload schema per event name, recorded as
  * `<service>.<name>` and offered as `service.events.<name>`).
  * @returns The service.

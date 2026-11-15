@@ -128,6 +128,7 @@ export {
   type UntypedServiceClient,
 } from "./rpc";
 export { useDeps } from "./deps";
+export type { Identity } from "./identity";
 export {
   defineError,
   stepErrors,
