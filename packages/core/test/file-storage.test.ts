@@ -194,6 +194,12 @@ describe("file storage", () => {
     const long = "t".repeat(300);
     const stored = await files.in(long).put(new Blob(["long"]));
     expect(await (await files.in(long).get(stored.id))?.text()).toBe("long");
+
+    // Lone surrogates all encode as U+FFFD, so such tenants would share a folder.
+    for (const tenant of ["\ud800", "a\ud801"])
+      await expect(
+        (async () => files.in(tenant).put(new Blob(["x"])))(),
+      ).rejects.toThrow("well-formed");
   });
 
   it("returns the content type it stored, normalised", async () => {
@@ -395,7 +401,7 @@ describe("file storage", () => {
     const files = localFiles();
     for (const bad of ["", ".", ".."])
       expect(() => files.in(bad)).toThrow(
-        "the tenant must be a non-empty string",
+        "the tenant must be a non-empty, well-formed string",
       );
     expect(() => files.in(undefined as any)).toThrow("the tenant must be");
     await expect(files.get(crypto.randomUUID())).rejects.toThrow(

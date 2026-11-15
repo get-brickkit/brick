@@ -49,9 +49,13 @@ export interface CallFiles extends ScopedFiles {
 }
 
 /** Deps as a call sees them: each file storage scoped to the caller's tenant. */
-export type CallDeps<T> = {
-  [K in keyof T]: T[K] extends FileStorage ? CallFiles : T[K];
-};
+export type CallDeps<T> = { [K in keyof T]: CallDep<T[K]> };
+// Distributive, so an optional or union dep is mapped too, and generic code still resolves `ctx.deps.x`.
+type CallDep<V> = V extends FileStorage ? CallFiles : V;
+
+/** Deps as declared on the service: the handle itself, with `in`. What `useDeps(service)` returns. */
+export type RawDeps<T> = { [K in keyof T]: RawDep<T[K]> };
+type RawDep<V> = V extends CallFiles ? FileStorage : V;
 
 /** A driver for file storage, such as `s3()`. It sees full keys; the handle builds them. */
 export interface FileDriver {
@@ -112,10 +116,12 @@ function tenantKey(tenant: unknown, local = false): string {
     typeof tenant !== "string" ||
     !tenant ||
     tenant === "." ||
-    tenant === ".."
+    tenant === ".." ||
+    // UTF-8 turns every lone surrogate into U+FFFD, so two such tenants would share a digest.
+    !tenant.isWellFormed()
   )
     throw new Error(
-      `File storage: the tenant must be a non-empty string other than "." and "..", got ${JSON.stringify(tenant)}`,
+      `File storage: the tenant must be a non-empty, well-formed string other than "." and "..", got ${JSON.stringify(tenant)}`,
     );
   return local ? sha256(tenant) : encodeURIComponent(tenant);
 }

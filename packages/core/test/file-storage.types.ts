@@ -4,6 +4,9 @@ import {
   memory,
   s3,
   t,
+  useDeps,
+  type CallDeps,
+  type CallFiles,
   type FileStorage,
   type KeyValueStorage,
   type ScopedFiles,
@@ -48,3 +51,18 @@ crm.action({
     return { url, size: blob?.size };
   },
 });
+
+// useDeps(service) returns the handle itself, so a listener can name a tenant.
+const fromService: ScopedFiles = useDeps(crm).files.in("acme");
+void fromService;
+
+// An optional file dep is scoped too, and ordinary deps keep their own type in generic code.
+declare const optional: CallDeps<{ backup?: FileStorage; n: number }>;
+const backup: CallFiles | undefined = optional.backup;
+void backup;
+// @ts-expect-error an optional file dep has no in() in a call either
+optional.backup?.in("globex");
+function generic<P extends { n: number }>(deps: CallDeps<P>): number {
+  return deps.n;
+}
+void generic;
