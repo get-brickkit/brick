@@ -1,16 +1,14 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { ArrowRightIcon } from "lucide-react";
-import * as React from "react";
+import type { ReactNode } from "react";
 
-import { LogoMark } from "@/components/logo";
-import { InstallOptions } from "@/components/install-command";
-import { site } from "@/lib/site";
-import { cn } from "@/lib/utils";
+import { BrickFront, BrickSingle } from "@/components/brick-art";
+import { HomeTour } from "@/components/home-tour";
+import { InstallCommand, InstallOptions } from "@/components/install-command";
+import { DitherCanvas, type Field } from "@/components/pixel-field";
 import { SourceCode } from "@/components/source-code";
-import { HomeCapabilities } from "@/components/home-capabilities";
+import { site } from "@/lib/site";
 import usersSource from "../../../examples/showcase/src/services/users.ts?raw";
-import mainSource from "../../../examples/showcase/src/main.ts?raw";
-import serverSource from "../../../examples/showcase/src/server.ts?raw";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -48,272 +46,327 @@ export const Route = createFileRoute("/")({
 
 const features = [
   {
-    title: "Monomorphic Dispatch",
-    text: "Call typed actions directly in process with the same validation and error handling used by HTTP routes.",
-    link: "/docs/services-and-actions",
+    title: "Services and actions",
+    text: "Validated, typed units of work you call in process or over HTTP.",
+    link: "services-and-actions",
   },
   {
-    title: "AOT Routing & Streaming",
-    text: "Compile action handlers and resource plans ahead of request handling, and serve them through Elysia.",
-    link: "/docs/brick-cli/build",
+    title: "Resources",
+    text: "A Drizzle table becomes CRUD routes with field policies and filters.",
+    link: "resources",
   },
   {
-    title: "Logical Monolith",
-    text: "Single repository with shared schemas, full TypeScript type safety, and instant jump-to-definition across services.",
-    link: "/docs/type-inference",
+    title: "Commands",
+    text: "Business rules that write a row and emit events in one transaction.",
+    link: "commands",
   },
   {
-    title: "Physical Microservices",
-    text: "Expose services over HTTP using the same action definitions you invoke in process.",
-    link: "/docs",
+    title: "Events",
+    text: "Events recorded with the write, delivered to listeners after commit.",
+    link: "events",
   },
   {
-    title: "Better Auth & Drizzle",
-    text: "First-class integration with Better Auth session security and Drizzle ORM pre-compiled query caching.",
-    link: "/docs/access-control",
+    title: "Realtime",
+    text: "Typed WebSockets with rooms, fan-out, and reconnect.",
+    link: "websockets",
+  },
+  {
+    title: "Typed client",
+    text: "A generated browser contract, with TanStack Query options.",
+    link: "typed-client",
+  },
+  {
+    title: "MCP tools",
+    text: "Expose tools to AI agents over the Model Context Protocol.",
+    link: "tools-and-mcp",
+  },
+  {
+    title: "Access control",
+    text: "Authorization guards on actions and row scoping on resources.",
+    link: "access-control",
+  },
+  {
+    title: "OpenAPI",
+    text: "An OpenAPI document generated from the same definitions.",
+    link: "openapi",
+  },
+  {
+    title: "Migrations",
+    text: "Create tables in development and run migrations in production.",
+    link: "migrations",
+  },
+  {
+    title: "Plugins",
+    text: "Package routes, resources, and dashboard tabs to reuse across apps.",
+    link: "plugins",
+  },
+  {
+    title: "Dev dashboard",
+    text: "brick dev serves a dashboard of requests, spans, and failures.",
+    link: "brick-cli/dev-and-start",
   },
 ];
 
-const kinds = [
-  { id: "monolith", label: "Logical Monolith" },
-  { id: "microservice", label: "HTTP Service" },
-] as const;
-
-type Kind = (typeof kinds)[number]["id"];
-
-const codeSamples = {
-  monolith: {
-    serviceFile: "src/services/users.ts",
-    serviceCode: usersSource.trim(),
-    sideFile: "src/main.ts",
-    sideDesc:
-      "Invoke the same typed action directly in process. These files are the runnable examples/showcase source in this repository.",
-    sideCode: mainSource.trim(),
+const flow = [
+  { label: "TABLE", title: "Drizzle table", code: 'status: text("status")' },
+  {
+    label: "RESOURCE",
+    title: "Resource + CRUD",
+    code: ".use(crud({ fields }))",
   },
-  microservice: {
-    serviceFile: "src/server.ts",
-    serviceCode: serverSource.trim(),
-    sideFile: "src/server.ts",
-    sideDesc:
-      "Expose the users service over HTTP. Run bun run --cwd examples/showcase serve, then POST the id usr_42 to /api/users/get-user.",
-    sideCode: serverSource.trim(),
-  },
-};
+  { label: "ROUTE", title: "HTTP route", code: "PATCH /api/orders/order/:id" },
+  { label: "CONTRACT", title: "Client contract", code: "_brick/contract.ts" },
+  { label: "UI", title: "Your UI", code: "api.orders.order.update()" },
+];
 
-function Home() {
-  const [kind, setKind] = React.useState<Kind>("monolith");
-  const activeCode = codeSamples[kind];
+const packages = [
+  ["@brickkit/core", "services, actions, client"],
+  ["@brickkit/crud", "resources, policies, hooks"],
+  ["@brickkit/cli", "dev, build, gen, dashboard"],
+  ["@brickkit/redis-world", "durable workflows on Redis"],
+  ["@brickkit/bullmq-world", "durable workflows on BullMQ"],
+];
 
+// A warm horizon behind the code window that fades out under the headline.
+const heroField: Field = (x, y) =>
+  Math.exp(-(((y - 0.5) / 0.26) ** 2)) * (0.25 + 0.75 * x ** 1.4);
+
+function SectionHeading({
+  label,
+  title,
+  children,
+}: {
+  label: string;
+  title: ReactNode;
+  children?: ReactNode;
+}) {
   return (
-    <main id="top" className="brick-landing">
-      <section className="brick-hero">
+    <div className="home-section-heading">
+      <div>
+        <p className="course-mark label">
+          <span aria-hidden="true" className="flex">
+            <i />
+            <i />
+            <i />
+          </span>
+          {label}
+        </p>
+        <h2>{title}</h2>
+      </div>
+      {children && <p className="section-description">{children}</p>}
+    </div>
+  );
+}
+
+function StartButtons({ second }: { second: "github" | "tutorial" }) {
+  return (
+    <div className="hero-actions">
+      <Link
+        to="/docs/$"
+        params={{ _splat: "quickstart" }}
+        className="home-button home-button-primary"
+      >
+        Start building
+      </Link>
+      {second === "github" ? (
         <a
-          href={`${site.repo}/releases`}
+          href={site.repo}
           target="_blank"
           rel="noreferrer"
           data-umami-event="github-click"
-          data-umami-event-location="hero-release"
-          className="hero-release"
+          data-umami-event-location="hero"
+          className="home-button home-button-secondary"
         >
-          Brick v{site.version}, open source
+          Explore the source
         </a>
-        <LogoMark className="hero-symbol" />
-        <h1>
-          Build your backend.
-          <br />
-          Keep your TypeScript.
-        </h1>
-        <p className="hero-caption">Small definitions. Production execution.</p>
-        <p className="hero-description">
-          Your actions, resources, and rules.
-          <br className="hidden sm:block" /> Compiled into a backend ready to
-          run on Bun.
-        </p>
-        <div className="hero-actions">
-          <Link
-            to="/docs/$"
-            params={{ _splat: "quickstart" }}
-            className="home-button home-button-primary"
-          >
-            Start building
-          </Link>
+      ) : (
+        <Link
+          to="/docs/$"
+          params={{ _splat: "tutorial" }}
+          className="home-button home-button-secondary"
+        >
+          Read the tutorial
+        </Link>
+      )}
+    </div>
+  );
+}
+
+function Home() {
+  return (
+    <main id="top" className="brick-landing">
+      <section className="brick-hero">
+        <DitherCanvas field={heroField} className="hero-dither" />
+        <div className="hero-window" aria-hidden="true" inert>
+          <div className="hero-window-bar">
+            <span />
+            <span />
+            <span />
+            <p>src/services/users.ts</p>
+          </div>
+          <div className="hero-window-code">
+            <SourceCode code={usersSource.trim()} />
+          </div>
+        </div>
+        <div className="hero-copy">
           <a
-            href={site.repo}
+            href={`${site.repo}/releases`}
             target="_blank"
             rel="noreferrer"
             data-umami-event="github-click"
-            data-umami-event-location="hero"
-            className="home-button home-button-secondary"
+            data-umami-event-location="hero-release"
+            className="hero-release"
           >
-            Explore the source
+            Brick v{site.version}, open source
           </a>
+          <h1>
+            Build your backend.
+            <br />
+            Keep your TypeScript.
+          </h1>
+          <p className="hero-description">
+            Your actions, resources, and rules.
+            <br className="hidden sm:block" /> Compiled into a backend ready to
+            run on Bun.
+          </p>
+          <StartButtons second="github" />
+          <InstallOptions />
         </div>
-        <InstallOptions />
       </section>
 
-      <div id="definitions" className="home-section-heading">
-        <div>
-          <h2>
-            One codebase.
-            <br />
-            Two ways to run.
-          </h2>
-        </div>
-        <p className="section-description">
-          Start with direct calls. Expose HTTP when you need it. The same typed
-          definitions power both.
-        </p>
-      </div>
-
-      <div className="brick-workbench">
-        <div
-          role="tablist"
-          aria-label="Kind of deployment"
-          className="workbench-tabs"
+      <section id="blocks" className="home-section">
+        <SectionHeading
+          label="One service file"
+          title={
+            <>
+              Write the block once.
+              <br />
+              Brick serves it everywhere.
+            </>
+          }
         >
-          {kinds.map((k) => (
-            <button
-              key={k.id}
-              type="button"
-              role="tab"
-              id={`tab-${k.id}`}
-              aria-selected={kind === k.id}
-              aria-controls="code-panel"
-              onClick={() => setKind(k.id)}
-              className={cn(
-                "workbench-tab",
-                kind === k.id && "workbench-tab-active",
-              )}
-            >
-              {k.label}
-            </button>
+          Each building block is a few lines of TypeScript. Pick one to see the
+          code and what it serves.
+        </SectionHeading>
+        <HomeTour />
+      </section>
+
+      <section id="flow" className="home-section">
+        <SectionHeading
+          label="From table to browser"
+          title="One type, five places."
+        >
+          Change a column and the types follow it through the resource, the
+          route and the generated client contract to your UI.
+        </SectionHeading>
+        <ol className="home-flow">
+          {flow.map((step) => (
+            <li key={step.label}>
+              <BrickFront label={step.label} />
+              <p>{step.title}</p>
+              <code>{step.code}</code>
+            </li>
           ))}
-        </div>
-        <div
-          role="tabpanel"
-          id="code-panel"
-          aria-labelledby={`tab-${kind}`}
-          className="grid lg:grid-cols-[1.3fr_1fr] lg:divide-x"
-        >
-          <figure className="min-w-0">
-            <figcaption className="border-b px-4 py-3 font-mono text-xs text-muted-foreground sm:px-6">
-              {activeCode.serviceFile}
-            </figcaption>
-            <div className="overflow-x-auto px-4 py-5 sm:px-6">
-              <SourceCode
-                key={activeCode.serviceCode}
-                code={activeCode.serviceCode}
-              />
-            </div>
-          </figure>
-          {kind === "monolith" ? (
-            <figure className="flex min-w-0 flex-col border-t lg:border-t-0">
-              <figcaption className="border-b px-4 py-3 font-mono text-xs text-muted-foreground sm:px-6">
-                {activeCode.sideFile}
-              </figcaption>
-              <div className="overflow-x-auto px-4 py-5 sm:px-6">
-                <SourceCode
-                  key={activeCode.sideCode}
-                  code={activeCode.sideCode}
-                />
-              </div>
-              <p className="mt-auto border-t px-4 py-4 text-sm leading-6 text-muted-foreground sm:px-6">
-                {activeCode.sideDesc}
-              </p>
-            </figure>
-          ) : (
-            <div className="flex min-w-0 flex-col border-t lg:border-t-0">
-              <p className="brick-caption border-b px-4 py-3 sm:px-6">
-                Zero-refactor deployment
-              </p>
-              <div className="space-y-4 px-4 py-5 text-sm leading-6 text-muted-foreground sm:px-6">
-                <p>
-                  Use the same typed service definitions for direct calls and
-                  HTTP routes. The runnable example exposes the users service on
-                  port 3000.
-                </p>
-                <p>
-                  Request /api/users/getUser?id=usr_42 to call the action over
-                  HTTP.
-                </p>
-              </div>
-              <figure className="mt-auto border-t">
-                <figcaption className="brick-caption border-b px-4 py-3 sm:px-6">
-                  Run the example
-                </figcaption>
-                <pre className="overflow-x-auto px-4 py-4 font-mono text-[13px] leading-[1.7] sm:px-6">
-                  <span className="text-gopher-ink select-none">$ </span>
-                  {"bun run --cwd examples/showcase serve\n"}
-                  <span className="text-gopher-ink select-none">$ </span>
-                  {"curl 'http://localhost:3000/api/users/getUser?id=usr_42'"}
-                </pre>
-              </figure>
-            </div>
-          )}
-        </div>
-      </div>
+        </ol>
+      </section>
 
-      <div id="platform" className="home-section-heading home-platform-heading">
-        <div>
-          <h2>
-            A foundation for
-            <br />
-            what comes next.
-          </h2>
-        </div>
-        <p className="section-description">
-          A focused set of primitives, built on the TypeScript tools you already
-          know.
-        </p>
-      </div>
-      <ul className="home-feature-grid">
-        {features.map((feature, i) => (
-          <li key={feature.title}>
-            <Link
-              to={feature.link}
-              className="brick-feature group flex h-full flex-col rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            >
-              <div
-                className="feature-visual transition-colors group-hover:border-foreground/30"
-                aria-hidden="true"
-                data-variant={i}
-              >
-                <span className="visual-index">0{i + 1}</span>
-                <div className="visual-flow">
-                  <span>
-                    {["ACTION", "ROUTE", "SERVICE", "HTTP", "SESSION"][i]}
-                  </span>
-                  <b>↓</b>
-                  <span>
-                    {["EXECUTE", "HANDLER", "ACTION", "SERVICE", "POLICY"][i]}
-                  </span>
-                </div>
-                <span className="visual-caption">
-                  {
-                    [
-                      "Type-safe execution",
-                      "Compiled ahead of time",
-                      "Direct in-process calls",
-                      "Same action, new interface",
-                      "Your identity, your rules",
-                    ][i]
-                  }
-                </span>
-              </div>
-              <div className="feature-copy">
-                <h3 className="flex items-center justify-between font-semibold tracking-tight">
+      <section id="platform" className="home-section">
+        <SectionHeading
+          label="The rest of the backend"
+          title="Every piece is opt-in."
+        >
+          Each one is typed from the same definitions and documented on its own
+          page.
+        </SectionHeading>
+        <ul className="home-feature-index">
+          {features.map((feature) => (
+            <li key={feature.title}>
+              <Link to="/docs/$" params={{ _splat: feature.link }}>
+                <span>
                   {feature.title}
-                  <ArrowRightIcon className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground motion-reduce:transition-none motion-reduce:group-hover:translate-x-0" />
-                </h3>
-                <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-                  {feature.text}
-                </p>
-              </div>
-            </Link>
-          </li>
-        ))}
-      </ul>
-      <HomeCapabilities />
+                  <ArrowRightIcon className="size-3.5" aria-hidden="true" />
+                </span>
+                <p>{feature.text}</p>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section id="stack" className="home-section home-split">
+        <div>
+          <SectionHeading
+            label="Built on tools you know"
+            title="No new runtime to learn."
+          />
+          <p className="section-description">
+            Brick is a layer of structure over Bun, Elysia, TypeBox and Drizzle.
+            Drop down to any of them when you need to.
+          </p>
+          <ul className="home-tools">
+            {[
+              "Bun 1.2+",
+              "Elysia",
+              "TypeBox",
+              "Drizzle ORM",
+              "Workflow SDK",
+            ].map((tool) => (
+              <li key={tool}>{tool}</li>
+            ))}
+          </ul>
+        </div>
+        <dl className="home-packages">
+          {packages.map(([name, text]) => (
+            <div key={name}>
+              <dt>{name}</dt>
+              <dd>{text}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+
+      <section id="agents" className="home-section home-split">
+        <div>
+          <SectionHeading
+            label="For your agent"
+            title={
+              <>
+                Your agent builds
+                <br />
+                with Brick too.
+              </>
+            }
+          />
+          <p className="section-description">
+            Give your coding agent the Brick skill and docs. Your own tools
+            reach other agents over MCP.
+          </p>
+        </div>
+        <div className="home-agent">
+          <InstallCommand
+            className="home-install"
+            command="npx skills add get-brickkit/brick --skill brick"
+          />
+          <Link
+            to="/docs/$"
+            params={{ _splat: "for-ai-agents" }}
+            className="capability-link"
+          >
+            Set up your agent with Brick docs and MCP
+            <ArrowRightIcon className="size-3.5" aria-hidden="true" />
+          </Link>
+        </div>
+      </section>
+
+      <section className="home-final">
+        <BrickSingle className="final-brick" />
+        <h2>Lay the first brick.</h2>
+        <p className="section-description">
+          Install, define a service, and run it on Bun.
+        </p>
+        <StartButtons second="tutorial" />
+        <InstallCommand className="home-install" />
+      </section>
     </main>
   );
 }

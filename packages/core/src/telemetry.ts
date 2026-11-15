@@ -1,4 +1,5 @@
 import { ATTR } from "./telemetry-names";
+import { redactText, redacting } from "./sensitive";
 import {
   context,
   propagation,
@@ -320,10 +321,19 @@ function settle<T>(fn: () => T, done: (outcome: Outcome) => void): T {
 }
 
 function recordThrown(span: Span, error: unknown): void {
-  span.recordException(error instanceof Error ? error : String(error));
+  if (!(error instanceof Error))
+    span.recordException(redactText(String(error)));
+  else if (!redacting()) span.recordException(error);
+  else
+    span.recordException({
+      code: (error as { code?: string }).code,
+      name: error.name,
+      message: redactText(error.message),
+      stack: error.stack && redactText(error.stack),
+    });
   span.setStatus({
     code: SpanStatusCode.ERROR,
-    message: truncate(messageOf(error)),
+    message: truncate(redactText(messageOf(error))),
   });
 }
 

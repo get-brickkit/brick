@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import {
   brick,
   defineDatabase,
@@ -7,6 +7,7 @@ import {
   defineService,
   outboxTable,
   syncSchema,
+  t,
   type EventDelivery,
 } from "@brickkit/core";
 import { eq } from "drizzle-orm";
@@ -81,6 +82,120 @@ function fixture(options: FixtureOptions = {}) {
   const outboxRows = () => db.select().from(outbox).all();
   return { resource, service, db, sqlite, app, seen, outboxRows };
 }
+
+describe("sensitive fields", () => {
+  const SECRET = "hunter2-sensitive-value";
+  const fields = (secret: {
+    read?: boolean;
+    create?: boolean;
+    update?: boolean;
+    filter?: readonly "startsWith"[];
+    sort?: boolean;
+  }) => ({
+    id: { read: true, filter: ["eq"] as const },
+    name: { read: true, create: true, update: true },
+    secret: { ...secret, schema: t.Sensitive(t.String()) },
+  });
+
+  it("refuses a sensitive field that reads would return", () => {
+    expect(() =>
+      fixture({ crud: { fields: fields({ read: true, create: true }) } }),
+    ).toThrow(
+      /CRUD field 'secret' on 'person' in service 'crud_events_\d+' is t\.Sensitive and cannot have `read: true`/,
+    );
+  });
+
+  it("refuses a sensitive derived field, which has no `read` to drop", () => {
+    expect(() =>
+      fixture({
+        crud: {
+          fields: {
+            id: { read: true, filter: ["eq"] },
+            name: { read: true, create: true },
+            token: {
+              read: true,
+              schema: t.Sensitive(t.String()),
+              resolve: ({ rows }: any) => rows.map(() => "x"),
+            },
+          },
+        },
+      }),
+    ).toThrow(
+      /Derived CRUD field 'token' on 'person' in service 'crud_events_\d+' cannot be t\.Sensitive/,
+    );
+  });
+
+  it("refuses a filter or a sort on a sensitive field, which would reveal it through counts", () => {
+    expect(() =>
+      fixture({
+        crud: { fields: fields({ create: true, filter: ["startsWith"] }) },
+      }),
+    ).toThrow("is t.Sensitive and cannot have `filter`");
+    expect(() =>
+      fixture({ crud: { fields: fields({ create: true, sort: true }) } }),
+    ).toThrow("is t.Sensitive and cannot have `sort`");
+  });
+
+  it("writes a sensitive field without reading, emitting or logging it", async () => {
+    const { resource, app, seen, outboxRows } = fixture({
+      crud: {
+        fields: fields({ create: true, update: true }),
+        hooks: {
+          beforeCreate: ({ data, ctx }: any) =>
+            void ctx.logger.info("creating", data),
+        },
+      },
+    });
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const created = await resource.create.run({
+        name: "Ada",
+        secret: SECRET,
+      });
+      expect(created).toEqual({ id: 1, name: "Ada" });
+      expect(await resource.get.run({ id: 1 })).toEqual({ id: 1, name: "Ada" });
+      expect(JSON.stringify(log.mock.calls)).toContain("[REDACTED]");
+      expect(JSON.stringify(log.mock.calls)).not.toContain(SECRET);
+    } finally {
+      log.mockRestore();
+    }
+    expect(JSON.stringify(outboxRows())).not.toContain(SECRET);
+    await app!.events!.drain();
+    expect(seen[0]!.payload).toEqual({ id: 1, row: { id: 1, name: "Ada" } });
+  });
+  it("runs listeners outside the emitting call's redaction set", async () => {
+    const database = defineDatabase({ tables: { people, outbox } });
+    const db: any = database.getDb();
+    syncSchema([people, outbox], db);
+    const service = defineService(`crud_events_${++serial}`, { database });
+    const resource: any = service
+      .resource({ name: "person", table: people, id: people.id })
+      .use(crud({ access: "public", fields: fields({ create: true }) }));
+    const store = (globalThis as Record<symbol, any>)[
+      Symbol.for("brickkit.redactions")
+    ];
+    const sets: unknown[] = [];
+    const app = brick({
+      services: [service],
+      events: {
+        listeners: [
+          defineListener({
+            name: "recorder",
+            on: ["person.create"],
+            run: () => void sets.push(store.getStore()),
+          }),
+        ],
+      },
+      requestLogging: false,
+      docs: false,
+    });
+    stoppers.push(() => app.events!.stop());
+    await resource.create.run({ name: "Ada", secret: SECRET });
+    for (let wait = 0; !sets.length && wait < 200; wait++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(sets).toEqual([undefined]);
+  });
+});
 
 describe("generated writes emit events", () => {
   it("emits person.create with the readable fields only", async () => {

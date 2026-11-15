@@ -14,6 +14,7 @@ import type {
 } from "./types";
 import { defineTool, isTool } from "./tool";
 import { defineAction } from "./action";
+import { sensitivity } from "./sensitive";
 import { claimName, definitionSite } from "./definition-site";
 import { getGlobalRegistry } from "./registry";
 import { getTableName, isDatabaseHandle, type DatabaseHandle } from "./db";
@@ -227,6 +228,7 @@ export class ServiceImpl<
   action(actionOrConfig: any): any {
     const isActionFunction =
       typeof actionOrConfig === "function" && "config" in actionOrConfig;
+    if (!isActionFunction) sensitivity(actionOrConfig, this.name);
     const actionInstance: Action<any, any, any, any> = isActionFunction
       ? actionOrConfig
       : defineAction(actionOrConfig);
@@ -243,6 +245,7 @@ export class ServiceImpl<
 
   tool(toolOrConfig: any): any {
     const existing = isTool(toolOrConfig);
+    if (!existing) sensitivity(toolOrConfig, this.name);
     const tool = existing ? toolOrConfig : defineTool(toolOrConfig);
     this.claim("tool", tool.name);
     tool.serviceName = this.name;

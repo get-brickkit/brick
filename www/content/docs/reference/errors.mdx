@@ -36,14 +36,13 @@ Errors thrown from an action (including CRUD actions) are serialized by the HTTP
   "errors": [
     {
       "path": "/title",
-      "message": "Expected string length greater or equal to 3",
-      "value": "Hi"
+      "message": "Expected string length greater or equal to 3"
     }
   ]
 }
 ```
 
-Input validation failures use status `400`; output validation failures use status `500` with the message `Validation failed for action '<name>' output`.
+Entries carry `path` and `message`, never the rejected value. `path` names the field, so a property name the client sent can appear in it. Input validation failures use status `400`; output validation failures use status `500` with the message `Validation failed for action '<name>' output`.
 
 ### Unexpected Errors (500)
 
