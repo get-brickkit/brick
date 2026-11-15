@@ -98,9 +98,10 @@ describe("service deps", () => {
   });
 
   it("refuses deps that are not an object, and a dep that is undefined", () => {
-    for (const deps of ["oops", [1, 2], null])
+    // A class instance or a Map would be emptied by the copy.
+    for (const deps of ["oops", [1, 2], null, new Map(), new Date()])
       expect(() => defineService("bad", { deps: deps as any })).toThrow(
-        'Service "bad": deps must be an object of values by name',
+        'Service "bad": deps must be a plain object of values by name',
       );
     expect(() =>
       defineService("orders", { deps: { carrier: undefined } }),
@@ -153,14 +154,14 @@ describe("service deps", () => {
     expect(
       await ship.execute({
         input: { id: "o1" },
-        ctx: { deps: { carrier: carrier("fake") } } as any,
+        ctx: { deps: { carrier: carrier("fake") } },
       }),
     ).toBe("kept fake_o1");
     expect(await ship.run({ id: "o1" })).toBe("kept real_o1");
   });
 
-  for (const hook of [false, true])
-    it(`runs a call to another service with that service's deps, never the caller's${hook ? " (caller has a context hook)" : ""}`, async () => {
+  for (const hook of ["", "a context hook", "a context hook that returns deps"])
+    it(`runs a call to another service with that service's deps, never the caller's${hook && ` (caller has ${hook})`}`, async () => {
       const billing = defineService("billing", {
         deps: { carrier: carrier("billing") },
       });
@@ -171,7 +172,13 @@ describe("service deps", () => {
       });
       const orders = defineService("orders", {
         deps: { carrier: carrier("orders"), secret: "s" },
-        ...(hook ? { context: () => ({ user: "u" }) } : {}),
+        ...(hook && {
+          // The types refuse a hook that returns deps; a JavaScript caller can still write one.
+          context: (base: { deps: object }): any => ({
+            user: "u",
+            ...(hook.endsWith("deps") && { deps: { ...base.deps, clock: 1 } }),
+          }),
+        }),
       });
       // Every way an action can hand its ctx, or a copy of it, to another service's action.
       orders.action({
@@ -274,18 +281,25 @@ describe("service deps", () => {
       database,
       deps: { carrier: carrier("sched") },
     });
+    const other = defineService("other", { deps: { label: "o" } });
+    const names = other.action({
+      name: "names",
+      execute: ({ ctx }) => Object.keys(ctx.deps).join(),
+    });
     const seen: string[] = [];
     const app = brick({
-      services: [service],
+      services: [service, other],
       events: {
         schedules: [
           defineSchedule({
             name: "book",
             every: "1h",
-            run: () =>
+            run: async () =>
               void seen.push(
                 useDeps<{ carrier: Carrier }>().carrier.book("x"),
                 useDeps(service).carrier.book("y"),
+                // The union handed on is not a test's override.
+                await names.execute({ ctx: { deps: useDeps() } }),
               ),
           }),
         ],
@@ -296,7 +310,7 @@ describe("service deps", () => {
     });
     apps.push(app);
     expect(await app.events!.schedules!.drain()).toBe(1);
-    expect(seen).toEqual(["sched_x", "sched_y"]);
+    expect(seen).toEqual(["sched_x", "sched_y", "label"]);
   });
 
   it("makes useDeps() throw on a name two services give different values", async () => {

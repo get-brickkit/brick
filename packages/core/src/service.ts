@@ -419,16 +419,23 @@ function pluginTables(tables: Record<string, unknown>) {
  * @throws When `deps` is not a plain object, or one of its values is undefined.
  */
 function ownDeps(service: string, deps: unknown = {}) {
-  if (deps === null || typeof deps !== "object" || Array.isArray(deps))
+  const proto =
+    deps !== null && typeof deps === "object"
+      ? Object.getPrototypeOf(deps)
+      : undefined;
+  // A class instance or a Map would lose its methods and entries in the copy below.
+  if (proto !== Object.prototype && proto !== null)
     throw new Error(
-      `Service "${service}": deps must be an object of values by name, such as { carrier: createCarrier() }`,
+      `Service "${service}": deps must be a plain object of values by name, such as { carrier: createCarrier() }`,
     );
-  for (const [name, value] of Object.entries(deps))
+  // Copied once, so a getter dep is read once.
+  const own: Record<string, unknown> = { ...(deps as object) };
+  for (const [name, value] of Object.entries(own))
     if (value === undefined)
       throw new Error(
         `Service "${service}": dep "${name}" is undefined; pass a value or leave it out`,
       );
-  return brickDeps({ ...deps } as Record<string, unknown>);
+  return brickDeps(own);
 }
 
 /**

@@ -49,6 +49,21 @@ void viaService;
 // @ts-expect-error: only declared deps exist
 void ordersDeps.mailer;
 
+// A direct call replaces one dep of several.
+const twoDeps = defineService("two", { deps: { carrier, label: "x" } });
+const labelled = twoDeps.action({ name: "label", execute: () => 1 });
+void labelled.execute({ ctx: { deps: { carrier } } });
+void labelled.run(undefined, { deps: { label: "y" } });
+// @ts-expect-error: only declared deps can be replaced
+void labelled.execute({ ctx: { deps: { mailer: carrier } } });
+
+// A context hook cannot replace deps: the service's own always win.
+defineService("replaced", {
+  deps: { carrier },
+  // @ts-expect-error: deps is not part of what a context hook returns
+  context: ({ deps }) => ({ deps: { ...deps, clock: 1 } }),
+});
+
 // deps typed as an interface.
 interface ReturnsDeps {
   carrier: Carrier;

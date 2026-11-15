@@ -23,7 +23,7 @@ import { brick } from "@brickkit/core";
 export default brick({ services: [orders] });
 ```
 
-`deps` holds real values, as a plain object: Brick copies it, so a class instance would lose its methods and getters. `ctx.deps` is typed from that object, so there is nothing to declare twice. A dep set to `undefined` fails at startup: `Service "orders": dep "carrier" is undefined; pass a value or leave it out`.
+`deps` holds real values, as a plain object of values by name. A class instance or a `Map` is refused at startup. `ctx.deps` is typed from that object, so there is nothing to declare twice. A dep set to `undefined` fails at startup: `Service "orders": dep "carrier" is undefined; pass a value or leave it out`.
 
 ### When deps are created
 
@@ -99,7 +99,9 @@ await bookAction.execute({
 });
 ```
 
-Only deps the test writes do this. Deps that Brick gave a context, such as the `ctx` of a calling action or a copy of it, never pass on: the called action runs with its own service's deps. A test's deps given to a plugin's action replace the plugin's deps for that action only. To run a whole app on fakes, build the service in a factory that takes them, as `createOrdersApp({ carrier })` does in the events example.
+Only deps the test writes do this. Deps that Brick gave a context, such as the `ctx` of a calling action or a spread copy of that `ctx`, never pass on: the called action runs with its own service's deps. A copy you make of the deps object itself (`{ ...ctx.deps }`) is a new object, so it does count as written by you.
+
+The fake applies to the action you call and to actions of the same service that it calls with its `ctx`. It does not apply when the call leaves the service and comes back, or when you add `deps` to a `ctx` that a service has already resolved: the real dep runs in both cases. A test's deps given to a plugin's action replace the plugin's deps for that action only. To run a whole app on fakes, build the service in a factory that takes them, as `createOrdersApp({ carrier })` does in the events example.
 
 ### Plugins
 

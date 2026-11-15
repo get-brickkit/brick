@@ -349,7 +349,8 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
         if (contextHook) {
           const extra = await contextHook(ctx);
           if (extra) Object.assign(ctx, extra);
-          if (plan.deps) ctx.deps = plan.deps;
+          // A hook's own `deps` would look like a test's override to the actions this one calls.
+          ctx.deps = plan.deps ?? plan.service.deps;
         }
         return await runStages(stages, input, ctx);
       } catch (err) {
