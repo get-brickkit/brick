@@ -17,6 +17,7 @@ import {
 } from "../storage";
 import { webhookOf, type WebhookDefinition } from "../webhook";
 import { baseContext, markResolved, requestIds } from "../context";
+import { scopeFiles } from "../file-storage";
 import type { ServicePort } from "../service-port";
 import { enforceRateLimits, rateLimitsOf } from "../rate-limit";
 import {
@@ -365,7 +366,7 @@ function requestContext(
       ? plan.service.deps
       : (plan.deps ?? plan.service.deps),
   });
-  markResolved(ctx, plan.service, plan.service.deps);
+  if (!plan.contextHook) resolveServiceDeps(ctx, plan);
   return ctx as ActionContext & { requestId: string };
 }
 
@@ -613,7 +614,7 @@ async function resolveContext({ plan, ctx }: Delivery) {
   if (!plan.contextHook) return;
   const extra = await plan.contextHook(ctx);
   if (extra) Object.assign(ctx, extra);
-  restoreServiceDeps(ctx, plan);
+  resolveServiceDeps(ctx, plan);
 }
 
 async function enforceWebhookRateLimits(
@@ -650,8 +651,9 @@ async function settleClaim(delivery: Delivery, result: unknown) {
   delivery.outcome = failed ? "failed" : "processed";
 }
 
-function restoreServiceDeps(ctx: any, plan: CompiledRoutePlan) {
-  ctx.deps = plan.deps ?? plan.service.deps;
+function resolveServiceDeps(ctx: any, plan: CompiledRoutePlan) {
+  markResolved(ctx, plan.service, plan.service.deps);
+  ctx.deps = scopeFiles(plan.deps ?? plan.service.deps, ctx);
 }
 
 /** The HTTP handler of one route: the pipeline's stages, synchronous when no stage needs to wait. */
@@ -714,7 +716,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
         if (contextHook) {
           const extra = await contextHook(ctx);
           if (extra) Object.assign(ctx, extra);
-          restoreServiceDeps(ctx, plan);
+          resolveServiceDeps(ctx, plan);
         }
         return await runStages(stages, input, ctx);
       } catch (err) {

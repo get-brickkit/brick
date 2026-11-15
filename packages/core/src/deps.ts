@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Service } from "./types";
+import type { RawDeps } from "./file-storage";
 import { portOf } from "./service-port";
 
 /** Where a listener a plugin added keeps the plugin's deps, for its handler and workflow steps; global so a second core copy finds it. */
@@ -39,7 +40,7 @@ export function runWithDeps<T>(deps: Record<string, unknown>, fn: () => T): T {
 export type ServiceDeps<S> =
   S extends Service<any, infer C, any>
     ? C extends { deps: infer D }
-      ? Readonly<D>
+      ? Readonly<RawDeps<D>>
       : Readonly<Record<string, unknown>>
     : never;
 

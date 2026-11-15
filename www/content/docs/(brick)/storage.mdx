@@ -3,7 +3,7 @@ title: Storage
 description: Keep short-lived values such as one-time codes and counters in Redis, or in memory for tests, with defineStorage.
 ---
 
-`defineStorage` declares a storage. Its driver decides the kind; `redis()` and `memory()` make a key-value storage. Pass it to a service as a [dep](/docs/dependencies):
+`defineStorage` declares a storage. Its driver decides the kind; `redis()` and `memory()` make a key-value storage, and `s3()` a [file storage](/docs/files) kept per tenant. Pass it to a service as a [dep](/docs/dependencies):
 
 ```ts title="src/storage.ts"
 import { defineStorage, redis } from "@brickkit/core";
@@ -97,4 +97,4 @@ Keeps values in this process, for tests and local development. They are lost on 
 
 Your keys and Brick's own keys are kept apart: your keys are stored under `app:`, and the keys Brick's features store in the same storage under `brick:storage:`. Neither can read or overwrite the other.
 
-Brick's features, such as [rate limits](/docs/rate-limits) and the seen event ids of [provider webhooks](/docs/webhooks#repeated-deliveries), use the one key-value storage among a service's deps. The same storage under two names counts as one. A service may have two for its own use; a feature that needs one fails on that service and names both deps.
+Brick's features, such as [rate limits](/docs/rate-limits) and the seen event ids of [provider webhooks](/docs/webhooks#repeated-deliveries), use the one key-value storage among a service's deps; a file storage is never one of them. The same storage under two names counts as one. A service may have two for its own use; a feature that needs one fails on that service and names both deps.

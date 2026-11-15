@@ -41,6 +41,7 @@ import {
   resolvedDeps,
 } from "./context";
 import { freezeAsBuiltDeps, depsOverride } from "./deps";
+import { hasFilesView, scopeFiles, type CallDeps } from "./file-storage";
 import { checkRateLimits, rateLimitsOf } from "./rate-limit";
 import {
   auditStage,
@@ -547,6 +548,9 @@ function frameworkDeps(
     : service.deps;
 }
 
+const alreadyHoldsDeps = (ctx: { deps?: unknown }, deps: object) =>
+  ctx.deps === deps || hasFilesView(ctx, deps);
+
 /**
  * The context of a call to one of the service's actions or sockets. The one
  * rule for which deps it sees: those of the plugin install that created the
@@ -565,11 +569,11 @@ async function resolveServiceContext<
   const ownDeps = resolvedDeps(callCtx, service);
   if (ownDeps) {
     const deps = pluginDeps ?? ownDeps;
-    return (
-      (callCtx as { deps?: unknown }).deps === deps
-        ? callCtx
-        : { ...callCtx, deps }
-    ) as BaseContext<TDb> & TServiceContext;
+    if (alreadyHoldsDeps(callCtx as { deps?: unknown }, deps))
+      return callCtx as BaseContext<TDb> & TServiceContext;
+    const ctx: any = { ...callCtx };
+    ctx.deps = scopeFiles(deps, ctx);
+    return ctx;
   }
   const override = depsOverride(callCtx);
   const framework = baseContext({
@@ -602,6 +606,7 @@ async function resolveServiceContext<
       : framework.deps,
   };
   markResolved(finalCtx, service, framework.deps);
+  finalCtx.deps = scopeFiles(finalCtx.deps, finalCtx);
   return finalCtx;
 }
 
@@ -658,7 +663,7 @@ export function defineService<
   TDb,
   [keyof TDeps] extends [never]
     ? TServiceContext
-    : TServiceContext & { deps: TDeps },
+    : TServiceContext & { deps: CallDeps<TDeps> },
   TEvents
 > &
   NamedService<TName> {

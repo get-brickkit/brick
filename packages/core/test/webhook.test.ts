@@ -28,7 +28,7 @@ import {
   twilioSignature,
   type BrickApp,
   type KeyValueDriver,
-  type StorageDriver,
+  type KeyValueStorage,
   type WebhookVerifier,
 } from "../src";
 import { generateOpenApiSpec } from "../src/openapi";
@@ -1276,12 +1276,12 @@ describe("the payload", () => {
 
 function replaySuite(
   name: string,
-  driver: () => StorageDriver,
+  driver: () => KeyValueDriver,
   lapse: () => Promise<void>,
   skip = false,
 ) {
   describe.skipIf(skip)(`replay on ${name}`, () => {
-    let storage: ReturnType<typeof defineStorage>;
+    let storage: KeyValueStorage;
     beforeEach(() => {
       storage = defineStorage({ driver: driver() });
     });
