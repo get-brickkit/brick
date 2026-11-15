@@ -10,7 +10,7 @@ import { actionMeta, type ResourceActionInfo } from "./action-meta";
 import { portOf } from "./service-port";
 import { Type } from "./typebox";
 import { runInTransaction } from "./events/transaction";
-import { entryOf, inlineAudit, recordInline } from "./audit";
+import { entryOf, inlineAudit, isAuditTable, recordInline } from "./audit";
 import { checkPayload, crudEventSource, type EventRef } from "./events/catalog";
 import {
   ActionExecutionError,
@@ -223,6 +223,11 @@ function defineCommand(
   config: CommandConfig<any, any, any, any, any, any, any, readonly string[]>,
 ) {
   const where = `Command '${resource.name}.${name}'`;
+  // The log is append-only: a command could rewrite one of its rows.
+  if (isAuditTable(resource.table))
+    throw new Error(
+      `${where} is over the audit table, so it could rewrite audit rows. The audit log takes no commands.`,
+    );
   if (typeof config.decide !== "function")
     throw new Error(`${where} needs a decide function`);
   const loaded = (config.load?.children ?? []).map((child) => ({

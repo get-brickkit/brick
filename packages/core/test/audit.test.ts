@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { readFileSync } from "node:fs";
 import { eq, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/bun-sqlite";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import {
   auditTable,
@@ -321,6 +322,44 @@ describe("a plain action is recorded", () => {
     });
     expect(cause).toBeInstanceOf(Error);
     expect(JSON.stringify(row)).not.toContain("TOP-SECRET");
+  });
+
+  it("logs the rest of the row, and keeps the result, when the record function throws", async () => {
+    const made = fixture();
+    const act = made.service.action({
+      name: "act",
+      audit: {
+        resource: "note",
+        record: () => {
+          throw new Error("no id");
+        },
+      },
+      execute: () => "done",
+    });
+    const error = mock(() => {});
+    const logger = { info() {}, warn() {}, debug() {}, error };
+    expect(await act.run(undefined, as("u1", { logger }))).toBe("done");
+    expect(made.rows()).toEqual([]);
+    const [, row] = error.mock.calls[0] as unknown as [string, object];
+    expect(row).toMatchObject({
+      action: "act",
+      resource: "note",
+      recordId: null,
+      actorId: "u1",
+    });
+  });
+
+  it("names the service the action is registered on now, not the one it first ran on", async () => {
+    const made = fixture();
+    const act = made.service.action({ name: "act", execute: () => "done" });
+    await act.run(undefined, as("u1"));
+    const other = defineService("other", {
+      database: made.database,
+      identity: () => ({ id: "u2" }),
+    });
+    other.action(act);
+    await act.run(undefined, as("u1"));
+    expect(made.rows().map((row) => row.service)).toEqual(["notes", "other"]);
   });
 
   it("records anonymous calls with null actor, label and tenant", async () => {
@@ -659,6 +698,43 @@ describe("recordAudit", () => {
     expect(made.rows()[0].recordId).toBeNull();
   });
 
+  it("with a tx Brick did not open does not stand in for the automatic row", async () => {
+    // Drizzle's own transaction never reports its commit, so a rollback of it could otherwise leave no row.
+    const made = fixture();
+    const untracked = drizzle(made.sqlite);
+    const act = made.service.action({
+      name: "act",
+      execute: async ({ ctx }) => {
+        await recordAudit(ctx, { action: "by hand" }, { tx: untracked });
+      },
+    });
+    await act.run(undefined, as("u1"));
+    expect(made.rows().map((row) => row.action)).toEqual(["by hand", "act"]);
+  });
+
+  it("without tx, twice at once inside one transaction, writes both rows", async () => {
+    const made = fixture();
+    const act = made.service.action({
+      name: "act",
+      audit: false,
+      execute: async ({ ctx }) => {
+        await runInTransaction(ctx.db, () =>
+          Promise.all([
+            recordAudit(ctx, { action: "one" }),
+            recordAudit(ctx, { action: "two" }),
+          ]),
+        );
+      },
+    });
+    await act.run(undefined, as("u1"));
+    expect(
+      made
+        .rows()
+        .map((row) => row.action)
+        .sort(),
+    ).toEqual(["one", "two"]);
+  });
+
   it("without tx, inside a transaction, joins it instead of waiting for it", async () => {
     const made = fixture();
     const act = made.service.action({
@@ -750,6 +826,21 @@ describe("commands are recorded in their transaction", () => {
       status: () => db.select().from(orders).get().status,
     };
   }
+
+  it("cannot be defined over the audit table", () => {
+    const database = defineDatabase({ tables: { auditLog } });
+    const service = defineService("shop", {
+      database,
+      identity: () => null,
+    });
+    const log = service.resource({ name: "audit", table: auditLog });
+    expect(() =>
+      log.command("forge", {
+        access: "public",
+        decide: () => ({ set: { action: "forged" } }),
+      } as never),
+    ).toThrow(/over the audit table/);
+  });
 
   it("with the resource and the record id, over HTTP and in process", async () => {
     const made = commandFixture();

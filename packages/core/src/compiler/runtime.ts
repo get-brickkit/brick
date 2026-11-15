@@ -286,13 +286,15 @@ export async function runStages(
   // After validation, so a malformed call does not count; before authorize, so a refused one does.
   if (stages.rateLimit) await stages.rateLimit(input, ctx);
   await authorizeCall(stages.authorize, ctx, input, stages.name);
-  const run = async () =>
-    stages.checkOutput(
+  if (!stages.audit)
+    return stages.checkOutput(
       await stages.execute({ input, ctx, error: stages.errorBuilder }),
     );
-  return stages.audit
-    ? runAudited(stages.audit, input, ctx as ActionContext, run)
-    : run();
+  return runAudited(stages.audit, input, ctx as ActionContext, async () =>
+    stages.checkOutput(
+      await stages.execute({ input, ctx, error: stages.errorBuilder }),
+    ),
+  );
 }
 
 function mapError(

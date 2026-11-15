@@ -41,13 +41,13 @@ export const order = ordersService
 
 ## What is recorded
 
-| Change                                                                             | Recorded                                                 | Written                                               |
-| :--------------------------------------------------------------------------------- | :------------------------------------------------------- | :---------------------------------------------------- |
-| CRUD `create`, `update`, `delete`                                                  | Always                                                   | In the write's own transaction                        |
-| CRUD `bulkCreate`, `bulkUpdate`, `bulkDelete`                                      | One row per record                                       | In the bulk call's one transaction                    |
-| A [command](/docs/commands)                                                        | Always, unless `audit: false`                            | In the command's own transaction                      |
-| Any other action, resource action or tool                                          | When its HTTP method is not `GET`, unless `audit: false` | After the action succeeded, in a statement of its own |
-| A `GET` action, a CRUD read, a refused call (401, 403, 429), an action that throws | Never                                                    |                                                       |
+| Change                                                                             | Recorded                                                 | Written                                           |
+| :--------------------------------------------------------------------------------- | :------------------------------------------------------- | :------------------------------------------------ |
+| CRUD `create`, `update`, `delete`                                                  | Always                                                   | In the write's own transaction                    |
+| CRUD `bulkCreate`, `bulkUpdate`, `bulkDelete`                                      | One row per record                                       | In the bulk call's one transaction                |
+| A [command](/docs/commands)                                                        | Always, unless `audit: false`                            | In the command's own transaction                  |
+| Any other action, resource action or tool                                          | When its HTTP method is not `GET`, unless `audit: false` | After the action succeeded, as a write of its own |
+| A `GET` action, a CRUD read, a refused call (401, 403, 429), an action that throws | Never                                                    |                                                   |
 
 The method is the one the action's route gets: `POST` unless the action says otherwise, whatever its name. An action named `getReport` that is a `POST` is recorded. A `POST` that only reads, such as a search, says so:
 
@@ -113,10 +113,10 @@ They are stable, so you can filter on them:
 
 A CRUD write and a command insert their row inside the transaction of the write itself. The row exists exactly when the write committed: if the write fails, or the commit fails, or the insert fails, none of it is kept. A bulk write records one row per record, all in its one transaction.
 
-A plain action owns no transaction Brick could join, since your `execute` does its own writes. Brick inserts the row after the output check succeeded, in a transaction of its own:
+A plain action owns no transaction Brick could join, since your `execute` does its own writes. Brick inserts the row after the output check succeeded, as a write of its own:
 
 - An action that threw, failed its output check, or was refused records nothing, even if it changed data before it threw.
-- If the insert fails, Brick logs an error with the complete row, and keeps the action's result. The mutation already happened, and reporting a failure for it would be worse than a log line. If this is not acceptable for an action, write its row yourself in its transaction, as below.
+- If the insert fails, Brick logs an error with the complete row, and keeps the action's result. When it is the `record` function that throws, the logged row has no record id. The mutation already happened, and reporting a failure for it would be worse than a log line. If this is not acceptable for an action, write its row yourself in its transaction, as below.
 
 ## Atomic with your own writes: `recordAudit`
 
@@ -149,9 +149,15 @@ ordersService.action({
 });
 ```
 
-When a plain action passes `tx`, that row is its record, and Brick does not write the automatic one for that call. It counts only once `tx` commits: if `tx` rolls back and the action returns anyway, Brick writes the automatic row. A CRUD write or a command always writes its own row, so a `recordAudit(…, { tx })` made from a hook of one adds a second row.
+When a plain action passes the `tx` of a `runInTransaction` it opened, that row is its record, and Brick does not write the automatic one for that call. It counts only once `tx` commits: if `tx` rolls back and the action returns anyway, Brick writes the automatic row.
 
-Without `tx` the row is inserted at once, in a transaction of its own, and the automatic row is still written. On SQLite, whose one connection serves every request, that transaction waits for those open in other requests, so a rollback there cannot take the row; called inside your `runInTransaction`, it joins it.
+In three cases there are two rows, the one you wrote and the automatic one (which has no `meta`):
+
+- `tx` is a transaction Brick did not open, such as Drizzle's own `ctx.db.transaction(...)`. It cannot tell Brick when it commits, so it never stands in for the automatic row.
+- The action runs inside its caller's transaction and passes that caller's `tx`: the commit comes after the action has returned.
+- The call is a CRUD write or a command, which always writes its own row; a `recordAudit(…, { tx })` made from a hook of one adds a second.
+
+Without `tx` the row is inserted at once, and the automatic row is still written. On SQLite, whose one connection serves every request, the insert waits for transactions open in other requests, so a rollback there cannot take the row; called inside your own `runInTransaction`, it joins that transaction and rolls back with it. On Postgres it is committed at once on a connection of its own, so it survives a rollback of yours, and it needs a free connection in the pool while your transaction holds one.
 
 `action` defaults to the running action's name. Inside an action that is not itself recorded (a `GET`, or `audit: false`) pass `action`.
 
@@ -204,7 +210,7 @@ Without `USAGE` on the sequence every insert fails. CRUD writes and commands the
 
 ## Reading the log
 
-The table is a Drizzle table, so you read it like any other. To show it in your app, give it a resource of your own with access restricted to the people who may see it, and nothing that writes. `crud()` refuses, when the service starts, a resource over the audit table with any write operation on, since a write through the API could forge or delete rows:
+The table is a Drizzle table, so you read it like any other. To show it in your app, give it a resource of your own with access restricted to the people who may see it, and nothing that writes. `crud()` refuses, when the service starts, a resource over the audit table with any write operation on, and a command cannot be defined over it, since a write through the API could forge or delete rows:
 
 ```ts title="src/services/orders.ts"
 export const auditEntry = ordersService
@@ -233,24 +239,24 @@ Add a `scope` to `access` to show a tenant only its own rows. Reading the log is
 
 ### Reading in order
 
-`seq` is taken when the row is inserted, not when its transaction commits. On Postgres a row with a higher `seq` can be visible before a lower one commits, and a rollback leaves a gap. A reader that remembers the last `seq` it saw and asks for `seq > last` can skip a row for good. Read only rows old enough to have settled: with `at` older than your longest transaction plus a margin (30 seconds, say), and keep the last `seq` of those. Gaps are normal.
+`seq` is taken when the row is inserted, not when its transaction commits. On Postgres a row with a higher `seq` can be visible before a lower one commits, and a rollback leaves a gap. A reader that remembers the last `seq` it saw and asks for `seq > last` can skip a row for good. A higher `seq` can also carry an earlier `at`, so do not filter by `at` and keep the highest `seq`. Read in `seq` order from the last one you kept, and stop at the first row whose `at` is newer than your longest transaction plus a margin (30 seconds, say); keep the `seq` of the row before it. Gaps are normal.
 
 ## What it costs
 
-A service without an audit table pays nothing: its routes keep the [synchronous fast path](/docs/rate-limits) and the audit log does no work.
+A service without an audit table pays nothing over HTTP: its routes keep the [synchronous fast path](/docs/rate-limits) and the audit log does no work. An in-process `action.run` reads one field to find that out.
 
 On a service with one:
 
 - A `GET` action and a CRUD read are unchanged.
 - A CRUD write always runs in a transaction, which one without hooks or [events](/docs/events) would not, and adds one `INSERT` to it.
 - A command adds one `INSERT` to its transaction.
-- A plain action loses the synchronous fast path of its route (it returns a promise), runs the `identity` hook before `execute` (once per call, and shared with a per-actor [rate limit](/docs/rate-limits)), and after it succeeded runs one `INSERT` in a transaction of its own. An action that does heavy work pays nothing noticeable; one that returns in microseconds does.
+- A plain action loses the synchronous fast path of its route (it returns a promise), runs the `identity` hook before `execute` (once per call, and shared with a per-actor [rate limit](/docs/rate-limits)), and after it succeeded runs one `INSERT` (inside a transaction of its own on SQLite). An action that does heavy work pays nothing noticeable; one that returns in microseconds does.
 
 Because the hook runs before `execute`, a hook that throws fails the call before anything changed.
 
 ## What is not recorded
 
-- **A plain action's row can be missing.** It is written after `execute` succeeded, in its own statement. If that insert fails, the change stays, the caller gets its result, and the complete row is logged instead. If the action changes data and then throws, or its output fails the output check, there is no row. For a row that cannot be lost, use `recordAudit` with `tx`.
+- **A plain action's row can be missing.** It is written after `execute` succeeded, as a write of its own. If that insert fails, the change stays, the caller gets its result, and the complete row is logged instead. If the action changes data and then throws, or its output fails the output check, there is no row. For a row that cannot be lost, use `recordAudit` with `tx`.
 - **Changes made outside an action call.** A socket handler, an event listener, a schedule, a workflow step or a plugin's HTTP route that changes data records nothing, and `recordAudit` cannot be called from a listener, a schedule or a workflow step.
 - **Login and signup record an anonymous actor**, because the identity is resolved before `execute` runs, when nobody is signed in yet. Name the user by the record instead; `record` receives the `result`:
 
@@ -260,7 +266,7 @@ Because the hook runs before `execute`, a hook that throws fails the call before
 
 - **`trace_id` and `request_id` are the caller's.** They are stored as sent in `x-trace-id` and `x-request-id` (a W3C `traceparent` also sets the trace id), so they are not proof of anything.
 - **`seq` is not commit order** on Postgres; see [reading in order](#reading-in-order).
-- **The table must be among the database's tables when the service is made** (or when `setDb` gives it its database). Adding it to the database afterwards is not supported.
+- **The table must be among the database's tables when the service is made** (or when `setDb` gives it its database, before the app is built with `brick()`). Adding it afterwards is not supported: calls over HTTP are then not recorded.
 - **A command records a row even when its `decide` changed nothing.**
 
 It does not record reads, refused calls, or the before and after values of fields; it does not chain or sign rows, prune old ones, or export them. A trigger and database grants are what make it hard to alter; export the table with your database's tools if an auditor wants a copy.

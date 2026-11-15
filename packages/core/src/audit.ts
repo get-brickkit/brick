@@ -13,7 +13,12 @@ import {
 } from "drizzle-orm/sqlite-core";
 import { actionMeta } from "./action-meta";
 import { serviceOf } from "./context";
-import { onTransactionCommit, runInTransaction } from "./events/transaction";
+import {
+  inTransaction,
+  isSqliteDatabase,
+  onTransactionCommit,
+  runInTransaction,
+} from "./events/transaction";
 import { identityOf } from "./identity";
 import { actionMethod } from "./routes";
 import { portOf, type ServicePort } from "./service-port";
@@ -203,6 +208,17 @@ async function auditRow(
   };
 }
 
+/**
+ * Runs an insert so another request's rollback cannot take it. Only SQLite needs a
+ * transaction opened for that: its one connection would put the row in whatever
+ * transaction is open. Inside the caller's own transaction the row joins it.
+ */
+function own<T>(db: any, fn: (handle: any) => Promise<T>): Promise<T> {
+  return isSqliteDatabase(db) && !inTransaction(db)
+    ? runInTransaction(db, fn)
+    : fn(db);
+}
+
 /** Inserts a row through `handle`: a transaction, or the database. */
 async function writeAudit(
   handle: any,
@@ -231,11 +247,13 @@ export async function runAudited(
   if (!audit.inline && !call.written) {
     let row: Awaited<ReturnType<typeof auditRow>> | undefined;
     try {
-      row = await auditRow(ctx, audit, entryOf(audit, input, result));
-      // Through the transaction queue: on SQLite a bare insert joins whatever transaction is open, and goes with its rollback.
-      await runInTransaction(ctx.db, (tx) =>
-        tx.insert(audit.table).values(row),
-      );
+      // The row first, so a `record` that throws still leaves the rest of it for the log.
+      row = await auditRow(ctx, audit, {
+        action: audit.action,
+        resource: audit.resource,
+      });
+      row.recordId = recordIdText(audit.record?.({ input, result }));
+      await own(ctx.db, (tx) => tx.insert(audit.table).values(row));
     } catch (error) {
       // The action's effects are done: keep its result, and log the whole row so it can be rebuilt.
       ctx.logger?.error?.(
@@ -324,11 +342,12 @@ export async function recordAudit(
   const target = { service: portOf(service), table };
   const named = { ...entry, action };
   if (options.tx === undefined)
-    await runInTransaction(ctx.db, (tx) => writeAudit(tx, ctx, target, named));
+    await own(ctx.db, (tx) => writeAudit(tx, ctx, target, named));
   else {
     await writeAudit(options.tx, ctx, target, named);
     // Only a commit makes it the call's record: a rolled-back `tx` leaves the automatic row to Brick.
-    if (call)
+    // A transaction Brick did not open (Drizzle's own) never reports its commit, so it cannot stand in for the automatic row.
+    if (call && (options.tx === ctx.db || inTransaction(options.tx)))
       await onTransactionCommit(options.tx, () => (call.written = true));
   }
 }

@@ -198,7 +198,9 @@ export function defineAction(config: any): any {
     },
   };
 
-  let audited: { table?: AuditTable; stage?: AuditStage } | undefined;
+  let audited:
+    | { service?: unknown; table?: AuditTable; stage?: AuditStage }
+    | undefined;
   actionFn.execute = async (params: { input?: any; ctx?: any }) => {
     const meta = actionMeta(actionFn);
     // The registered service resolves the context once per request, and
@@ -209,8 +211,9 @@ export function defineAction(config: any): any {
     try {
       // Worked out once per audit table: a service without one pays a field read.
       const table = meta.service?.getAuditTable();
-      if (table !== audited?.table)
+      if (table !== audited?.table || meta.service !== audited?.service)
         audited = {
+          service: meta.service,
           table,
           stage: meta.service && auditStage(meta.service, actionFn),
         };
