@@ -772,7 +772,7 @@ export interface ServiceOptions<
   database?: DatabaseHandle<TDb>;
   /**
    * The values the service's code uses, such as clients: `{ carrier: createCarrier() }`,
-   * as a plain object (a class instance or a Map is refused at startup).
+   * as a plain object (a class instance or a Map as the whole object is refused when the module is imported).
    * Actions read them as `ctx.deps`, typed from this object. They are created
    * when the module is imported, so a dep should connect on first use.
    */

@@ -4,7 +4,7 @@ import type { Static, TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { getTableName, type Table } from "drizzle-orm";
 import { actionMeta } from "./action-meta";
-import { brickDeps } from "./deps";
+import { freezeAsBuiltDeps } from "./deps";
 import { portOf } from "./service-port";
 import type { EventCatalog, EventRef, EventRefs } from "./events/catalog";
 import type { EventListener } from "./events/types";
@@ -549,7 +549,6 @@ function bindPluginDeps(
   meta.deps = { values: deps, at: ++bindings };
 }
 
-/** Check the deps passed at install against the names the plugin declares. */
 function checkDeps(
   plugin: string,
   /** The plugin's factory as the user imports it (its camelCase name), for the hint. */
@@ -573,7 +572,7 @@ function checkDeps(
     throw new Error(
       `${plugin} needs ${missing.map((key) => `deps.${key}`).join(", ")}; pass it when installing: ${camelName}(options, { deps: { ${missing.join(", ")} } })`,
     );
-  return brickDeps(
+  return freezeAsBuiltDeps(
     Object.fromEntries(declared.map((key) => [key, provided[key]])),
   );
 }
