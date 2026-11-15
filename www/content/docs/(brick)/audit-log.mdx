@@ -106,7 +106,7 @@ They are stable, so you can filter on them:
 | Webhook delivery           | The webhook's name                                                                         | `audit.resource`, else null | `audit.record`, else null              |
 | `recordAudit`              | Its `action`, else the running action's name                                               | Its `resource`, else null   | Its `recordId`, else null              |
 
-`audit.resource` and `audit.record` override these defaults on a resource action or command too. A [webhook](/docs/webhooks) writes its row only for a delivery it handled: a refused, repeated or failed delivery writes none. Its actor is whatever `identity` returns for the provider's request, usually nobody.
+`audit.resource` and `audit.record` override these defaults on a resource action or command too. A [webhook](/docs/webhooks) writes its row when its handler returns: a refused or repeated delivery, or one whose handler throws, writes none. A handler that returns a `Response` with a status of 400 or more still writes one, as an action does, and the provider's retry of it writes another. Its actor is whatever `identity` returns for the provider's request, usually nobody.
 
 `record_id` is text. A number is stored as its decimal digits. A composite key has no single value, so give `record` the one string you filter by (`${org}:${slug}`); a value that is neither a string nor a number is stored as its JSON text rather than lost.
 

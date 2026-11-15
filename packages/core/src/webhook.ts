@@ -70,7 +70,7 @@ export interface WebhookConfig<
   /** Largest body accepted, in bytes (default 1 MiB). */
   maxBodyBytes?: number;
   rateLimit?: RateLimits<Static<TInput>, TContext>;
-  /** The delivery's audit row when the service's database holds an audit table: written for each handled delivery, not for a refused, repeated or failed one. `false` leaves it out. */
+  /** The delivery's audit row when the service's database holds an audit table: written when the handler returns, not for a refused or repeated delivery or one whose handler throws. `false` leaves it out. */
   audit?: AuditConfig<Static<TInput>>;
   errors?: TErrors;
   tags?: string[];
