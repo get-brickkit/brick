@@ -24,6 +24,7 @@ import { actionMeta, type PluginRouteBinding } from "./action-meta";
 import { kebabCase } from "./kebab";
 import { DEFAULT_PREFIX, pathParamNames, pluginRoutePath } from "./routes";
 import { HTTP_METHODS } from "./http";
+import { sensitivity } from "./sensitive";
 import { portOf } from "./service-port";
 
 /**
@@ -359,6 +360,7 @@ export function installPlugin(
         checkInput,
         ...actionConfig
       } = config;
+      sensitivity({ ...actionConfig, name }, service.name);
       const action = defineAction({ ...actionConfig, name });
       Object.assign(actionMeta(action), {
         route: binding,

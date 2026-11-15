@@ -1,6 +1,7 @@
 import { ActionExecutionError, ValidationError, type Logger } from "./types";
 import { recordFailure } from "./telemetry";
 import type { WireError } from "./protocol";
+import { redactDetails, redactText } from "./sensitive";
 
 /** The JSON body of a failed HTTP call. */
 export interface ErrorEnvelope extends WireError {
@@ -43,8 +44,15 @@ export function toErrorResponse(
   err: unknown,
   context: ErrorContext,
 ): ErrorEnvelope {
-  const envelope = buildErrorEnvelope(err, context);
+  const envelope = redactAnsweredEnvelope(buildErrorEnvelope(err, context));
   recordFailure(err, envelope);
+  return envelope;
+}
+
+function redactAnsweredEnvelope(envelope: ErrorEnvelope): ErrorEnvelope {
+  envelope.message = redactText(envelope.message);
+  if (envelope.details !== undefined)
+    envelope.details = redactDetails(envelope.details);
   return envelope;
 }
 
