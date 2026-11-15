@@ -69,16 +69,9 @@ export function pickContextEnvelope(
   return envelope;
 }
 
-// Ties a context to the service instance that resolved it.
 const RESOLVED = Symbol("resolved");
-/** The deps a resolved context was resolved with, to restore them when a plugin's copy comes back. */
 const OWN_DEPS = Symbol("ownDeps");
 
-/**
- * Marks a context as resolved by `service`, in process or for an HTTP request,
- * so a call within the same service that passes it on reuses it, identity
- * included; and gives it the service's identity.
- */
 export function markResolved(
   ctx: object,
   service: Service<any, any>,
@@ -90,7 +83,6 @@ export function markResolved(
   attachIdentity(marked, service, ownDeps);
 }
 
-/** The service's own deps, when `service` resolved this context; else `undefined`. */
 export function resolvedDeps(
   ctx: unknown,
   service: Service<any, any>,

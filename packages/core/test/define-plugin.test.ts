@@ -658,7 +658,6 @@ describe("plugin deps", () => {
     expect(await (service.getAction("relayOwn") as any).run()).toEqual(
       expected,
     );
-    // A test's deps given to the plugin action replace the plugin's, and stop there.
     expect(
       await service.getAction("relayOwn")!.execute({
         ctx: { deps: { mailer: mailer("fake") } } as any,

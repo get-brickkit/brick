@@ -38,7 +38,7 @@ import {
   pickContextEnvelope,
   resolvedDeps,
 } from "./context";
-import { brickDeps, depsOverride } from "./deps";
+import { freezeAsBuiltDeps, depsOverride } from "./deps";
 import { checkRateLimits, rateLimitsOf } from "./rate-limit";
 import type { NamedService } from "./rpc";
 import { defineServiceSocket } from "./socket";
@@ -79,7 +79,6 @@ export class ServiceImpl<
   private _events: Readonly<Record<string, EventRef>>;
   /** What a write needs to record events. Set by `brick({ events })`. */
   recorder?: ServiceEvents;
-  /** The values of this service's `deps`. */
   readonly deps: Readonly<Record<string, unknown>>;
 
   constructor(
@@ -361,7 +360,6 @@ export class ServiceImpl<
     // The schema is data. A function among the options (such as `context`)
     // cannot cross to the dev dashboard: structured clone
     // refuses the whole architecture. JSON keeps the data and drops the rest.
-    // `deps` hold live clients: never serialized, and not data to show.
     const {
       database: _database,
       events: _events,
@@ -426,29 +424,41 @@ function pluginTables(tables: Record<string, unknown>) {
   return owners.length ? { plugins: Object.fromEntries(owners) } : {};
 }
 
-/**
- * A copy of a service's `deps`, frozen.
- *
- * @throws When `deps` is not a plain object, or one of its values is undefined.
- */
+function isPlainObject(value: unknown): value is object {
+  if (value === null || typeof value !== "object") return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
 function ownDeps(service: string, deps: unknown = {}) {
-  const proto =
-    deps !== null && typeof deps === "object"
-      ? Object.getPrototypeOf(deps)
-      : undefined;
-  // A class instance or a Map would lose its methods and entries in the copy below.
-  if (proto !== Object.prototype && proto !== null)
+  if (!isPlainObject(deps))
     throw new Error(
       `Service "${service}": deps must be a plain object of values by name, such as { carrier: createCarrier() }`,
     );
-  // Copied once, so a getter dep is read once.
-  const own: Record<string, unknown> = { ...(deps as object) };
-  for (const [name, value] of Object.entries(own))
+  const snapshot: Record<string, unknown> = { ...deps };
+  for (const [name, value] of Object.entries(snapshot))
     if (value === undefined)
       throw new Error(
         `Service "${service}": dep "${name}" is undefined; pass a value or leave it out`,
       );
-  return brickDeps(own);
+  return freezeAsBuiltDeps(snapshot);
+}
+
+function withOverride(
+  deps: Readonly<Record<string, unknown>>,
+  override: Record<string, unknown> | undefined,
+) {
+  return freezeAsBuiltDeps({ ...deps, ...override });
+}
+
+function frameworkDeps(
+  service: { deps: Readonly<Record<string, unknown>> },
+  override: Record<string, unknown> | undefined,
+  pluginDeps: Readonly<Record<string, unknown>> | undefined,
+) {
+  return override && !pluginDeps
+    ? withOverride(service.deps, override)
+    : service.deps;
 }
 
 /**
@@ -475,10 +485,7 @@ async function resolveServiceContext<
         : { ...callCtx, deps }
     ) as BaseContext<TDb> & TServiceContext;
   }
-  // A direct call (a unit test) may replace some deps by name; a deps object Brick built never does.
   const override = depsOverride(callCtx);
-  const merged = (deps: Readonly<Record<string, unknown>>) =>
-    brickDeps({ ...deps, ...override });
   const framework = baseContext({
     request: callCtx?.request,
     // Always this service's own database, never the caller's.
@@ -489,8 +496,7 @@ async function resolveServiceContext<
     services: callCtx?.services,
     metadata: callCtx?.metadata,
     dashboard: callCtx?.dashboard,
-    // The service's own deps; a direct call's override is for the action, so it reaches them only for a service action.
-    deps: override && !pluginDeps ? merged(service.deps) : service.deps,
+    deps: frameworkDeps(service, override, pluginDeps),
   });
   const fullBaseCtx = {
     ...framework,
@@ -505,11 +511,10 @@ async function resolveServiceContext<
     ...resolvedExtra,
     deps: pluginDeps
       ? override
-        ? merged(pluginDeps)
+        ? withOverride(pluginDeps, override)
         : pluginDeps
       : framework.deps,
   };
-  // Like `context`, the identity hook sees the service's own deps, never a plugin's.
   markResolved(finalCtx, service, framework.deps);
   return finalCtx;
 }

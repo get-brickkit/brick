@@ -16,7 +16,6 @@ import { openSocket, postJson, track } from "./helpers";
 
 beforeEach(resetGlobalRegistry);
 
-/** A service whose `identity` hook reads `x-user` through `context`, counting its runs. */
 function crm(name = "crm") {
   const runs = { count: 0 };
   const service = defineService(name, {
@@ -43,7 +42,6 @@ describe("identity", () => {
       output: t.Any(),
       execute: async ({ ctx }) => {
         const first = await identityOf(ctx);
-        // A copy of ctx is the same call.
         const again = await Promise.all([
           identityOf(ctx),
           identityOf({ ...ctx }),
@@ -140,13 +138,20 @@ describe("identity", () => {
         return inner.execute({ ctx: { ...ctx, user: "admin" } });
       },
     });
-    // The copy says "admin", but the call is still u1's.
     expect(await outer.execute({ ctx: { request: as("u1") } })).toEqual({
       user: "admin",
       identity: { id: "u1", tenant: "acme" },
     });
     expect(runs.count).toBe(1);
   });
+
+  it("gives the hook a context that does not wait on the hook itself", async () => {
+    const reentrant = defineService("reentrant", {
+      identity: async (ctx) => (await identityOf(ctx)) ?? { id: "anonymous" },
+    });
+    const ctx = await portOf(reentrant).resolveContext();
+    expect(await identityOf(ctx)).toEqual({ id: "anonymous" });
+  }, 1000);
 
   it("keeps only id, label and tenant of what the hook returns, and refuses an empty id", async () => {
     const leaky = defineService("leaky", {
@@ -189,7 +194,6 @@ describe("identity over the transports", () => {
         await inner.execute({ ctx }),
       ],
     });
-    // No `context` hook and no `authorize`: the route's synchronous path.
     const bare = defineService("bare", {
       identity: (ctx) => ({ id: ctx.request.headers.get("x-user")! }),
     });

@@ -39,7 +39,6 @@ export function connection(
       timer = undefined;
       start();
     }, reconnectDelay(failures++));
-    // A reconnect alone must not keep the process alive.
     timer.unref();
   };
   const start = () => {
@@ -70,7 +69,6 @@ export function connection(
       start();
       return redis?.connected ? redis : undefined;
     },
-    /** Why the last attempt to connect failed, if it did. */
     failure: () => failure,
     /** Resolves after the next connection is made and announced, or after `ms`. */
     opened(ms: number): Promise<void> {

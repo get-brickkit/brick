@@ -42,29 +42,25 @@ orders.socket({
 
 const plain = defineService("plain");
 
-// useDeps(service) is typed from the service.
 const ordersDeps = useDeps(orders);
 const viaService: Carrier = ordersDeps.carrier;
 void viaService;
-// @ts-expect-error: only declared deps exist
+// @ts-expect-error
 void ordersDeps.mailer;
 
-// A direct call replaces one dep of several.
 const twoDeps = defineService("two", { deps: { carrier, label: "x" } });
 const labelled = twoDeps.action({ name: "label", execute: () => 1 });
 void labelled.execute({ ctx: { deps: { carrier } } });
 void labelled.run(undefined, { deps: { label: "y" } });
-// @ts-expect-error: only declared deps can be replaced
+// @ts-expect-error
 void labelled.execute({ ctx: { deps: { mailer: carrier } } });
 
-// A context hook cannot replace deps: the service's own always win.
 defineService("replaced", {
   deps: { carrier },
-  // @ts-expect-error: deps is not part of what a context hook returns
+  // @ts-expect-error
   context: ({ deps }) => ({ deps: { ...deps, clock: 1 } }),
 });
 
-// deps typed as an interface.
 interface ReturnsDeps {
   carrier: Carrier;
 }
@@ -74,18 +70,16 @@ defineService("returns", { deps: returnsDeps }).action({
   execute: ({ ctx }) => ctx.deps.carrier.book("x"),
 });
 
-// All-optional deps still type ctx.deps.
 defineService("optional", { deps: {} as { carrier?: Carrier } }).action({
   name: "book",
   execute: ({ ctx }) => {
     const maybe: Carrier | undefined = ctx.deps.carrier;
-    // @ts-expect-error: only declared deps exist
+    // @ts-expect-error
     void ctx.deps.mailer;
     return maybe ? 1 : 0;
   },
 });
 
-// The context hook sees the service's deps, typed.
 defineService("hooked", {
   deps: { carrier },
   context: ({ deps }) => ({ booker: deps.carrier }),
@@ -108,7 +102,7 @@ defineListener({
 });
 
 brick({ services: [orders] });
-// @ts-expect-error deps moved to defineService
+// @ts-expect-error
 brick({ services: [orders], deps: { carrier } });
 
 // --- useService ---------------------------------------------------------------
