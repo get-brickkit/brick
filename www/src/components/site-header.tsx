@@ -1,5 +1,4 @@
-import { MenuIcon, XIcon } from "lucide-react";
-import * as React from "react";
+import { ArrowRightIcon } from "lucide-react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { GitHubIcon } from "@/components/icons";
 import { Wordmark } from "@/components/logo";
@@ -12,7 +11,6 @@ const navLink =
 
 export function SiteHeader() {
   const pathname = useLocation({ select: (l) => l.pathname });
-  const [menuOpen, setMenuOpen] = React.useState(false);
   return (
     <header
       id="site-top"
@@ -21,12 +19,7 @@ export function SiteHeader() {
       <Link to="/">
         <Wordmark />
       </Link>
-      <nav
-        id="site-nav"
-        data-open={menuOpen || undefined}
-        onClick={() => setMenuOpen(false)}
-        className="order-3 hidden w-full flex-col gap-4 text-sm data-open:flex sm:order-none sm:flex sm:w-auto sm:flex-row sm:items-center sm:gap-x-6"
-      >
+      <nav className="order-3 flex w-full flex-wrap items-center gap-x-6 gap-y-3 text-sm sm:order-none sm:w-auto">
         <a
           href={pathname === "/" ? "#platform" : "/#platform"}
           className={navLink}
@@ -62,7 +55,7 @@ export function SiteHeader() {
           params={{ _splat: "quickstart" }}
           className="home-button home-button-primary header-cta"
         >
-          Start building
+          Get started <ArrowRightIcon className="size-3" />
         </Link>
         <a
           href={site.repo}
@@ -76,20 +69,6 @@ export function SiteHeader() {
           <GitHubIcon className="size-4" />
         </a>
         <ThemeToggle />
-        <button
-          type="button"
-          aria-label={menuOpen ? "Close menu" : "Open menu"}
-          aria-expanded={menuOpen}
-          aria-controls="site-nav"
-          onClick={() => setMenuOpen((open) => !open)}
-          className={`${buttonVariants({ variant: "ghost", size: "icon" })} sm:hidden`}
-        >
-          {menuOpen ? (
-            <XIcon className="size-4" />
-          ) : (
-            <MenuIcon className="size-4" />
-          )}
-        </button>
       </div>
     </header>
   );

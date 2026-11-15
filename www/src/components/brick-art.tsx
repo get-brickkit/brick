@@ -147,49 +147,6 @@ function viewBoxOf(boxes: Box[], s: number, pad: number) {
   return `${minX.toFixed(0)} ${minY.toFixed(0)} ${(Math.max(...xs) + pad - minX).toFixed(0)} ${(Math.max(...ys) + pad - minY).toFixed(0)}`;
 }
 
-const blocks = [
-  ["ACTION", "RESOURCE", "COMMAND"],
-  ["EVENT", "SOCKET"],
-  ["MCP TOOL"],
-];
-
-/** Six building blocks in running bond. Each brick sets once on load; that is the hero's one animation. */
-export function BrickPyramid({ className }: { className?: string }) {
-  const id = useHatchId();
-  const s = 58;
-  const [L, W, H, g] = [2.5, 1, 0.78, 0.09];
-  const bricks = blocks.flatMap((row, k) =>
-    row.map((label, i) => {
-      const x0 = (k * (L + g)) / 2 + i * (L + g);
-      const z0 = k * (H + g * 0.6);
-      return { label, box: [x0, x0 + L, 0, W, z0, z0 + H] as Box };
-    }),
-  );
-  return (
-    <svg
-      viewBox={viewBoxOf(
-        bricks.map((b) => b.box),
-        s,
-        4,
-      )}
-      className={cn("brick-art", className)}
-      role="img"
-      aria-label="Six bricks in running bond, labelled action, resource, command, event, socket and MCP tool"
-    >
-      <Hatching id={id} />
-      {bricks.map(({ label, box }, n) => (
-        <g
-          key={label}
-          className="brick-lay"
-          style={{ animationDelay: `${n * 100}ms` }}
-        >
-          <IsoBrick id={id} box={box} s={s} label={label} />
-        </g>
-      ))}
-    </svg>
-  );
-}
-
 /** One engraved brick, for the closing call to action. */
 export function BrickSingle({ className }: { className?: string }) {
   const id = useHatchId();
@@ -246,51 +203,6 @@ export function BrickFront({ label }: { label: string }) {
       <text x={25} y={h / 2 + 4} className="brick-label">
         {label}
       </text>
-    </svg>
-  );
-}
-
-/** Running-bond courses curving edge to edge: the ground the hero stands on. */
-export function BrickGround({ className }: { className?: string }) {
-  const [w, h, rows] = [1196, 150, 5];
-  const courses: { points: string; opacity: number }[] = [];
-  let y = h;
-  for (let r = 0; r < rows; r++) {
-    const rh = 30 * 0.86 ** r;
-    const bw = 92 * 0.9 ** r;
-    const arc = (x: number) => 3 * (r + 2) * ((x - w / 2) / (w / 2)) ** 2;
-    const top = y - rh;
-    for (let x = r % 2 ? -bw / 2 : 0; x < w; x += bw) {
-      const [xa, xb] = [x + 2, x + bw - 2];
-      courses.push({
-        points: [
-          [xa, top + arc(xa)],
-          [xb, top + arc(xb)],
-          [xb, y - 2 + arc(xb)],
-          [xa, y - 2 + arc(xa)],
-        ]
-          .map(([px, py]) => `${px.toFixed(1)},${py.toFixed(1)}`)
-          .join(" "),
-        opacity: Math.max(0.12, 0.75 - r * 0.075),
-      });
-    }
-    y = top - 3;
-  }
-  return (
-    <svg
-      viewBox={`0 0 ${w} ${h}`}
-      preserveAspectRatio="xMidYMax slice"
-      className={cn("brick-ground", className)}
-      aria-hidden="true"
-    >
-      {courses.map((c) => (
-        <polygon
-          key={c.points}
-          points={c.points}
-          strokeOpacity={c.opacity}
-          vectorEffect="non-scaling-stroke"
-        />
-      ))}
     </svg>
   );
 }
