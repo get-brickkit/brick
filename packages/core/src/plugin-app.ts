@@ -31,6 +31,12 @@ export function isPluginInstance(value: unknown): value is PluginInstance {
     INTERNALS in (value as object)
   );
 }
+/** The deps a plugin instance was installed with. */
+export function pluginDepsOf(
+  value: unknown,
+): Readonly<Record<string, unknown>> {
+  return internalsOf(value)?.deps ?? {};
+}
 function internalsOf(value: unknown): Internals | undefined {
   return isPluginInstance(value)
     ? ((value as unknown as Record<symbol, Internals>)[INTERNALS] ?? undefined)

@@ -5,6 +5,7 @@ import { Value } from "@sinclair/typebox/value";
 import { getTableName, type Table } from "drizzle-orm";
 import { actionMeta } from "./action-meta";
 import { brickDeps } from "./deps";
+import type { CallDeps } from "./file-storage";
 import { portOf } from "./service-port";
 import type { EventCatalog, EventRef, EventRefs } from "./events/catalog";
 import type { EventListener } from "./events/types";
@@ -55,8 +56,8 @@ export type PluginContext<P extends Record<string, unknown> = {}> =
 /** A plugin's view of its host's service context: loose, except `deps`, which is the plugin's. */
 export type PluginServiceContext<P extends Record<string, unknown> = {}> = {
   [key: string]: any;
-  /** The values passed for the plugin's `deps` when it was installed. */
-  deps: P;
+  /** The values passed for the plugin's `deps` when it was installed; a file storage scoped to the caller's tenant. */
+  deps: CallDeps<P>;
 };
 
 /** What every setup callback receives. */

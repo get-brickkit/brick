@@ -43,6 +43,8 @@ crm.action({
     await ctx.deps.files.increment("k", 1000);
     // @ts-expect-error key-value storage stays key-value
     await ctx.deps.cache.url("k");
+    // @ts-expect-error a call's view has no in(): naming a tenant takes the imported handle
+    ctx.deps.files.in("globex");
     return { url, size: blob?.size };
   },
 });

@@ -39,7 +39,7 @@ import {
   resolvedDeps,
 } from "./context";
 import { brickDeps, depsOverride } from "./deps";
-import { scopeFiles } from "./file-storage";
+import { hasFilesView, scopeFiles, type CallDeps } from "./file-storage";
 import type { NamedService } from "./rpc";
 import { defineServiceSocket } from "./socket";
 import type {
@@ -457,7 +457,9 @@ async function resolveServiceContext<
   const ownDeps = resolvedDeps(callCtx, service);
   if (ownDeps) {
     const deps = pluginDeps ?? ownDeps;
-    if ((callCtx as { deps?: unknown }).deps === deps)
+    // Passed on with the deps, or this very ctx's view of them: reused, so a nested call's changes to ctx reach its caller.
+    const passed = callCtx as { deps?: unknown };
+    if (passed.deps === deps || hasFilesView(passed, deps))
       return callCtx as BaseContext<TDb> & TServiceContext;
     // A per-call deps object is never `deps` itself: a file storage's view is built again for this ctx.
     const ctx: any = { ...callCtx };
@@ -557,7 +559,7 @@ export function defineService<
   TDb,
   [keyof TDeps] extends [never]
     ? TServiceContext
-    : TServiceContext & { deps: TDeps },
+    : TServiceContext & { deps: CallDeps<TDeps> },
   TEvents
 > &
   NamedService<TName> {

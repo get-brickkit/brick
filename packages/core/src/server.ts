@@ -9,7 +9,7 @@ import {
 import { DuplicateNameError, type Service } from "./types";
 import { getGlobalRegistry } from "./registry";
 import { getPluginEndpoints, installedPlugins } from "./plugin";
-import { pluginLifecycle, setupAppPlugins } from "./plugin-app";
+import { pluginDepsOf, pluginLifecycle, setupAppPlugins } from "./plugin-app";
 import type { PluginInstance } from "./define-plugin";
 import { OPENAPI_DEFAULTS, generateOpenApiSpec } from "./openapi";
 import { resolveSecrets, type SecretSource } from "./secrets";
@@ -254,7 +254,11 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
 
   // Close declarations before anything reads them.
   for (const service of services) service.build();
-  for (const service of services) checkFileStorages(service);
+  for (const service of services)
+    checkFileStorages(service, [
+      portOf(service).deps,
+      ...installedPlugins(service).map(pluginDepsOf),
+    ]);
   const localDirs = localFileDirs([
     ...services.map((service) => portOf(service).deps),
     ...plugins.deps,

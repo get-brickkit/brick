@@ -144,6 +144,8 @@ export {
 } from "./storage";
 export {
   s3,
+  type CallDeps,
+  type CallFiles,
   type FileDriver,
   type FileStorage,
   type S3StorageOptions,

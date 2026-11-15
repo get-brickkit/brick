@@ -73,19 +73,21 @@ Keep the id in your database, next to the record the file belongs to, and check 
 | `url(id, { expiresInMs?, download? })` | `string`                    | A signed GET, valid for 5 minutes by default, served as an attachment named `download`.                              |
 | `get(id)`                              | `Blob \| undefined`         | The file, with its content type, or `undefined` when the tenant has no file with that id.                            |
 | `delete(id)`                           | `void`                      | Removes the file; does nothing when the tenant has no file with that id.                                             |
-| `in(tenant)`                           | the four methods above      | The files of one tenant, for code outside a request.                                                                 |
+| `in(tenant)`                           | the four methods above      | On the imported handle only: the files of one tenant, for code outside a request.                                    |
 
-`ctx.deps.files` is typed from the driver: these methods, and none of a key-value storage's.
+`ctx.deps.files` is typed from the driver: the first four methods, and none of a key-value storage's. It has no `in`: to name a tenant, import the handle, a deliberate act in server code, so an action cannot read another tenant's files with `ctx.deps.files.in(input.orgId)`.
 
 ## Tenants and keys
 
-A file is stored at `<prefix><encodeURIComponent(tenant)>/<id>`, where the id is a `crypto.randomUUID()` Brick generates. No method takes a key, a path or a URL.
+In S3, a file is stored at `<prefix><encodeURIComponent(tenant)>/<id>`, where the id is a `crypto.randomUUID()` Brick generates. In [local mode](#local-mode), the tenant's folder is instead the SHA-256 hex digest of the tenant, because disks may ignore case (`Acme` and `acme` would be one folder), drop a trailing dot, reserve names such as `CON` or cap a name's length. No method takes a key, a path or a URL.
 
 Every method checks that the id is a UUID, then builds the key under the current tenant. So another tenant's id, a URL someone pasted, `../` or an encoded `/` resolves to a file that does not exist in the caller's own tenant: `get` returns `undefined`, `delete` does nothing, and `url` refuses an id that is not a UUID and, for another tenant's id, signs a link to nothing.
 
 In a call, `ctx.deps.files` is scoped to the tenant of that call's identity. The tenant is resolved when a method is first called, so a call that never touches files never runs the `identity` hook. A call with no tenant (an anonymous caller, or an identity without `tenant`) throws; nothing falls back to an unscoped prefix. A service that has a file storage in its deps but no `identity` hook fails at startup.
 
 Handing `ctx` to another service's action does not hand it your files: that service sees its own deps, as always.
+
+A view kept from one call and used in another still acts as the first call's tenant, so don't keep `ctx.deps.files` beyond the call.
 
 ### Outside a request
 
@@ -117,6 +119,8 @@ export const files = defineStorage({
 });
 ```
 
+Outside local mode a bucket is required, from `bucket`, `S3_BUCKET` or `AWS_BUCKET`: without one, `brick()` refuses to start for a storage among an app's deps, and a handle used on its own throws on its first call. The variables are read then, not at import.
+
 Static keys, environment variables and a session token are supported. A credentials callback (to refresh IAM role credentials) is not.
 
 Nothing connects and no credential is read when the module is imported: deps are created at import, and `brick info` and `brick gen` import the app without starting it. The client is created on the first call.
@@ -125,15 +129,15 @@ Give the credentials `s3:ListBucket` on the bucket as well as `s3:GetObject`, `s
 
 ## Download links
 
-`url()` returns a presigned GET that S3 serves with `Content-Disposition: attachment` and the `download` name, so a stored file is downloaded, never rendered inline from the storage origin. It is valid for 5 minutes unless you pass `expiresInMs`.
+`url()` returns a presigned GET that S3 serves with `Content-Disposition: attachment` and the `download` name, so a stored file is downloaded, never rendered inline from the storage origin. It is valid for 5 minutes unless you pass `expiresInMs`, at most 7 days (the most S3 accepts); a longer one throws, in both modes.
 
-A signed URL is a bearer credential until it expires: anyone holding it can download the file. Don't log it.
+A signed URL is a bearer credential until it expires: anyone holding it can download the file. Don't log it. Brick's own errors never include one: when S3 cannot be reached, the error names only the operation.
 
 ## Local mode
 
-With `local` set to a directory, files are written under it instead of S3, in the same key layout, with the same id and tenant checks and the same limits. Only the last write differs, so a test in local mode exercises the checks that matter. Nothing touches the directory until the first `put`.
+With `local` set to a directory, files are written under it instead of S3, under the same prefix with the tenant's folder named by its digest (see [Tenants and keys](#tenants-and-keys)), with the same id and tenant checks and the same limits. Only the last write differs, so a test in local mode exercises the checks that matter. Nothing touches the directory until the first `put`.
 
-`url()` then returns a link to `/_brick/files?token=…`, a route Brick mounts when an app has a file storage in local mode. The token is signed over the key and an expiry with a key generated per process, so links stop working when the process restarts. The route refuses an expired or altered token, and never serves a symlink or a path outside the directory. The token is in the query string because the request log and traces record only the path.
+`url()` then returns a link to `/_brick/files?token=…`, a route Brick mounts when an app has a file storage in local mode among its services' or plugins' deps. A storage used only through an imported handle's `in()`, in no app's deps, gives links that answer 403. The token is signed over the key, a digest of the directory (not its path) and an expiry, with a key generated per process, so links stop working when the process restarts. The route refuses an expired or altered token. Writing, reading and removing all require the file's folder to resolve, through symlinks, to that same folder under the directory, and the route never serves a symlinked file. The token is in the query string because the request log and traces record only the path.
 
 The link is relative to the app's origin. Brick warns once at startup when `local` is set and `NODE_ENV` is `production`.
 
@@ -146,9 +150,11 @@ t.File({ maxSize: 10 * 1024 * 1024, accept: ["application/pdf", "image/*"] });
 t.Files({ maxSize: 5 * 1024 * 1024, maxItems: 10, accept: ["image/*"] });
 ```
 
-`accept` lists content types; `type/*` matches any subtype, and the match ignores case and parameters such as `charset`. A file over `maxSize` or of a type not listed fails input validation with `VALIDATION_FAILED` (400) before `execute` runs.
+`accept` lists content types; `type/*` matches any subtype, `*/*` any type, and the match ignores case and parameters such as `charset`. A file over `maxSize` or of a type not listed fails input validation with `VALIDATION_FAILED` (400) before `execute` runs.
 
-The type checked is the one the client declared in the multipart body. It is not content inspection: a client can send any bytes under `image/png`. `put` stores the type that was checked, and links are served as attachments, so a mislabeled file is downloaded, not rendered.
+Over HTTP, the type checked is the one Bun derives from the extension of the part's file name. The part's own `Content-Type` is ignored: `a.pdf` sent as `text/html` arrives as `application/pdf`, and a part named `photo`, or a `Blob` appended without a name (sent as `blob`), arrives with an empty type, which no `accept` list but `*/*` matches. So a client must send a file name whose extension matches the type: `form.append("file", canvasBlob, "photo.png")`. A `.txt` file arrives as `text/plain;charset=utf-8`.
+
+Both the name and the bytes come from the client: this is not content inspection, and a client can send any bytes as `photo.png`. `put` stores the type that was checked, and links are served as attachments, so a mislabeled file is downloaded, not rendered.
 
 ## Testing
 

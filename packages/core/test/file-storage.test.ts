@@ -1,7 +1,10 @@
 import { afterAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -10,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   brick,
+  definePlugin,
   defineSecret,
   defineService,
   defineStorage,
@@ -33,6 +37,10 @@ const localFiles = () =>
   });
 
 beforeEach(resetGlobalRegistry);
+
+/** The folder local mode keeps a tenant's files in, and the digest a link names its directory by. */
+const digest = (value: string) =>
+  createHash("sha256").update(value).digest("hex");
 
 const as = (user?: string, org?: string) => ({
   ...(user && { "x-user": user }),
@@ -152,6 +160,7 @@ describe("file storage", () => {
     expect(served.status).toBe(200);
     expect(await served.text()).toBe("hello");
     expect(served.headers.get("content-type")).toBe("application/pdf");
+    expect(served.headers.get("x-content-type-options")).toBe("nosniff");
     expect(served.headers.get("content-disposition")).toBe(
       `attachment; filename="report _.pdf"; filename*=UTF-8''report%20%C3%A9.pdf`,
     );
@@ -161,11 +170,53 @@ describe("file storage", () => {
     expect((await open(app, link)).status).toBe(404);
   });
 
-  it("keeps the key under the prefix and the encoded tenant", async () => {
+  it("keeps the key under the prefix and a digest of the tenant, on disk", async () => {
     const files = localFiles();
     const { id } = await files.in("org/1").put(new Blob(["x"]));
     const dir = join(root, `store-${dirs}`);
-    expect(existsSync(join(dir, "files", "org%2F1", id))).toBe(true);
+    expect(existsSync(join(dir, "files", digest("org/1"), id))).toBe(true);
+  });
+
+  it("keeps tenants apart on disk when they differ only by case, end in a dot, or are long", async () => {
+    const files = localFiles();
+    const { id } = await files.in("Acme").put(new Blob(["upper"]));
+    const lower = files.in("acme");
+    expect(await lower.get(id)).toBeUndefined();
+    await lower.delete(id);
+    expect(await (await files.in("Acme").get(id))?.text()).toBe("upper");
+
+    const dotted = await files.in("globex.").put(new Blob(["dot"]));
+    expect(await files.in("globex").get(dotted.id)).toBeUndefined();
+    expect(await (await files.in("globex.").get(dotted.id))?.text()).toBe(
+      "dot",
+    );
+
+    const long = "t".repeat(300);
+    const stored = await files.in(long).put(new Blob(["long"]));
+    expect(await (await files.in(long).get(stored.id))?.text()).toBe("long");
+  });
+
+  it("returns the content type it stored, normalised", async () => {
+    const acme = localFiles().in("acme");
+    const stored = await acme.put(new Blob(["x"]), {
+      contentType: "Image/PNG",
+    });
+    expect(stored.contentType).toBe("image/png");
+    expect((await acme.get(stored.id))?.type).toBe(stored.contentType);
+  });
+
+  it("refuses a link valid for more than 7 days", async () => {
+    const acme = localFiles().in("acme");
+    const { id } = await acme.put(new Blob(["x"]));
+    await expect(
+      acme.url(id, { expiresInMs: 7 * 24 * 3600_000 + 1 }),
+    ).rejects.toThrow("at most 7 days");
+    await expect(acme.url(id, { expiresInMs: 2 ** 53 - 1 })).rejects.toThrow(
+      "at most 7 days",
+    );
+    expect(await acme.url(id, { expiresInMs: 7 * 24 * 3600_000 })).toContain(
+      LOCAL_FILES_ROUTE,
+    );
   });
 
   it("never reaches another tenant's file: get, delete and url resolve in the caller's tenant", async () => {
@@ -247,8 +298,97 @@ describe("file storage", () => {
   it("fails at startup when a service holds a file storage but has no identity hook", () => {
     const plain = defineService("plain", { deps: { uploads: localFiles() } });
     expect(() => brick({ services: [plain], requestLogging: false })).toThrow(
-      'Service "plain" has file storage "uploads" in its deps but no identity hook',
+      'Service "plain" has file storage "uploads" in its deps or a plugin\'s but no identity hook',
     );
+  });
+
+  it("checks the file storages of the plugins installed on a service, and scopes them per call", async () => {
+    const attachments = definePlugin({
+      name: "@acme/attachments",
+      deps: { uploads: {} as FileStorage },
+      service: ({ service }) => {
+        service.action({
+          name: "keep",
+          input: t.Object({ text: t.String() }),
+          output: t.Object({ id: t.String(), hasIn: t.Boolean() }),
+          execute: async ({ input, ctx }) => ({
+            id: (await ctx.deps.uploads.put(new Blob([input.text]))).id,
+            hasIn: "in" in ctx.deps.uploads,
+          }),
+        });
+      },
+    });
+    const uploads = localFiles();
+    const plain = defineService("plain");
+    plain.use(attachments({}, { deps: { uploads } }));
+    expect(() => brick({ services: [plain], requestLogging: false })).toThrow(
+      'Service "plain" has file storage "uploads" in its deps or a plugin\'s but no identity hook',
+    );
+
+    resetGlobalRegistry();
+    const { service } = crm(localFiles());
+    service.use(attachments({}, { deps: { uploads } }));
+    const app = brick({
+      services: [service],
+      requestLogging: false,
+      docs: false,
+    });
+    const kept = (await (
+      await json(app, "/api/crm/keep", { text: "mine" })
+    ).json()) as { id: string; hasIn: boolean };
+    expect(kept.hasIn).toBe(false);
+    expect(await (await uploads.in("acme").get(kept.id))?.text()).toBe("mine");
+    expect(await uploads.in("globex").get(kept.id)).toBeUndefined();
+  });
+
+  it("never runs identity for a call that does not touch files", async () => {
+    let runs = 0;
+    const service = defineService("lazyid", {
+      deps: { files: localFiles() },
+      identity: () => {
+        runs++;
+        return { id: "u", tenant: "acme" };
+      },
+    });
+    const ping = service.action({ name: "ping", execute: () => "ok" });
+    service.action({
+      name: "touch",
+      execute: async ({ ctx }) => {
+        await ctx.deps.files.get(crypto.randomUUID());
+        return "ok";
+      },
+    });
+    const app = brick({
+      services: [service],
+      requestLogging: false,
+      docs: false,
+    });
+    expect((await json(app, "/api/lazyid/ping", {})).status).toBe(200);
+    expect(await ping.execute({})).toBe("ok");
+    expect(runs).toBe(0);
+    expect((await json(app, "/api/lazyid/touch", {})).status).toBe(200);
+    expect(runs).toBe(1);
+  });
+
+  it("does not offer in() on the call's view: naming a tenant takes the imported handle", async () => {
+    const { service } = crm(localFiles());
+    service.action({
+      name: "hasIn",
+      output: t.Array(t.Boolean()),
+      execute: async ({ ctx }) => [
+        "in" in ctx.deps.files,
+        typeof (ctx.deps.files as any).in === "function",
+      ],
+    });
+    const app = brick({
+      services: [service],
+      requestLogging: false,
+      docs: false,
+    });
+    expect(await (await json(app, "/api/crm/has-in", {})).json()).toEqual([
+      false,
+      false,
+    ]);
   });
 
   it("names the tenant outside a request, and refuses an empty one", async () => {
@@ -310,6 +450,32 @@ describe("file storage", () => {
     expect(await text(await json(app, "/api/crm/nested", {}))).toBe("mine");
   });
 
+  it("hands a nested call within the service the caller's own ctx, so its changes reach the caller", async () => {
+    const { service } = crm(localFiles());
+    const mark = service.action({
+      name: "mark",
+      execute: async ({ ctx }: { ctx: any }) => {
+        ctx.marked = "by nested";
+      },
+    });
+    service.action({
+      name: "outer",
+      output: t.Any(),
+      execute: async ({ ctx }: { ctx: any }) => {
+        await mark.execute({ ctx });
+        return { marked: ctx.marked ?? null };
+      },
+    });
+    const app = brick({
+      services: [service],
+      requestLogging: false,
+      docs: false,
+    });
+    expect(await (await json(app, "/api/crm/outer", {})).json()).toEqual({
+      marked: "by nested",
+    });
+  });
+
   it("uses a test's fake in ctx.deps as given", async () => {
     const { read } = crm(localFiles());
     const fake = {
@@ -348,10 +514,47 @@ describe("file storage", () => {
       expect(response.status).toBe(400);
       expect(((await response.json()) as any).code).toBe("VALIDATION_FAILED");
     }
-    expect(
-      (await upload(app, new File(["x"], "a.png", { type: "IMAGE/PNG" })))
-        .status,
-    ).toBe(200);
+    // Over HTTP the type is the one Bun takes from the file name's extension, not the part's Content-Type.
+    for (const file of [
+      new File(["x"], "photo", { type: "image/png" }),
+      new Blob(["x"], { type: "image/png" }) as File,
+      new File(["x"], "a.html", { type: "image/png" }),
+    ])
+      expect((await upload(app, file)).status).toBe(400);
+    const named = await upload(
+      app,
+      new File(["x"], "a.pdf", { type: "text/html" }),
+    );
+    expect(named.status).toBe(200);
+    expect(((await named.json()) as any).contentType).toBe("application/pdf");
+    for (const [accept, file] of [
+      [["IMAGE/*"], new File(["x"], "a.png", { type: "image/png" })],
+      [["*/*"], new File(["x"], "a.bin")],
+      // Arrives as text/plain;charset=utf-8: parameters are ignored.
+      [["text/plain"], new File(["x"], "a.txt", { type: "text/plain" })],
+    ] as const) {
+      resetGlobalRegistry();
+      const one = defineService("one");
+      one.action({
+        name: "take",
+        input: t.Object({ file: t.File({ accept: [...accept] }) }),
+        output: t.String(),
+        execute: ({ input }) => input.file.type,
+      });
+      const form = new FormData();
+      form.append("file", file);
+      const response = await brick({
+        services: [one],
+        requestLogging: false,
+        docs: false,
+      }).handle(
+        new Request("http://localhost/api/one/take", {
+          method: "POST",
+          body: form,
+        }),
+      );
+      expect(response.status).toBe(200);
+    }
     const form = new FormData();
     form.append("file", new File(["x"], "a.txt", { type: "text/plain" }));
     const many = await app.handle(
@@ -383,14 +586,15 @@ describe("the local files route", () => {
     const { files, dir, app: served } = app();
     const acme = files.in("acme");
     const { id } = await acme.put(new Blob(["x"]));
-    const key = `files/acme/${id}`;
+    const key = `files/${digest("acme")}/${id}`;
+    const d = digest(dir);
     const route = (token: string) =>
       open(served, `${LOCAL_FILES_ROUTE}?token=${token}`);
     expect(
       (
         await route(
           signFileLink({
-            d: dir,
+            d,
             k: key,
             e: Date.now() + 60_000,
             c: "attachment",
@@ -401,7 +605,7 @@ describe("the local files route", () => {
     expect(
       (
         await route(
-          signFileLink({ d: dir, k: key, e: Date.now() - 1, c: "attachment" }),
+          signFileLink({ d, k: key, e: Date.now() - 1, c: "attachment" }),
         )
       ).status,
     ).toBe(403);
@@ -409,6 +613,9 @@ describe("the local files route", () => {
     const token = tokenOf(await acme.url(id));
     const [payload, mac] = token.split(".");
     const claims = JSON.parse(Buffer.from(payload!, "base64url").toString());
+    // The link names the directory by a digest, never by the server's path.
+    expect(JSON.stringify(claims)).not.toContain(root);
+    expect(claims.d).toBe(d);
     const forged = Buffer.from(
       JSON.stringify({ ...claims, k: "files/globex/x" }),
     ).toString("base64url");
@@ -416,9 +623,10 @@ describe("the local files route", () => {
     expect((await route(`${payload}.${mac!.slice(0, -2)}AA`)).status).toBe(403);
     expect((await route("")).status).toBe(403);
     // A directory that is not one of this app's storages.
-    expect((await route(signFileLink({ ...claims, d: root }))).status).toBe(
-      403,
-    );
+    for (const other of [root, dir, digest(root)])
+      expect((await route(signFileLink({ ...claims, d: other }))).status).toBe(
+        403,
+      );
   });
 
   it("serves nothing outside the directory: no `..`, no symlink", async () => {
@@ -428,14 +636,14 @@ describe("the local files route", () => {
     await defineStorage({ driver: s3({ local: dir }) })
       .in("acme")
       .put(new Blob(["x"]));
-    symlinkSync(outside, join(dir, "acme", "link"));
+    symlinkSync(outside, join(dir, digest("acme"), "link"));
     for (const key of [
       "../outside.txt",
       "acme/../../outside.txt",
-      "acme/link",
+      `${digest("acme")}/link`,
     ]) {
       const token = signFileLink({
-        d: dir,
+        d: digest(dir),
         k: key,
         e: Date.now() + 60_000,
         c: "attachment",
@@ -446,6 +654,44 @@ describe("the local files route", () => {
       );
       expect(response.status).toBe(404);
     }
+  });
+
+  it("follows no symlinked folder: put refuses, delete and get see nothing, a linked .type is not served", async () => {
+    const { files, dir, app: served } = app();
+    const prefix = join(dir, "files");
+    mkdirSync(prefix, { recursive: true });
+    // A tenant's folder that points outside the directory.
+    const elsewhere = join(root, `elsewhere-${dirs}`);
+    mkdirSync(elsewhere);
+    const id = crypto.randomUUID();
+    writeFileSync(join(elsewhere, id), "outside");
+    writeFileSync(join(elsewhere, `${id}.type`), "text/plain");
+    symlinkSync(elsewhere, join(prefix, digest("mallory")));
+    const mallory = files.in("mallory");
+    await expect(mallory.put(new Blob(["x"]))).rejects.toThrow(
+      "not inside the local directory",
+    );
+    expect(await mallory.get(id)).toBeUndefined();
+    await mallory.delete(id);
+    expect(readFileSync(join(elsewhere, id), "utf8")).toBe("outside");
+
+    // A tenant's folder that points at another tenant's folder inside it.
+    const { id: secret } = await files.in("acme").put(new Blob(["acme"]));
+    symlinkSync(join(prefix, digest("acme")), join(prefix, digest("evil")));
+    const evil = files.in("evil");
+    expect(await evil.get(secret)).toBeUndefined();
+    expect((await open(served, await evil.url(secret))).status).toBe(404);
+    await evil.delete(secret);
+    expect(await (await files.in("acme").get(secret))?.text()).toBe("acme");
+
+    // A side file linked to another file is not read.
+    const acme = files.in("acme");
+    const { id: typed } = await acme.put(new Blob(["x"]));
+    const side = join(prefix, digest("acme"), `${typed}.type`);
+    rmSync(side);
+    symlinkSync(join(elsewhere, `${id}.type`), side);
+    expect(await acme.get(typed)).toBeUndefined();
+    expect((await open(served, await acme.url(typed))).status).toBe(404);
   });
 
   it("is mounted only for an app with a file storage in local mode", async () => {
@@ -487,7 +733,7 @@ describe("the local files route", () => {
 });
 
 /** A stand-in for S3 on localhost: records each request and keeps objects in memory. */
-function fakeS3() {
+function fakeS3(status?: number) {
   const objects = new Map<string, { body: ArrayBuffer; type: string }>();
   const requests: { method: string; path: string }[] = [];
   const server = Bun.serve({
@@ -495,6 +741,7 @@ function fakeS3() {
     fetch: async (request) => {
       const path = decodeURIComponent(new URL(request.url).pathname);
       requests.push({ method: request.method, path });
+      if (status) return new Response("<Error/>", { status });
       if (request.method === "PUT") {
         objects.set(path, {
           body: await request.arrayBuffer(),
@@ -603,6 +850,114 @@ describe("the s3 driver, against a local stand-in", () => {
     } finally {
       fake.server.stop(true);
     }
+  });
+
+  it("throws on a 403 reading a file, instead of answering undefined", async () => {
+    const fake = fakeS3(403);
+    try {
+      const files = defineStorage({
+        driver: s3({
+          bucket: "b",
+          endpoint: fake.endpoint,
+          accessKeyId: "AK",
+          secretAccessKey: "SK",
+        }),
+      });
+      await expect(files.in("acme").get(crypto.randomUUID())).rejects.toThrow(
+        "S3 answered 403",
+      );
+    } finally {
+      fake.server.stop(true);
+    }
+  });
+
+  it("keeps a signed URL out of the error when S3 cannot be reached", async () => {
+    const fake = fakeS3();
+    fake.server.stop(true);
+    const acme = defineStorage({
+      driver: s3({
+        bucket: "b",
+        endpoint: fake.endpoint,
+        accessKeyId: "AK",
+        secretAccessKey: "SK",
+      }),
+    }).in("acme");
+    for (const [operation, call] of [
+      ["reading", () => acme.get(crypto.randomUUID())],
+      ["writing", () => acme.put(new Blob(["x"]))],
+      ["deleting", () => acme.delete(crypto.randomUUID())],
+    ] as const) {
+      const error = await call().then(
+        () => undefined,
+        (error: Error) => error,
+      );
+      expect(error?.message).toContain(`S3 failed ${operation} a file`);
+      for (const leak of ["X-Amz-Signature", "localhost", "acme"])
+        expect(
+          `${error?.message} ${error?.stack} ${error?.cause}`,
+        ).not.toContain(leak);
+    }
+  });
+
+  it("refuses to run without a bucket: at startup, or at first use of a handle on its own", async () => {
+    const env = {
+      S3_BUCKET: process.env.S3_BUCKET,
+      AWS_BUCKET: process.env.AWS_BUCKET,
+    };
+    delete process.env.S3_BUCKET;
+    delete process.env.AWS_BUCKET;
+    try {
+      const options = {
+        prefix: "files/",
+        endpoint: "http://localhost:1",
+        accessKeyId: "AK",
+        secretAccessKey: "SK",
+      };
+      // Defined at import without complaint.
+      const files = defineStorage({ driver: s3(options) });
+      await expect(
+        files.in("crm-backups").get(crypto.randomUUID()),
+      ).rejects.toThrow("s3(): no bucket");
+      await expect(files.in("acme").url(crypto.randomUUID())).rejects.toThrow(
+        "s3(): no bucket",
+      );
+      const { service } = crm(files);
+      expect(() =>
+        brick({ services: [service], requestLogging: false, docs: false }),
+      ).toThrow("s3(): no bucket");
+
+      process.env.S3_BUCKET = "from-env";
+      resetGlobalRegistry();
+      const fromEnv = defineStorage({ driver: s3(options) });
+      brick({
+        services: [crm(fromEnv).service],
+        requestLogging: false,
+        docs: false,
+      });
+      expect(
+        new URL(await fromEnv.in("acme").url(crypto.randomUUID())).pathname,
+      ).toStartWith("/from-env/files/acme/");
+    } finally {
+      for (const [name, value] of Object.entries(env))
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+    }
+  });
+
+  it("refuses a link valid for more than 7 days", async () => {
+    const files = defineStorage({
+      driver: s3({
+        bucket: "b",
+        endpoint: "http://localhost:1",
+        accessKeyId: "AK",
+        secretAccessKey: "SK",
+      }),
+    });
+    await expect(
+      files
+        .in("acme")
+        .url(crypto.randomUUID(), { expiresInMs: 30 * 24 * 3600_000 }),
+    ).rejects.toThrow("at most 7 days");
   });
 
   it("refuses a prefix that leaves the bucket's folder", () => {
