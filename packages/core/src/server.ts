@@ -189,7 +189,6 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     services.flatMap((service) => installedPlugins(service)),
     options.plugins ?? [],
   );
-  // Every request knows where its client address comes from, for rate limits reached by any route.
   const addressSource = {
     clientIp: options.clientIp,
     server: () => app.server,
@@ -476,7 +475,6 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   Object.defineProperty(brickApp, "events", { value: events });
   // Plugin lifecycle: start before serving, stop after the server stops.
   const lifecycle = pluginLifecycle(plugins.lifecycles);
-  // Closed once no other app uses them, after the plugins' stop handlers.
   const releaseStorages = useStorages([
     ...services.map((service) => portOf(service).deps),
     ...plugins.deps,
@@ -489,7 +487,14 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   brickApp.listen = ((...args: Parameters<typeof listen>) => {
     lifecycle.start().catch((error) => {
       console.error("[Brick-TS] A plugin failed to start:", error);
-      return Promise.resolve(stop(true)).finally(releaseStorages);
+      return Promise.resolve(stop(true))
+        .finally(releaseStorages)
+        .catch((stopError) =>
+          console.error(
+            "[Brick-TS] Stopping after a failed plugin start failed:",
+            stopError,
+          ),
+        );
     });
     return listen(...args);
   }) as typeof brickApp.listen;

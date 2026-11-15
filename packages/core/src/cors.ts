@@ -71,7 +71,6 @@ export function corsHook(cors: CorsOptions) {
     if (allows(from, request)) {
       headers["access-control-allow-origin"] = from;
       if (credentials) headers["access-control-allow-credentials"] = "true";
-      // So browser code can read how long a 429 asks it to wait.
       headers["access-control-expose-headers"] = "Retry-After";
     }
     const preflight =

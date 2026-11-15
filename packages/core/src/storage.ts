@@ -54,24 +54,28 @@ export type StorageOf<D extends StorageDriver> = D extends KeyValueDriver
 /** A storage could not be reached, or did not answer in time. Thrown by every call while it is down. A write that rejects with it may still have been applied. */
 export class StorageUnavailableError extends Error {
   override readonly name = "StorageUnavailableError";
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return value instanceof Error && value.name === "StorageUnavailableError";
+  }
 }
 
-/** App keys and Brick's own keys sit under different prefixes, so neither reaches the other. */
 const APP_PREFIX = "app:";
 const BRICK_PREFIX = "brick:storage:";
 
-/** The framework side of each storage handle; global so a second core copy finds it. */
 const frameworkSides: WeakMap<object, KeyValueStorage> = ((globalThis as any)[
   Symbol.for("brickkit.storage")
 ] ??= new WeakMap());
 
-/** Who uses each handle: the apps running with it, so the last to stop closes it. */
 const users: WeakMap<object, number> = ((globalThis as any)[
   Symbol.for("brickkit.storage.users")
 ] ??= new WeakMap());
 
 function notACounter(key: string): Error {
   return new Error(`Storage: "${key}" does not hold a counter`);
+}
+
+function counterOverflow(key: string): Error {
+  return new Error(`Storage: incrementing "${key}" would overflow`);
 }
 
 function ttl(ttlMs: number | undefined, required: boolean): void {
@@ -127,20 +131,10 @@ export function defineStorage<D extends StorageDriver>(options: {
   return handle as StorageOf<D>;
 }
 
-/**
- * Brick's own side of the key-value storage among a service's deps, for a
- * feature that stores its own keys (rate-limit counters, seen webhook ids).
- * Pass a call's `ctx.deps` to follow a test's override of the storage.
- *
- * @param deps - The deps to search; the service's own by default.
- * @returns The storage, or `undefined` when there is none.
- * @throws When the deps hold two key-value storages: Brick can't tell which to use.
- */
 export function serviceStorage(
   service: Service<any, any>,
   deps: Readonly<Record<string, unknown>> = portOf(service).deps,
 ): KeyValueStorage | undefined {
-  // One handle under two names is one storage.
   const found = Object.entries(deps).filter(
     ([, value], index, all) =>
       frameworkSides.has(value as object) &&
@@ -153,11 +147,6 @@ export function serviceStorage(
   return found[0] && frameworkSides.get(found[0][1] as object);
 }
 
-/**
- * Counts an app as a user of every storage among `deps` (each a service's or a
- * plugin install's). The returned function, called once when the app stops,
- * closes the storages no other app uses.
- */
 export function useStorages(
   deps: readonly Readonly<Record<string, unknown>>[],
 ): () => Promise<void> {
@@ -190,8 +179,6 @@ export interface RedisStorageOptions {
   prefix?: string;
 }
 
-// Sets the counter's expiry whenever it has none, so it never lives forever.
-// Only a wrong type or a non-integer value means "not a counter"; READONLY, OOM and the like stay as Redis sent them.
 const NOT_A_COUNTER = "BRICK_NOT_A_COUNTER";
 const INCREMENT = `local n = redis.pcall('INCR', KEYS[1])
 if type(n) == 'table' and n.err then
@@ -225,12 +212,11 @@ export function redis(options: RedisStorageOptions = {}): KeyValueDriver {
     const current = (conn ??= connection(options.url, () => {
       down = false;
     }));
-    // Once a wait has failed, fail at once until a reconnect succeeds.
     if (!down) await current.opened(REDIS_WAIT_MS);
-    // Undefined too when close() ran during the wait.
+    const closedMeanwhile = () => conn !== current;
     const client = current.get();
     if (!client) {
-      if (conn === current) down = true;
+      if (!closedMeanwhile()) down = true;
       throw new StorageUnavailableError("Storage: Redis is unreachable", {
         cause: current.failure(),
       });
@@ -245,8 +231,7 @@ export function redis(options: RedisStorageOptions = {}): KeyValueDriver {
       ]);
     } catch (error) {
       if (error === TIMED_OUT) {
-        // A connection that stops answering is dropped; the next call opens a fresh one.
-        if (conn === current) {
+        if (!closedMeanwhile()) {
           conn = undefined;
           down = false;
         }
@@ -256,7 +241,6 @@ export function redis(options: RedisStorageOptions = {}): KeyValueDriver {
         );
       }
       if (client.connected) {
-        // Replies that mean Redis cannot serve right now (restart, failover, out of memory, a busy script).
         if (UNAVAILABLE_REPLY.test(String((error as Error)?.message)))
           throw new StorageUnavailableError(
             `Storage: Redis cannot serve the command right now (${(error as Error).message})`,
@@ -324,9 +308,8 @@ export function redis(options: RedisStorageOptions = {}): KeyValueDriver {
  * Lost on restart and not shared between processes.
  */
 export function memory(): KeyValueDriver {
-  // shortcut: an expired key is dropped only when touched again; sweep if a long-running dev process grows.
   const entries = new Map<string, { value: string; expiresAt?: number }>();
-  const read = (key: string) => {
+  const readEvictingExpired = (key: string) => {
     const entry = entries.get(key);
     if (entry?.expiresAt !== undefined && entry.expiresAt <= Date.now()) {
       entries.delete(key);
@@ -338,25 +321,22 @@ export function memory(): KeyValueDriver {
     ttlMs === undefined ? undefined : Date.now() + ttlMs;
   return {
     kind: "key-value",
-    get: async (key) => read(key)?.value ?? null,
+    get: async (key) => readEvictingExpired(key)?.value ?? null,
     put: async (key, value, ttlMs) => {
       entries.set(key, { value, expiresAt: expiry(ttlMs) });
     },
     putIfAbsent: async (key, value, ttlMs) => {
-      const entry = read(key);
+      const entry = readEvictingExpired(key);
       if (entry) return { stored: false, value: entry.value };
       entries.set(key, { value, expiresAt: expiry(ttlMs) });
       return { stored: true, value };
     },
     increment: async (key, ttlMs) => {
-      const entry = read(key) ?? { value: "0" };
+      const entry = readEvictingExpired(key) ?? { value: "0" };
       // What Redis's INCR takes: a plain integer, no spaces, signs, exponents or leading zeros.
       const count = Number(entry.value) + 1;
-      if (
-        !/^(0|-?[1-9][0-9]*)$/.test(entry.value) ||
-        !Number.isSafeInteger(count)
-      )
-        throw notACounter(key);
+      if (!/^(0|-?[1-9][0-9]*)$/.test(entry.value)) throw notACounter(key);
+      if (!Number.isSafeInteger(count)) throw counterOverflow(key);
       const expiresAt = entry.expiresAt ?? Date.now() + ttlMs;
       entries.set(key, { value: String(count), expiresAt });
       return { count, expiresInMs: Math.max(1, expiresAt - Date.now()) };

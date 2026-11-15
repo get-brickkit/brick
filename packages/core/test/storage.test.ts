@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import {
   brick,
   definePlugin,
@@ -12,7 +12,7 @@ import {
   type StorageDriver,
 } from "../src";
 import { serviceStorage } from "../src/storage";
-import { redisReachable, requireService } from "./helpers";
+import { redisReachable, requireService, waitFor } from "./helpers";
 
 const url = requireService("REDIS_URL", "redis storage");
 if (url && !(await redisReachable(url)))
@@ -20,7 +20,6 @@ if (url && !(await redisReachable(url)))
 
 beforeEach(resetGlobalRegistry);
 
-/** The same behaviour from every key-value driver. */
 function suite(name: string, driver: () => StorageDriver, skip = false) {
   describe.skipIf(skip)(`${name} storage`, () => {
     const storage = defineStorage({ driver: driver() });
@@ -57,7 +56,6 @@ function suite(name: string, driver: () => StorageDriver, skip = false) {
         value: "first",
       });
       expect(await storage.get(k)).toBe("first");
-      // The same value from every racer: only `stored` tells the winner.
       const racers = await Promise.all(
         Array.from({ length: 20 }, () =>
           storage.putIfAbsent(`${k}:race`, "pending", 1000),
@@ -117,6 +115,14 @@ function suite(name: string, driver: () => StorageDriver, skip = false) {
       expect((await storage.increment(k, 1000)).count).toBe(-2);
     });
 
+    it("refuses to count past the largest integer with an overflow error, not a not-a-counter one", async () => {
+      const k = key("overflow");
+      await storage.put(k, "9223372036854775807", 1000);
+      const error = await storage.increment(k, 1000).catch((e) => e);
+      expect(error.message).toContain("overflow");
+      expect(error.message).not.toContain("does not hold a counter");
+    });
+
     it("refuses a ttlMs that is not a positive integer", async () => {
       await expect(storage.put(key("bad"), "v", 1e21)).rejects.toThrow(
         "ttlMs must be a positive integer",
@@ -139,7 +145,6 @@ function suite(name: string, driver: () => StorageDriver, skip = false) {
       await brickSide.put(k, "brick");
       expect(await storage.get(k)).toBe("app");
       expect(await brickSide.get(k)).toBe("brick");
-      // No app key reaches Brick's, whatever it is called.
       expect(await storage.get(`../brick:storage:${k}`)).toBeNull();
       await storage.delete(k);
       expect(await brickSide.get(k)).toBe("brick");
@@ -165,7 +170,6 @@ describe("defineStorage", () => {
       },
     });
     expect(await send.execute({ input: { email: "a@b.c" } })).toBe("123456");
-    // Deps stay out of the service schema.
     expect(auth.introspect().options).toEqual({});
   });
 
@@ -190,7 +194,6 @@ describe("defineStorage", () => {
     const service = defineService("dup", { deps: { cache, sessions: cache } });
     const own = serviceStorage(service)!;
     expect(own).toBeDefined();
-    // A test's override, passed as the call's ctx.deps.
     const fake = defineStorage({ driver: memory() });
     expect(() =>
       serviceStorage(service, { cache: fake, sessions: cache }),
@@ -199,6 +202,16 @@ describe("defineStorage", () => {
     await only.put("k", "fake");
     await own.put("k", "real");
     expect(await only.get("k")).toBe("fake");
+  });
+
+  it("recognises a StorageUnavailableError thrown by another copy of core", async () => {
+    const copy = "../src/storage?another-copy";
+    const other: typeof import("../src/storage") = await import(copy);
+    expect(other.StorageUnavailableError).not.toBe(StorageUnavailableError);
+    expect(new other.StorageUnavailableError("x")).toBeInstanceOf(
+      StorageUnavailableError,
+    );
+    expect(new Error("x")).not.toBeInstanceOf(StorageUnavailableError);
   });
 
   it("closes storages when the app stops", async () => {
@@ -214,11 +227,47 @@ describe("defineStorage", () => {
     expect(closed).toBe(1);
   });
 
+  it("logs, and does not leave unhandled, a storage that fails to close after a plugin fails to start", async () => {
+    const cache = defineStorage({
+      driver: {
+        ...memory(),
+        close: async () => {
+          throw new Error("close failed");
+        },
+      },
+    });
+    const broken = definePlugin({
+      name: "@acme/broken",
+      app: ({ on }) =>
+        on("start", () => {
+          throw new Error("no connection");
+        }),
+    });
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown) => void unhandled.push(reason);
+    process.on("unhandledRejection", record);
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const app = brick({
+        services: [defineService("failing", { deps: { cache } })],
+        docs: false,
+        requestLogging: false,
+        plugins: [broken()],
+      }).listen(0);
+      await waitFor(() => !app.server);
+      await waitFor(() => logged.mock.calls.length >= 2);
+      await Bun.sleep(20);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", record);
+      logged.mockRestore();
+    }
+  });
+
   it("closes a storage two apps share when the last of them stops, after the plugins' stop handlers", async () => {
     let closed = 0;
     const counting = () => ({ ...memory(), close: async () => void closed++ });
     const cache = defineStorage({ driver: counting() });
-    // Only a plugin install's dep.
     const outbox = defineStorage({ driver: counting() });
     let closedAtStop = -1;
     const flush = definePlugin({
@@ -250,7 +299,6 @@ describe("defineStorage", () => {
     await b.stop();
     expect(closedAtStop).toBe(0);
     expect(closed).toBe(2);
-    // Stopping again closes nothing twice.
     await Promise.resolve(b.stop()).catch(() => undefined);
     expect(closed).toBe(2);
   });
@@ -313,7 +361,6 @@ describe("redis driver, failing", () => {
   });
 
   it("times out a command Redis doesn't answer, and reconnects for the next", async () => {
-    // Answers the handshake, then nothing.
     let connections = 0;
     const frozen = Bun.listen({
       hostname: "127.0.0.1",
@@ -341,23 +388,6 @@ describe("redis driver, failing", () => {
     } finally {
       await storage.close();
       frozen.stop(true);
-    }
-  });
-});
-
-describe.skipIf(!url)("redis driver, increment script", () => {
-  it("passes on an INCR error that does not mean 'not a counter'", async () => {
-    // Redis refuses the INCR inside the script, as it does on a read-only replica or out of memory.
-    const storage = defineStorage({ driver: redis({ url }) });
-    const k = `overflow:${crypto.randomUUID()}`;
-    try {
-      await storage.put(k, "9223372036854775807", 5000);
-      const error = await storage.increment(k, 5000).catch((e) => e);
-      expect(String(error.message)).toContain("overflow");
-      expect(String(error.message)).not.toContain("does not hold a counter");
-    } finally {
-      await storage.delete(k);
-      await storage.close();
     }
   });
 });

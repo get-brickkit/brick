@@ -602,15 +602,14 @@ export const checkRules: Record<string, Rule> = {
         CallExpression(node: Node) {
           const definition = definitionOf(node);
           if (!definition || !HANDLERS.includes(definition.kind)) return;
+          if (objectKeys(definition.config) === undefined) return;
           const access = getProperty(definition.config, "access")?.value;
-          // A dashboard: true action is reachable only through the dashboard, so it is not public.
           const isPublic =
             !getProperty(definition.config, "authorize") &&
             getProperty(definition.config, "dashboard")?.value?.value !==
               true &&
             (!access || stringValue(access) === "public");
           const limit = getProperty(definition.config, "rateLimit")?.value;
-          // An empty list limits nothing.
           const limited =
             limit &&
             !(limit.type === "ArrayExpression" && limit.elements.length === 0);

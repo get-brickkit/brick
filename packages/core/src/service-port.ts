@@ -13,7 +13,6 @@ export interface ServicePort<
   TDb = any,
   TServiceContext extends Record<string, any> = Record<string, any>,
 > extends Service<TDb, TServiceContext> {
-  /** The values of this service's `deps`. */
   readonly deps: Readonly<Record<string, unknown>>;
   /** Whether the service declares an event catalog. */
   readonly hasCatalog: boolean;
