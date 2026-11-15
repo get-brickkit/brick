@@ -17,6 +17,9 @@ auth.action({
   execute: async ({ ctx }) => {
     const value: string | null = await ctx.deps.cache.get("k");
     const counter: Counter = await ctx.deps.cache.increment("k", 1000);
+    const claim: { stored: boolean; value: string } =
+      await ctx.deps.cache.putIfAbsent("k", "v", 1000);
+    void claim;
     // @ts-expect-error values are strings
     await ctx.deps.cache.put("k", 1);
     // @ts-expect-error putIfAbsent needs ttlMs

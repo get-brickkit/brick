@@ -29,6 +29,7 @@ export function connection(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
   let failures = 0;
+  let failure: unknown;
   const waiters: (() => void)[] = [];
   const lost = (client: RedisClient) => {
     if (redis !== client) return;
@@ -38,6 +39,8 @@ export function connection(
       timer = undefined;
       start();
     }, reconnectDelay(failures++));
+    // A reconnect alone must not keep the process alive.
+    timer.unref();
   };
   const start = () => {
     if (closed || redis || timer) return;
@@ -52,10 +55,14 @@ export function connection(
       () => {
         if (redis !== client) return;
         failures = 0;
+        failure = undefined;
         connected(client);
         for (const wake of waiters.splice(0)) wake();
       },
-      () => lost(client),
+      (error) => {
+        failure = error;
+        lost(client);
+      },
     );
   };
   return {
@@ -63,6 +70,8 @@ export function connection(
       start();
       return redis?.connected ? redis : undefined;
     },
+    /** Why the last attempt to connect failed, if it did. */
+    failure: () => failure,
     /** Resolves after the next connection is made and announced, or after `ms`. */
     opened(ms: number): Promise<void> {
       if (redis?.connected) return Promise.resolve();

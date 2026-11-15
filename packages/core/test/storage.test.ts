@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import {
   brick,
+  definePlugin,
   defineService,
   defineStorage,
   memory,
@@ -45,21 +46,32 @@ function suite(name: string, driver: () => StorageDriver, skip = false) {
       expect(await storage.get(k)).toBeNull();
     });
 
-    it("putIfAbsent keeps the stored value and returns it", async () => {
+    it("putIfAbsent keeps the stored value and says whether this call stored it", async () => {
       const k = key("once");
-      expect(await storage.putIfAbsent(k, "first", 1000)).toBe("first");
-      expect(await storage.putIfAbsent(k, "second", 1000)).toBe("first");
+      expect(await storage.putIfAbsent(k, "first", 1000)).toEqual({
+        stored: true,
+        value: "first",
+      });
+      expect(await storage.putIfAbsent(k, "second", 1000)).toEqual({
+        stored: false,
+        value: "first",
+      });
       expect(await storage.get(k)).toBe("first");
+      // The same value from every racer: only `stored` tells the winner.
       const racers = await Promise.all(
-        Array.from({ length: 20 }, (_, i) =>
-          storage.putIfAbsent(`${k}:race`, `v${i}`, 1000),
+        Array.from({ length: 20 }, () =>
+          storage.putIfAbsent(`${k}:race`, "pending", 1000),
         ),
       );
-      expect(new Set(racers).size).toBe(1);
+      expect(racers.filter((racer) => racer.stored)).toHaveLength(1);
+      expect(racers.every((racer) => racer.value === "pending")).toBe(true);
       const short = key("once-ttl");
       await storage.putIfAbsent(short, "a", 30);
       await Bun.sleep(60);
-      expect(await storage.putIfAbsent(short, "b", 1000)).toBe("b");
+      expect(await storage.putIfAbsent(short, "b", 1000)).toEqual({
+        stored: true,
+        value: "b",
+      });
     });
 
     it("increments atomically and expires ttlMs after the first hit", async () => {
@@ -89,7 +101,26 @@ function suite(name: string, driver: () => StorageDriver, skip = false) {
       expect(counter.expiresInMs).toBeLessThanOrEqual(1000);
     });
 
+    it("refuses to count a value that is not an integer", async () => {
+      for (const value of ["", " 5 ", "1e3", "0x10", "05", "1.5"]) {
+        const k = key("not-counter");
+        await storage.put(k, value, 1000);
+        const error = await storage.increment(k, 1000).catch((e) => e);
+        expect(error.constructor).toBe(Error);
+        expect(error.message).toBe(
+          `Storage: "app:${k}" does not hold a counter`,
+        );
+        expect(await storage.get(k)).toBe(value);
+      }
+      const k = key("counter");
+      await storage.put(k, "-3", 1000);
+      expect((await storage.increment(k, 1000)).count).toBe(-2);
+    });
+
     it("refuses a ttlMs that is not a positive integer", async () => {
+      await expect(storage.put(key("bad"), "v", 1e21)).rejects.toThrow(
+        "ttlMs must be a positive integer",
+      );
       await expect(storage.increment(key("bad"), 0)).rejects.toThrow(
         "ttlMs must be a positive integer",
       );
@@ -154,6 +185,22 @@ describe("defineStorage", () => {
     expect(serviceStorage(defineService("none"))).toBeUndefined();
   });
 
+  it("counts one storage under two names once, and searches the deps it is given", async () => {
+    const cache = defineStorage({ driver: memory() });
+    const service = defineService("dup", { deps: { cache, sessions: cache } });
+    const own = serviceStorage(service)!;
+    expect(own).toBeDefined();
+    // A test's override, passed as the call's ctx.deps.
+    const fake = defineStorage({ driver: memory() });
+    expect(() =>
+      serviceStorage(service, { cache: fake, sessions: cache }),
+    ).toThrow('has two key-value storages in its deps, "cache" and "sessions"');
+    const only = serviceStorage(service, { cache: fake })!;
+    await only.put("k", "fake");
+    await own.put("k", "real");
+    expect(await only.get("k")).toBe("fake");
+  });
+
   it("closes storages when the app stops", async () => {
     let closed = 0;
     const driver = { ...memory(), close: async () => void closed++ };
@@ -165,6 +212,47 @@ describe("defineStorage", () => {
     }).listen(0);
     await app.stop();
     expect(closed).toBe(1);
+  });
+
+  it("closes a storage two apps share when the last of them stops, after the plugins' stop handlers", async () => {
+    let closed = 0;
+    const counting = () => ({ ...memory(), close: async () => void closed++ });
+    const cache = defineStorage({ driver: counting() });
+    // Only a plugin install's dep.
+    const outbox = defineStorage({ driver: counting() });
+    let closedAtStop = -1;
+    const flush = definePlugin({
+      name: "@acme/flush",
+      deps: { outbox },
+      service: () => {},
+      app: ({ on }) =>
+        on("stop", () => {
+          closedAtStop = closed;
+        }),
+    });
+    const service = defineService("shared", { deps: { cache } });
+    service.use(flush({}, { deps: { outbox } }));
+    const count = service.action({
+      name: "count",
+      output: t.Number(),
+      execute: async ({ ctx }) => {
+        await Bun.sleep(20);
+        return (await ctx.deps.cache.increment("hits", 60_000)).count;
+      },
+    });
+    const options = { services: [service], docs: false, requestLogging: false };
+    const a = brick(options).listen(0);
+    const b = brick(options).listen(0);
+    const calls = Array.from({ length: 20 }, () => count.execute({}));
+    await a.stop();
+    expect(await Promise.all(calls)).toHaveLength(20);
+    expect(closed).toBe(0);
+    await b.stop();
+    expect(closedAtStop).toBe(0);
+    expect(closed).toBe(2);
+    // Stopping again closes nothing twice.
+    await Promise.resolve(b.stop()).catch(() => undefined);
+    expect(closed).toBe(2);
   });
 });
 
@@ -200,6 +288,7 @@ describe("redis driver", () => {
       const first = Date.now();
       const error = await storage.increment("k", 1000).catch((e) => e);
       expect(error).toBeInstanceOf(StorageUnavailableError);
+      expect(error.cause).toBeDefined();
       expect(Date.now() - first).toBeLessThan(1500);
       const second = Date.now();
       await expect(storage.get("k")).rejects.toBeInstanceOf(
@@ -208,6 +297,81 @@ describe("redis driver", () => {
       expect(Date.now() - second).toBeLessThan(50);
     } finally {
       await storage.close();
+    }
+  });
+});
+
+describe("redis driver, failing", () => {
+  it("rejects with StorageUnavailableError when closed while a call waits to connect", async () => {
+    const storage = defineStorage({
+      driver: redis({ url: "redis://127.0.0.1:1" }),
+    });
+    const pending = storage.get("k").catch((e) => e);
+    await Bun.sleep(20);
+    await storage.close();
+    expect(await pending).toBeInstanceOf(StorageUnavailableError);
+  });
+
+  it("times out a command Redis doesn't answer, and reconnects for the next", async () => {
+    // Answers the handshake, then nothing.
+    let connections = 0;
+    const frozen = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open: () => void connections++,
+        data(socket, data) {
+          if (data.toString().includes("HELLO"))
+            socket.write("%1\r\n+server\r\n+redis\r\n");
+        },
+      },
+    });
+    const storage = defineStorage({
+      driver: redis({ url: `redis://127.0.0.1:${frozen.port}` }),
+    });
+    try {
+      const started = Date.now();
+      const error = await storage.get("k").catch((e) => e);
+      expect(error).toBeInstanceOf(StorageUnavailableError);
+      expect(Date.now() - started).toBeLessThan(1500);
+      await expect(storage.put("k", "v")).rejects.toBeInstanceOf(
+        StorageUnavailableError,
+      );
+      expect(connections).toBe(2);
+    } finally {
+      await storage.close();
+      frozen.stop(true);
+    }
+  });
+});
+
+describe.skipIf(!url)("redis driver, prefix", () => {
+  it("keeps two prefixes on one database apart, Brick's keys included", async () => {
+    const a = defineStorage({ driver: redis({ url, prefix: "a:" }) });
+    const b = defineStorage({ driver: redis({ url, prefix: "b:" }) });
+    const k = `prefixed:${crypto.randomUUID()}`;
+    const brickSide = (storage: typeof a) =>
+      serviceStorage(
+        defineService(`p_${crypto.randomUUID().slice(0, 8)}`, {
+          deps: { storage },
+        }),
+      )!;
+    try {
+      await a.put(k, "a", 5000);
+      await brickSide(a).put(k, "brick-a", 5000);
+      expect(await b.get(k)).toBeNull();
+      expect(await brickSide(b).get(k)).toBeNull();
+      expect(await a.get(k)).toBe("a");
+      expect(await brickSide(a).get(k)).toBe("brick-a");
+      const raw = new Bun.RedisClient(url);
+      expect(await raw.get(`a:app:${k}`)).toBe("a");
+      expect(await raw.get(`a:brick:storage:${k}`)).toBe("brick-a");
+      raw.close();
+    } finally {
+      await a.delete(k);
+      await brickSide(a).delete(k);
+      await a.close();
+      await b.close();
     }
   });
 });

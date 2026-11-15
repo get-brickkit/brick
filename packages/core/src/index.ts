@@ -137,6 +137,7 @@ export {
   type Counter,
   type KeyValueDriver,
   type KeyValueStorage,
+  type PutIfAbsentResult,
   type RedisStorageOptions,
   type StorageDriver,
   type StorageOf,

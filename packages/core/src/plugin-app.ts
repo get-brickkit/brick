@@ -143,7 +143,14 @@ export function setupAppPlugins(
       },
     });
   }
-  return { lifecycles, middleware, listeners, plugins: listed };
+  return {
+    lifecycles,
+    middleware,
+    listeners,
+    plugins: listed,
+    /** Each install's deps, so the app can close the storages among them. */
+    deps: ordered.map((plugin) => internalsOf(plugin)!.deps),
+  };
 }
 
 interface Lifecycle {
