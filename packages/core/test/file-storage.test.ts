@@ -27,7 +27,6 @@ import {
 import { LOCAL_FILES_ROUTE, signFileLink } from "../src/file-storage";
 import { serviceStorage } from "../src/storage";
 
-// Every file a test writes lives here, and is removed with it.
 const root = mkdtempSync(join(tmpdir(), "brick-files-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 let dirs = 0;
@@ -38,7 +37,6 @@ const localFiles = () =>
 
 beforeEach(resetGlobalRegistry);
 
-/** The folder local mode keeps a tenant's files in, and the digest a link names its directory by. */
 const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 
@@ -47,7 +45,6 @@ const as = (user?: string, org?: string) => ({
   ...(org && { "x-org": org }),
 });
 
-/** A service keeping files per org, with actions that put, read and link them. */
 function crm(files: FileStorage, extra: Record<string, unknown> = {}) {
   const service = defineService("crm", {
     deps: { files, ...extra },
@@ -120,12 +117,10 @@ const json = (
       body: JSON.stringify(body),
     }),
   );
-/** The text an action call returned, or the link. */
 const text = async (response: Response) =>
   ((await response.json()) as any).text;
 const linkOf = async (response: Response) =>
   ((await response.json()) as any).url as string;
-/** The message of what a direct call threw: Brick wraps an unexpected error as a 500, keeping it as the cause. */
 const thrown = (call: Promise<unknown>) =>
   call.then(
     () => "did not throw",
@@ -195,7 +190,6 @@ describe("file storage", () => {
     const stored = await files.in(long).put(new Blob(["long"]));
     expect(await (await files.in(long).get(stored.id))?.text()).toBe("long");
 
-    // Lone surrogates all encode as U+FFFD, so such tenants would share a folder.
     for (const tenant of ["\ud800", "a\ud801"])
       await expect(
         (async () => files.in(tenant).put(new Blob(["x"])))(),
@@ -283,15 +277,14 @@ describe("file storage", () => {
     ).toEqual({
       text: null,
     });
-    // Over HTTP, a 500 that does not leak the message.
     const app = brick({
       services: [service],
       requestLogging: false,
       docs: false,
     });
-    expect((await json(app, "/api/crm/read", { id }, as("u1"))).status).toBe(
-      500,
-    );
+    const refused = await json(app, "/api/crm/read", { id }, as("u1"));
+    expect(refused.status).toBe(500);
+    expect(await refused.text()).not.toContain("this call has no tenant");
 
     const plain = defineService("plain", { deps: { files: localFiles() } });
     const get = plain.action({
@@ -299,6 +292,40 @@ describe("file storage", () => {
       execute: ({ ctx }) => ctx.deps.files.get(id),
     });
     expect(await thrown(get.execute({}))).toContain("this call has no tenant");
+  });
+
+  it("scopes files in a same-service action a context hook calls, over HTTP as in process", async () => {
+    const seen: string[] = [];
+    let inHook = false;
+    const service = defineService("hooked", {
+      deps: { files: localFiles() },
+      context: async (ctx) => {
+        if (!inHook) {
+          inHook = true;
+          seen.push(
+            await (nested as any).execute({ input: {}, ctx }).then(
+              () => "ok",
+              (error: Error) => error.message,
+            ),
+          );
+          inHook = false;
+        }
+        return { user: ctx.request.headers.get("x-user") };
+      },
+      identity: (ctx) => (ctx.user ? { id: ctx.user, tenant: "acme" } : null),
+    });
+    const nested = service.action({
+      name: "nested",
+      execute: ({ ctx }) => ctx.deps.files.get(crypto.randomUUID()),
+    });
+    service.action({ name: "outer", execute: () => "done" });
+    const app = brick({
+      services: [service],
+      requestLogging: false,
+      docs: false,
+    });
+    await json(app, "/api/hooked/outer", {});
+    expect(seen).toEqual(["ok"]);
   });
 
   it("fails at startup when a service holds a file storage but has no identity hook", () => {
@@ -423,7 +450,6 @@ describe("file storage", () => {
     service.action({
       name: "handOff",
       output: t.Array(t.String()),
-      // crm's deps differ from billing's; the types refuse, a JavaScript caller can still pass them.
       execute: async ({ ctx }: { ctx: any }) => [
         await useService(billing).book({}, ctx),
         await book.execute({ ctx }),
@@ -520,7 +546,6 @@ describe("file storage", () => {
       expect(response.status).toBe(400);
       expect(((await response.json()) as any).code).toBe("VALIDATION_FAILED");
     }
-    // Over HTTP the type is the one Bun takes from the file name's extension, not the part's Content-Type.
     for (const file of [
       new File(["x"], "photo", { type: "image/png" }),
       new Blob(["x"], { type: "image/png" }) as File,
@@ -536,7 +561,6 @@ describe("file storage", () => {
     for (const [accept, file] of [
       [["IMAGE/*"], new File(["x"], "a.png", { type: "image/png" })],
       [["*/*"], new File(["x"], "a.bin")],
-      // Arrives as text/plain;charset=utf-8: parameters are ignored.
       [["text/plain"], new File(["x"], "a.txt", { type: "text/plain" })],
     ] as const) {
       resetGlobalRegistry();
@@ -600,10 +624,10 @@ describe("the local files route", () => {
       (
         await route(
           signFileLink({
-            d,
-            k: key,
-            e: Date.now() + 60_000,
-            c: "attachment",
+            dirDigest: d,
+            key,
+            expiresAt: Date.now() + 60_000,
+            disposition: "attachment",
           }),
         )
       ).status,
@@ -611,7 +635,12 @@ describe("the local files route", () => {
     expect(
       (
         await route(
-          signFileLink({ d, k: key, e: Date.now() - 1, c: "attachment" }),
+          signFileLink({
+            dirDigest: d,
+            key,
+            expiresAt: Date.now() - 1,
+            disposition: "attachment",
+          }),
         )
       ).status,
     ).toBe(403);
@@ -619,40 +648,59 @@ describe("the local files route", () => {
     const token = tokenOf(await acme.url(id));
     const [payload, mac] = token.split(".");
     const claims = JSON.parse(Buffer.from(payload!, "base64url").toString());
-    // The link names the directory by a digest, never by the server's path.
     expect(JSON.stringify(claims)).not.toContain(root);
-    expect(claims.d).toBe(d);
+    expect(claims.dirDigest).toBe(d);
     const forged = Buffer.from(
-      JSON.stringify({ ...claims, k: "files/globex/x" }),
+      JSON.stringify({ ...claims, key: "files/globex/x" }),
     ).toString("base64url");
     expect((await route(`${forged}.${mac}`)).status).toBe(403);
     expect((await route(`${payload}.${mac!.slice(0, -2)}AA`)).status).toBe(403);
     expect((await route("")).status).toBe(403);
-    // A directory that is not one of this app's storages.
     for (const other of [root, dir, digest(root)])
-      expect((await route(signFileLink({ ...claims, d: other }))).status).toBe(
-        403,
-      );
+      expect(
+        (await route(signFileLink({ ...claims, dirDigest: other }))).status,
+      ).toBe(403);
+  });
+
+  it("verifies a link signed by another copy of the module", async () => {
+    const copy = "../src/file-storage?another-copy";
+    const other: typeof import("../src/file-storage") = await import(copy);
+    expect(other.signFileLink).not.toBe(signFileLink);
+    const token = signFileLink({
+      dirDigest: digest("/some/dir"),
+      key: "files/x",
+      expiresAt: Date.now() + 60_000,
+      disposition: "attachment",
+    });
+    const route = other.localFilesRoute(new Set(["/some/dir"]));
+    const response = await route({
+      request: new Request(
+        `http://localhost${LOCAL_FILES_ROUTE}?token=${token}`,
+      ),
+    });
+    expect(response.status).toBe(404);
   });
 
   it("serves nothing outside the directory: no `..`, no symlink", async () => {
     const { dir, app: served } = app();
     const outside = join(root, "outside.txt");
     writeFileSync(outside, "backup");
+    writeFileSync(`${outside}.type`, "text/plain");
     await defineStorage({ driver: s3({ local: dir }) })
       .in("acme")
       .put(new Blob(["x"]));
     symlinkSync(outside, join(dir, digest("acme"), "link"));
+    writeFileSync(join(dir, digest("acme"), "link.type"), "text/plain");
     for (const key of [
       "../outside.txt",
       "acme/../../outside.txt",
       `${digest("acme")}/link`,
     ]) {
       const token = signFileLink({
-        d: digest(dir),
-        k: key,
-        e: Date.now() + 60_000,
-        c: "attachment",
+        dirDigest: digest(dir),
+        key,
+        expiresAt: Date.now() + 60_000,
+        disposition: "attachment",
       });
       const response = await open(
         served,
@@ -666,7 +714,6 @@ describe("the local files route", () => {
     const { files, dir, app: served } = app();
     const prefix = join(dir, "files");
     mkdirSync(prefix, { recursive: true });
-    // A tenant's folder that points outside the directory.
     const elsewhere = join(root, `elsewhere-${dirs}`);
     mkdirSync(elsewhere);
     const id = crypto.randomUUID();
@@ -681,7 +728,6 @@ describe("the local files route", () => {
     await mallory.delete(id);
     expect(readFileSync(join(elsewhere, id), "utf8")).toBe("outside");
 
-    // A tenant's folder that points at another tenant's folder inside it.
     const { id: secret } = await files.in("acme").put(new Blob(["acme"]));
     symlinkSync(join(prefix, digest("acme")), join(prefix, digest("evil")));
     const evil = files.in("evil");
@@ -690,7 +736,6 @@ describe("the local files route", () => {
     await evil.delete(secret);
     expect(await (await files.in("acme").get(secret))?.text()).toBe("acme");
 
-    // A side file linked to another file is not read.
     const acme = files.in("acme");
     const { id: typed } = await acme.put(new Blob(["x"]));
     const side = join(prefix, digest("acme"), `${typed}.type`);
@@ -738,7 +783,6 @@ describe("the local files route", () => {
   });
 });
 
-/** A stand-in for S3 on localhost: records each request and keeps objects in memory. */
 function fakeS3(status?: number) {
   const objects = new Map<string, { body: ArrayBuffer; type: string }>();
   const requests: { method: string; path: string }[] = [];
@@ -776,7 +820,6 @@ describe("the s3 driver, against a local stand-in", () => {
   it("connects and reads credentials only on the first call", async () => {
     const fake = fakeS3();
     try {
-      // With a default, so the registry that brick() validates never misses it.
       let reads = 0;
       const secret = defineSecret("BRICK_TEST_S3_SECRET", {
         default: "SK",
@@ -798,7 +841,6 @@ describe("the s3 driver, against a local stand-in", () => {
         identity: () => ({ id: "u", tenant: "acme" }),
       });
       void service;
-      // Defined, imported and wired: no request, no directory, no secret read.
       expect(fake.requests).toHaveLength(0);
       expect(existsSync(dir)).toBe(false);
       expect(reads).toBe(0);
@@ -877,6 +919,37 @@ describe("the s3 driver, against a local stand-in", () => {
     }
   });
 
+  it("gives up on a read whose body stalls, with the plain error", async () => {
+    const stalled = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({ start: (c) => c.enqueue(new Uint8Array(1)) }),
+        ),
+    });
+    const real = AbortSignal.timeout.bind(AbortSignal);
+    const timeout = spyOn(AbortSignal, "timeout").mockImplementation(() =>
+      real(50),
+    );
+    try {
+      const files = defineStorage({
+        driver: s3({
+          bucket: "b",
+          endpoint: `http://localhost:${stalled.port}`,
+          accessKeyId: "AK",
+          secretAccessKey: "SK",
+        }),
+      });
+      await expect(files.in("acme").get(crypto.randomUUID())).rejects.toThrow(
+        "S3 failed reading a file",
+      );
+      expect(timeout).toHaveBeenCalledWith(30_000);
+    } finally {
+      timeout.mockRestore();
+      stalled.stop(true);
+    }
+  });
+
   it("keeps a signed URL out of the error when S3 cannot be reached", async () => {
     const fake = fakeS3();
     fake.server.stop(true);
@@ -919,7 +992,6 @@ describe("the s3 driver, against a local stand-in", () => {
         accessKeyId: "AK",
         secretAccessKey: "SK",
       };
-      // Defined at import without complaint.
       const files = defineStorage({ driver: s3(options) });
       await expect(
         files.in("crm-backups").get(crypto.randomUUID()),

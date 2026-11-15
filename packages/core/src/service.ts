@@ -449,6 +449,9 @@ function frameworkDeps(
     : service.deps;
 }
 
+const alreadyHoldsDeps = (ctx: { deps?: unknown }, deps: object) =>
+  ctx.deps === deps || hasFilesView(ctx, deps);
+
 /**
  * The context of a call to one of the service's actions or sockets. The one
  * rule for which deps it sees: those of the plugin install that created the
@@ -467,11 +470,8 @@ async function resolveServiceContext<
   const ownDeps = resolvedDeps(callCtx, service);
   if (ownDeps) {
     const deps = pluginDeps ?? ownDeps;
-    // Passed on with the deps, or this very ctx's view of them: reused, so a nested call's changes to ctx reach its caller.
-    const passed = callCtx as { deps?: unknown };
-    if (passed.deps === deps || hasFilesView(passed, deps))
+    if (alreadyHoldsDeps(callCtx as { deps?: unknown }, deps))
       return callCtx as BaseContext<TDb> & TServiceContext;
-    // A per-call deps object is never `deps` itself: a file storage's view is built again for this ctx.
     const ctx: any = { ...callCtx };
     ctx.deps = scopeFiles(deps, ctx);
     return ctx;

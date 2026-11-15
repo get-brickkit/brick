@@ -31,7 +31,6 @@ export function isPluginInstance(value: unknown): value is PluginInstance {
     INTERNALS in (value as object)
   );
 }
-/** The deps a plugin instance was installed with. */
 export function pluginDepsOf(
   value: unknown,
 ): Readonly<Record<string, unknown>> {

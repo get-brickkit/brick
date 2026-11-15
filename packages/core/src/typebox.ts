@@ -42,7 +42,6 @@ export interface FileOptions {
   description?: string;
 }
 
-/** Whether `type` (parameters ignored) is one of `accept`, where `type/*` matches any subtype. */
 function accepts(accept: string[] | undefined, type: string): boolean {
   if (!accept) return true;
   const given = type.split(";")[0]!.trim().toLowerCase();

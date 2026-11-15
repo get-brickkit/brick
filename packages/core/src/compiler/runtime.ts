@@ -313,12 +313,12 @@ function requestContext(
       ? plan.service.deps
       : (plan.deps ?? plan.service.deps),
   });
-  markResolved(ctx, plan.service, plan.service.deps);
-  if (!plan.contextHook) ctx.deps = scopeFiles(ctx.deps, ctx);
+  if (!plan.contextHook) resolveServiceDeps(ctx, plan);
   return ctx as ActionContext & { requestId: string };
 }
 
-function restoreServiceDeps(ctx: any, plan: CompiledRoutePlan) {
+function resolveServiceDeps(ctx: any, plan: CompiledRoutePlan) {
+  markResolved(ctx, plan.service, plan.service.deps);
   ctx.deps = scopeFiles(plan.deps ?? plan.service.deps, ctx);
 }
 
@@ -357,7 +357,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
         if (contextHook) {
           const extra = await contextHook(ctx);
           if (extra) Object.assign(ctx, extra);
-          restoreServiceDeps(ctx, plan);
+          resolveServiceDeps(ctx, plan);
         }
         return await runStages(stages, input, ctx);
       } catch (err) {

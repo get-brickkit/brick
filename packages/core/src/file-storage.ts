@@ -50,10 +50,8 @@ export interface CallFiles extends ScopedFiles {
 
 /** Deps as a call sees them: each file storage scoped to the caller's tenant. */
 export type CallDeps<T> = { [K in keyof T]: CallDep<T[K]> };
-// Distributive, so an optional or union dep is mapped too, and generic code still resolves `ctx.deps.x`.
 type CallDep<V> = V extends FileStorage ? CallFiles : V;
 
-/** Deps as declared on the service: the handle itself, with `in`. What `useDeps(service)` returns. */
 export type RawDeps<T> = { [K in keyof T]: RawDep<T[K]> };
 type RawDep<V> = V extends CallFiles ? FileStorage : V;
 
@@ -97,11 +95,10 @@ export interface S3StorageOptions {
 const DEFAULT_EXPIRY_MS = 5 * 60_000;
 /** The longest a link may last: S3 refuses a presigned URL valid for longer. */
 const MAX_EXPIRY_MS = 7 * 24 * 60 * 60_000;
-/** The route that serves local-mode links. Outside the API prefix, like Brick's other routes. */
+const S3_READ_TIMEOUT_MS = 30_000;
 export const LOCAL_FILES_ROUTE = "/_brick/files";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-/** The driver behind each file storage handle; global so a second core copy finds it. */
 const drivers: WeakMap<object, FileDriver> = ((globalThis as any)[
   Symbol.for("brickkit.storage.files")
 ] ??= new WeakMap());
@@ -109,15 +106,12 @@ const drivers: WeakMap<object, FileDriver> = ((globalThis as any)[
 const sha256 = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 
-/** The tenant's folder name. On disk a digest: disks may ignore case, drop a trailing dot, reserve names or cap their length. */
 function tenantKey(tenant: unknown, local = false): string {
-  // "." and ".." survive encodeURIComponent, and a URL or a path would resolve them.
   if (
     typeof tenant !== "string" ||
     !tenant ||
     tenant === "." ||
     tenant === ".." ||
-    // UTF-8 turns every lone surrogate into U+FFFD, so two such tenants would share a digest.
     !tenant.isWellFormed()
   )
     throw new Error(
@@ -126,7 +120,6 @@ function tenantKey(tenant: unknown, local = false): string {
   return local ? sha256(tenant) : encodeURIComponent(tenant);
 }
 
-/** `attachment`, with the download name when given, so the storage origin never renders a file inline. */
 function attachment(download: string | undefined): string {
   if (!download) return "attachment";
   const ascii = download.replace(/[^\x20-\x7e]|["\\]/g, "_");
@@ -139,7 +132,6 @@ function scoped(
 ): ScopedFiles {
   const folder = async () =>
     `${driver.prefix}${tenantKey(await tenant(), !!driver.local)}/`;
-  // Not a UUID: no key at all, so another tenant's id, a URL or `../` never reaches the driver.
   const keyOf = async (id: string) => {
     const at = await folder();
     return typeof id === "string" && UUID.test(id) ? at + id : undefined;
@@ -186,7 +178,6 @@ function scoped(
   });
 }
 
-/** The handle `defineStorage` returns for a file driver. Its own methods have no tenant. */
 export function fileStorage(driver: FileDriver): FileStorage {
   const outside = () =>
     Promise.reject(
@@ -209,22 +200,14 @@ export function fileStorage(driver: FileDriver): FileStorage {
   return handle;
 }
 
-/** The names of the file storages among a deps object, found once per object. */
 const fileNames = new WeakMap<object, string[]>();
-/** Each per-call deps object: the deps it was built from, and the ctx whose tenant it uses. */
 const views = new WeakMap<object, { deps: object; ctx: object }>();
 
-/** Whether `ctx.deps` is the view `scopeFiles(deps, ctx)` built for this very `ctx`. */
 export function hasFilesView(ctx: { deps?: unknown }, deps: object): boolean {
   const view = views.get(ctx.deps as object);
   return view?.deps === deps && view.ctx === ctx;
 }
 
-/**
- * The deps a call sees: `deps` itself when it holds no file storage, else a
- * copy, recorded as built by Brick, with each file storage scoped to the
- * tenant of `ctx`'s identity, resolved on the first method call.
- */
 export function scopeFiles<T extends Readonly<Record<string, unknown>>>(
   deps: T,
   ctx: object,
@@ -249,7 +232,6 @@ export function scopeFiles<T extends Readonly<Record<string, unknown>>>(
   const copy: Record<string, unknown> = { ...deps };
   for (const name of names) {
     const handle = deps[name] as FileStorage;
-    // No `in`: naming another tenant takes the imported handle, never the call's view.
     const files: CallFiles = Object.freeze({
       kind: "file",
       ...scoped(drivers.get(handle)!, tenant),
@@ -261,10 +243,6 @@ export function scopeFiles<T extends Readonly<Record<string, unknown>>>(
   return view as T;
 }
 
-/**
- * @param deps - The service's own deps and those of each plugin installed on it.
- * @throws When they hold a file storage but the service has no `identity` hook to take the tenant from.
- */
 export function checkFileStorages(
   service: Service<any, any>,
   deps: readonly Readonly<Record<string, unknown>>[],
@@ -283,10 +261,6 @@ export function checkFileStorages(
 
 const warned = new WeakSet<FileDriver>();
 
-/**
- * Checks each file storage among these deps, and returns the local-mode
- * directories; warns once per storage when one runs in production.
- */
 export function localFileDirs(
   deps: readonly Readonly<Record<string, unknown>>[],
 ): Set<string> {
@@ -365,8 +339,10 @@ export function s3(options: S3StorageOptions = {}): FileDriver {
       expiresIn: Math.ceil(expiresInMs / 1000),
       ...(contentDisposition && { contentDisposition }),
     });
-  // An error may carry a signed URL: rethrow one that names only the operation.
-  const plainly = async <T>(operation: string, run: () => Promise<T>) => {
+  const rethrowWithoutUrl = async <T>(
+    operation: string,
+    run: () => Promise<T>,
+  ) => {
     try {
       return await run();
     } catch (error) {
@@ -382,47 +358,44 @@ export function s3(options: S3StorageOptions = {}): FileDriver {
     check,
     write: async (key, file, contentType) => {
       const client = open();
-      await plainly("writing", () =>
+      await rethrowWithoutUrl("writing", () =>
         client.write(key, file, { type: contentType }),
       );
     },
-    // A presigned GET: the response carries the stored content type, and a missing key is a 404.
     read: async (key) => {
       const url = presign(key, 60_000);
-      const response = await plainly("reading", () => fetch(url));
+      const response = await rethrowWithoutUrl("reading", () =>
+        fetch(url, { signal: AbortSignal.timeout(S3_READ_TIMEOUT_MS) }),
+      );
       if (response.status === 404) return undefined;
       if (!response.ok)
         throw new Error(
           `File storage: S3 answered ${response.status} reading a file`,
         );
-      return plainly("reading", () => response.blob());
+      return rethrowWithoutUrl("reading", () => response.blob());
     },
     remove: async (key) => {
       const client = open();
-      await plainly("deleting", () => client.delete(key));
+      await rethrowWithoutUrl("deleting", () => client.delete(key));
     },
     sign: async (key, expiresInMs, contentDisposition) =>
       presign(key, expiresInMs, contentDisposition),
   };
 }
 
-/** Signs local-mode links; random per process, so links stop working on restart. */
-const tokenKey = randomBytes(32);
+const perProcessLinkKey: Buffer = ((globalThis as any)[
+  Symbol.for("brickkit.storage.files.linkKey")
+] ??= randomBytes(32));
 const mac = (payload: string) =>
-  createHmac("sha256", tokenKey).update(payload).digest();
+  createHmac("sha256", perProcessLinkKey).update(payload).digest();
 
 interface LinkClaims {
-  /** A SHA-256 of the storage's directory, so a link does not show the server's path. */
-  d: string;
-  /** The key under it. */
-  k: string;
-  /** Expiry, in ms since the epoch. */
-  e: number;
-  /** The Content-Disposition to serve. */
-  c: string;
+  dirDigest: string;
+  key: string;
+  expiresAt: number;
+  disposition: string;
 }
 
-/** `<base64url(json)>.<hmac>`, as the dashboard's identity header. */
 export function signFileLink(claims: LinkClaims): string {
   const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
   return `${payload}.${mac(payload).toString("base64url")}`;
@@ -438,7 +411,7 @@ function verifyFileLink(token: string | null): LinkClaims | undefined {
     return undefined;
   try {
     const claims = JSON.parse(Buffer.from(payload, "base64url").toString());
-    return typeof claims.e === "number" && claims.e > Date.now()
+    return typeof claims.expiresAt === "number" && claims.expiresAt > Date.now()
       ? claims
       : undefined;
   } catch {
@@ -446,11 +419,6 @@ function verifyFileLink(token: string | null): LinkClaims | undefined {
   }
 }
 
-/**
- * The real path of `key` under `dir`, when the real path of its folder is that
- * folder under the real path of `dir`: no symlinked folder, no `..`. `undefined`
- * when the folder does not exist or leaves `dir`.
- */
 async function localPath(
   dir: string,
   key: string,
@@ -470,7 +438,6 @@ async function localPath(
   }
 }
 
-/** Whether `path` is a regular file: not a symlink, not missing. */
 const isFile = (path: string) =>
   lstat(path).then(
     (stat) => stat.isFile(),
@@ -480,7 +447,6 @@ const isFile = (path: string) =>
     },
   );
 
-/** The file at `key` under `dir`: a regular file inside it, never a symlink or a path that leaves it. */
 async function readLocal(dir: string, key: string): Promise<Blob | undefined> {
   const path = await localPath(dir, key);
   if (!path || !(await isFile(path)) || !(await isFile(`${path}.type`)))
@@ -508,33 +474,31 @@ function localDriver(dir: string, prefix: string): FileDriver {
     },
     read: (key) => readLocal(dir, key),
     remove: async (key) => {
-      // No folder, or one that leaves the directory: nothing of this tenant's to remove.
       const path = await localPath(dir, key);
       if (!path) return;
       await rm(path, { force: true });
       await rm(`${path}.type`, { force: true });
     },
     sign: async (key, expiresInMs, contentDisposition) =>
-      `${LOCAL_FILES_ROUTE}?token=${signFileLink({ d: sha256(dir), k: key, e: Date.now() + expiresInMs, c: contentDisposition })}`,
+      `${LOCAL_FILES_ROUTE}?token=${signFileLink({ dirDigest: sha256(dir), key, expiresAt: Date.now() + expiresInMs, disposition: contentDisposition })}`,
   };
 }
 
-/** The handler of the local-mode route, for the directories of one app's storages. The token is in the query, which logs and spans leave out. */
 export function localFilesRoute(dirs: ReadonlySet<string>) {
   const byDigest = new Map([...dirs].map((dir) => [sha256(dir), dir]));
   return async ({ request }: { request: Request }): Promise<Response> => {
     const claims = verifyFileLink(
       new URL(request.url).searchParams.get("token"),
     );
-    const dir = claims && byDigest.get(claims.d);
+    const dir = claims && byDigest.get(claims.dirDigest);
     if (!claims || !dir)
       return new Response("Invalid or expired link", { status: 403 });
-    const file = await readLocal(dir, claims.k);
+    const file = await readLocal(dir, claims.key);
     if (!file) return new Response("Not found", { status: 404 });
     return new Response(file, {
       headers: {
         "content-type": file.type,
-        "content-disposition": claims.c,
+        "content-disposition": claims.disposition,
         "x-content-type-options": "nosniff",
         "cache-control": "private, no-store",
       },
