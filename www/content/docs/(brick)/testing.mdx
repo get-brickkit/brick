@@ -34,7 +34,7 @@ Pass a function and Brick empties the global service registry before it runs, so
 
 ## Options
 
-`createTestApp` takes everything [`brick()`](/docs/reference/configuration) takes, such as `services`, `deps`, `prefix` and `compiler`, plus:
+`createTestApp` takes everything [`brick()`](/docs/reference/configuration) takes, such as `services`, `prefix` and `compiler`, plus:
 
 | Option     | Type                  | Default | Description                                                                                                                                                                                               |
 | :--------- | :-------------------- | :------ | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -53,14 +53,14 @@ Request logging is off unless you set `requestLogging`.
 
 ## Fakes for deps
 
-Give the app fakes for the [deps](/docs/dependencies) its services declare:
+A service's [deps](/docs/dependencies) are values on the service. To run an app on fakes, build the service in a factory that takes them:
 
 ```ts
+const orders = createOrdersService({ carrier: fakeCarrier() });
 const { client } = createTestApp({
   services: [orders],
-  deps: { carrier: fakeCarrier() },
-  contract: { orders: { ship } },
+  contract: { orders: { ship: orders.getAction("ship")! } },
 });
 ```
 
-To test a single action without an app, call `action.execute({ input, ctx })` instead. For commands, see [Testing without a database](/docs/commands#testing-without-a-database).
+To test a single action without an app, call `action.execute({ input, ctx })` instead; `ctx.deps` replaces the service's deps of the same name. For commands, see [Testing without a database](/docs/commands#testing-without-a-database).

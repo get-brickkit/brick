@@ -1,6 +1,6 @@
 import { useDeps, type WorkflowEvent } from "@brickkit/core";
 import { RetryableError, sleep } from "workflow";
-import { ordersDeps } from "../deps";
+import type { OrdersDeps } from "../deps";
 import { notifications } from "../schema";
 
 type Shipped = { id: string; customer: string };
@@ -22,7 +22,7 @@ export async function fulfilOrder(event: WorkflowEvent<Shipped>) {
 async function bookCarrier(orderId: string) {
   "use step";
   try {
-    return await useDeps(ordersDeps).carrier.book(orderId);
+    return await useDeps<OrdersDeps>().carrier.book(orderId);
   } catch (error) {
     throw new RetryableError((error as Error).message, { retryAfter: 100 });
   }
@@ -34,7 +34,7 @@ async function notifyCustomer(
   trackingId: string,
 ) {
   "use step";
-  await useDeps(ordersDeps)
+  await useDeps<OrdersDeps>()
     .db.insert(notifications)
     .values({
       id: deliveryId,

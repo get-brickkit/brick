@@ -310,6 +310,10 @@ function requestContext(
   }) as ActionContext & { requestId: string };
 }
 
+function restoreServiceDeps(ctx: any, plan: CompiledRoutePlan) {
+  ctx.deps = plan.deps ?? plan.service.deps;
+}
+
 /** The HTTP handler of one route: the pipeline's stages, synchronous when no stage needs to wait. */
 export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
   const {
@@ -345,7 +349,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
         if (contextHook) {
           const extra = await contextHook(ctx);
           if (extra) Object.assign(ctx, extra);
-          if (plan.deps) ctx.deps = plan.deps;
+          restoreServiceDeps(ctx, plan);
         }
         return await runStages(stages, input, ctx);
       } catch (err) {

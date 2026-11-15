@@ -33,7 +33,7 @@ import {
 import { getActionAccess } from "./access";
 import { pluginOwner } from "./plugin-tables";
 import { baseContext, pickContextEnvelope } from "./context";
-import type { DepsOf, Ports } from "./deps";
+import { freezeAsBuiltDeps, depsOverride } from "./deps";
 import type { NamedService } from "./rpc";
 import { defineServiceSocket } from "./socket";
 import type {
@@ -78,8 +78,7 @@ export class ServiceImpl<
   private _events: Readonly<Record<string, EventRef>>;
   /** What a write needs to record events. Set by `brick({ events })`. */
   recorder?: ServiceEvents;
-  /** The values of this service's `deps`. Set by `brick({ deps })`. */
-  deps?: Readonly<Record<string, unknown>>;
+  readonly deps: Readonly<Record<string, unknown>>;
 
   constructor(
     name: string,
@@ -87,6 +86,7 @@ export class ServiceImpl<
   ) {
     this.name = name;
     this.options = options;
+    this.deps = ownDeps(name, options.deps);
     this._events = eventRefs(name, options.events);
     for (const key of Object.keys(this._events)) this.claim("event", key);
     if (options.database !== undefined && !isDatabaseHandle(options.database)) {
@@ -322,10 +322,6 @@ export class ServiceImpl<
     checkEvent(this, name, payload);
   }
 
-  setDeps(deps: Readonly<Record<string, unknown>>): void {
-    this.deps = deps;
-  }
-
   setDb(database: DatabaseHandle<TDb>): void {
     if (!isDatabaseHandle(database))
       throw new Error("Use defineDatabase() to set a service database");
@@ -357,7 +353,12 @@ export class ServiceImpl<
     // The schema is data. A function among the options (such as `context`)
     // cannot cross to the dev dashboard: structured clone
     // refuses the whole architecture. JSON keeps the data and drops the rest.
-    const { database: _database, events: _events, ...config } = this.options;
+    const {
+      database: _database,
+      events: _events,
+      deps: _deps,
+      ...config
+    } = this.options;
     const options: ServiceSchema["options"] = JSON.parse(
       JSON.stringify(config),
     );
@@ -410,6 +411,43 @@ function pluginTables(tables: Record<string, unknown>) {
   return owners.length ? { plugins: Object.fromEntries(owners) } : {};
 }
 
+function isPlainObject(value: unknown): value is object {
+  if (value === null || typeof value !== "object") return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function ownDeps(service: string, deps: unknown = {}) {
+  if (!isPlainObject(deps))
+    throw new Error(
+      `Service "${service}": deps must be a plain object of values by name, such as { carrier: createCarrier() }`,
+    );
+  const snapshot: Record<string, unknown> = { ...deps };
+  for (const [name, value] of Object.entries(snapshot))
+    if (value === undefined)
+      throw new Error(
+        `Service "${service}": dep "${name}" is undefined; pass a value or leave it out`,
+      );
+  return freezeAsBuiltDeps(snapshot);
+}
+
+function withOverride(
+  deps: Readonly<Record<string, unknown>>,
+  override: Record<string, unknown> | undefined,
+) {
+  return freezeAsBuiltDeps({ ...deps, ...override });
+}
+
+function frameworkDeps(
+  service: { deps: Readonly<Record<string, unknown>> },
+  override: Record<string, unknown> | undefined,
+  pluginDeps: Readonly<Record<string, unknown>> | undefined,
+) {
+  return override && !pluginDeps
+    ? withOverride(service.deps, override)
+    : service.deps;
+}
+
 /**
  * The context of a call to one of the service's actions or sockets. The one
  * rule for which deps it sees: those of the plugin install that created the
@@ -433,6 +471,7 @@ async function resolveServiceContext<
         : { ...callCtx, deps }
     ) as BaseContext<TDb> & TServiceContext;
   }
+  const override = depsOverride(callCtx);
   const framework = baseContext({
     request: callCtx?.request,
     // Always this service's own database, never the caller's.
@@ -443,16 +482,9 @@ async function resolveServiceContext<
     services: callCtx?.services,
     metadata: callCtx?.metadata,
     dashboard: callCtx?.dashboard,
-    // The app's deps for this service; a direct call with no app (a unit test) may pass its own,
-    // but never those of a context another service (or a plugin) resolved.
-    deps:
-      service.deps ??
-      ((callCtx as any)?.[RESOLVED_SYMBOL]
-        ? undefined
-        : (callCtx as { deps?: Readonly<Record<string, unknown>> } | undefined)
-            ?.deps),
+    deps: frameworkDeps(service, override, pluginDeps),
   });
-  const fullBaseCtx: BaseContext<TDb> = {
+  const fullBaseCtx = {
     ...framework,
     ...pickContextEnvelope(callCtx),
   };
@@ -463,7 +495,11 @@ async function resolveServiceContext<
   const finalCtx: any = {
     ...fullBaseCtx,
     ...resolvedExtra,
-    deps: pluginDeps ?? framework.deps,
+    deps: pluginDeps
+      ? override
+        ? withOverride(pluginDeps, override)
+        : pluginDeps
+      : framework.deps,
     [RESOLVED_SYMBOL]: service,
     [OWN_DEPS]: framework.deps,
   };
@@ -481,8 +517,8 @@ async function resolveServiceContext<
  * @param name - Unique name. It is the service's segment of every action route
  * (`/api/<name>/<action>`) and appears in OpenAPI and the dashboard. Defining it
  * again from the same file (a dev reload) replaces it; from another file throws.
- * @param options - `database` (a handle from `defineDatabase`), `deps` (typed
- * slots from `port<T>()` that `brick({ deps })` fills, read as `ctx.deps`),
+ * @param options - `database` (a handle from `defineDatabase`), `deps` (the
+ * values the service's code uses, such as clients, read as `ctx.deps`),
  * `context` (adds fields such as the signed-in user to every action's `ctx`),
  * `events` (the event catalog: a payload schema per event name, recorded as
  * `<service>.<name>` and offered as `service.events.<name>`).
@@ -511,22 +547,24 @@ export function defineService<
   TServiceContext extends Record<string, any> = Record<string, any>,
   const TEvents extends EventCatalog = {},
   const TName extends string = string,
-  TPorts extends Ports = {},
+  TDeps extends object = {},
 >(
   name: TName,
-  options?: ServiceOptions<TServiceContext, TDb> & {
+  options?: ServiceOptions<TServiceContext, TDb, TDeps> & {
     events?: TEvents;
-    deps?: TPorts;
   },
 ): Service<
   TDb,
-  {} extends TPorts
+  [keyof TDeps] extends [never]
     ? TServiceContext
-    : TServiceContext & { deps: DepsOf<TPorts> },
+    : TServiceContext & { deps: TDeps },
   TEvents
 > &
   NamedService<TName> {
-  const service = new ServiceImpl<TDb, TServiceContext>(name, options);
+  const service = new ServiceImpl<TDb, TServiceContext>(
+    name,
+    options as ServiceOptions<TServiceContext, TDb>,
+  );
   getGlobalRegistry().register(service as any);
   return service as any;
 }

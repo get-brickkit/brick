@@ -107,7 +107,7 @@ export const sendWelcome = notificationsService.action({
 
 Each method takes the action's input as its first argument and an optional call context as its second. Only in-process dispatch is implemented. See [Service references](/docs/dependencies#service-references) for how the types are inferred.
 
-Besides its context, each service has its own [declared dependencies](/docs/dependencies) in `ctx.deps`. A call to another service runs with that service's deps, never the caller's.
+Besides its context, each service has its own [dependencies](/docs/dependencies) in `ctx.deps`. A call to another service runs with that service's deps, never the caller's.
 
 ### Security Boundaries
 

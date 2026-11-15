@@ -13,7 +13,7 @@ A quick reference of commonly used public exports from `@brickkit/core`, `@brick
 | `defineAction(config)`             | Function | Constructs a typed action with input/output validation, error helpers, and authorization.   |
 | `defineResource(service, config)`  | Function | Binds a Drizzle table to a service with explicit primary key identity.                      |
 | `useService(service, { from })`    | Function | Calls another service's actions in-process, typed from the service, with context isolation. |
-| `port<T>()` / `useDeps()`          | Function | Declares a service dependency (`deps` option, `ctx.deps`); reads the app's deps in steps.   |
+| `useDeps(service)`                 | Function | Reads a service's deps in listeners, schedules and steps (`ctx.deps` elsewhere).            |
 | `brick(options)`                   | Function | Instantiates an Elysia HTTP server gateway precompiled with services and routes.            |
 | `t` / `Type`                       | Object   | TypeBox schema builder for declaring runtime input and output data shapes.                  |
 | `Static<typeof Schema>`            | Type     | Incurs static TypeScript compile-time types from TypeBox runtime schemas.                   |
