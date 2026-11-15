@@ -18,7 +18,7 @@ export function reconnectDelay(failures: number): number {
 }
 
 /** How long a call waits for Redis to connect before going on without it. */
-const REDIS_WAIT_MS = 1000;
+export const REDIS_WAIT_MS = 1000;
 
 /** One Redis connection that reconnects by itself and reports each fresh connection. */
 export function connection(
@@ -29,6 +29,7 @@ export function connection(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
   let failures = 0;
+  let failure: unknown;
   const waiters: (() => void)[] = [];
   const lost = (client: RedisClient) => {
     if (redis !== client) return;
@@ -38,6 +39,7 @@ export function connection(
       timer = undefined;
       start();
     }, reconnectDelay(failures++));
+    timer.unref();
   };
   const start = () => {
     if (closed || redis || timer) return;
@@ -52,10 +54,14 @@ export function connection(
       () => {
         if (redis !== client) return;
         failures = 0;
+        failure = undefined;
         connected(client);
         for (const wake of waiters.splice(0)) wake();
       },
-      () => lost(client),
+      (error) => {
+        failure = error;
+        lost(client);
+      },
     );
   };
   return {
@@ -63,6 +69,7 @@ export function connection(
       start();
       return redis?.connected ? redis : undefined;
     },
+    failure: () => failure,
     /** Resolves after the next connection is made and announced, or after `ms`. */
     opened(ms: number): Promise<void> {
       if (redis?.connected) return Promise.resolve();

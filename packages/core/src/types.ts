@@ -19,6 +19,7 @@ import type { HttpMethod } from "./http";
 import type { Reveal } from "./sensitive";
 import type { StandardErrorCode } from "./protocol";
 import type { DashboardIdentity } from "./dashboard-identity";
+import type { Identity } from "./identity";
 import type { ServiceEvents } from "./events/types";
 import type { EventCatalog, EventRefs } from "./events/catalog";
 import type { EventsDefinition } from "./events/hub";
@@ -812,6 +813,17 @@ export interface ServiceOptions<
   ) =>
     | Promise<TServiceContext & { deps?: never }>
     | (TServiceContext & { deps?: never });
+  /**
+   * Who the caller is and which tenant they act in, for the features that need
+   * it. Runs at most once per call, and only when a feature asks. Return `null`
+   * or `undefined` for an anonymous caller.
+   *
+   * @example
+   * identity: (ctx) => ctx.user && { id: ctx.user.id, tenant: ctx.user.orgId },
+   */
+  identity?: (
+    ctx: BaseContext<TDb> & TServiceContext & { deps: Readonly<TDeps> },
+  ) => Identity | null | undefined | Promise<Identity | null | undefined>;
   /**
    * The service's event catalog: payload schema by event name. Each becomes
    * `service.events.<name>`, recorded as `<service>.<name>`.

@@ -7,7 +7,7 @@ import {
   type ValidationErrorItem,
 } from "../types";
 import { toErrorResponse } from "../error-response";
-import { baseContext, requestIds } from "../context";
+import { baseContext, markResolved, requestIds } from "../context";
 import type { ServicePort } from "../service-port";
 import { withRedaction, type Sensitivity } from "../sensitive";
 import type { Coercion, RouteIR } from "./ir";
@@ -304,7 +304,7 @@ function requestContext(
   plan: CompiledRoutePlan,
   { headers, request, set }: any,
 ): ActionContext & { requestId: string } {
-  return baseContext({
+  const ctx = baseContext({
     ...requestIds(headers, set),
     request: request instanceof Request ? request : undefined,
     db: plan.cachedDb ?? plan.service.getDb(),
@@ -314,7 +314,9 @@ function requestContext(
     deps: plan.contextHook
       ? plan.service.deps
       : (plan.deps ?? plan.service.deps),
-  }) as ActionContext & { requestId: string };
+  });
+  markResolved(ctx, plan.service, plan.service.deps);
+  return ctx as ActionContext & { requestId: string };
 }
 
 function restoreServiceDeps(ctx: any, plan: CompiledRoutePlan) {

@@ -25,6 +25,8 @@ export default brick({ services: [orders] });
 
 `deps` holds real values, as a plain object of values by name. `defineService` refuses a class instance or a `Map` as the `deps` object itself. `ctx.deps` is typed from that object, so there is nothing to declare twice. A dep set to `undefined` fails too. Both throw when the service module is imported, not when the app starts: `Service "orders": dep "carrier" is undefined; pass a value or leave it out`.
 
+A [storage](/docs/storage) from `defineStorage` is a dep like any other: `deps: { cache }`, read as `ctx.deps.cache`.
+
 ### When deps are created
 
 A dep is created when the service module is imported, not when the app starts. `brick info` and `brick gen` import the app to read its services without starting it, so a dep's constructor runs there too. Open connections on first use, not in the constructor:
