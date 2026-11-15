@@ -74,6 +74,10 @@ function notACounter(key: string): Error {
   return new Error(`Storage: "${key}" does not hold a counter`);
 }
 
+function counterOverflow(key: string): Error {
+  return new Error(`Storage: incrementing "${key}" would overflow`);
+}
+
 function ttl(ttlMs: number | undefined, required: boolean): void {
   if (ttlMs === undefined && !required) return;
   if (!Number.isSafeInteger(ttlMs) || ttlMs! <= 0)
@@ -237,7 +241,6 @@ export function redis(options: RedisStorageOptions = {}): KeyValueDriver {
         );
       }
       if (client.connected) {
-        // Replies that mean Redis cannot serve right now (restart, failover, out of memory, a busy script).
         if (UNAVAILABLE_REPLY.test(String((error as Error)?.message)))
           throw new StorageUnavailableError(
             `Storage: Redis cannot serve the command right now (${(error as Error).message})`,
@@ -332,11 +335,8 @@ export function memory(): KeyValueDriver {
       const entry = readEvictingExpired(key) ?? { value: "0" };
       // What Redis's INCR takes: a plain integer, no spaces, signs, exponents or leading zeros.
       const count = Number(entry.value) + 1;
-      if (
-        !/^(0|-?[1-9][0-9]*)$/.test(entry.value) ||
-        !Number.isSafeInteger(count)
-      )
-        throw notACounter(key);
+      if (!/^(0|-?[1-9][0-9]*)$/.test(entry.value)) throw notACounter(key);
+      if (!Number.isSafeInteger(count)) throw counterOverflow(key);
       const expiresAt = entry.expiresAt ?? Date.now() + ttlMs;
       entries.set(key, { value: String(count), expiresAt });
       return { count, expiresInMs: Math.max(1, expiresAt - Date.now()) };

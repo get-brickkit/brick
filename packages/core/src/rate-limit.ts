@@ -41,7 +41,6 @@ export type ClientIp = (args: {
   peer: string | undefined;
 }) => string | undefined;
 
-/** Where a request's client address comes from: set on every request an app receives. */
 interface AddressSource {
   clientIp?: ClientIp;
   server: () =>
@@ -50,10 +49,8 @@ interface AddressSource {
     | undefined;
 }
 const SOURCE = Symbol.for("brickkit.addressSource");
-/** On a call's context: the request whose client address the call counts by, carried through `useService`. */
 const CLIENT_REQUEST = Symbol.for("brickkit.clientRequest");
 
-/** Marks a request with where its client address comes from. One property write, no closure. */
 export function markAddressSource(
   request: Request,
   source: AddressSource,
@@ -61,30 +58,29 @@ export function markAddressSource(
   (request as any)[SOURCE] = source;
 }
 
-/** For the MCP handler: the `clientIp` it was given replaces the app's, keeping the app's peer. */
 export function withClientIp(request: Request, clientIp: ClientIp): void {
   const app: AddressSource | undefined = (request as any)[SOURCE];
   markAddressSource(request, { clientIp, server: app?.server ?? noServer });
 }
 const noServer = () => undefined;
 
-/** The request a context's client address comes from, if it has one; for the envelope `useService` forwards. */
 export function clientRequestOf(ctx: object): Request | undefined {
   const request: any =
     (ctx as any)[CLIENT_REQUEST] ?? (ctx as { request?: Request }).request;
   return request?.[SOURCE] ? request : undefined;
 }
 
-/** Puts the client request on a forwarded context. */
 export function carryClientRequest(envelope: object, from: object): void {
   const request = clientRequestOf(from);
   if (request) (envelope as any)[CLIENT_REQUEST] = request;
 }
 
 /**
- * The client address of a call as rate limits count it (see `addressKey`), or
- * `undefined` when it has none: in-process without a request, or `app.handle`
- * without `clientIp`. For a custom `per` that combines it with another key.
+ * The client address of a call as rate limits count it, or `undefined` when it
+ * has none: in-process without a request, or `app.handle` without `clientIp`.
+ * An IPv4-mapped or NAT64 IPv6 address counts as its IPv4 address, any other
+ * IPv6 address by its /64, and every spelling of one address the same. For a
+ * custom `per` that combines it with another key.
  *
  * @throws When `clientIp` returns anything but a non-empty string or `undefined`.
  */
@@ -103,11 +99,6 @@ export function clientAddress(ctx: object): string | undefined {
   return ip === undefined ? undefined : addressKey(ip as string);
 }
 
-/**
- * The key of a client address: an IPv4-mapped or NAT64 (`64:ff9b::/96`) IPv6 address as IPv4, any other
- * IPv6 address by its /64 (one client often holds a whole /64), and every
- * spelling of one address the same. An address that does not parse is kept as given.
- */
 function addressKey(address: string): string {
   const ip = address.trim().toLowerCase().replace(/%.*$/, "");
   if (isIPv4(ip)) return ip;
@@ -135,7 +126,6 @@ function addressKey(address: string): string {
     .join(":")}::/64`;
 }
 
-/** An action's limits, as a list. */
 export function rateLimitsOf(config: {
   name: string;
   rateLimit?: RateLimit | readonly RateLimit[];
@@ -163,10 +153,6 @@ export function rateLimitsOf(config: {
   return limits;
 }
 
-/**
- * Checks at startup what an action's limits need: a key-value storage among
- * the deps, and an `identity` hook for `per: "actor"`.
- */
 export function checkRateLimits(
   service: Service<any, any>,
   action: { name: string; config: { name: string; rateLimit?: any } },
@@ -181,7 +167,6 @@ export function checkRateLimits(
     );
 }
 
-/** The storage limits count in: the plugin install's (or the call's deps'), else the service's own. */
 function storageOf(
   service: Service<any, any>,
   deps: Readonly<Record<string, unknown>>,
@@ -195,22 +180,11 @@ function noStorage(service: Service<any, any>, action: string): Error {
   );
 }
 
-/**
- * While a storage is unavailable, limits count in this process's memory. The
- * fallback starts at the first `StorageUnavailableError`, tries the storage at
- * most once a second meanwhile, and ends once the storage has answered without
- * error for `QUIET_MS`. Its counters are kept until their window ends, so a
- * storage that flaps never resets them: per window, a key passes at most `max`
- * in memory plus `max` in the storage.
- */
 interface Fallback {
   active: boolean;
   counters: Map<string, { count: number; expiresAt: number }>;
-  /** When the storage may be tried next. */
   probeAt: number;
-  /** Since when every try has succeeded. */
   healthySince?: number;
-  /** When expired counters are swept next. */
   sweepAt: number;
 }
 const QUIET_MS = 10_000;
@@ -238,14 +212,37 @@ function countInMemory(
   };
 }
 
-// Swept on the next call after SWEEP_MS, so no timer keeps the process alive.
 function sweep(fallback: Fallback, now: number): void {
   for (const [key, entry] of fallback.counters)
     if (entry.expiresAt <= now) fallback.counters.delete(key);
   fallback.sweepAt = now + SWEEP_MS;
 }
 
-/** Tries the storage once, without waiting for it, and leaves the fallback after QUIET_MS of answers. */
+const isTimeToProbe = (fallback: Fallback, now: number): boolean =>
+  now >= fallback.probeAt;
+
+const hasBeenHealthyLongEnough = (fallback: Fallback, now: number): boolean =>
+  fallback.healthySince !== undefined &&
+  now - fallback.healthySince >= QUIET_MS;
+
+function enterFallback(fallback: Fallback, now: number, cause: Error): void {
+  Object.assign(fallback, {
+    active: true,
+    probeAt: now + PROBE_MS,
+    healthySince: undefined,
+  });
+  console.warn(
+    `[Brick-TS] Rate limits: storage is unavailable (${cause.message}); counting in this process's memory until it is back.`,
+  );
+}
+
+function leaveFallback(fallback: Fallback): void {
+  fallback.active = false;
+  console.warn(
+    "[Brick-TS] Rate limits: storage is back; counting there again.",
+  );
+}
+
 function probe(
   storage: KeyValueStorage,
   fallback: Fallback,
@@ -255,12 +252,8 @@ function probe(
   const answered = () => {
     const now = Date.now();
     fallback.healthySince ??= now;
-    if (fallback.active && now - fallback.healthySince >= QUIET_MS) {
-      fallback.active = false;
-      console.warn(
-        "[Brick-TS] Rate limits: storage is back; counting there again.",
-      );
-    }
+    if (fallback.active && hasBeenHealthyLongEnough(fallback, now))
+      leaveFallback(fallback);
   };
   storage.increment(key, windowMs).then(answered, (error) => {
     if (error instanceof StorageUnavailableError)
@@ -278,7 +271,7 @@ async function increment(
   if (fallback) {
     const now = Date.now();
     if (fallback.active) {
-      if (now >= fallback.probeAt) {
+      if (isTimeToProbe(fallback, now)) {
         fallback.probeAt = now + PROBE_MS;
         probe(storage, fallback, key, windowMs);
       }
@@ -305,28 +298,33 @@ async function increment(
           sweepAt: now + SWEEP_MS,
         }),
       );
-    if (!fallback.active) {
-      Object.assign(fallback, {
-        active: true,
-        probeAt: now + PROBE_MS,
-        healthySince: undefined,
-      });
-      console.warn(
-        `[Brick-TS] Rate limits: storage is unavailable (${error.message}); counting in this process's memory until it is back.`,
-      );
-    }
+    if (!fallback.active) enterFallback(fallback, now, error);
     return countInMemory(fallback, key, windowMs, now);
   }
 }
 
-/** The key of one limit for a call, or undefined to skip the limit. */
+const MAX_KEY_PART_LENGTH = 128;
+
+function counterKey(parts: readonly (string | number)[]): string {
+  const bounded = parts.map((part) =>
+    typeof part === "string" && part.length > MAX_KEY_PART_LENGTH
+      ? createHash("sha256").update(part).digest("hex")
+      : part,
+  );
+  return `rate-limit:${JSON.stringify(bounded)}`;
+}
+
 async function keyOf(
   limit: RateLimit,
   input: unknown,
   ctx: ActionContext,
 ): Promise<string[] | undefined> {
   if (typeof limit.per === "function") {
-    const key = limit.per({ input, ctx });
+    const key: unknown = limit.per({ input, ctx });
+    if (typeof (key as { then?: unknown } | null)?.then === "function")
+      throw new Error(
+        "rateLimit per must return a string, null or undefined; it returned a promise (it must not be async)",
+      );
     return key == null ? undefined : ["key", String(key)];
   }
   if (limit.per === "actor") {
@@ -337,10 +335,6 @@ async function keyOf(
   return ip === undefined ? undefined : ["ip", ip];
 }
 
-/**
- * The rate-limit stage: counts the call against each limit in order, and
- * refuses it (429, `RATE_LIMITED`) at the first limit over its `max`.
- */
 export async function enforceRateLimits(
   service: Service<any, any> | undefined,
   kind: "action" | "tool",
@@ -358,15 +352,9 @@ export async function enforceRateLimits(
   for (const [index, limit] of limits.entries()) {
     const key = await keyOf(limit, input, ctx);
     if (!key) continue;
-    // JSON keeps the parts apart, whatever separators or newlines a key holds; a long part is hashed, so a client cannot fill the storage.
-    const parts = [service.name, kind, action, index, ...key].map((part) =>
-      typeof part === "string" && part.length > 128
-        ? createHash("sha256").update(part).digest("hex")
-        : part,
-    );
     const { count, expiresInMs } = await increment(
       storage,
-      `rate-limit:${JSON.stringify(parts)}`,
+      counterKey([service.name, kind, action, index, ...key]),
       limit.windowMs,
     );
     if (count > limit.max) {

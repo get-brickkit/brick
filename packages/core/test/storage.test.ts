@@ -115,6 +115,14 @@ function suite(name: string, driver: () => StorageDriver, skip = false) {
       expect((await storage.increment(k, 1000)).count).toBe(-2);
     });
 
+    it("refuses to count past the largest integer with an overflow error, not a not-a-counter one", async () => {
+      const k = key("overflow");
+      await storage.put(k, "9223372036854775807", 1000);
+      const error = await storage.increment(k, 1000).catch((e) => e);
+      expect(error.message).toContain("overflow");
+      expect(error.message).not.toContain("does not hold a counter");
+    });
+
     it("refuses a ttlMs that is not a positive integer", async () => {
       await expect(storage.put(key("bad"), "v", 1e21)).rejects.toThrow(
         "ttlMs must be a positive integer",
@@ -380,23 +388,6 @@ describe("redis driver, failing", () => {
     } finally {
       await storage.close();
       frozen.stop(true);
-    }
-  });
-});
-
-describe.skipIf(!url)("redis driver, increment script", () => {
-  it("passes on an INCR error that does not mean 'not a counter'", async () => {
-    // Redis refuses the INCR inside the script, as it does on a read-only replica or out of memory.
-    const storage = defineStorage({ driver: redis({ url }) });
-    const k = `overflow:${crypto.randomUUID()}`;
-    try {
-      await storage.put(k, "9223372036854775807", 5000);
-      const error = await storage.increment(k, 5000).catch((e) => e);
-      expect(String(error.message)).toContain("overflow");
-      expect(String(error.message)).not.toContain("does not hold a counter");
-    } finally {
-      await storage.delete(k);
-      await storage.close();
     }
   });
 });

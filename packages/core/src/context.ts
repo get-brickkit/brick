@@ -64,7 +64,6 @@ export function pickContextEnvelope(
   if (context.tenantId !== undefined) envelope.tenantId = context.tenantId;
   // In process only: the identity was verified when the outer request arrived.
   if (context.dashboard !== undefined) envelope.dashboard = context.dashboard;
-  // In process only, like `dashboard`: the client address, for rate limits.
   carryClientRequest(envelope, context);
   return envelope;
 }

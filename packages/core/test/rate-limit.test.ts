@@ -44,7 +44,6 @@ beforeEach(resetGlobalRegistry);
 
 const cache = () => defineStorage({ driver: memory() });
 
-/** A service with one action, limited as given, on its own storage. */
 function limited(
   rateLimit: RateLimit | RateLimit[],
   options: { storage?: ReturnType<typeof cache>; extra?: object } = {},
@@ -65,7 +64,6 @@ function limited(
 const login = (app: BrickApp, email = "a@b.c", headers = {}) =>
   postJson(app, "/api/auth/login", { email }, headers);
 
-/** The HTTP behaviour on every driver; Redis only when REDIS_URL is set. */
 function suite(name: string, driver: () => StorageDriver, skip = false) {
   describe.skipIf(skip)(`rate limits on ${name}`, () => {
     let storage: ReturnType<typeof cache>;
@@ -102,7 +100,6 @@ function suite(name: string, driver: () => StorageDriver, skip = false) {
       expect((await login(app)).status).toBe(200);
       const refused = await login(app);
       expect(refused.status).toBe(429);
-      // Never 0: a client that retries at once would be refused again.
       expect(refused.headers.get("retry-after")).toBe("1");
       await Bun.sleep(250);
       expect((await login(app)).status).toBe(200);
@@ -176,18 +173,16 @@ function suite(name: string, driver: () => StorageDriver, skip = false) {
 }
 
 suite("memory", memory);
+const runPrefix = `brick-test-rate-limit-${crypto.randomUUID()}-`;
 suite(
   "redis",
-  () => redis({ url, prefix: `brick-test-rate-limit-${crypto.randomUUID()}:` }),
+  () => redis({ url, prefix: `${runPrefix}${crypto.randomUUID()}:` }),
   !url,
 );
 if (url)
   afterAll(async () => {
-    // Every key this file wrote, whatever the run's prefix.
     const client = new Bun.RedisClient(url);
-    const keys: string[] = await client.send("KEYS", [
-      "brick-test-rate-limit-*",
-    ]);
+    const keys: string[] = await client.send("KEYS", [`${runPrefix}*`]);
     if (keys.length) await client.send("DEL", keys);
     client.close();
   });
@@ -244,7 +239,6 @@ describe("rate limits", () => {
     const app = brick({ services: [service], requestLogging: false });
     for (const email of ["a:b", "a", "b", "a\nb", 'a","b', "a\\", "0"])
       expect((await login(app, email)).status).toBe(200);
-    // Joined with ":", login's entry 0 for "1:x" would be login:0's entry 1 for "x".
     expect((await login(app, "1:x")).status).toBe(200);
     expect(
       (await postJson(app, "/api/auth/login:0", { email: "x" })).status,
@@ -375,7 +369,6 @@ describe('per: "actor"', () => {
       expect((await call("u1")).status).toBe(200);
       expect((await call("u2")).status).toBe(200);
       expect((await call("u1")).status).toBe(429);
-      // Anonymous: one IP budget, apart from an actor whose id is the same address.
       expect((await call()).status).toBe(200);
       expect((await call()).status).toBe(429);
       expect((await call("::1")).status).toBe(200);
@@ -409,13 +402,11 @@ describe('per: "actor"', () => {
     const refused = await exportAll.run(undefined, ctx).catch((error) => error);
     expect(refused).toBeInstanceOf(ActionExecutionError);
     expect(refused).toMatchObject({ code: "RATE_LIMITED", status: 429 });
-    // Anonymous, in-process inside a request the app received: counted by its address.
     const relay = () =>
       postJson(app, "/api/crm/relay", {}, { "x-ip": "1.1.1.1" });
     expect((await relay()).status).toBe(200);
     expect((await relay()).status).toBe(200);
     expect((await relay()).status).toBe(429);
-    // With no request behind it there is no address to count by.
     for (let i = 0; i < 3; i++) expect(await exportAll.run()).toBe("ok");
   });
 });
@@ -506,7 +497,6 @@ describe("rate limits while the storage is down", () => {
     try {
       expect((await login(app)).status).toBe(200);
       down = true;
-      // Counted in memory: two more pass, then the limit holds.
       expect((await login(app)).status).toBe(200);
       expect((await login(app)).status).toBe(200);
       expect((await login(app)).status).toBe(429);
@@ -515,7 +505,6 @@ describe("rate limits while the storage is down", () => {
         "counting in this process's memory",
       );
       down = false;
-      // Still on memory until the storage has answered for 10 s.
       after(1_000);
       expect((await login(app)).status).toBe(429);
       after(5_000);
@@ -525,7 +514,6 @@ describe("rate limits while the storage is down", () => {
       expect((await login(app)).status).toBe(429);
       expect(warn).toHaveBeenCalledTimes(2);
       expect(String(warn.mock.calls[1]![0])).toContain("storage is back");
-      // A flap does not reset the memory count.
       down = true;
       expect((await login(app)).status).toBe(429);
       expect(warn).toHaveBeenCalledTimes(3);
@@ -553,7 +541,6 @@ describe("rate limits while the storage is down", () => {
     brick({ services: [service], requestLogging: false });
     const warn = spyOn(console, "warn").mockImplementation(() => {});
     const start = Date.now();
-    // Up 1 s in 3, and now and then up for 20 s.
     up = (at) => {
       const t = (at - start) % 60_000;
       return t > 30_000 && t < 50_000 ? true : t % 3_000 < 1_000;
@@ -569,7 +556,6 @@ describe("rate limits while the storage is down", () => {
       }
       expect(passed).toBeGreaterThanOrEqual(5);
       expect(passed).toBeLessThanOrEqual(10);
-      // One warning each way in and out of a long outage, not two per flap.
       expect(warn.mock.calls.length).toBe(7);
     } finally {
       setSystemTime();
@@ -693,7 +679,6 @@ describe("rate limits on a Redis that is down", () => {
     return () => warn.mockRestore();
   };
 
-  /** A server that completes the handshake, then answers every command with `reply`, or never. */
   function fakeRedis(reply?: string) {
     const fake = {
       commands: 0,
@@ -753,7 +738,6 @@ describe("rate limits on a Redis that is down", () => {
         { storage },
       );
       const app = brick({ services: [service], requestLogging: false });
-      // The first call waits for the timeout once.
       expect((await login(app)).status).toBe(200);
       const commands = fake.commands;
       const started = performance.now();
@@ -892,7 +876,6 @@ describe("rate limits reached through another action", () => {
       ).then((response) => response.status);
     for (const [path, user] of [
       ["/api/crm/outer", undefined],
-      // Signed in to web, but anonymous to crm: counted by the address.
       ["/api/web/via", "u9"],
     ] as const) {
       expect(await call(path, "1.1.1.1", user)).toBe(200);
@@ -1051,7 +1034,6 @@ describe("rate limits, other cases", () => {
       expect(Bun.inspect(error.mock.calls)).toContain(
         "clientIp must return a non-empty string, or undefined when there is no address; it returned a promise",
       );
-      // undefined: no address, so the limit is skipped.
       resetGlobalRegistry();
       const skipped = limited({ per: "ip", max: 1, windowMs: 60_000 });
       const none = brick({
@@ -1060,6 +1042,26 @@ describe("rate limits, other cases", () => {
         clientIp: () => undefined,
       });
       for (let i = 0; i < 3; i++) expect((await login(none)).status).toBe(200);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("fails the call when a custom per returns a promise, instead of counting every caller together", async () => {
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { service } = limited({
+        per: (async ({ input }: { input: { email: string } }) =>
+          input.email) as any,
+        max: 1,
+        windowMs: 60_000,
+      });
+      const app = brick({ services: [service], requestLogging: false });
+      expect((await login(app, "a")).status).toBe(500);
+      expect((await login(app, "b")).status).toBe(500);
+      expect(Bun.inspect(error.mock.calls)).toContain(
+        "rateLimit per must return a string, null or undefined; it returned a promise",
+      );
     } finally {
       error.mockRestore();
     }
@@ -1087,7 +1089,6 @@ describe("rate limits, other cases", () => {
     expect(await status("::ffff:1.2.3.4")).toBe(200);
     expect(await status("1.2.3.4")).toBe(429);
     expect(await status("::ffff:102:304")).toBe(429);
-    // NAT64: the IPv4 address inside, not one /64 for every IPv4 client.
     expect(await status("64:ff9b::1.2.3.4")).toBe(429);
     expect(await status("64:ff9b::5.6.7.8")).toBe(200);
     expect(await status("127.0.0.1")).toBe(200);
@@ -1099,7 +1100,10 @@ describe("rate limits, other cases", () => {
   it("keys the documented login example so a stranger cannot lock an email out", async () => {
     const { service } = limited([
       {
-        per: ({ input, ctx }) => `${clientAddress(ctx)} ${input.email}`,
+        per: ({ input, ctx }) => {
+          const ip = clientAddress(ctx);
+          return ip && `${ip} ${input.email}`;
+        },
         max: 2,
         windowMs: 60_000,
       },
@@ -1116,6 +1120,25 @@ describe("rate limits, other cases", () => {
     expect(await from("6.6.6.6")).toBe(200);
     expect(await from("6.6.6.6")).toBe(429);
     expect(await from("1.1.1.1")).toBe(200);
+  });
+
+  it("leaves the documented login example's address key out for a call without an address", async () => {
+    const { service, action } = limited([
+      {
+        per: ({ input, ctx }) => {
+          const ip = clientAddress(ctx);
+          return ip && `${ip} ${input.email}`;
+        },
+        max: 1,
+        windowMs: 60_000,
+      },
+      { per: ({ input }) => input.email, max: 3, windowMs: 60_000 },
+    ]);
+    brick({ services: [service], requestLogging: false });
+    for (let i = 0; i < 3; i++) await action.run({ email: "a@b.c" });
+    await expect(action.run({ email: "a@b.c" })).rejects.toThrow(
+      "Too many calls",
+    );
   });
 
   it("sends Retry-After from an app's own RATE_LIMITED only as a whole number of at least 1", async () => {

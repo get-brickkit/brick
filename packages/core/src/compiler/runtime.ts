@@ -258,7 +258,6 @@ export interface Stages {
   readonly dashboardOnly?: boolean;
   /** @throws The input's validation error. */
   readonly checkInput: (input: unknown) => void;
-  /** Counts the call against the action's `rateLimit`; throws `RATE_LIMITED` over it. */
   readonly rateLimit?: (input: unknown, ctx: any) => Promise<void>;
   readonly authorize?: (params: any) => unknown;
   readonly execute: (params: any) => unknown;
@@ -280,7 +279,6 @@ export async function runStages(
       401,
     );
   stages.checkInput(input);
-  // After validation, so a malformed call does not count; before authorize, so a refused one does.
   if (stages.rateLimit) await stages.rateLimit(input, ctx);
   await authorizeCall(stages.authorize, ctx, input, stages.name);
   return stages.checkOutput(

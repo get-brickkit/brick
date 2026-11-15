@@ -189,7 +189,6 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     services.flatMap((service) => installedPlugins(service)),
     options.plugins ?? [],
   );
-  // Every request knows where its client address comes from, for rate limits reached by any route.
   const addressSource = {
     clientIp: options.clientIp,
     server: () => app.server,
