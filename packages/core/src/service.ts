@@ -33,7 +33,6 @@ import {
 import { getActionAccess } from "./access";
 import { pluginOwner } from "./plugin-tables";
 import { baseContext, pickContextEnvelope } from "./context";
-import type { DepsOf, Ports } from "./deps";
 import type { NamedService } from "./rpc";
 import { defineServiceSocket } from "./socket";
 import type {
@@ -78,8 +77,8 @@ export class ServiceImpl<
   private _events: Readonly<Record<string, EventRef>>;
   /** What a write needs to record events. Set by `brick({ events })`. */
   recorder?: ServiceEvents;
-  /** The values of this service's `deps`. Set by `brick({ deps })`. */
-  deps?: Readonly<Record<string, unknown>>;
+  /** The values of this service's `deps`. */
+  readonly deps: Readonly<Record<string, unknown>>;
 
   constructor(
     name: string,
@@ -87,6 +86,7 @@ export class ServiceImpl<
   ) {
     this.name = name;
     this.options = options;
+    this.deps = Object.freeze({ ...options.deps });
     this._events = eventRefs(name, options.events);
     for (const key of Object.keys(this._events)) this.claim("event", key);
     if (options.database !== undefined && !isDatabaseHandle(options.database)) {
@@ -322,10 +322,6 @@ export class ServiceImpl<
     checkEvent(this, name, payload);
   }
 
-  setDeps(deps: Readonly<Record<string, unknown>>): void {
-    this.deps = deps;
-  }
-
   setDb(database: DatabaseHandle<TDb>): void {
     if (!isDatabaseHandle(database))
       throw new Error("Use defineDatabase() to set a service database");
@@ -357,7 +353,13 @@ export class ServiceImpl<
     // The schema is data. A function among the options (such as `context`)
     // cannot cross to the dev dashboard: structured clone
     // refuses the whole architecture. JSON keeps the data and drops the rest.
-    const { database: _database, events: _events, ...config } = this.options;
+    // `deps` hold live clients: never serialized, and not data to show.
+    const {
+      database: _database,
+      events: _events,
+      deps: _deps,
+      ...config
+    } = this.options;
     const options: ServiceSchema["options"] = JSON.parse(
       JSON.stringify(config),
     );
@@ -410,6 +412,10 @@ function pluginTables(tables: Record<string, unknown>) {
   return owners.length ? { plugins: Object.fromEntries(owners) } : {};
 }
 
+/** The deps a direct call passes in its context, unless another service resolved that context. */
+const depsOverride = (callCtx: any): Record<string, unknown> | undefined =>
+  callCtx?.[RESOLVED_SYMBOL] ? undefined : callCtx?.deps;
+
 /**
  * The context of a call to one of the service's actions or sockets. The one
  * rule for which deps it sees: those of the plugin install that created the
@@ -443,14 +449,11 @@ async function resolveServiceContext<
     services: callCtx?.services,
     metadata: callCtx?.metadata,
     dashboard: callCtx?.dashboard,
-    // The app's deps for this service; a direct call with no app (a unit test) may pass its own,
-    // but never those of a context another service (or a plugin) resolved.
-    deps:
-      service.deps ??
-      ((callCtx as any)?.[RESOLVED_SYMBOL]
-        ? undefined
-        : (callCtx as { deps?: Readonly<Record<string, unknown>> } | undefined)
-            ?.deps),
+    // The service's own deps. A direct call (a unit test) may replace some of them,
+    // but never with those of a context another service (or a plugin) resolved.
+    deps: depsOverride(callCtx)
+      ? Object.freeze({ ...service.deps, ...depsOverride(callCtx) })
+      : service.deps,
   });
   const fullBaseCtx: BaseContext<TDb> = {
     ...framework,
@@ -481,8 +484,8 @@ async function resolveServiceContext<
  * @param name - Unique name. It is the service's segment of every action route
  * (`/api/<name>/<action>`) and appears in OpenAPI and the dashboard. Defining it
  * again from the same file (a dev reload) replaces it; from another file throws.
- * @param options - `database` (a handle from `defineDatabase`), `deps` (typed
- * slots from `port<T>()` that `brick({ deps })` fills, read as `ctx.deps`),
+ * @param options - `database` (a handle from `defineDatabase`), `deps` (the
+ * values the service's code uses, such as clients, read as `ctx.deps`),
  * `context` (adds fields such as the signed-in user to every action's `ctx`),
  * `events` (the event catalog: a payload schema per event name, recorded as
  * `<service>.<name>` and offered as `service.events.<name>`).
@@ -511,18 +514,16 @@ export function defineService<
   TServiceContext extends Record<string, any> = Record<string, any>,
   const TEvents extends EventCatalog = {},
   const TName extends string = string,
-  TPorts extends Ports = {},
+  TDeps extends Record<string, unknown> = {},
 >(
   name: TName,
   options?: ServiceOptions<TServiceContext, TDb> & {
     events?: TEvents;
-    deps?: TPorts;
+    deps?: TDeps;
   },
 ): Service<
   TDb,
-  {} extends TPorts
-    ? TServiceContext
-    : TServiceContext & { deps: DepsOf<TPorts> },
+  {} extends TDeps ? TServiceContext : TServiceContext & { deps: TDeps },
   TEvents
 > &
   NamedService<TName> {

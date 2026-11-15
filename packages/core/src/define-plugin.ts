@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url";
 import type { Static, TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { getTableName, type Table } from "drizzle-orm";
-import type { DepsOf, Ports } from "./deps";
 import { actionMeta } from "./action-meta";
 import { portOf } from "./service-port";
 import type { EventCatalog, EventRef, EventRefs } from "./events/catalog";
@@ -50,13 +49,13 @@ type OptionsOf<O> = O extends TSchema ? Static<O> : {};
  * The context of a plugin's actions, endpoints and hooks: the host's request
  * context, loosely typed, with `deps` set to the plugin's own declared deps.
  */
-export type PluginContext<P extends Ports = {}> = BaseContext<any> &
-  PluginServiceContext<P>;
+export type PluginContext<P extends Record<string, unknown> = {}> =
+  BaseContext<any> & PluginServiceContext<P>;
 /** A plugin's view of its host's service context: loose, except `deps`, which is the plugin's. */
-export type PluginServiceContext<P extends Ports = {}> = {
+export type PluginServiceContext<P extends Record<string, unknown> = {}> = {
   [key: string]: any;
   /** The values passed for the plugin's `deps` when it was installed. */
-  deps: DepsOf<P>;
+  deps: P;
 };
 
 /** What every setup callback receives. */
@@ -65,7 +64,7 @@ export interface PluginSetupContext<
   S,
   T,
   E extends EventCatalog,
-  P extends Ports = {},
+  P extends Record<string, unknown> = {},
 > {
   /** The validated options, defaults filled in. */
   options: O;
@@ -76,7 +75,7 @@ export interface PluginSetupContext<
   /** The plugin's events, as `emitEvent` and `defineListener` take them. */
   events: EventRefs<E>;
   /** The values passed for `deps` when the plugin was installed. */
-  deps: DepsOf<P>;
+  deps: P;
   /** The host service. Actions registered on it read the plugin's deps as `ctx.deps`. */
   service: Service<any, PluginServiceContext<P>>;
   routes: PluginRouteRegistrar<PluginContext<P>>;
@@ -85,18 +84,26 @@ export interface PluginSetupContext<
 }
 
 /** The lifecycle context of `on("start")` and `on("stop")`. */
-export interface PluginLifecycleContext<O, S, P extends Ports = {}> {
+export interface PluginLifecycleContext<
+  O,
+  S,
+  P extends Record<string, unknown> = {},
+> {
   options: O;
   secrets: S;
-  deps: DepsOf<P>;
+  deps: P;
 }
 
 /** What `app` receives: the app-wide part of a plugin. */
-export interface PluginAppContext<O, S, P extends Ports = {}> {
+export interface PluginAppContext<
+  O,
+  S,
+  P extends Record<string, unknown> = {},
+> {
   options: O;
   secrets: S;
   /** The values passed for `deps` when the plugin was installed. */
-  deps: DepsOf<P>;
+  deps: P;
   /**
    * Run when the app starts (`app.start()`, which `listen`, `brick dev` and
    * `brick start` call) in install order, and when it stops in reverse order.
@@ -129,7 +136,7 @@ export interface PluginManifest<
   E extends EventCatalog = {},
   RA extends object = {},
   SA = unknown,
-  P extends Ports = {},
+  P extends Record<string, unknown> = {},
 > {
   /** The npm package name, scoped: `@acme/brick-comments`. */
   name: string;
@@ -143,8 +150,9 @@ export interface PluginManifest<
   /** Secrets it reads, from `defineSecret`. */
   secrets?: S;
   /**
-   * What it needs from the app, declared with `port<T>()`. The user passes the
-   * values when installing: `notify(options, { deps: { mailer } })`. Setup
+   * What it needs from the app, by name, each with a placeholder of its type:
+   * `{ mailer: {} as Mailer }`. Only the names and types are used. The user passes
+   * the values when installing: `notify(options, { deps: { mailer } })`. Setup
    * parts read them as `deps`, the plugin's actions as `ctx.deps`.
    */
   deps?: P;
@@ -219,7 +227,7 @@ export type PluginFactory<
   O extends TSchema | undefined,
   RA extends object,
   SA,
-  P extends Ports = {},
+  P extends Record<string, unknown> = {},
 > = ((
   // shortcut: every option is optional in the type (TypeBox types carry no
   // defaults); a required one without a default fails when installed.
@@ -227,7 +235,7 @@ export type PluginFactory<
     ? [options?: Partial<OptionsOf<O>>, install?: PluginInstallOptions]
     : [
         options: Partial<OptionsOf<O>> | undefined,
-        install: PluginInstallOptions & { deps: DepsOf<P> },
+        install: PluginInstallOptions & { deps: P },
       ]
 ) => PluginInstance<RA, SA>) & { readonly info: PluginInfo };
 
@@ -278,7 +286,7 @@ export function definePlugin<
   const E extends EventCatalog = {},
   RA extends object = {},
   SA = unknown,
-  P extends Ports = {},
+  P extends Record<string, unknown> = {},
 >(
   manifest: PluginManifest<O, S, T, E, RA, SA, P>,
 ): PluginFactory<O, RA, SA, P> {
@@ -467,7 +475,7 @@ export function definePlugin<
         secrets,
         tables,
         events: events as EventRefs<E>,
-        deps: deps as DepsOf<P>,
+        deps: deps as P,
         service: service as never,
         resource: resource as never,
         routes,
@@ -540,17 +548,17 @@ function bindPluginDeps(
   meta.deps = { values: deps, at: ++bindings };
 }
 
-/** Check the deps passed at install against the ports the plugin declares. */
+/** Check the deps passed at install against the names the plugin declares. */
 function checkDeps(
   plugin: string,
   /** The plugin's factory as the user imports it (its camelCase name), for the hint. */
   camelName: string,
-  ports: Ports | undefined,
+  declaredDeps: Record<string, unknown> | undefined,
   given: unknown = {},
 ): Readonly<Record<string, unknown>> {
   if (given === null || typeof given !== "object" || Array.isArray(given))
     throw new Error(`${plugin}: deps must be an object`);
-  const declared = Object.keys(ports ?? {});
+  const declared = Object.keys(declaredDeps ?? {});
   const provided = given as Record<string, unknown>;
   const extra = Object.keys(provided).filter((key) => !declared.includes(key));
   if (extra.length)

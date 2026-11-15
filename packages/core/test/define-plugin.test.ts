@@ -9,7 +9,6 @@ import {
   defineSecret,
   defineService,
   emitEvent,
-  port,
   generateOpenApiSpec,
   getTableName,
   resetGlobalRegistry,
@@ -452,7 +451,7 @@ describe("plugin deps", () => {
   const seen: Record<string, unknown> = {};
   const notify = definePlugin({
     name: "@acme/brick-notify",
-    deps: { mailer: port<Mailer>() },
+    deps: { mailer: {} as Mailer },
     service: ({ service, deps }) => {
       seen.service = deps.mailer;
       service.action({
@@ -492,7 +491,7 @@ describe("plugin deps", () => {
 
   it("gives the plugin's actions the deps passed at install, never the host's", async () => {
     const service = defineService("mail", {
-      deps: { carrier: port<string>() },
+      deps: { carrier: "host" },
     });
     service.action({
       name: "own",
@@ -502,7 +501,6 @@ describe("plugin deps", () => {
     service.use(notify({}, { deps: { mailer: passed } }));
     const app = brick({
       services: [service],
-      deps: { carrier: "host" },
       requestLogging: false,
       docs: false,
     });
@@ -554,12 +552,11 @@ describe("plugin deps", () => {
       },
     });
     const service = defineService("plainhost", {
-      deps: { carrier: port<string>() },
+      deps: { carrier: "host" },
     });
     service.use(plain());
     const app = brick({
       services: [service],
-      deps: { carrier: "host" },
       requestLogging: false,
       docs: false,
     });
@@ -591,7 +588,7 @@ describe("plugin deps", () => {
   it("runs a plugin's sockets with the plugin's deps", async () => {
     const live = definePlugin({
       name: "@acme/live",
-      deps: { mailer: port<Mailer>() },
+      deps: { mailer: {} as Mailer },
       service: ({ service }) => {
         service.socket({
           name: "live",
@@ -606,12 +603,11 @@ describe("plugin deps", () => {
       },
     });
     const service = defineService("livehost", {
-      deps: { carrier: port<string>() },
+      deps: { carrier: "host" },
     });
     service.use(live({}, { deps: { mailer: mailer("plugin") } }));
     const app = brick({
       services: [service],
-      deps: { carrier: "host" },
       requestLogging: false,
       docs: false,
     }).listen(0);
@@ -633,7 +629,7 @@ describe("plugin deps", () => {
   it("gives a host action called with a plugin's ctx the host's deps, even outside brick()", async () => {
     const relay = definePlugin({
       name: "@acme/relay",
-      deps: { mailer: port<Mailer>() },
+      deps: { mailer: {} as Mailer },
       service: ({ service }) => {
         service.action({
           name: "relayOwn",
@@ -655,7 +651,7 @@ describe("plugin deps", () => {
   it("keeps a nested install's deps on its own actions, and the outer's on the rest", async () => {
     const inner = definePlugin({
       name: "@acme/inner",
-      deps: { mailer: port<Mailer>() },
+      deps: { mailer: {} as Mailer },
       service: ({ service }) => {
         service.action({
           name: "innerSend",
@@ -665,7 +661,7 @@ describe("plugin deps", () => {
     });
     const outer = definePlugin({
       name: "@acme/outer",
-      deps: { mailer: port<Mailer>() },
+      deps: { mailer: {} as Mailer },
       service: ({ service }) => {
         service.use(inner({}, { deps: { mailer: mailer("inner") } }));
         service.action({
@@ -688,7 +684,7 @@ describe("plugin deps", () => {
     const shared = defineAction({ name: "shared", execute: () => null });
     const sharing = definePlugin({
       name: "@acme/sharing",
-      deps: { mailer: port<Mailer>() },
+      deps: { mailer: {} as Mailer },
       service: ({ service }) => {
         service.action(shared);
       },

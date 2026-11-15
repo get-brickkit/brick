@@ -15,7 +15,6 @@ import type {
 } from "@sinclair/typebox";
 import type { BunSQLiteDatabase } from "./db/sqlite";
 import type { DatabaseHandle } from "./db/define";
-import type { Ports } from "./deps";
 import type { HttpMethod } from "./http";
 import type { StandardErrorCode } from "./protocol";
 import type { DashboardIdentity } from "./dashboard-identity";
@@ -766,10 +765,11 @@ export interface ServiceOptions<
 > {
   database?: DatabaseHandle<TDb>;
   /**
-   * What the service needs from the app, as typed slots: `{ carrier: port<Carrier>() }`.
-   * `brick({ deps })` provides the values, and actions read them as `ctx.deps`.
+   * The values the service's code uses, such as clients: `{ carrier: createCarrier() }`.
+   * Actions read them as `ctx.deps`, typed from this object. They are created
+   * when the module is imported, so a dep should connect on first use.
    */
-  deps?: Ports;
+  deps?: Record<string, unknown>;
   context?: (
     baseCtx: BaseContext<TDb> & { user?: unknown },
   ) => Promise<TServiceContext> | TServiceContext;

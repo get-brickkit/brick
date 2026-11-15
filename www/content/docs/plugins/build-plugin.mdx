@@ -133,22 +133,24 @@ The `app` part also runs for a plugin installed on a service or resource, once p
 | `requires`  | Plugin names that must already be installed on the same host: `@acme/brick-comments requires @brickkit/crud, installed on resource "page" before it`.                                     |
 | `options`   | A TypeBox schema. Defaults fill what the user leaves out; the values are checked at install, with errors that name the plugin and the option. The factory's parameter type comes from it. |
 | `secrets`   | Secrets from `defineSecret`, so `brick()` checks them at boot and the dashboard and `brick lint` list what the plugin needs.                                                              |
-| `deps`      | What the plugin needs from the app, as `port<T>()` slots. The user passes the values at install. See below.                                                                               |
+| `deps`      | What the plugin needs from the app, by name, with a placeholder of each type. The user passes the values at install. See below.                                                           |
 | `tables`    | Tables the plugin owns. See below.                                                                                                                                                        |
 | `events`    | Events the plugin emits. They join the host's catalog as `<plugin>.<event>`.                                                                                                              |
 | `dashboard` | A dashboard extension module that the dashboard merges with the app's own, in `brick dev` and in production.                                                                              |
 
 ## Dependencies
 
-A plugin declares what it needs from the app with `port<T>()`, the same slots a service's `deps` uses. The user passes the values when installing, in the factory's second argument next to `prefix`:
+A plugin declares what it needs from the app by name, each with a placeholder of its type, such as `{} as Mailer`. Only the names and types are used; the placeholder is never read. The user passes the values when installing, in the factory's second argument next to `prefix`:
 
 ```ts
-import { definePlugin, port, t } from "@brickkit/core";
+import { definePlugin, t } from "@brickkit/core";
+
+type Mailer = { send(to: string): Promise<void> };
 
 export const notify = definePlugin({
   name: "@acme/brick-notify",
   brick: "^0.11.0",
-  deps: { mailer: port<{ send(to: string): Promise<void> }>() },
+  deps: { mailer: {} as Mailer },
   service: ({ service, deps }) => {
     deps.mailer; // typed, in the resource, service and app parts
     service.action({
@@ -167,7 +169,7 @@ orders.use(notify({}, { deps: { mailer: createMailer() } }));
 
 - **Required.** When a plugin declares deps, the install options and every dep in them are required: `notify()` does not compile. A JavaScript caller gets `@acme/brick-notify needs deps.mailer; pass it when installing: notify(options, { deps: { mailer } })`.
 - **Exact.** A key the plugin does not declare is a compile error, and at install `@acme/brick-notify does not declare deps.extra; it takes mailer`. A plugin without `deps` takes none.
-- **`ctx.deps` is the plugin's.** In every action, socket, endpoint and host hook the plugin adds, `ctx.deps` holds exactly the values passed at install, typed by its ports. That includes actions on resources it creates and `crud()` it installs inside its setup. It never holds the host service's `brick({ deps })`; a plugin without deps sees `{}`. Create actions inside the setup: one action object registered by two installs with different deps is refused.
+- **`ctx.deps` is the plugin's.** In every action, socket, endpoint and host hook the plugin adds, `ctx.deps` holds exactly the values passed at install, typed by its declaration. That includes actions on resources it creates and `crud()` it installs inside its setup. It never holds the host service's own deps; a plugin without deps sees `{}`. Create actions inside the setup: one action object registered by two installs with different deps is refused.
 - **Setup and listeners.** Every part receives the values as `deps`, and `on("start")` and `on("stop")` handlers as `context.deps`. `useDeps()` in the `run` of a listener the plugin adds returns them too, and so does `useDeps()` in the steps of a workflow listener it adds.
 - **App plugins.** `brick({ plugins: [notify({}, { deps: { mailer } })] })` takes them the same way.
 

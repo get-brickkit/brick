@@ -4,7 +4,6 @@ import {
   brick,
   defineService,
   defineListener,
-  port,
   t,
   useDeps,
   useService,
@@ -16,8 +15,8 @@ interface Carrier {
 
 // --- deps -------------------------------------------------------------------
 
-const ordersDeps = { carrier: port<Carrier>() };
-const orders = defineService("orders", { deps: ordersDeps });
+declare const carrier: Carrier;
+const orders = defineService("orders", { deps: { carrier } });
 
 orders.action({
   name: "ship",
@@ -47,14 +46,14 @@ defineListener({
   name: "book",
   on: "order.update",
   run: async () => {
-    const carrier: Carrier = useDeps(ordersDeps).carrier;
     const typed: Carrier = useDeps<{ carrier: Carrier }>().carrier;
-    void carrier;
     void typed;
   },
 });
 
-brick({ services: [orders], deps: { carrier: {} as Carrier } });
+brick({ services: [orders] });
+// @ts-expect-error deps moved to defineService
+brick({ services: [orders], deps: { carrier } });
 
 // --- useService ---------------------------------------------------------------
 

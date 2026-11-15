@@ -1,12 +1,11 @@
-import { port } from "@brickkit/core";
 import type { Carrier } from "./carrier";
 
 /**
- * What the orders service needs from the app. `brick({ deps })` provides the
- * values; actions read `ctx.deps`, and the steps of a workflow, which cannot
- * close over the app that started them, read `useDeps(ordersDeps)`.
+ * What the orders service gives its code: `defineService({ deps })` holds the
+ * values, actions read `ctx.deps`, and the steps of a workflow, which cannot
+ * close over the service that started them, read `useDeps<OrdersDeps>()`.
  */
-export const ordersDeps = {
-  db: port<any>(),
-  carrier: port<Carrier>(),
+export type OrdersDeps = {
+  db: any;
+  carrier: Carrier;
 };

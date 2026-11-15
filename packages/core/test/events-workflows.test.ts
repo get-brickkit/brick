@@ -12,7 +12,6 @@ import {
   scheduleTable,
   defineService,
   outboxTable,
-  port,
   syncSchema,
   useDeps,
   type EventsHub,
@@ -325,7 +324,7 @@ describe("workflow listeners", () => {
       (globalThis as any).__readDeps = () => useDeps();
       const sync = definePlugin({
         name: "@acme/sync",
-        deps: { mailer: port<string>() },
+        deps: { mailer: "" },
         app: ({ listeners }) =>
           listeners(
             defineListener({
@@ -336,12 +335,11 @@ describe("workflow listeners", () => {
           ),
       });
       const host = defineService(`wf_plugin_${++serial}`, {
-        deps: { carrier: port<string>() },
+        deps: { carrier: "app" },
       });
       const made = track(
         brick({
           services: [host],
-          deps: { carrier: "app" },
           requestLogging: false,
           docs: false,
           plugins: [sync({}, { deps: { mailer: "plugin" } })],

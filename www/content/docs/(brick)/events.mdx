@@ -276,8 +276,8 @@ export async function fulfilOrder(event: WorkflowEvent<OrderUpdated>) {
 
 async function bookCarrier(orderId: string) {
   "use step";
-  // A step cannot close over the app; useDeps() returns the deps of the app running it.
-  return useDeps(ordersDeps).carrier.book(orderId);
+  // A step cannot close over its service; useDeps() returns the deps of the app's services.
+  return useDeps<{ carrier: Carrier }>().carrier.book(orderId);
 }
 ```
 
@@ -299,7 +299,7 @@ export default brick({
 });
 ```
 
-Listeners and steps read what they need, such as the carrier, with `useDeps()`; the app provides it in `brick({ deps })`. See [Dependencies](/docs/dependencies).
+Listeners and steps read what they need, such as the carrier, with `useDeps()`; the service holds it in `defineService({ deps })`. See [Dependencies](/docs/dependencies).
 
 `brick dev` and `brick start` do the rest. Before the app loads they make the `"use workflow"` and `"use step"` files load as workflows and steps, and before events start they build the workflow bundle into `.well-known/workflow/v1` (add it to `.gitignore`). On a reload of `brick dev` the bundle is kept when nothing it was built from has changed (the workflow and step files, what they import, `package.json`, the lockfile, `tsconfig.json`), so editing a route costs nothing; adding or removing a source file, or giving one a `"use workflow"` or `"use step"` directive, rebuilds it. `brick start` and `brick build` always build. The world starts with the app's events and closes when they stop.
 
@@ -311,7 +311,7 @@ Your steps run in your app, as the same module instances the rest of the app use
 
 A process that only records events (`dispatch: false`) does not start the world. A process that delivers does, and it also runs the steps and replays of every run in the world, including runs another process started.
 
-A [plugin](/docs/plugins/build-plugin#lifecycle-middleware-and-listeners) can add a workflow listener too. `useDeps()` in that workflow's steps returns the plugin's deps, not the app's. One workflow can't be run by both an app listener and a plugin listener, or by two installs of a plugin with different deps: its steps could see only one set, so the world refuses to start.
+A [plugin](/docs/plugins/build-plugin#lifecycle-middleware-and-listeners) can add a workflow listener too. `useDeps()` in that workflow's steps returns the plugin's deps, not the services'. One workflow can't be run by both an app listener and a plugin listener, or by two installs of a plugin with different deps: its steps could see only one set, so the world refuses to start.
 
 ### Typed errors in steps
 
@@ -348,7 +348,7 @@ export async function fulfilOrder(event: WorkflowEvent<Shipped>) {
 
 async function bookCarrier(orderId: string) {
   "use step";
-  const booking = await useDeps(ordersDeps).carrier.book(orderId);
+  const booking = await useDeps<{ carrier: Carrier }>().carrier.book(orderId);
   if (!booking.ok)
     error.CARRIER_REJECTED(undefined, { reason: booking.reason });
 }

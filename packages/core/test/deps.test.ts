@@ -7,7 +7,6 @@ import {
   definePlugin,
   defineService,
   outboxTable,
-  port,
   resetGlobalRegistry,
   syncSchema,
   t,
@@ -31,8 +30,8 @@ afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.events?.stop()));
 });
 
-function ordersService(name: string) {
-  const service = defineService(name, { deps: { carrier: port<Carrier>() } });
+function ordersService(name: string, prefix = "trk") {
+  const service = defineService(name, { deps: { carrier: carrier(prefix) } });
   service.action({
     name: "ship",
     input: t.Object({ id: t.String() }),
@@ -47,14 +46,13 @@ function ordersService(name: string) {
 const call = async (app: BrickApp, path: string, body: unknown) =>
   ((await (await postJson(app, path, body)).json()) as any).tracking;
 
-describe("declared deps", () => {
-  it("gives actions the app's deps as ctx.deps", async () => {
+describe("service deps", () => {
+  it("gives actions the service's deps as ctx.deps", async () => {
     const { client, cleanup } = createTestApp(() => {
       const orders = ordersService("orders");
       const ship = orders.getAction("ship")!;
       return {
         services: [orders],
-        deps: { carrier: carrier("trk") },
         docs: false,
         contract: { orders: { ship } },
       };
@@ -67,18 +65,17 @@ describe("declared deps", () => {
 
   it("gives the service's context hook its deps, over HTTP and in-process alike", async () => {
     const seen: unknown[] = [];
+    const booked = carrier("trk");
     const orders = defineService("hooked", {
-      deps: { carrier: port<Carrier>() },
+      deps: { carrier: booked },
       context: (ctx: any) => {
         seen.push(ctx.deps?.carrier);
         return {};
       },
     });
     orders.action({ name: "ping", execute: () => ({ tracking: "ok" }) });
-    const booked = carrier("trk");
     const app = brick({
       services: [orders],
-      deps: { carrier: booked },
       requestLogging: false,
       docs: false,
     });
@@ -87,29 +84,22 @@ describe("declared deps", () => {
     expect(seen).toEqual([booked, booked]);
   });
 
-  it("fails at brick() when a dep is missing or extra", () => {
+  it("refuses brick({ deps }) and names where the values go now", () => {
     const orders = ordersService("orders");
-    expect(() => brick({ services: [orders], docs: false })).toThrow(
-      'service "orders" declares dep "carrier", but brick({ deps }) does not provide it',
-    );
     expect(() =>
-      brick({
-        services: [orders],
-        deps: { carrier: carrier("a"), mailer: {} },
-        docs: false,
-      }),
-    ).toThrow('brick({ deps }) provides "mailer", but no service declares it');
+      brick({ services: [orders], deps: { carrier: carrier("a") } } as any),
+    ).toThrow(
+      "brick({ deps }) was removed in 0.16. Move each value into the service that uses it: defineService(name, { deps: { ... } })",
+    );
   });
 
-  it("keeps the deps of two apps in one process apart", async () => {
+  it("keeps the deps of two services in one process apart", async () => {
     const first = createTestApp({
-      services: [ordersService("ordersA")],
-      deps: { carrier: carrier("a") },
+      services: [ordersService("ordersA", "a")],
       docs: false,
     });
     const second = createTestApp({
-      services: [ordersService("ordersB")],
-      deps: { carrier: carrier("b") },
+      services: [ordersService("ordersB", "b")],
       docs: false,
     });
     expect(await call(first.app, "/api/orders-a/ship", { id: "1" })).toBe(
@@ -120,15 +110,50 @@ describe("declared deps", () => {
     );
   });
 
-  it("lets a unit test pass fakes to an action directly", async () => {
-    const orders = ordersService("orders");
-    const ship = orders.getAction("ship")!;
+  it("lets a unit test replace one dep when calling an action directly", async () => {
+    const orders = defineService("orders", {
+      deps: { carrier: carrier("real"), label: "kept" },
+    });
+    const ship = orders.action({
+      name: "ship",
+      input: t.Object({ id: t.String() }),
+      execute: ({ input, ctx }) =>
+        `${ctx.deps.label} ${ctx.deps.carrier.book(input.id)}`,
+    });
     expect(
       await ship.execute({
         input: { id: "o1" },
         ctx: { deps: { carrier: carrier("fake") } } as any,
       }),
-    ).toEqual({ tracking: "fake_o1" });
+    ).toBe("kept fake_o1");
+    expect(await ship.run({ id: "o1" })).toBe("kept real_o1");
+  });
+
+  it("runs a call to another service with that service's deps, never the caller's", async () => {
+    const billing = defineService("billing", {
+      deps: { carrier: carrier("billing") },
+    });
+    billing.action({
+      name: "book",
+      execute: ({ ctx }) => ctx.deps.carrier.book("x"),
+    });
+    const orders = defineService("orders", {
+      deps: { carrier: carrier("orders") },
+    });
+    const ship = orders.action({
+      name: "ship",
+      execute: async ({ ctx }) => {
+        const viaService = await useService(billing).book({});
+        // A context this service resolved, handed straight to the other's action.
+        const direct = await billing.getAction("book")!.execute({ ctx });
+        return [viaService, direct];
+      },
+    });
+    expect(
+      await ship.execute({
+        ctx: { deps: { carrier: carrier("fake") } } as any,
+      }),
+    ).toEqual(["billing_x", "billing_x"]);
   });
 
   it("gives listeners the deps of their own app through useDeps()", async () => {
@@ -143,11 +168,10 @@ describe("declared deps", () => {
       syncSchema([items, outbox], database.getDb() as any);
       const service = defineService(name, {
         database,
-        deps: { carrier: port<Carrier>() },
+        deps: { carrier: carrier(prefix) },
       });
       const app = brick({
         services: [service],
-        deps: { carrier: carrier(prefix) },
         events: {
           listeners: [
             defineListener({
@@ -178,6 +202,49 @@ describe("declared deps", () => {
       await app.events!.drain();
     }
     expect(seen).toEqual(["a_x", "b_x"]);
+  });
+
+  it("makes useDeps() throw on a name two services give different values", async () => {
+    const outbox = outboxTable("sqlite");
+    const database = defineDatabase({ tables: { outbox } });
+    syncSchema([outbox], database.getDb() as any);
+    const shared = carrier("s");
+    const first = defineService("first", {
+      database,
+      deps: { carrier: carrier("a"), shared },
+    });
+    const second = defineService("second", {
+      deps: { carrier: carrier("b"), shared },
+    });
+    const seen: unknown[] = [];
+    const app = brick({
+      services: [first, second],
+      events: {
+        listeners: [
+          defineListener({
+            name: "read",
+            on: "ping",
+            run: () => {
+              const deps = useDeps<{ carrier: Carrier; shared: Carrier }>();
+              seen.push(deps.shared);
+              seen.push(() => deps.carrier);
+            },
+          }),
+        ],
+        dispatch: { timer: false },
+      },
+      requestLogging: false,
+      docs: false,
+    });
+    apps.push(app);
+    await first.recorder!.transaction(database.getDb(), {}, (_tx, record) =>
+      record("ping", {}),
+    );
+    await app.events!.drain();
+    expect(seen[0]).toBe(shared);
+    expect(seen[1] as () => unknown).toThrow(
+      'useDeps().carrier is ambiguous: services "first" and "second" both declare dep "carrier" with different values',
+    );
   });
 
   it("says where useDeps() works when called outside an app", () => {
@@ -254,13 +321,13 @@ describe("plugins with deps", () => {
     syncSchema([items, outbox], database.getDb() as any);
     const service = defineService("shipping", {
       database,
-      deps: { carrier: port<Carrier>() },
+      deps: { carrier: carrier("host") },
     });
     const item = service.resource({ name: "item", table: items, id: items.id });
     const seen: string[] = [];
     const tracking = definePlugin({
       name: "@acme/tracking",
-      deps: { carrier: port<Carrier>() },
+      deps: { carrier: {} as Carrier },
       resource: ({ routes }) => ({
         tracking: {
           book: routes.action({
@@ -288,7 +355,6 @@ describe("plugins with deps", () => {
     item.use(tracking({}, { deps: { carrier: carrier("p") } }));
     const app = brick({
       services: [service],
-      deps: { carrier: carrier("host") },
       events: { dispatch: { timer: false } },
       requestLogging: false,
       docs: false,

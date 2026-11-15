@@ -74,11 +74,11 @@ export const ordersService = defineService("orders", {
 
 ### Service Options Table
 
-| Option     | Type                                        | Description                                                                                                            |
-| :--------- | :------------------------------------------ | :--------------------------------------------------------------------------------------------------------------------- |
-| `database` | `DatabaseHandle`                            | Database handle created via `defineDatabase()`. Accessible in actions as `ctx.db`.                                     |
-| `context`  | `(baseCtx: BaseContext) => Promise<T> \| T` | Context resolver function. Injects user, session, or tenant properties into every action.                              |
-| `deps`     | `Record<string, Port>`                      | Typed slots from `port<T>()` that `brick({ deps })` fills. Read as `ctx.deps`. See [Dependencies](/docs/dependencies). |
+| Option     | Type                                        | Description                                                                                                                              |
+| :--------- | :------------------------------------------ | :--------------------------------------------------------------------------------------------------------------------------------------- |
+| `database` | `DatabaseHandle`                            | Database handle created via `defineDatabase()`. Accessible in actions as `ctx.db`.                                                       |
+| `context`  | `(baseCtx: BaseContext) => Promise<T> \| T` | Context resolver function. Injects user, session, or tenant properties into every action.                                                |
+| `deps`     | `Record<string, unknown>`                   | The values the service's code uses, such as clients. Read as `ctx.deps`, typed from this object. See [Dependencies](/docs/dependencies). |
 
 ### Duplicate names
 
