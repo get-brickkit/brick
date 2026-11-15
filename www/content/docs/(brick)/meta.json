@@ -21,6 +21,7 @@
     "commands",
     "routes",
     "access-control",
+    "rate-limits",
     "validation-and-errors",
     "hooks",
     "events",

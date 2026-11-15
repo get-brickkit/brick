@@ -39,6 +39,7 @@ import {
   resolvedDeps,
 } from "./context";
 import { brickDeps, depsOverride } from "./deps";
+import { checkRateLimits, rateLimitsOf } from "./rate-limit";
 import type { NamedService } from "./rpc";
 import { defineServiceSocket } from "./socket";
 import type {
@@ -168,6 +169,12 @@ export class ServiceImpl<
       const resource = info?.record && this.resources.get(info.resource);
       if (resource) checkRecordAccess(resource, info);
     }
+    for (const action of [...this.actions.values(), ...this.tools.values()])
+      checkRateLimits(
+        this,
+        action,
+        actionMeta(action).deps?.values ?? this.deps,
+      );
     this._isBuilt = true;
     return this;
   }
@@ -383,6 +390,12 @@ export class ServiceImpl<
           hasScope: access.hasScope,
           accessPolicy: access.policy,
           errors: act.config.errors,
+          ...(act.config.rateLimit && {
+            rateLimit: rateLimitsOf(act.config)!.map(({ max, windowMs }) => ({
+              max,
+              windowMs,
+            })),
+          }),
           emits: act.config.emits,
           tags: act.config.tags,
         };

@@ -108,7 +108,7 @@ live.send('say',42);
 live.send('message',{text:'x'});
 // @ts-expect-error Unknown output
 live.on('say',()=>{});
-live.onHandlerError(e=>{const code:'TOO_LONG'|'FORBIDDEN'|'BAD_REQUEST'|'UNAUTHORIZED'|'NOT_FOUND'|'CONFLICT'|'INTERNAL_SERVER_ERROR'=e.code;const event:'say'=e.event;void [code,event];});
+live.onHandlerError(e=>{const code:'TOO_LONG'|'FORBIDDEN'|'BAD_REQUEST'|'UNAUTHORIZED'|'NOT_FOUND'|'CONFLICT'|'RATE_LIMITED'|'INTERNAL_SERVER_ERROR'=e.code;const event:'say'=e.event;void [code,event];});
 `,
     );
     await Bun.write(

@@ -45,6 +45,7 @@ import { corsHook, type CorsOptions } from "./cors";
 import { useStorages } from "./storage";
 import { portOf } from "./service-port";
 import { bodyLimitParser } from "./compiler/runtime";
+import { APP_CLIENT_IP, type ClientIp } from "./rate-limit";
 
 export interface CreateServerOptions {
   port?: number;
@@ -118,6 +119,15 @@ export interface CreateServerOptions {
    * Other origins get no `Access-Control-Allow-Origin`. Preflights are answered.
    */
   cors?: false | CorsOptions;
+  /**
+   * Where the client address is, for `rateLimit: { per: "ip" }`. By default it
+   * is the socket peer; behind a proxy, read the header your proxy sets. Brick
+   * never reads `X-Forwarded-For` or any other header itself.
+   *
+   * @example
+   * clientIp: ({ request, peer }) => request.headers.get("fly-client-ip") ?? peer,
+   */
+  clientIp?: ClientIp;
 }
 
 /**
@@ -396,7 +406,19 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     );
   }
   const mountedRoutes: RouteIR[] = [];
+  const { clientIp } = options;
   for (const route of compilation.routes) {
+    // Only a rate-limited route reads the client address.
+    const handler =
+      clientIp &&
+      portOf(byName.get(route.ir.service) as Service)?.getAction(
+        route.ir.action,
+      )?.config.rateLimit
+        ? (context: any) => {
+            context[APP_CLIENT_IP] = clientIp;
+            return route.handler(context);
+          }
+        : route.handler;
     const invoke = (context: any) => {
       const result = telemetry
         ? withSpan(
@@ -405,9 +427,9 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
               [ATTR.service]: route.ir.service,
               [ATTR.action]: route.ir.action,
             },
-            () => route.handler(context),
+            () => handler(context),
           )
-        : route.handler(context);
+        : handler(context);
       return result &&
         typeof (result as PromiseLike<unknown>).then === "function"
         ? Promise.resolve(result).then(jsonActionResult)

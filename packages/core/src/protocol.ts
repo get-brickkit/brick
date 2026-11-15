@@ -13,6 +13,7 @@ export const STANDARD_ERRORS = {
   FORBIDDEN: { status: 403, message: "Forbidden" },
   NOT_FOUND: { status: 404, message: "Not Found" },
   CONFLICT: { status: 409, message: "Conflict" },
+  RATE_LIMITED: { status: 429, message: "Too Many Requests" },
   INTERNAL_SERVER_ERROR: { status: 500, message: "Internal Server Error" },
 } as const;
 

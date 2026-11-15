@@ -105,6 +105,7 @@ The `error` helper is passed to `execute({ input, ctx, error })` and to every CR
 | `error.FORBIDDEN(msg?, details?)`             | `403`       | `FORBIDDEN`             | `"Forbidden"`             |
 | `error.NOT_FOUND(msg?, details?)`             | `404`       | `NOT_FOUND`             | `"Not Found"`             |
 | `error.CONFLICT(msg?, details?)`              | `409`       | `CONFLICT`              | `"Conflict"`              |
+| `error.RATE_LIMITED(msg?, details?)`          | `429`       | `RATE_LIMITED`          | `"Too Many Requests"`     |
 | `error.INTERNAL_SERVER_ERROR(msg?, details?)` | `500`       | `INTERNAL_SERVER_ERROR` | `"Internal Server Error"` |
 
 When an action's `authorize()` returns `false`, Brick throws `ActionExecutionError` with code `"UNAUTHORIZED"` and status `403` (not 401). CRUD access denial uses code `"FORBIDDEN"` with status `403`.

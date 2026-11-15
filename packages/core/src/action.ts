@@ -14,6 +14,7 @@ import { validateWithSchema } from "./typebox";
 import { actionMeta } from "./action-meta";
 import { baseContext } from "./context";
 import { invalid, runStages, type Stages } from "./compiler/runtime";
+import { enforceRateLimits, rateLimitsOf } from "./rate-limit";
 
 /**
  * The `error` helpers an action receives: one function per error code that
@@ -164,6 +165,7 @@ export function defineAction(config: any): any {
     return actionFn.execute({ input, ctx });
   };
 
+  const limits = rateLimitsOf(config);
   const stages: Stages = {
     name: config.name,
     dashboardOnly: config.dashboard === true,
@@ -172,6 +174,16 @@ export function defineAction(config: any): any {
       const checked = actionFn.validateInput(input);
       if (!checked.success) throw invalid(config.name, "input", checked.errors);
     },
+    rateLimit:
+      limits &&
+      ((input, ctx) =>
+        enforceRateLimits(
+          actionMeta(actionFn).service,
+          config.name,
+          limits,
+          input,
+          ctx,
+        )),
     authorize: config.authorize,
     execute: config.execute,
     errorBuilder: errorHelpers,

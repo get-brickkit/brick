@@ -594,6 +594,28 @@ export const checkRules: Record<string, Rule> = {
     },
   ),
 
+  "public-rate-limit": rule(
+    "Public actions, commands and tools declare rateLimit.",
+    (context) => {
+      if (skip(context)) return {};
+      return {
+        CallExpression(node: Node) {
+          const definition = definitionOf(node);
+          if (!definition || !HANDLERS.includes(definition.kind)) return;
+          const access = getProperty(definition.config, "access")?.value;
+          const isPublic =
+            !getProperty(definition.config, "authorize") &&
+            (!access || stringValue(access) === "public");
+          if (isPublic && !getProperty(definition.config, "rateLimit"))
+            context.report({
+              node: definition.nameNode ?? node,
+              message: `Anyone can call this ${definition.kind} as often as they like; add rateLimit: { per: "ip", max, windowMs }, or authorize.`,
+            });
+        },
+      };
+    },
+  ),
+
   "socket-authorize": rule("Sockets declare authorize and join.", (context) => {
     if (skip(context)) return {};
     return {

@@ -38,6 +38,7 @@ const RECOMMENDED: Record<string, Severity> = {
   "no-unregistered-format": "error",
   "no-floating-calls": "error",
   "explicit-access": "error",
+  "public-rate-limit": "warn",
   "socket-authorize": "error",
   "no-wildcard-origins": "error",
 };

@@ -402,6 +402,18 @@ const CASES: Record<string, Case[]> = {
       errors: 4,
     },
   ],
+  "public-rate-limit": [
+    {
+      file: "src/a.ts",
+      code: `s.action({ name: "a", authorize: () => true });\ns.action({ name: "b", rateLimit: { per: "ip", max: 5, windowMs: 60_000 } });\nr.action({ name: "c", record: true, access: { scope } });\nr.command("d", { access: "public", rateLimit: [] });\ns.tool({ name: "e", authorize: () => true });\n`,
+      errors: 0,
+    },
+    {
+      file: "src/b.ts",
+      code: `s.action({ name: "a" });\ns.action({ name: "b", access: "public" });\nr.command("d", { access: "public" });\ns.tool({ name: "e" });\n`,
+      errors: 4,
+    },
+  ],
   "socket-authorize": [
     {
       file: "src/a.ts",
