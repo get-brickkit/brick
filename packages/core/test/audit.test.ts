@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { readFileSync } from "node:fs";
 import { eq, sql } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
@@ -7,6 +7,8 @@ import {
   auditTable,
   brick,
   compileBrickApplication,
+  createMcpHandler,
+  createMcpRegistry,
   defineDatabase,
   defineService,
   recordAudit,
@@ -288,6 +290,39 @@ describe("a plain action is recorded", () => {
     }
   });
 
+  it("logs the complete row, and no input or output, when the audit insert fails", async () => {
+    const { rename, sqlite } = withRename();
+    sqlite.run("DROP TABLE brick_audit");
+    const error = mock(() => {});
+    const logger = { info() {}, warn() {}, debug() {}, error };
+    await rename.run(
+      { id: 1, body: "TOP-SECRET" },
+      as("u1", { logger, traceId: "tr_1", requestId: "rq_1" }),
+    );
+    expect(error).toHaveBeenCalledTimes(1);
+    const [, row, cause] = error.mock.calls[0] as unknown as [
+      string,
+      object,
+      unknown,
+    ];
+    expect(row).toEqual({
+      id: expect.any(String),
+      at: expect.any(Date),
+      service: "notes",
+      action: "rename",
+      resource: "note",
+      recordId: "1",
+      actorId: "u1",
+      actorLabel: "u1@example.com",
+      tenant: "acme",
+      traceId: "tr_1",
+      requestId: "rq_1",
+      meta: null,
+    });
+    expect(cause).toBeInstanceOf(Error);
+    expect(JSON.stringify(row)).not.toContain("TOP-SECRET");
+  });
+
   it("records anonymous calls with null actor, label and tenant", async () => {
     const { rename, rows } = withRename();
     await rename.run({ id: 1, body: "x" }, as());
@@ -322,6 +357,96 @@ describe("a plain action is recorded", () => {
     expect(JSON.stringify(row)).not.toContain("wrong");
   });
 
+  it("takes the actor from identity alone: a ctx.user is not a fallback", async () => {
+    const { service, rows } = fixture({ context: false });
+    const act = service.action({ name: "act", execute: () => "ok" });
+    // The hook says anonymous; the caller's `user` must not stand in.
+    await act.run(undefined, { user: { id: "wrong" } } as never);
+    expect(rows()).toEqual([
+      expect.objectContaining({
+        actorId: null,
+        actorLabel: null,
+        tenant: null,
+      }),
+    ]);
+  });
+
+  it("resolves the actor before the action runs, once", async () => {
+    const order: string[] = [];
+    const database = defineDatabase({ tables: { auditLog } });
+    syncSchema([auditLog], database.getDb() as any);
+    const service = defineService("early", {
+      database,
+      identity: () => {
+        order.push("identity");
+        return { id: "u1" };
+      },
+    });
+    const act = service.action({
+      name: "act",
+      execute: () => {
+        order.push("execute");
+      },
+    });
+    await act.run(undefined, {} as never);
+    expect(order).toEqual(["identity", "execute"]);
+  });
+
+  it("records a service whose database is set after it was made", async () => {
+    const service = defineService("late", {
+      identity: () => ({ id: "u1" }),
+    });
+    const act = service.action({ name: "act", execute: () => "ok" });
+    const database = defineDatabase({ tables: { auditLog } });
+    syncSchema([auditLog], database.getDb() as any);
+    (service as any).setDb(database);
+    await act.run(undefined, {} as never);
+    expect(
+      (database.getDb() as any)
+        .select()
+        .from(auditLog)
+        .all()
+        .map((row: any) => row.action),
+    ).toEqual(["act"]);
+  });
+
+  it("records an MCP tool call, and not a tool with audit: false", async () => {
+    const { service, rows } = fixture();
+    service.tool({
+      name: "lookup",
+      input: t.Object({}),
+      execute: () => "x",
+    });
+    service.tool({
+      name: "quiet",
+      input: t.Object({}),
+      audit: false,
+      execute: () => "x",
+    });
+    const mounted = createMcpHandler({
+      registry: createMcpRegistry({ services: [service] }),
+      serverInfo: { name: "t", version: "1" },
+    });
+    for (const name of ["lookup", "quiet"]) {
+      const response = await mounted(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-session": "u1" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: { name, arguments: {} },
+          }),
+        }),
+      );
+      expect(((await response.json()) as any).result.isError).not.toBe(true);
+    }
+    expect(rows()).toEqual([
+      expect.objectContaining({ action: "lookup", actorId: "u1" }),
+    ]);
+  });
+
   it("copies no input or output into the row", async () => {
     const { service, rows } = fixture();
     const act = service.action({
@@ -334,6 +459,47 @@ describe("a plain action is recorded", () => {
     const text = JSON.stringify(rows());
     expect(text).not.toContain("TOP-SECRET");
     expect(rows()[0].meta).toBeNull();
+  });
+
+  it("is written through the transaction queue: a rollback elsewhere does not take its row, nor a recordAudit without tx", async () => {
+    const { service, rows, db } = fixture();
+    const act = service.action({ name: "act", execute: () => "ok" });
+    const manual = service.action({
+      name: "manual",
+      execute: ({ ctx }) => recordAudit(ctx, { action: "by-hand" }),
+    });
+    let fail!: () => void;
+    const gate = new Promise<void>((_, reject) => (fail = reject));
+    // Another request's transaction, open while the action returns, then rolled back.
+    const other = runInTransaction(db, async () => gate).catch(() => {});
+    await Promise.resolve();
+    const running = [act, manual].map((one) => one.run(undefined, as("u1")));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    fail();
+    await Promise.all([...running, other]);
+    expect(
+      rows()
+        .map((row) => row.action)
+        .sort(),
+    ).toEqual(["act", "by-hand", "manual"]);
+  });
+
+  it("does not deadlock when the action is called inside a transaction, and rolls back with it", async () => {
+    const { service, rows } = fixture();
+    const inner = service.action({ name: "inner", execute: () => "in" });
+    const outer = service.action({
+      name: "outer",
+      input: t.Object({ fail: t.Boolean() }),
+      execute: ({ input, ctx }) =>
+        runInTransaction(ctx.db, async () => {
+          await inner.run(undefined, ctx);
+          if (input.fail) throw new Error("rolled back");
+        }),
+    });
+    await outer.run({ fail: false }, as("u1"));
+    expect(rows().map((row) => row.action)).toEqual(["inner", "outer"]);
+    await expect(outer.run({ fail: true }, as("u1"))).rejects.toThrow();
+    expect(rows()).toHaveLength(2);
   });
 
   it("gives each nested call its own row, with one trace id", async () => {
@@ -448,6 +614,67 @@ describe("recordAudit", () => {
     });
     await outer.run(undefined, as("u1"));
     expect(made.rows().map((row) => row.action)).toEqual(["inner", "outer"]);
+  });
+
+  it("with a tx that rolls back leaves the automatic row to Brick", async () => {
+    const made = fixture();
+    made.db.insert(notes).values({ body: "b" }).run();
+    const act = made.service.action({
+      name: "refund",
+      execute: async ({ ctx }) => {
+        await runInTransaction(ctx.db, async (tx) => {
+          await recordAudit(
+            ctx,
+            { recordId: 1, meta: { forged: true } },
+            { tx },
+          );
+          throw new Error("rolled back");
+        }).catch(() => {});
+        // The action carries on, changes data anyway, and returns.
+        await ctx.db.update(notes).set({ status: "refunded" });
+      },
+    });
+    await act.run(undefined, as("u1"));
+    expect(made.rows()).toEqual([
+      expect.objectContaining({ action: "refund", meta: null, actorId: "u1" }),
+    ]);
+    expect(status(made)).toBe("refunded");
+  });
+
+  it("with a tx of a savepoint that rolls back, but an outer commit, leaves the automatic row to Brick", async () => {
+    const made = fixture();
+    const act = made.service.action({
+      name: "refund",
+      execute: async ({ ctx }) => {
+        await runInTransaction(ctx.db, async (outer) => {
+          await runInTransaction(outer, async (inner) => {
+            await recordAudit(ctx, { recordId: 1 }, { tx: inner });
+            throw new Error("savepoint rolled back");
+          }).catch(() => {});
+        });
+      },
+    });
+    await act.run(undefined, as("u1"));
+    expect(made.rows().map((row) => row.action)).toEqual(["refund"]);
+    expect(made.rows()[0].recordId).toBeNull();
+  });
+
+  it("without tx, inside a transaction, joins it instead of waiting for it", async () => {
+    const made = fixture();
+    const act = made.service.action({
+      name: "act",
+      execute: async ({ ctx }) => {
+        await runInTransaction(ctx.db, async () => {
+          await recordAudit(ctx, { action: "inside" });
+        });
+        await runInTransaction(ctx.db, async () => {
+          await recordAudit(ctx, { action: "undone" });
+          throw new Error("rolled back");
+        }).catch(() => {});
+      },
+    });
+    await act.run(undefined, as("u1"));
+    expect(made.rows().map((row) => row.action)).toEqual(["inside", "act"]);
   });
 
   it("needs an action name where no recorded action is running, and a service with an audit table", async () => {
@@ -702,7 +929,7 @@ describe("the append-only triggers in the docs", () => {
       new RegExp('```sql title="' + title + '"\\n([\\s\\S]*?)```'),
     )?.[1];
 
-  it("refuse UPDATE and DELETE on SQLite and leave inserts alone", async () => {
+  it("refuse UPDATE, DELETE and a replacing INSERT on SQLite and leave inserts alone", async () => {
     const made = fixture();
     const trigger = block("SQLite");
     expect(trigger).toBeString();
@@ -721,6 +948,13 @@ describe("the append-only triggers in the docs", () => {
     expect(() =>
       made.sqlite.run("DELETE FROM brick_audit WHERE seq = 1"),
     ).toThrow(/append-only/);
+    // A replacing insert is refused too, by seq or by id.
+    for (const statement of [
+      "INSERT OR REPLACE INTO brick_audit (seq, id, at, service, action) VALUES (1, 'forged', 0, 's', 'a')",
+      "INSERT OR REPLACE INTO brick_audit (id, at, service, action) SELECT id, 0, 's', 'a' FROM brick_audit WHERE seq = 1",
+      "INSERT INTO brick_audit (seq, id, at, service, action) VALUES (1, 'x', 0, 's', 'a') ON CONFLICT (seq) DO UPDATE SET action = 'forged'",
+    ])
+      expect(() => made.sqlite.run(statement)).toThrow(/append-only/);
     expect(made.rows().map((row) => row.actorId)).toEqual(["u1", "u1"]);
     await act.run(undefined, as("u1"));
     expect(made.rows()).toHaveLength(3);

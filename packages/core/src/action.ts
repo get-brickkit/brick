@@ -15,7 +15,7 @@ import { actionMeta } from "./action-meta";
 import { baseContext } from "./context";
 import { invalid, runStages, type Stages } from "./compiler/runtime";
 import { enforceRateLimits, rateLimitsOf } from "./rate-limit";
-import { auditStage } from "./audit";
+import { auditStage, type AuditStage, type AuditTable } from "./audit";
 
 /**
  * The `error` helpers an action receives: one function per error code that
@@ -198,6 +198,7 @@ export function defineAction(config: any): any {
     },
   };
 
+  let audited: { table?: AuditTable; stage?: AuditStage } | undefined;
   actionFn.execute = async (params: { input?: any; ctx?: any }) => {
     const meta = actionMeta(actionFn);
     // The registered service resolves the context once per request, and
@@ -206,7 +207,14 @@ export function defineAction(config: any): any {
       ? await meta.service.resolveContext(params?.ctx, meta.deps?.values)
       : { ...baseContext(params?.ctx ?? {}), ...params?.ctx };
     try {
-      const audit = meta.service && auditStage(meta.service, actionFn);
+      // Worked out once per audit table: a service without one pays a field read.
+      const table = meta.service?.getAuditTable();
+      if (table !== audited?.table)
+        audited = {
+          table,
+          stage: meta.service && auditStage(meta.service, actionFn),
+        };
+      const audit = audited?.stage;
       return await runStages(
         audit ? { ...stages, audit } : stages,
         params?.input,

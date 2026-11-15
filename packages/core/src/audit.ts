@@ -13,6 +13,7 @@ import {
 } from "drizzle-orm/sqlite-core";
 import { actionMeta } from "./action-meta";
 import { serviceOf } from "./context";
+import { onTransactionCommit, runInTransaction } from "./events/transaction";
 import { identityOf } from "./identity";
 import { actionMethod } from "./routes";
 import { portOf, type ServicePort } from "./service-port";
@@ -155,7 +156,7 @@ export function auditStage(
 
 interface Call {
   readonly audit: AuditStage;
-  /** The action recorded itself with `recordAudit(…, { tx })`, so Brick does not. */
+  /** The action recorded itself with `recordAudit(…, { tx })` and `tx` committed, so Brick does not. */
   written: boolean;
 }
 /** The audited call being run. Global so a second core copy finds it. */
@@ -179,15 +180,14 @@ function recordIdText(id: unknown): string | null {
   return JSON.stringify(id) ?? null;
 }
 
-/** Inserts a row through `handle`: a transaction, or the database. */
-async function writeAudit(
-  handle: any,
+/** The row of one change: the entry, the actor and the trace. */
+async function auditRow(
   ctx: { traceId?: string; requestId?: string },
-  target: Pick<AuditStage, "service" | "table">,
+  target: Pick<AuditStage, "service">,
   entry: Entry,
-): Promise<void> {
+) {
   const who = await identityOf(ctx);
-  await handle.insert(target.table).values({
+  return {
     id: crypto.randomUUID(),
     at: new Date(),
     service: target.service.name,
@@ -200,7 +200,17 @@ async function writeAudit(
     traceId: ctx.traceId ?? null,
     requestId: ctx.requestId ?? null,
     meta: entry.meta ?? null,
-  });
+  };
+}
+
+/** Inserts a row through `handle`: a transaction, or the database. */
+async function writeAudit(
+  handle: any,
+  ctx: { traceId?: string; requestId?: string },
+  target: Pick<AuditStage, "service" | "table">,
+  entry: Entry,
+): Promise<void> {
+  await handle.insert(target.table).values(await auditRow(ctx, target, entry));
 }
 
 /**
@@ -218,16 +228,23 @@ export async function runAudited(
   await identityOf(ctx);
   const call: Call = { audit, written: false };
   const result = await calls.run(call, run);
-  if (!audit.inline && !call.written)
+  if (!audit.inline && !call.written) {
+    let row: Awaited<ReturnType<typeof auditRow>> | undefined;
     try {
-      await writeAudit(ctx.db, ctx, audit, entryOf(audit, input, result));
+      row = await auditRow(ctx, audit, entryOf(audit, input, result));
+      // Through the transaction queue: on SQLite a bare insert joins whatever transaction is open, and goes with its rollback.
+      await runInTransaction(ctx.db, (tx) =>
+        tx.insert(audit.table).values(row),
+      );
     } catch (error) {
-      // The action's effects are done: say so, and keep its result.
+      // The action's effects are done: keep its result, and log the whole row so it can be rebuilt.
       ctx.logger?.error?.(
         `audit: '${audit.action}' ran but its audit row was not written`,
+        row,
         error,
       );
     }
+  }
   return result;
 }
 
@@ -263,8 +280,8 @@ export function recordInline(
 /**
  * Record a change of your own from an action: for what Brick cannot see, or to
  * add `meta`. By default the row is inserted at once. Pass the `tx` of a
- * transaction you have open to commit it with your writes instead; then it is
- * the record of this call, and Brick does not add the automatic row.
+ * transaction you have open to commit it with your writes instead; once `tx`
+ * commits it is the record of this call, and Brick does not add the automatic row.
  *
  * Brick copies no input or output into the log: `meta` holds what you pass.
  *
@@ -304,11 +321,14 @@ export async function recordAudit(
     throw new Error(
       "recordAudit needs an action: it defaults to the running action only when that action is recorded",
     );
-  await writeAudit(
-    options.tx ?? ctx.db,
-    ctx,
-    { service: portOf(service), table },
-    { ...entry, action },
-  );
-  if (options.tx !== undefined && call) call.written = true;
+  const target = { service: portOf(service), table };
+  const named = { ...entry, action };
+  if (options.tx === undefined)
+    await runInTransaction(ctx.db, (tx) => writeAudit(tx, ctx, target, named));
+  else {
+    await writeAudit(options.tx, ctx, target, named);
+    // Only a commit makes it the call's record: a rolled-back `tx` leaves the automatic row to Brick.
+    if (call)
+      await onTransactionCommit(options.tx, () => (call.written = true));
+  }
 }

@@ -193,6 +193,110 @@ suite("audit log on Postgres", () => {
     expect(await made.status()).toBe("refunded");
   });
 
+  it("recordAudit with a tx that rolls back leaves the automatic row to Brick, also for a savepoint", async () => {
+    const made = await setup();
+    const act = made.service.action({
+      name: "refund",
+      execute: async ({ ctx }) => {
+        await runInTransaction(ctx.db, async (outer) => {
+          await runInTransaction(outer, async (inner) => {
+            await recordAudit(ctx, { recordId: "o1" }, { tx: inner });
+            throw new Error("savepoint rolled back");
+          }).catch(() => {});
+        });
+        await runInTransaction(ctx.db, async (tx) => {
+          await recordAudit(ctx, { recordId: "o1" }, { tx });
+          throw new Error("rolled back");
+        }).catch(() => {});
+      },
+    });
+    await act.run(undefined, as("u1"));
+    expect(await made.rows()).toEqual([
+      expect.objectContaining({ action: "refund", record_id: null }),
+    ]);
+  });
+
+  it("does not deadlock when an action, or recordAudit without tx, runs inside a transaction", async () => {
+    const made = await setup();
+    const inner = made.service.action({ name: "inner", execute: () => "in" });
+    const outer = made.service.action({
+      name: "outer",
+      execute: ({ ctx }) =>
+        runInTransaction(ctx.db, async () => {
+          await inner.run(undefined, ctx);
+          await recordAudit(ctx, { action: "inside" });
+        }),
+    });
+    await outer.run(undefined, as("u1"));
+    expect((await made.rows()).map((row) => row.action).sort()).toEqual([
+      "inner",
+      "inside",
+      "outer",
+    ]);
+  });
+
+  it("records with the grants in the docs, and a plain action leaves no row without USAGE on the sequence", async () => {
+    const made = await setup();
+    const docs = readFileSync(
+      new URL(
+        "../../../www/content/docs/(brick)/audit-log.mdx",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const grants = docs.match(
+      /```sql title="Postgres grants"\n([\s\S]*?)```/,
+    )?.[1];
+    expect(grants).toBeString();
+    const role = `app_${made.suffix}`;
+    await made.sql(`CREATE ROLE ${role} LOGIN PASSWORD 'pw'`);
+    made.created.push(`DROP OWNED BY ${role}; DROP ROLE IF EXISTS ${role}`);
+    await made.sql(`GRANT USAGE ON SCHEMA public TO ${role}`);
+    const asRole = new URL(url!);
+    asRole.username = role;
+    asRole.password = "pw";
+    const database = defineDatabase({
+      engine: "postgres",
+      url: asRole.toString(),
+      max: 2,
+      tables: {
+        [made.auditName]: auditTable("postgres", { name: made.auditName }),
+      },
+    });
+    databases.push(database);
+    const service = defineService(`role_${made.suffix}`, {
+      database,
+      identity: () => ({ id: "u1" }),
+    });
+    const act = service.action({ name: "act", execute: () => "ok" });
+    const errors: unknown[][] = [];
+    const logger = {
+      info() {},
+      warn() {},
+      debug() {},
+      error: (...args: unknown[]) => void errors.push(args),
+    };
+    const ctx = { logger } as never;
+
+    // INSERT and SELECT alone: the plain action succeeds, and its row is lost.
+    await made.sql(`GRANT INSERT, SELECT ON ${made.auditName} TO ${role}`);
+    expect(await act.run(undefined, ctx)).toBe("ok");
+    expect(errors).toHaveLength(1);
+    expect(await made.rows()).toEqual([]);
+
+    // Exactly the grants of the docs: it records.
+    await made.sql(
+      grants!
+        .replaceAll("brick_audit", made.auditName)
+        .replaceAll("app_role", role),
+    );
+    expect(await act.run(undefined, ctx)).toBe("ok");
+    expect(errors).toHaveLength(1);
+    expect(await made.rows()).toEqual([
+      expect.objectContaining({ action: "act", actor_id: "u1" }),
+    ]);
+  });
+
   it("keeps the result when the audit insert of a plain action fails", async () => {
     const made = await setup();
     const act = made.service.action({ name: "act", execute: () => "kept" });

@@ -52,6 +52,7 @@ function fixture(options: { table?: boolean; hooks?: object } = {}) {
     );
   const sqlite: Database = db.$client;
   return {
+    database,
     db,
     sqlite,
     service,
@@ -228,6 +229,14 @@ describe("CRUD writes are recorded", () => {
     });
   });
 
+  it("records each write once, however often the database is set", async () => {
+    const { database, service, resource, rows } = fixture();
+    (service as any).setDb(database);
+    (service as any).setDb(database);
+    await resource.create.run({ name: "Ada" }, as("u1"));
+    expect(rows().map((row) => row.action)).toEqual(["person.create"]);
+  });
+
   it("records nothing, and opens no transaction of its own, without the table", async () => {
     const { resource, sqlite } = fixture({ table: false });
     const statements: string[] = [];
@@ -238,6 +247,82 @@ describe("CRUD writes are recorded", () => {
     }) as typeof sqlite.run;
     await resource.create.run({ name: "a" }, as("u1"));
     expect(statements.filter((query) => query.startsWith("BEGIN"))).toEqual([]);
+  });
+});
+
+describe("crud() over the audit table", () => {
+  const over = (operations: object) => {
+    const { service } = fixture();
+    return () =>
+      service
+        .resource({ name: "audit", table: auditLog, id: auditLog.seq })
+        .use(
+          crud({
+            access: "public",
+            fields: { seq: { read: true }, action: { read: true } },
+            operations,
+          } as Parameters<typeof crud>[0]),
+        );
+  };
+  const readOnly = { create: false, update: false, delete: false };
+
+  it("is refused with its default operations, naming the resource and how to make it read-only", () => {
+    expect(over({})).toThrow(
+      /'audit' is over the audit table.*read-only.*create: false, update: false, delete: false/,
+    );
+    expect(over({ update: false, delete: false })).toThrow("audit table");
+  });
+
+  it("is refused when a bulk write is turned on", () => {
+    expect(over({ ...readOnly, bulkDelete: true })).toThrow("audit table");
+  });
+
+  it("is allowed, and reads, when every write is off", async () => {
+    const { service, rows } = fixture();
+    const audit: any = service
+      .resource({ name: "audit", table: auditLog, id: auditLog.seq })
+      .use(
+        crud({
+          access: "public",
+          fields: { seq: { read: true }, action: { read: true } },
+          operations: readOnly,
+        } as Parameters<typeof crud>[0]),
+      );
+    expect(audit.create).toBeUndefined();
+    expect(Object.keys(audit).filter((key) => key.startsWith("bulk"))).toEqual(
+      [],
+    );
+    expect(rows()).toEqual([]);
+    expect(await audit.list.run({}, as("u1"))).toMatchObject({ items: [] });
+  });
+});
+
+describe("a plain action's row, beside a CRUD write", () => {
+  it("survives the rollback of a CRUD write that was open when the action returned", async () => {
+    let started!: () => void;
+    const open = new Promise<void>((resolve) => (started = resolve));
+    let fail!: () => void;
+    const gate = new Promise<void>((_, reject) => (fail = reject));
+    const { service, resource, rows } = fixture({
+      hooks: {
+        hooks: {
+          beforeCreate: async () => {
+            started();
+            await gate;
+          },
+        },
+      },
+    });
+    const touch = service.action({ name: "touch", execute: () => "ok" });
+    const creating = resource.create
+      .run({ name: "a" }, as("u1"))
+      .catch(() => {});
+    await open;
+    const touching = touch.run(undefined, as("u1"));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    fail();
+    await Promise.all([creating, touching]);
+    expect(rows().map((row) => row.action)).toEqual(["touch"]);
   });
 });
 
