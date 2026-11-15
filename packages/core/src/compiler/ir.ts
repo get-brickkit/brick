@@ -10,6 +10,7 @@ import {
   routeKey,
 } from "../routes";
 import { portOf } from "../service-port";
+import { webhookOf } from "../webhook";
 import { fileFields } from "../typebox";
 
 const FORM_FIELDS_AND_FRAMING_BYTES = 1024 * 1024;
@@ -30,7 +31,8 @@ export interface RouteIR {
   readonly path: string;
   readonly service: string;
   readonly action: string;
-  readonly kind: "action";
+  /** A `webhook` has a verified raw body; see `service.webhook`. */
+  readonly kind: "action" | "webhook";
   /** The plugin that registered the action, if one did. */
   readonly plugin?: string;
   readonly input: boolean;
@@ -47,7 +49,7 @@ export interface RouteIR {
     /** How each item of an `array` field is coerced. */
     readonly items?: Exclude<Coercion, "array">;
   }[];
-  /** The most bytes a multipart body may declare (`Content-Length`) for an input with `t.File` fields. */
+  /** The most bytes a body may have: multipart bodies with `t.File` fields (by `Content-Length`), and a webhook's (counted as read). */
   readonly bodyLimit?: number;
   /** JSON projection for inspection and stale-artifact detection, not runtime validation. */
   readonly inputSchema?: unknown;
@@ -218,8 +220,10 @@ export function describeRoute(
   }
   const plugin = actionMeta(action).route?.plugin;
   const files = fileFields(action.config.input);
-  const bodyLimit =
-    files.length && files.every((field) => field.maxBytes !== undefined)
+  const webhook = webhookOf(action);
+  const bodyLimit = webhook
+    ? webhook.maxBodyBytes
+    : files.length && files.every((field) => field.maxBytes !== undefined)
       ? files.reduce((sum, field) => sum + (field.maxBytes ?? 0), 0) +
         FORM_FIELDS_AND_FRAMING_BYTES
       : undefined;
@@ -228,7 +232,7 @@ export function describeRoute(
     path,
     service: service.name,
     action: action.name,
-    kind: "action",
+    kind: webhook ? "webhook" : "action",
     ...(plugin ? { plugin } : {}),
     input: Boolean(action.config.input),
     output: Boolean(action.config.output),

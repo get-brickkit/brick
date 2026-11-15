@@ -44,7 +44,7 @@ import type { SocketBroker } from "./socket-types";
 import { corsHook, type CorsOptions } from "./cors";
 import { useStorages } from "./storage";
 import { portOf } from "./service-port";
-import { bodyLimitParser } from "./compiler/runtime";
+import { bodyLimitParser, rawBodyParser } from "./compiler/runtime";
 import { markAddressSource, type ClientIp } from "./rate-limit";
 
 export interface CreateServerOptions {
@@ -442,9 +442,11 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
             )
         : invoke,
       Boolean(route.ir.plugin),
-      route.ir.bodyLimit
-        ? { parse: bodyLimitParser(route.ir.bodyLimit) }
-        : undefined,
+      route.ir.kind === "webhook"
+        ? { parse: rawBodyParser(route.ir.bodyLimit!) }
+        : route.ir.bodyLimit
+          ? { parse: bodyLimitParser(route.ir.bodyLimit) }
+          : undefined,
     );
     if (mounted) mountedRoutes.push(route.ir);
   }

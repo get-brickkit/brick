@@ -129,6 +129,38 @@ function suite(name: string, driver: () => StorageDriver, skip = false) {
       );
     });
 
+    it("compareAndDelete deletes a key only while it holds the expected value, and says whether it did", async () => {
+      const service = defineService(`cad_${crypto.randomUUID().slice(0, 8)}`, {
+        deps: { storage },
+      });
+      const brickSide = serviceStorage(service)!;
+      const k = key("claim");
+      expect(await brickSide.compareAndDelete(k, "mine")).toBe(false);
+      await brickSide.put(k, "mine", 5000);
+      expect(await brickSide.compareAndDelete(k, "theirs")).toBe(false);
+      expect(await brickSide.get(k)).toBe("mine");
+      expect(await brickSide.compareAndDelete(k, "mine")).toBe(true);
+      expect(await brickSide.get(k)).toBeNull();
+      expect(await brickSide.compareAndDelete(k, "mine")).toBe(false);
+      // Only Brick's side has it: the app's handle does not.
+      expect("compareAndDelete" in storage).toBe(false);
+    });
+
+    it("compareAndDelete lets exactly one of several racers delete", async () => {
+      const service = defineService(`cad_${crypto.randomUUID().slice(0, 8)}`, {
+        deps: { storage },
+      });
+      const brickSide = serviceStorage(service)!;
+      const k = key("race");
+      await brickSide.put(k, "token", 5000);
+      const results = await Promise.all(
+        Array.from({ length: 20 }, () =>
+          brickSide.compareAndDelete(k, "token"),
+        ),
+      );
+      expect(results.filter(Boolean)).toHaveLength(1);
+    });
+
     it("keeps Brick's keys and the app's keys apart", async () => {
       const service = defineService(`kv_${crypto.randomUUID().slice(0, 8)}`, {
         deps: { storage },

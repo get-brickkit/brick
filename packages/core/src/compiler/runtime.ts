@@ -6,7 +6,15 @@ import {
   type Logger,
   type ValidationErrorItem,
 } from "../types";
+import { Value } from "@sinclair/typebox/value";
 import { toErrorResponse } from "../error-response";
+import { recordWebhook } from "../telemetry";
+import {
+  serviceStorage,
+  StorageUnavailableError,
+  storageKey,
+} from "../storage";
+import { webhookOf } from "../webhook";
 import { baseContext, markResolved, requestIds } from "../context";
 import type { ServicePort } from "../service-port";
 import { enforceRateLimits, rateLimitsOf } from "../rate-limit";
@@ -105,6 +113,26 @@ export function bodyLimitParser(limit: number) {
     Number(request.headers.get("content-length")) > limit
       ? BODY_TOO_LARGE
       : undefined;
+}
+
+/**
+ * A webhook's body as raw bytes, never more than `limit` of them: counted as
+ * they are read, so a chunked body with no `Content-Length` is cut off too.
+ */
+export function rawBodyParser(limit: number) {
+  return async ({ request }: { request: Request }) => {
+    if (Number(request.headers.get("content-length")) > limit)
+      return BODY_TOO_LARGE;
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    if (request.body)
+      for await (const chunk of request.body as AsyncIterable<Uint8Array>) {
+        size += chunk.byteLength;
+        if (size > limit) return BODY_TOO_LARGE;
+        chunks.push(chunk);
+      }
+    return new Uint8Array(Buffer.concat(chunks));
+  };
 }
 
 /** The action's input from the path, query and body, coerced by its schema. */
@@ -329,8 +357,217 @@ function requestContext(
   return ctx as ActionContext & { requestId: string };
 }
 
+/** What a stored event id holds once its delivery has been handled; while one is in flight it holds `pending:<claimant>`. */
+const HANDLED = "handled";
+/**
+ * How long an in-flight claim holds off other deliveries of the same event. A
+ * handler still running when it ends can be joined by a second delivery that
+ * claims the event and runs it again (at least once, not exactly once): keep
+ * handlers well inside it, and idempotent.
+ */
+const LEASE_MS = 5 * 60_000;
+
+const refuse = (code: string, message: string, status: number) =>
+  new ActionExecutionError(code, message, status);
+
+/** Form or query fields as an input object: a repeated name is a list. */
+function fieldsOf(params: URLSearchParams): Record<string, unknown> {
+  const grouped = new Map<string, string[]>();
+  for (const [name, value] of params)
+    grouped.set(name, [...(grouped.get(name) ?? []), value]);
+  return Object.fromEntries(
+    [...grouped].map(([name, values]) => [
+      name,
+      values.length > 1 ? values : values[0],
+    ]),
+  );
+}
+
+/** What a verified delivery carries, before the schema has checked it: JSON, or form fields coerced like query values. */
+function webhookInput(route: RouteIR, request: Request, rawBody: Uint8Array) {
+  const text = new TextDecoder().decode(rawBody);
+  const form =
+    route.method === "GET"
+      ? new URL(request.url).searchParams
+      : /^application\/x-www-form-urlencoded/i.test(
+            request.headers.get("content-type") ?? "",
+          )
+        ? new URLSearchParams(text)
+        : undefined;
+  if (form) return readInput(route, { query: fieldsOf(form) });
+  if (!text) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw invalid(route.action, "input", [
+      { path: "", message: "Body is not valid JSON" },
+    ]);
+  }
+}
+
+/**
+ * The HTTP handler of a webhook. Its order is the contract: raw body (capped) →
+ * verify → parse and check → claim the event id → context → rate limit →
+ * execute. Nothing the app wrote runs before `verify` accepts, other than
+ * `verify` itself; a claim is released if anything after it fails.
+ */
+function bindWebhook(plan: CompiledRoutePlan): CompiledHandler {
+  const { route, execute, contextHook, inputChecker, checkInput } = plan;
+  const name = route.action;
+  const webhook = webhookOf(plan.action)!;
+  const limits = rateLimitsOf(plan.action.config);
+  const storage = webhook.replay ? serviceStorage(plan.service) : undefined;
+  if (webhook.replay && !storage)
+    throw new Error(
+      `Webhook '${name}' remembers the events it has handled, but its service has no key-value storage`,
+    );
+  return async function brickWebhook(context) {
+    const ctx = requestContext(plan, context);
+    const request: Request = context.request;
+    let eventId: string | undefined;
+    let outcome = "failed";
+    try {
+      if (context.body === BODY_TOO_LARGE) {
+        outcome = "too_large";
+        throw refuse(
+          "PAYLOAD_TOO_LARGE",
+          `Request body exceeds ${webhook.maxBodyBytes} bytes`,
+          413,
+        );
+      }
+      const rawBody =
+        context.body instanceof Uint8Array ? context.body : new Uint8Array();
+      let verdict: unknown;
+      try {
+        verdict = await webhook.verify({
+          rawBody,
+          headers: request.headers,
+          url: request.url,
+          method: request.method,
+        });
+      } catch {
+        // Not logged: what a verifier throws may quote the signature or the body.
+        verdict = false;
+      }
+      const given = (verdict as { eventId?: unknown } | null)?.eventId;
+      if (verdict !== true && !(typeof given === "string" && given)) {
+        outcome = "refused";
+        throw refuse("UNAUTHORIZED", "Webhook verification failed", 401);
+      }
+      eventId = verdict === true ? undefined : (given as string);
+
+      outcome = "invalid";
+      let input = webhookInput(route, request, rawBody);
+      if (inputChecker) validateInput(inputChecker, input, name, checkInput);
+      input = Value.Clean(plan.action.config.input, input);
+      outcome = "failed";
+
+      eventId ||=
+        (await webhook.eventId?.({
+          input,
+          headers: request.headers,
+          url: request.url,
+          method: request.method,
+        })) || undefined;
+      let claim: { key: string; mine: string } | undefined;
+      if (storage) {
+        if (!eventId) {
+          outcome = "no_event_id";
+          throw refuse("BAD_REQUEST", "The delivery has no event id", 400);
+        }
+        claim = {
+          key: storageKey("webhook", [plan.service.name, name, eventId]),
+          mine: `pending:${crypto.randomUUID()}`,
+        };
+        try {
+          const claimed = await storage.putIfAbsent(
+            claim.key,
+            claim.mine,
+            LEASE_MS,
+          );
+          if (!claimed.stored) {
+            if (claimed.value === HANDLED) {
+              outcome = "duplicate";
+              return { duplicate: true };
+            }
+            outcome = "in_flight";
+            throw refuse(
+              "CONFLICT",
+              "Another delivery of this event is being handled; retry later",
+              409,
+            );
+          }
+        } catch (error) {
+          if (!(error instanceof StorageUnavailableError)) throw error;
+          // The write may have been applied: drop it if the storage answers, so the retry is not held off by this very claim.
+          storage.compareAndDelete(claim.key, claim.mine).catch(() => {});
+          outcome = "unavailable";
+          throw new ActionExecutionError(
+            "SERVICE_UNAVAILABLE",
+            "Webhook storage is unavailable; retry later",
+            503,
+            undefined,
+            { cause: error },
+          );
+        }
+      }
+
+      let result: unknown;
+      try {
+        if (contextHook) {
+          const extra = await contextHook(ctx);
+          if (extra) Object.assign(ctx, extra);
+          ctx.deps = plan.deps ?? plan.service.deps;
+        }
+        if (limits)
+          await enforceRateLimits(
+            plan.service,
+            "action",
+            name,
+            limits,
+            input,
+            ctx,
+          );
+        result = await execute({
+          input,
+          ctx,
+          error: plan.errorBuilder,
+          eventId,
+        });
+      } catch (error) {
+        // Only its own claim: if the lease lapsed and another delivery holds the id, that claim stays.
+        await storage
+          ?.compareAndDelete(claim!.key, claim!.mine)
+          .catch(() => {});
+        throw error;
+      }
+      // A reply the handler chose to fail with (4xx, 5xx) is a failed delivery too.
+      const failed = result instanceof Response && result.status >= 400;
+      if (storage && failed)
+        await storage.compareAndDelete(claim!.key, claim!.mine).catch(() => {});
+      else if (storage && webhook.replay)
+        await storage
+          .put(claim!.key, HANDLED, webhook.replay.ttlMs)
+          .catch((error) =>
+            plan.logger.warn(
+              "Webhook handled, but its id was not recorded; a retry may run it again",
+              { requestId: ctx.requestId },
+              error,
+            ),
+          );
+      outcome = failed ? "failed" : "processed";
+      return result === undefined ? { ok: true } : result;
+    } catch (err) {
+      return mapError(err, context.set, ctx);
+    } finally {
+      recordWebhook(name, eventId, outcome);
+    }
+  };
+}
+
 /** The HTTP handler of one route: the pipeline's stages, synchronous when no stage needs to wait. */
 export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
+  if (plan.route.kind === "webhook") return bindWebhook(plan);
   const {
     route,
     execute,

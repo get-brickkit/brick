@@ -1,0 +1,207 @@
+---
+title: Provider Webhooks
+description: Receive callbacks from a payment, telephony or other provider with service.webhook, which runs your code only for deliveries the provider signed, and only once per event.
+---
+
+A provider webhook is a callback that a provider (a payment processor, a telephony service, a code host) sends to your app. `service.webhook` declares one as a kind of action in which a request that was not verified can never reach your handler.
+
+> These are not the workflow webhooks of `createWebhook` in the [events](/docs/events#webhooks) page, which resume a waiting workflow. This page is about callbacks from outside providers.
+
+```ts title="src/services/integrations/webhooks/github.webhook.ts"
+import { defineSecret, hmacSignature, t } from "@brickkit/core";
+import { integrations } from "../integrations.service";
+
+const githubSecret = defineSecret("GITHUB_WEBHOOK_SECRET");
+
+export default integrations.webhook({
+  name: "github", // POST /api/integrations/github
+  description: "Repository events from GitHub",
+  verify: hmacSignature({
+    secret: githubSecret,
+    header: "x-hub-signature-256",
+    prefix: "sha256=",
+  }),
+  eventId: ({ headers }) => headers.get("x-github-delivery") ?? undefined,
+  input: t.Object({
+    action: t.String(),
+    repository: t.Object({ id: t.Number() }),
+  }),
+  execute: async ({ input, ctx, eventId }) => {
+    // `input` is verified and checked against the schema above.
+  },
+});
+```
+
+There is no `authorize`: verification is the authorization. The service needs a [key-value storage](/docs/storage) for the check against repeats, below.
+
+```ts title="src/services/integrations/integrations.service.ts"
+import { defineService, defineStorage, redis } from "@brickkit/core";
+
+export const integrations = defineService("integrations", {
+  deps: { cache: defineStorage({ driver: redis() }) },
+});
+```
+
+## Verified means the provider sent it
+
+A verifier proves one thing: the provider signed this delivery with the secret you share with it. It does not prove that anything in the payload is true of one of your customers, and it must never be what you identify one by.
+
+**Look records up by ids your app stored from the provider** (the customer id, the subscription id, the call SID your own code created), never by an email, a metadata field or an amount that arrives in the payload. A provider signs what its own customers type into it: an attacker who can set the email or the metadata on their own account at the provider gets a correctly signed delivery carrying whatever they typed. Trusting that field has handed an attacker another customer's account.
+
+Treat the amount the same way: when it matters, fetch the object from the provider's API by its id, rather than believing the number in the callback.
+
+## What runs, in order
+
+Over HTTP, a delivery passes these steps, and a step that fails answers and stops:
+
+1. **Read the raw body**, up to `maxBodyBytes` (default 1 MiB). Over it: `413 PAYLOAD_TOO_LARGE`. The cap holds for a chunked body that declares no `Content-Length`, because Brick counts the bytes as it reads them. Brick does not let the framework parse the body: the verifier sees the bytes exactly as they arrived.
+2. **Verify.** `false`, or a throw, answers `401 UNAUTHORIZED` with a fixed message. Nothing is parsed, and no code of yours other than the verifier has run.
+3. **Parse and check.** A form body (`application/x-www-form-urlencoded`) or a `GET` query is read as a form and coerced by the schema as query values are; anything else is read as JSON. Then the payload is checked against `input` (a mismatch is `400`, as for an action), and properties the schema does not declare are dropped before `execute`.
+4. **Check for a repeat.** See [Repeated deliveries](#repeated-deliveries).
+5. **Context, rate limit, execute.** The service's `context` hook runs as it does for an action, then [`rateLimit`](/docs/rate-limits) if declared, then `execute`.
+
+The provider is answered with what `execute` returns, which may be a `Response` (for example Twilio's TwiML), or `{ "ok": true }` when it returns nothing. Throw `error.CODE()` for a declared failure as in an action.
+
+A `context` hook runs for a webhook too. One that refuses requests without a session refuses the provider: have it return what it can without a session, or keep the check in the actions that need it.
+
+## Verifiers
+
+`verify` takes a verifier. Three are built in, and each takes its secret as a [`defineSecret`](/docs/reference/configuration) ref, a string, or a list of them, so a secret can be rotated: a delivery that verifies against any one of them is accepted. A ref is read at each request, so a changed secret takes effect at once. A missing or empty secret refuses the delivery. Every signature comparison runs in constant time.
+
+### `hmacSignature`
+
+An HMAC of the raw body, compared with a header.
+
+```ts
+verify: hmacSignature({
+  secret: [githubSecret, previousGithubSecret], // rotation
+  header: "x-hub-signature-256",
+  prefix: "sha256=", // what the header puts before the signature; a header without it is refused
+  algorithm: "sha256", // default; also "sha1", "sha384", "sha512"
+  encoding: "hex", // default; or "base64"
+}),
+```
+
+It signs the body alone, so it neither checks a timestamp nor stops a replay: give the webhook an `eventId`.
+
+### `standardWebhooks`
+
+The [Standard Webhooks](https://www.standardwebhooks.com) scheme, used by Svix and the services built on it: the `webhook-id`, `webhook-timestamp` and `webhook-signature` headers, a base64 HMAC-SHA256 over `id.timestamp.body`, a `whsec_…` secret, several space-separated `v1,…` signatures during a rotation, and a timestamp tolerance (default 5 minutes, either way; `toleranceMs` changes it). The `webhook-id` is the event id, so the webhook needs no `eventId`.
+
+```ts
+billing.webhook({
+  name: "payments",
+  verify: standardWebhooks({ secret: billingSecret }),
+  input: PaymentEvent,
+  execute,
+});
+```
+
+### `twilioSignature`
+
+Twilio's scheme: `X-Twilio-Signature` is a base64 HMAC-SHA1, keyed with the auth token, over the URL Twilio called followed by the form parameters sorted by name, each as name and value. For a JSON body Twilio signs the URL alone and puts the body's SHA-256 in its `bodySHA256` query parameter, which Brick checks against the body.
+
+The signature depends on the public URL the provider called, which Brick cannot know behind a proxy, so your app supplies it as a string or a function of the request. Twilio signs the URL as it was configured, so a port, a query string or a trailing slash that differs from the configured URL fails verification; Twilio drops the port for HTTPS voice callbacks.
+
+```ts
+telephony.webhook({
+  name: "voiceStatus",
+  verify: twilioSignature({ authToken, url: (request) => publicUrl(request) }),
+  eventId: ({ input }) => `${input.CallSid}:${input.CallStatus}`,
+  input: t.Object({ CallSid: t.String(), CallStatus: t.String() }),
+  execute: () =>
+    new Response("<Response/>", { headers: { "content-type": "text/xml" } }),
+});
+```
+
+Twilio supplies no event id of its own: build one from what makes the callback unique, as above.
+
+### Your own verifier
+
+A verifier is a function of `{ rawBody, headers, url, method }`. It returns `true` to accept, `false` to refuse, or `{ eventId }` to accept and name the event; a throw refuses. Use it for a provider's SDK:
+
+```ts
+verify: ({ rawBody, headers }) => {
+  stripe.webhooks.constructEvent(
+    Buffer.from(rawBody),
+    headers.get("stripe-signature")!,
+    stripeSecret.require(),
+  );
+  return true; // throwing or returning false refuses
+},
+```
+
+The signed-timestamp scheme of Stripe (`t=…,v1=…`) is checked this way, with the SDK doing the work. What a verifier throws is never logged or sent: the response is always `Webhook verification failed`.
+
+A verifier that always returns `{ eventId }` can say so with `suppliesEventId = true` on the function, as `standardWebhooks` does, so the webhook needs no `eventId` option. Otherwise give an `eventId`: Brick cannot tell at startup what a function will return.
+
+## Repeated deliveries
+
+Providers deliver at least once, so the same event arrives again after a timeout or a retry. A webhook claims each event id in the service's storage under a key that names the service, the webhook and the id, and `execute` runs once per id.
+
+The id comes from the verifier's `{ eventId }`, or from the `eventId` option: a function of `{ input, headers, url, method }` that returns the delivery's id, or `undefined` when it has none (a verified delivery with no id is answered `400` and does not run).
+
+| What the claim finds                                                    | The answer                                                                                                         |
+| :---------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------- |
+| Nothing: this is the first delivery                                     | `execute` runs.                                                                                                    |
+| The event is already handled                                            | `200 { "duplicate": true }`; `execute` does not run.                                                               |
+| Another delivery is handling it now                                     | `409 CONFLICT`, so the provider retries later.                                                                     |
+| `execute` (or the context hook, or the rate limit) then fails or throws | The claim is released, so the provider's retry runs. A `Response` with status 400 or over counts as a failure too. |
+| `execute` succeeds                                                      | The claim is marked handled and kept for `replay.ttlMs` (default 7 days).                                          |
+| The storage cannot be reached                                           | `503 SERVICE_UNAVAILABLE`, so the provider retries. `execute` does not run without the check.                      |
+
+A failure releases only its own claim. A claim that is still in flight when its lease ends can be taken over by a second delivery; the first handler's later failure then leaves the second's claim alone.
+
+### The lease, and a handler that outlives it
+
+An in-flight claim holds off other deliveries for **5 minutes**. A handler that is still running when the lease ends can be joined by a retry that claims the event and runs it again, so delivery is at least once, not exactly once: keep a handler well inside the lease, make what it does idempotent (check before you write), and move slow work to a queue or a [workflow](/docs/events). There is no heartbeat: if a process dies mid-handler, the event is retried once the lease ends.
+
+A write that rejects with `StorageUnavailableError` may have been applied, so after a storage error Brick never takes "not stored" to mean "already handled": it answers `503`, and drops the claim if the storage answers. If the handler succeeds but its id cannot be recorded, the provider is still answered with the success and a warning is logged, because answering an error would only make the provider retry into a `409`; a retry after the lease may then run it again.
+
+### Opting out
+
+`replay: false` runs every delivery, with no id and no storage. Use it only for a handler that is safe to run twice.
+
+```ts
+verify: myVerifier,
+replay: false,
+```
+
+A webhook that has neither an id source (a verifier that supplies one, or `eventId`) nor `replay: false` fails when the service is built, and so does one on a service without a key-value storage, each with a message that names the service and the webhook and shows the fix. `replay: { ttlMs }` changes how long a handled id is remembered.
+
+## Options
+
+| Option         | Default  | What it does                                                                            |
+| :------------- | :------- | :-------------------------------------------------------------------------------------- |
+| `name`         | required | The webhook's name, and its URL segment as for an action: `POST /api/<service>/<name>`. |
+| `description`  |          | For OpenAPI and the dashboard.                                                          |
+| `path`         |          | A route relative to the service, as for an action.                                      |
+| `method`       | `"POST"` | `"POST"` or `"GET"`. A `GET` webhook's input is its query string.                       |
+| `verify`       | required | The verifier. Nothing else runs until it accepts.                                       |
+| `input`        | required | The schema of the payload. Properties it does not declare are dropped.                  |
+| `eventId`      |          | A function that names the delivery. Not needed when the verifier supplies one.          |
+| `replay`       |          | `false`, or `{ ttlMs }`: how long a handled id is remembered (default 7 days).          |
+| `maxBodyBytes` | 1 MiB    | The largest body read.                                                                  |
+| `rateLimit`    |          | As for an action; runs after the repeat check and before `execute`.                     |
+| `errors`       |          | Declared errors, as for an action.                                                      |
+| `tags`         |          | OpenAPI tags.                                                                           |
+
+A webhook shares the URL space and the name rules of the service's actions: two cannot claim one URL segment.
+
+## Where a webhook shows
+
+A webhook is not for callers of your API, so it is left out of the [typed client](/docs/typed-client), the `useService` types and [MCP](/docs/tools-and-mcp). [OpenAPI](/docs/openapi) lists its route with its input and its `401`, `409` and `413` responses (marked `x-brick-webhook`), and `introspect()` and the dashboard mark it as a webhook. [`brick lint`](/docs/brick-cli/lint) treats `.webhook(` as its own kind: it is not an unprotected public action, and goes in a `*.webhook.ts` file under `webhooks/`.
+
+## Logs and traces
+
+The raw body, the signature headers and the secrets are never logged and never put on a span. The span records the webhook's name, the event id, and the outcome (`processed`, `duplicate`, `in_flight`, `refused`, `invalid`, `too_large`, `no_event_id`, `unavailable` or `failed`).
+
+## Testing
+
+`webhook.run(input, ctx)` runs the handler in-process as trusted server code, for tests and for re-processing an event: it skips verification and the repeat check, validates `input` against the schema, and `eventId` is `undefined`.
+
+```ts
+await github.run({ action: "opened", repository: { id: 1 } });
+```
+
+To test the whole route, sign a request yourself with the secret and send it to a running app, as the provider would; `memory()` is enough for the storage.

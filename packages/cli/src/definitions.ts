@@ -10,6 +10,7 @@ export const DEFINITION_KINDS = [
   "action",
   "command",
   "tool",
+  "webhook",
   "socket",
   "listener",
   "schedule",

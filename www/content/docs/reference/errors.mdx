@@ -81,6 +81,8 @@ The standard error helpers injected into `execute({ error })` and CRUD hooks thr
 | `RATE_LIMITED`          | `429 Too Many Requests` | Over the action's [`rateLimit`](/docs/rate-limits); `details.retryAfterSeconds` sets `Retry-After` | `error.RATE_LIMITED(msg?, details?)`          |
 | `INTERNAL_SERVER_ERROR` | `500 Internal Error`    | Unexpected backend or database failure                                                             | `error.INTERNAL_SERVER_ERROR(msg?, details?)` |
 
+A [provider webhook](/docs/webhooks) also answers `PAYLOAD_TOO_LARGE` (413) for a body over `maxBodyBytes`, `UNAUTHORIZED` (401) with a fixed message for a delivery its verifier refuses, `CONFLICT` (409) while another delivery of the event is being handled, and `SERVICE_UNAVAILABLE` (503) when its storage cannot be reached.
+
 ## Authorization Status Codes
 
 An action's `authorize` and a CRUD resource's `access` deny a call the same way: `UNAUTHORIZED` (401) when the request has no user, `FORBIDDEN` (403) when it has one.

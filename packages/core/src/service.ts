@@ -40,6 +40,7 @@ import {
 } from "./context";
 import { brickDeps, depsOverride } from "./deps";
 import { checkRateLimits, rateLimitsOf } from "./rate-limit";
+import { checkWebhook, defineWebhookMeta, webhookOf } from "./webhook";
 import type { NamedService } from "./rpc";
 import { defineServiceSocket } from "./socket";
 import type {
@@ -56,7 +57,10 @@ import type {
 export interface ServiceImpl<
   TDb = BunSQLiteDatabase<Record<string, unknown>>,
   TServiceContext extends Record<string, any> = Record<string, any>,
-> extends Pick<Service<TDb, TServiceContext>, "action" | "tool" | "resource"> {}
+> extends Pick<
+  Service<TDb, TServiceContext>,
+  "action" | "tool" | "resource" | "webhook"
+> {}
 export class ServiceImpl<
   TDb = BunSQLiteDatabase<Record<string, unknown>>,
   TServiceContext extends Record<string, any> = Record<string, any>,
@@ -169,12 +173,11 @@ export class ServiceImpl<
       const resource = info?.record && this.resources.get(info.resource);
       if (resource) checkRecordAccess(resource, info);
     }
-    for (const action of [...this.actions.values(), ...this.tools.values()])
-      checkRateLimits(
-        this,
-        action,
-        actionMeta(action).deps?.values ?? this.deps,
-      );
+    for (const action of [...this.actions.values(), ...this.tools.values()]) {
+      const deps = actionMeta(action).deps?.values ?? this.deps;
+      if (webhookOf(action)) checkWebhook(this, action, deps);
+      else checkRateLimits(this, action, deps);
+    }
     this._isBuilt = true;
     return this;
   }
@@ -246,6 +249,25 @@ export class ServiceImpl<
     this.actions.set(actionInstance.name, actionInstance);
     this.touch();
     return isActionFunction ? this : actionInstance;
+  }
+
+  webhook(config: any): any {
+    const webhook = defineWebhookMeta(this.name, config);
+    // What only the webhook runtime reads stays out of the action's config.
+    const {
+      verify: _verify,
+      eventId: _eventId,
+      replay: _replay,
+      maxBodyBytes: _maxBodyBytes,
+      ...action
+    } = config;
+    const instance = defineAction({
+      ...action,
+      method: config.method ?? "POST",
+    });
+    actionMeta(instance).webhook = webhook;
+    this.action(instance);
+    return instance;
   }
 
   tool(toolOrConfig: any): any {
@@ -396,6 +418,7 @@ export class ServiceImpl<
               windowMs,
             })),
           }),
+          ...(webhookOf(act) && { webhook: true as const }),
           emits: act.config.emits,
           tags: act.config.tags,
         };
