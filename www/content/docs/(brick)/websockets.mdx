@@ -168,7 +168,7 @@ Unknown events, incorrect payloads, and reversed message directions fail TypeScr
 
 ## Typed errors
 
-A socket declares `errors` as an action does, and its handlers raise them with `error.CODE()`. The standard codes (`BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`, `INTERNAL_SERVER_ERROR`) are always there:
+A socket declares `errors` as an action does, and its handlers raise them with `error.CODE()`. The standard codes (`BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`, `RATE_LIMITED`, `INTERNAL_SERVER_ERROR`) are always there:
 
 ```ts
 const TooLong = defineError("TOO_LONG", {

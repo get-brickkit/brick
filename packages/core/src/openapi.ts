@@ -7,6 +7,7 @@ import {
 } from "./routes";
 import { analyzeDeclaredApplication } from "./compiler/ir";
 import { getActionAccess } from "./access";
+import { rateLimitsOf } from "./rate-limit";
 import { fileFields } from "./typebox";
 import { writeOnly } from "./sensitive";
 import { getGlobalRegistry } from "./registry";
@@ -220,6 +221,24 @@ export function generateOpenApiSpec(
       }
       if ((action.config as { dashboard?: boolean }).dashboard === true)
         addError("UNAUTHORIZED", 401, "Only for the dashboard");
+      if (rateLimitsOf(action.config)) {
+        addError(
+          "RATE_LIMITED",
+          429,
+          "Too many calls; retry after Retry-After seconds",
+          {
+            type: "object",
+            properties: { retryAfterSeconds: { type: "integer", minimum: 1 } },
+            required: ["retryAfterSeconds"],
+          },
+        );
+        responses["429"].headers = {
+          "Retry-After": {
+            description: "Seconds until the window resets",
+            schema: { type: "integer", minimum: 1 },
+          },
+        };
+      }
       if (action.config.errors) {
         for (const [code, errorDef] of Object.entries(action.config.errors)) {
           const def = errorDef as ActionErrorDefinition;

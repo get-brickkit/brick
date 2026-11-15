@@ -369,6 +369,7 @@ function defineCommand(
       errors: config.errors,
       ...(config.access === undefined ? {} : { access: config.access }),
       ...(config.authorize ? { authorize: config.authorize } : {}),
+      ...(config.rateLimit ? { rateLimit: config.rateLimit } : {}),
       execute: () => undefined,
     } as ResourceActionConfig<any, any, any, any, any, boolean>,
     run,

@@ -118,13 +118,18 @@ export default billing.action({
   );
   has(`${S}/billing/actions/charge.action.ts:6:`, "brick/explicit-access");
   has(
+    `${S}/billing/actions/charge.action.ts:6:`,
+    "brick/public-rate-limit",
+    "warning",
+  );
+  has(
     `${S}/billing/actions/charge.action.ts:1:1`,
     "brick/test-colocated",
     "warning",
   );
   has(`${S}/billing/lib/report.ts:1:1`, "brick/no-cross-service-tables");
   has("src/extra.ts:3:", "brick/single-app-entry");
-  expect(result.stdout).toContain("✖ 5 problems (4 errors, 1 warning)");
+  expect(result.stdout).toContain("✖ 6 problems (4 errors, 2 warnings)");
   expect(result.code).toBe(1);
 });
 
