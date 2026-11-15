@@ -2,15 +2,13 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 import { ArrowRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
-import {
-  BrickFront,
-  BrickGround,
-  BrickPyramid,
-  BrickSingle,
-} from "@/components/brick-art";
+import { BrickFront, BrickSingle } from "@/components/brick-art";
 import { HomeTour } from "@/components/home-tour";
-import { InstallCommand } from "@/components/install-command";
+import { InstallCommand, InstallOptions } from "@/components/install-command";
+import { DitherCanvas, type Field } from "@/components/pixel-field";
+import { SourceCode } from "@/components/source-code";
 import { site } from "@/lib/site";
+import usersSource from "../../../examples/showcase/src/services/users.ts?raw";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -129,13 +127,15 @@ const packages = [
   ["@brickkit/bullmq-world", "durable workflows on BullMQ"],
 ];
 
+// A warm horizon behind the code window that fades out under the headline.
+const heroField: Field = (x, y) =>
+  Math.exp(-(((y - 0.5) / 0.26) ** 2)) * (0.25 + 0.75 * x ** 1.4);
+
 function SectionHeading({
-  index,
   label,
   title,
   children,
 }: {
-  index: string;
   label: string;
   title: ReactNode;
   children?: ReactNode;
@@ -149,7 +149,7 @@ function SectionHeading({
             <i />
             <i />
           </span>
-          {index} · {label}
+          {label}
         </p>
         <h2>{title}</h2>
       </div>
@@ -177,7 +177,7 @@ function StartButtons({ second }: { second: "github" | "tutorial" }) {
           data-umami-event-location="hero"
           className="home-button home-button-secondary"
         >
-          GitHub
+          Explore the source
         </a>
       ) : (
         <Link
@@ -196,6 +196,18 @@ function Home() {
   return (
     <main id="top" className="brick-landing">
       <section className="brick-hero">
+        <DitherCanvas field={heroField} className="hero-dither" />
+        <div className="hero-window" aria-hidden="true" inert>
+          <div className="hero-window-bar">
+            <span />
+            <span />
+            <span />
+            <p>src/services/users.ts</p>
+          </div>
+          <div className="hero-window-code">
+            <SourceCode code={usersSource.trim()} />
+          </div>
+        </div>
         <div className="hero-copy">
           <a
             href={`${site.repo}/releases`}
@@ -203,9 +215,9 @@ function Home() {
             rel="noreferrer"
             data-umami-event="github-click"
             data-umami-event-location="hero-release"
-            className="hero-release label"
+            className="hero-release"
           >
-            v{site.version} · MIT · Bun
+            Brick v{site.version}, open source
           </a>
           <h1>
             Build your backend.
@@ -213,20 +225,17 @@ function Home() {
             Keep your TypeScript.
           </h1>
           <p className="hero-description">
-            A TypeScript backend framework on Bun. Actions, resources, events,
-            sockets and MCP tools that fit together, typed from the table to the
-            browser.
+            Your actions, resources, and rules.
+            <br className="hidden sm:block" /> Compiled into a backend ready to
+            run on Bun.
           </p>
           <StartButtons second="github" />
-          <InstallCommand className="home-install" />
+          <InstallOptions />
         </div>
-        <BrickPyramid className="hero-bricks" />
-        <BrickGround className="hero-ground" />
       </section>
 
       <section id="blocks" className="home-section">
         <SectionHeading
-          index="01"
           label="One service file"
           title={
             <>
@@ -244,7 +253,6 @@ function Home() {
 
       <section id="flow" className="home-section">
         <SectionHeading
-          index="02"
           label="From table to browser"
           title="One type, five places."
         >
@@ -264,7 +272,6 @@ function Home() {
 
       <section id="platform" className="home-section">
         <SectionHeading
-          index="03"
           label="The rest of the backend"
           title="Every piece is opt-in."
         >
@@ -289,7 +296,6 @@ function Home() {
       <section id="stack" className="home-section home-split">
         <div>
           <SectionHeading
-            index="04"
             label="Built on tools you know"
             title="No new runtime to learn."
           />
@@ -322,7 +328,6 @@ function Home() {
       <section id="agents" className="home-section home-split">
         <div>
           <SectionHeading
-            index="05"
             label="For your agent"
             title={
               <>
