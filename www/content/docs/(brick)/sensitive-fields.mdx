@@ -40,7 +40,9 @@ After the output is validated, each sensitive field is removed from the result u
 
 - left out or `false`: sensitive fields are always removed;
 - `true`: they are always sent, for an action that exists to show a secret, such as creating an API key;
-- a function `({ field, input, ctx }) => boolean | Promise<boolean>`, called once for each sensitive field present in the result. `field` is its JSON pointer, in the same form as validation errors (`/accessToken`, `/items/0/token`). Check `ctx.caller` to allow one calling service.
+- a function `({ field, input, ctx }) => boolean | Promise<boolean>`, called once for each sensitive field present in the result, with the action's own input and context types. `field` is its JSON pointer, in the same form as validation errors (`/accessToken`, `/items/0/token`). Check `ctx.caller` to allow one calling service. Only `true` reveals: any other answer removes the field, and a `reveal` that throws fails the call.
+
+Removal applies to plain objects and arrays. Return plain data from `execute`: a class instance whose getter reads a secret reaches an in-process caller with the getter intact.
 
 ```ts
 keys.action({
@@ -53,10 +55,10 @@ keys.action({
 
 ### A sensitive output field must be optional
 
-A removed field must not break the response's schema or the typed client's types. So unless `reveal` is `true`, every sensitive output field must be `t.Optional` (or a record value). An array item or a required property marked sensitive fails when the action is defined:
+A removed field must not break the response's schema or the typed client's types. So unless `reveal` is `true`, every sensitive output field must be `t.Optional` (or a record value). Defining the action fails for an array item, a required property, a field that is optional in one `t.Union` or `t.Intersect` branch but required and unmarked in another, and a record value under `minProperties`:
 
 ```
-Action 'getCredential': sensitive output field '/accessToken' is removed unless `reveal` allows it, so it must be t.Optional (or set `reveal: true`)
+Service 'integrations' action 'getCredential': sensitive output field '/accessToken' is removed unless `reveal` allows it, so the schema must let it be absent: make it t.Optional in every union or intersect branch, not an array item nor a record value under minProperties (or set `reveal: true`)
 ```
 
 The client's types and OpenAPI then say what is sent: the field is optional, and with `reveal: true` it is required and always present.
@@ -73,9 +75,33 @@ execute: ({ input, ctx }) => {
 };
 ```
 
-An error that leaves the call has its message and stack redacted, since whoever logs it next is outside the call. A call made in-process from inside another call adds its values to the outer call's set, so they stay redacted until the outer call ends.
+An error's message and `details` are redacted in the HTTP error response, and an error that leaves an in-process or MCP call has its message, stack and `details` redacted, since whoever logs it next is outside the call. A call made in-process from inside another call adds its values to the outer call's set, so they stay redacted until the outer call ends.
 
-The values are matched as text: a value shorter than **8 characters** is not redacted from log lines, since a short value such as `42` or `true` would blank out unrelated parts of every line. It is still removed from responses.
+Redaction runs in two passes:
+
+- **Values.** Before a line is formatted, the strings and numbers in its arguments, and in the plain objects, arrays, `Map`s and `Set`s inside them as deep as the line prints, are checked. One that **equals** a sensitive value is replaced at any length, so a 6-digit code or a PIN logged with `ctx.logger.info(input)` shows `[REDACTED]`. One that **contains** a sensitive value has it replaced, which covers a PEM key, a JSON string or a very long value inside an object.
+- **Text.** The formatted line is then searched for each value, which covers interpolated strings such as `` `retrying with ${input.password}` ``. Here a value shorter than **8 characters** is not matched, since a short value such as `42` or `true` would blank out unrelated parts of every line. So log a short secret as its own value, not inside a string.
+
+A call keeps at most 1,000 values. Past that, its log lines and error messages are replaced whole with `[REDACTED: too many sensitive values in this call]` and Brick warns once, rather than drop a value and print it. A timer or task started inside a call with sensitive fields joins that call's set, so this is where such a task ends up.
+
+### Secrets that `execute` loads
+
+The values of the output are known only once `execute` returns. A secret `execute` loads and logs, or puts in an error, before then is not yet in the set. Register it with `redact` as soon as you have it:
+
+```ts
+import { redact } from "@brickkit/core";
+
+execute: async ({ input, ctx, error }) => {
+  const credential = await loadCredential(ctx.db, input.id);
+  redact(credential.accessToken);
+  ctx.logger.info("loaded", credential); // accessToken: '[REDACTED]'
+  if (credential.expired)
+    throw error.CONFLICT(`token ${credential.accessToken} expired`); // token [REDACTED] expired
+  return credential;
+};
+```
+
+`redact` adds to the running call's set, which exists only while an action with a `t.Sensitive` field runs (in its input or output). Anywhere else it does nothing.
 
 ## OpenAPI
 
@@ -83,7 +109,7 @@ A sensitive input field is marked `writeOnly: true`. A sensitive output field is
 
 ## CRUD resources
 
-A `crud()` field whose `schema` is sensitive cannot be read: `read: true` on it throws at setup. Reads and the outbox event payloads (`<resource>.create`, `.update`, `.delete`) carry only readable fields, so the value leaves through neither. It can still be written with `create` and `update`, and its value is redacted from logs during those calls.
+A `crud()` field whose `schema` is sensitive cannot be read, filtered or sorted: `read: true`, `filter` or `sort` on it throws at setup. Reads and the outbox event payloads (`<resource>.create`, `.update`, `.delete`) carry only readable fields, so the value leaves through neither, and a filter such as `startsWith` or a sort would give it away through which rows match and in what order. It can still be written with `create` and `update`, and its value is redacted from logs during those calls.
 
 ```ts
 crud({
@@ -96,9 +122,17 @@ crud({
 });
 ```
 
+## Where a mark is refused
+
+These fail when the app starts, naming the service, the action and the path:
+
+- a sensitive input field that is a path parameter (`path: "/reset/:token"`), since the request log and the trace record the path; take it in the request body. A mark on a record action's whole input covers its `id`, so it is refused too;
+- a mark inside a `t.Recursive` schema, or in a schema that has a `t.Ref`, since `$ref` is not followed. A `t.Json()` field beside a sensitive one is fine;
+- a mark in a socket's input or output schema, or in an event payload schema, which are not supported yet.
+
 ## Limits
 
-- `t.Recursive` and `$ref` schemas (including `t.Json()`) are not followed: a mark inside one is ignored.
-- Values are found in the validated input and in the output. A value logged inside `execute` before it returns, and that did not come in through the input, is not yet known and is not redacted.
-- Redaction applies to Brick's logger and spans. A direct `console.log` outside a dashboard capture, or a logger of your own, is not covered.
+- Redaction applies to Brick's logger, spans and error responses. A direct `console.log` outside a dashboard capture, or a logger of your own, is not covered.
+- A plain action (one with no sensitive field) that calls a `reveal: true` action in-process and logs the result is not covered: the inner call's set closes when it returns. Mark a field of the outer action, so that it opens a set the inner call joins.
+- In errors, the message, stack and `details` are redacted, and a few levels of `cause`. Other properties of a custom error class, the `errors` of an `AggregateError`, and a `cause` that is not an `Error` are not.
 - Fields are matched by path, not by union branch: when one branch of a `t.Union` marks `/token` sensitive, a `token` in any branch is removed.

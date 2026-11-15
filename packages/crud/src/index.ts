@@ -145,12 +145,22 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
         if (policy.sort && !SORTABLE_TYPES.has(columns[key].dataType))
           throw new Error(`Sorting is unsupported for '${key}'`);
       }
-      // Reads and event payloads carry the readable fields only, so this keeps a secret out of both.
-      for (const key of [...readable, ...includable])
-        if (hasSensitive(schemas[key]))
+      // Reads and event payloads carry the readable fields only, and a filter or a sort
+      // reveals a value through what it matches, so a secret gets none of them.
+      for (const [key, policy] of Object.entries(fields)) {
+        if (!hasSensitive(schemas[key])) continue;
+        const option = policy.read
+          ? "read: true"
+          : policy.filter?.length
+            ? "filter"
+            : policy.sort
+              ? "sort"
+              : undefined;
+        if (option)
           throw new Error(
-            `CRUD field '${key}' on '${resource.name}' is t.Sensitive and cannot be read; drop \`read: true\``,
+            `CRUD field '${key}' on '${resource.name}' in service '${service.name}' is t.Sensitive and cannot have \`${option}\`; drop it`,
           );
+      }
       const idColumn: Column = resource.id;
       if (!Object.values(columns).includes(idColumn))
         throw new Error("CRUD ID must belong to the resource table");

@@ -9,6 +9,7 @@ import { kebabCase } from "./kebab";
 import { actionMeta, type ResourceActionInfo } from "./action-meta";
 import { portOf } from "./service-port";
 import { Type } from "./typebox";
+import { isSensitive, Sensitive, sensitivity } from "./sensitive";
 import { runInTransaction } from "./events/transaction";
 import { checkPayload, crudEventSource, type EventRef } from "./events/catalog";
 import {
@@ -127,7 +128,10 @@ function defineResourceAction(
         ? {}
         : { additionalProperties: own.additionalProperties },
     );
+    // The rebuilt object would drop a mark on the input itself.
+    if (isSensitive(own)) input = Sensitive(input);
   }
+  sensitivity({ ...rest, name, input }, service.name);
   const action = defineAction({
     ...rest,
     name,

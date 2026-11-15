@@ -32,7 +32,7 @@ export function planRoute(
     logger: createLogger(`[${service.name}:${action.name}]`),
     cachedDb: service.getDb(),
     checkInput: meta.checkInput,
-    sensitive: sensitivity(action.config),
+    sensitive: sensitivity(action.config, service.name),
     deps: meta.deps?.values,
   };
 }

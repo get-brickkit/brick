@@ -1,5 +1,6 @@
 import type { Static, TSchema } from "@sinclair/typebox";
 import { validateWithSchema } from "../typebox";
+import { sensitivePointer } from "../sensitive";
 
 /** A service's declared events: payload schema by event name. */
 export type EventCatalog = Record<string, TSchema>;
@@ -57,6 +58,11 @@ export function eventRefs(
     if (!schema || typeof schema !== "object")
       throw new Error(
         `Event "${service}.${key}" needs a payload schema, such as t.Object({ ... })`,
+      );
+    const at = sensitivePointer(schema);
+    if (at)
+      throw new Error(
+        `Event "${service}.${key}" payload marks '${at}' t.Sensitive, which event payloads do not support yet; carry an id and load the secret in the listener`,
       );
     refs[key] = Object.freeze({ name: `${service}.${key}`, service, schema });
   }

@@ -265,12 +265,6 @@ export interface BaseActionConfig<
   method?: HttpMethod;
   input?: TInputSchema;
   output?: TOutputSchema;
-  /**
-   * Whether this call may receive the output's `t.Sensitive` fields; by default
-   * they are removed. `field` is the JSON pointer (`/items/0/token`). With
-   * anything but `true`, a sensitive output field must be `t.Optional`.
-   */
-  reveal?: Reveal;
   errors?: TErrors;
   emits?: string[];
   tags?: string[];
@@ -290,6 +284,15 @@ export interface ActionConfigWithAuthorize<
    * dashboard's `/app/*` proxy, so only the dashboard's pages can reach it.
    * `ctx.dashboard` is then set.
    */
+  /**
+   * Whether this call may receive the output's `t.Sensitive` fields; by default
+   * they are removed. `field` is the JSON pointer (`/items/0/token`). With
+   * anything but `true`, a sensitive output field must be `t.Optional`.
+   */
+  reveal?: Reveal<
+    TInputSchema extends TSchema ? Static<TInputSchema> : any,
+    TContext
+  >;
   dashboard?: boolean;
   authorize: (params: {
     user?: TContext extends { user: infer U } ? U : any;
@@ -319,6 +322,15 @@ export interface ActionConfigWithoutAuthorize<
    * dashboard's `/app/*` proxy, so only the dashboard's pages can reach it.
    * `ctx.dashboard` is then set.
    */
+  /**
+   * Whether this call may receive the output's `t.Sensitive` fields; by default
+   * they are removed. `field` is the JSON pointer (`/items/0/token`). With
+   * anything but `true`, a sensitive output field must be `t.Optional`.
+   */
+  reveal?: Reveal<
+    TInputSchema extends TSchema ? Static<TInputSchema> : any,
+    TContext
+  >;
   dashboard?: boolean;
   authorize?: undefined;
   execute: (params: {
@@ -660,7 +672,7 @@ export interface CommandConfig<
    */
   output?: TOut;
   /** As an action's `reveal`: which `t.Sensitive` output fields this call may receive. */
-  reveal?: Reveal;
+  reveal?: Reveal<ResourceActionInput<TIn, true>, TCtx>;
   errors?: TErr;
   /** Which child tables to load with the row, by their name on the resource. */
   load?: { children?: TLoad };
@@ -756,6 +768,8 @@ export interface ResourceActionConfig<
    * answers 404 before `execute` runs.
    */
   record?: TRecord;
+  /** As an action's `reveal`: which `t.Sensitive` output fields this call may receive. */
+  reveal?: Reveal<ResourceActionInput<TIn, TRecord>, TCtx>;
   /** For a record action on a resource without `crud`: which rows it may load. */
   access?: ResourceActionAccess<TCtx>;
   authorize?: (params: {

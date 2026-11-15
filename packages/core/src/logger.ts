@@ -2,7 +2,7 @@ import { ATTR, GLOBAL_SYMBOL, SPAN } from "./telemetry-names";
 import { format, formatWithOptions } from "node:util";
 import { trace, type Span } from "@opentelemetry/api";
 import type { Logger } from "./types";
-import { redactText, redacting } from "./sensitive";
+import { redactText, redactValues, redacting } from "./sensitive";
 
 type Level = keyof Logger;
 
@@ -45,10 +45,11 @@ function render(args: unknown[]): string {
   let text = stripAnsi(
     formatWithOptions(
       { depth: 3, breakLength: 120, maxArrayLength: 50, maxStringLength: 1000 },
-      ...args,
+      ...redactValues(args),
     ),
   );
-  // Before the cut, so a value cut in half is still found.
+  // Before the cut, so a value cut in half is still found. Values first, then
+  // text: a value inside an object can be escaped or cut when printed.
   text = redactText(text);
   return text.length > MAX_MESSAGE_LENGTH
     ? `${text.slice(0, MAX_MESSAGE_LENGTH)}…`
@@ -101,13 +102,14 @@ export function createLogger(prefix: string | Record<Level, string>): Logger {
   const level =
     (name: Level, print: (...args: unknown[]) => void) =>
     (...args: unknown[]): void => {
-      // One redacted string while the call has sensitive values.
-      if (redacting()) args = [redactText(format(...args))];
+      // `render` redacts what is recorded.
       if (
         (globalThis as Record<symbol, unknown>)[CAPTURE] === true &&
         recordActive(name, args)
       )
         return;
+      // One redacted string while the call has sensitive values, at console.log's own depth.
+      if (redacting()) args = [redactText(format(...redactValues(args)))];
       print(typeof prefix === "string" ? prefix : prefix[name], ...args);
     };
   return {

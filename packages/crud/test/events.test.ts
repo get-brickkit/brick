@@ -89,6 +89,8 @@ describe("sensitive fields", () => {
     read?: boolean;
     create?: boolean;
     update?: boolean;
+    filter?: readonly "startsWith"[];
+    sort?: boolean;
   }) => ({
     id: { read: true, filter: ["eq"] as const },
     name: { read: true, create: true, update: true },
@@ -99,8 +101,19 @@ describe("sensitive fields", () => {
     expect(() =>
       fixture({ crud: { fields: fields({ read: true, create: true }) } }),
     ).toThrow(
-      "CRUD field 'secret' on 'person' is t.Sensitive and cannot be read",
+      /CRUD field 'secret' on 'person' in service 'crud_events_\d+' is t\.Sensitive and cannot have `read: true`/,
     );
+  });
+
+  it("refuses a filter or a sort on a sensitive field, which would reveal it through counts", () => {
+    expect(() =>
+      fixture({
+        crud: { fields: fields({ create: true, filter: ["startsWith"] }) },
+      }),
+    ).toThrow("is t.Sensitive and cannot have `filter`");
+    expect(() =>
+      fixture({ crud: { fields: fields({ create: true, sort: true }) } }),
+    ).toThrow("is t.Sensitive and cannot have `sort`");
   });
 
   it("writes a sensitive field without reading, emitting or logging it", async () => {

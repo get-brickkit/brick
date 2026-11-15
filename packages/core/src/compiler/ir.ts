@@ -7,10 +7,12 @@ import {
   getActionRoute,
   inputSource,
   isReadLike,
+  pathParamNames,
   routeKey,
 } from "../routes";
 import { portOf } from "../service-port";
 import { fileFields } from "../typebox";
+import { hasSensitive, isSensitive } from "../sensitive";
 
 const FORM_FIELDS_AND_FRAMING_BYTES = 1024 * 1024;
 
@@ -205,6 +207,14 @@ export function describeRoute(
   method: RouteMethod,
   path: string,
 ): RouteIR {
+  // The request log and the span record the path, outside the call's redaction.
+  for (const name of pathParamNames(path)) {
+    const input = action.config.input;
+    if (isSensitive(input) || hasSensitive(input?.properties?.[name]))
+      throw new Error(
+        `Service '${service.name}' action '${action.name}': sensitive input field '/${name}' is a path parameter of '${method} ${path}', and request logs and traces record the path; take it in the request body instead`,
+      );
+  }
   const coercions: RouteIR["coercions"][number][] = [];
   for (const [key, prop] of Object.entries(
     action.config.input?.properties ?? {},
