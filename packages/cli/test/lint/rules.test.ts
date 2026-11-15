@@ -549,6 +549,7 @@ describe("lint file rules", () => {
       "defineError",
       "defineSecret",
       "defineServicePlugin",
+      "defineStorage",
       "defineResourcePlugin",
     ];
     for (const name of Object.keys(core).filter((key) =>

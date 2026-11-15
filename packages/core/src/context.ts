@@ -1,6 +1,7 @@
-import type { BaseContext, Logger } from "./types";
+import type { BaseContext, Logger, Service } from "./types";
 import { createLogger, DEFAULT_LOG_PREFIXES } from "./logger";
 import { dashboardIdentity } from "./dashboard-identity";
+import { attachIdentity } from "./identity";
 
 const DEFAULT_REQUEST = new Request("http://localhost");
 const EMPTY = Object.freeze({});
@@ -63,4 +64,26 @@ export function pickContextEnvelope(
   // In process only: the identity was verified when the outer request arrived.
   if (context.dashboard !== undefined) envelope.dashboard = context.dashboard;
   return envelope;
+}
+
+const RESOLVED = Symbol("resolved");
+const OWN_DEPS = Symbol("ownDeps");
+
+export function markResolved(
+  ctx: object,
+  service: Service<any, any>,
+  ownDeps: Readonly<Record<string, unknown>>,
+): void {
+  const marked = ctx as Record<PropertyKey, unknown>;
+  marked[RESOLVED] = service;
+  marked[OWN_DEPS] = ownDeps;
+  attachIdentity(marked, service, ownDeps);
+}
+
+export function resolvedDeps(
+  ctx: unknown,
+  service: Service<any, any>,
+): Readonly<Record<string, unknown>> | undefined {
+  const marked = ctx as Record<PropertyKey, any> | undefined;
+  return marked?.[RESOLVED] === service ? marked[OWN_DEPS] : undefined;
 }

@@ -1,0 +1,100 @@
+---
+title: Storage
+description: Keep short-lived values such as one-time codes and counters in Redis, or in memory for tests, with defineStorage.
+---
+
+`defineStorage` declares a storage. Its driver decides the kind; `redis()` and `memory()` make a key-value storage. Pass it to a service as a [dep](/docs/dependencies):
+
+```ts title="src/storage.ts"
+import { defineStorage, redis } from "@brickkit/core";
+
+export const cache = defineStorage({
+  driver: redis({ url: process.env.REDIS_URL }),
+});
+```
+
+```ts title="src/services/auth/auth.service.ts"
+import { defineService } from "@brickkit/core";
+import { cache } from "../../storage";
+
+export const auth = defineService("auth", { deps: { cache } });
+```
+
+```ts title="src/services/auth/actions/send-code.action.ts"
+import { randomInt } from "node:crypto";
+import { t } from "@brickkit/core";
+import { auth } from "../auth.service";
+
+export default auth.action({
+  name: "sendCode",
+  input: t.Object({ email: t.String() }),
+  execute: async ({ input, ctx }) => {
+    const code = String(randomInt(1_000_000)).padStart(6, "0");
+    await ctx.deps.cache.put(`otp:${input.email}`, code, 5 * 60_000);
+    // ...send it
+  },
+});
+```
+
+`ctx.deps.cache` is typed from the handle.
+
+## Methods
+
+Values are strings, and every duration is in milliseconds.
+
+| Method                           | Returns                  | Does                                                                                                                        |
+| :------------------------------- | :----------------------- | :-------------------------------------------------------------------------------------------------------------------------- |
+| `get(key)`                       | `string \| null`         | The value, or `null` when the key is missing or expired.                                                                    |
+| `put(key, value, ttlMs?)`        | `void`                   | Stores the value. Without `ttlMs` it never expires.                                                                         |
+| `putIfAbsent(key, value, ttlMs)` | `{ stored, value }`      | Stores the value unless the key exists. `stored` says whether this call stored it; `value` is the value now stored. Atomic. |
+| `increment(key, ttlMs)`          | `{ count, expiresInMs }` | Adds 1 to a counter that expires `ttlMs` after its first hit. Atomic; a counter always has an expiry.                       |
+| `delete(key)`                    | `void`                   | Removes the key.                                                                                                            |
+| `close()`                        | `void`                   | Closes the connection. The next call opens a new one.                                                                       |
+
+`ttlMs` must be a positive safe integer. `expiresInMs` is at least 1.
+
+`increment` counts only a key that holds an integer, as Redis writes one: `"5"` or `"-3"`, not `""`, `" 5 "`, `"1e3"` or `"0x10"`. On any other value both drivers throw the same `Error`, naming the key, and leave the value as it is.
+
+An app closes the storages among its services' deps and its plugins' deps when it stops, after the plugins' stop handlers have run. A storage that several apps in the process use is closed when the last of them stops. An app counts from `brick()`, not from when it starts listening, so an app that is created and never stopped keeps its storages open until the process exits.
+
+## Drivers
+
+### `redis(options)`
+
+Uses Bun's built-in Redis client. `url` defaults to `REDIS_URL`, then `redis://localhost:6379`.
+
+`prefix` is put in front of every key, your keys and Brick's alike, so two apps or environments can share one Redis database:
+
+```ts
+defineStorage({ driver: redis({ url, prefix: "shop:staging:" }) });
+// your key "otp:a@b.c" is stored as "shop:staging:app:otp:a@b.c"
+```
+
+Two storages on the same database without different prefixes share every key.
+
+The storage connects on its first call, not when it is defined: deps are created when the module is imported, and `brick info` and `brick gen` import the app without starting it. It reconnects by itself.
+
+When Redis can't be reached, a call rejects with `StorageUnavailableError`: the first after about a second, the following ones at once, until Redis is back; the error's `cause` says why the connection failed. A command Redis doesn't answer within a second rejects the same way, and the connection is dropped so the next call opens a new one. Nothing falls back to memory. A write that rejects this way may still have been applied, because Redis can finish a command after the wait ran out: do not retry an `increment` (the hit would count twice), and do not read a later `stored: false` from `putIfAbsent` as proof that the first call's work was done.
+
+```ts
+import { StorageUnavailableError } from "@brickkit/core";
+
+try {
+  await ctx.deps.cache.put(key, value, 60_000);
+} catch (error) {
+  if (error instanceof StorageUnavailableError) {
+    // Redis is down: decide whether to go on without it
+  }
+  throw error;
+}
+```
+
+### `memory()`
+
+Keeps values in this process, for tests and local development. They are lost on restart and not shared between processes. An expired key leaves memory the next time it is used, so a long-running process that writes many keys and never reads them again keeps them.
+
+## Keys
+
+Your keys and Brick's own keys are kept apart: your keys are stored under `app:`, and the keys Brick's features store in the same storage under `brick:storage:`. Neither can read or overwrite the other.
+
+Brick's features use the one key-value storage among a service's deps. The same storage under two names counts as one. A service may have two for its own use; a feature that needs one fails on that service and names both deps.

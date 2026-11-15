@@ -143,7 +143,13 @@ export function setupAppPlugins(
       },
     });
   }
-  return { lifecycles, middleware, listeners, plugins: listed };
+  return {
+    lifecycles,
+    middleware,
+    listeners,
+    plugins: listed,
+    deps: ordered.map((plugin) => internalsOf(plugin)!.deps),
+  };
 }
 
 interface Lifecycle {

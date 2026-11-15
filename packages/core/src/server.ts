@@ -42,6 +42,8 @@ import { localBroker, mountSockets, socketPath } from "./socket";
 import { DEFAULT_PREFIX, routeKey } from "./routes";
 import type { SocketBroker } from "./socket-types";
 import { corsHook, type CorsOptions } from "./cors";
+import { useStorages } from "./storage";
+import { portOf } from "./service-port";
 import { bodyLimitParser } from "./compiler/runtime";
 
 export interface CreateServerOptions {
@@ -455,6 +457,10 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   Object.defineProperty(brickApp, "events", { value: events });
   // Plugin lifecycle: start before serving, stop after the server stops.
   const lifecycle = pluginLifecycle(plugins.lifecycles);
+  const releaseStorages = useStorages([
+    ...services.map((service) => portOf(service).deps),
+    ...plugins.deps,
+  ]);
   const listen = app.listen.bind(app);
   const stop = app.stop.bind(app);
   Object.defineProperty(brickApp, "start", { value: lifecycle.start });
@@ -463,7 +469,14 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   brickApp.listen = ((...args: Parameters<typeof listen>) => {
     lifecycle.start().catch((error) => {
       console.error("[Brick-TS] A plugin failed to start:", error);
-      return stop(true);
+      return Promise.resolve(stop(true))
+        .finally(releaseStorages)
+        .catch((stopError) =>
+          console.error(
+            "[Brick-TS] Stopping after a failed plugin start failed:",
+            stopError,
+          ),
+        );
     });
     return listen(...args);
   }) as typeof brickApp.listen;
@@ -471,7 +484,11 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     try {
       await stop(closeActiveConnections);
     } finally {
-      await lifecycle.stop();
+      try {
+        await lifecycle.stop();
+      } finally {
+        await releaseStorages();
+      }
     }
   }) as typeof brickApp.stop;
   Object.defineProperty(brickApp, "serve", {
