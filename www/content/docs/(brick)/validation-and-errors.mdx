@@ -79,12 +79,13 @@ Input validation runs before `execute()`. If an incoming payload violates the sc
   "errors": [
     {
       "path": "/amount",
-      "message": "Expected number to be greater or equal to 1",
-      "value": 0
+      "message": "Expected number to be greater or equal to 1"
     }
   ]
 }
 ```
+
+Each entry has the JSON pointer `path` and a `message`. The rejected value is never included, so a bad password or token is not echoed back or logged. Property names are included: `path` names the field, so an unexpected property or a record key sent by the client appears in it.
 
 ### Output Validation
 

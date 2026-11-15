@@ -110,7 +110,8 @@ export function getCompiledCheck<T extends TSchema>(schema: T): TypeCheck<T> {
  * @param schema - A TypeBox schema, or `undefined` to accept anything.
  * @param value - The value to check.
  * @returns `{ success: true, data }`, or `{ success: false, errors }` with a
- * `path`, `message`, `type`, and the offending `value` for each problem.
+ * `path`, `message` and `type` for each problem. The offending value is
+ * left out so a rejected secret is never echoed or logged.
  */
 export function validateWithSchema<T extends TSchema>(
   schema: T | undefined,
@@ -132,7 +133,6 @@ export function validateWithSchema<T extends TSchema>(
     errors.push({
       path: error.path,
       message: error.message,
-      value: error.value,
       type: error.type,
     });
   }

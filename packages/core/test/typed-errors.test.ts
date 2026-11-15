@@ -8,6 +8,7 @@ import {
   generateOpenApiSpec,
   ActionExecutionError,
   ValidationError,
+  type ValidationErrorItem,
 } from "../src";
 import { createTestApp } from "../src/testing";
 import { postJson } from "./helpers";
@@ -255,7 +256,7 @@ test("raw endpoint rejects invalid statuses and redacts unexpected server failur
   }
 });
 
-test("output validation redacts failing values and logs diagnostics", async () => {
+test("output validation redacts failing values and logs diagnostics without them", async () => {
   const action = defineAction({
     name: "invalidOutput",
     output: t.Object({ token: t.Number() }),
@@ -286,14 +287,17 @@ test("output validation redacts failing values and logs diagnostics", async () =
       .flat()
       .find((item) => item instanceof ValidationError);
     expect(diagnostic?.errors).toContainEqual(
-      expect.objectContaining({ value: "private-output-token" }),
+      expect.objectContaining({ path: "/token" }),
+    );
+    expect(JSON.stringify(diagnostic?.errors)).not.toContain(
+      "private-output-token",
     );
   } finally {
     log.mockRestore();
   }
 });
 
-test("input validation keeps caller-provided values and endpoint output validation redacts them", async () => {
+test("validation errors drop caller-provided values and endpoint output validation redacts them", async () => {
   const log = spyOn(console, "error").mockImplementation(() => {});
   try {
     for (const status of [400, 500]) {
@@ -304,7 +308,7 @@ test("input validation keeps caller-provided values and endpoint output validati
             path: "/value",
             message: "Expected number",
             value: "sensitive-value",
-          },
+          } as ValidationErrorItem,
         ],
         status,
       );
@@ -328,11 +332,7 @@ test("input validation keeps caller-provided values and endpoint output validati
       const body = await response.json();
       if (status === 400)
         expect(body.errors).toEqual([
-          {
-            path: "/value",
-            message: "Expected number",
-            value: "sensitive-value",
-          },
+          { path: "/value", message: "Expected number" },
         ]);
       else {
         expect(body).not.toHaveProperty("errors");

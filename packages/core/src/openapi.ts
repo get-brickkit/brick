@@ -320,7 +320,6 @@ export function generateOpenApiSpec(
               properties: {
                 path: { type: "string" },
                 message: { type: "string" },
-                value: {},
               },
             },
           },

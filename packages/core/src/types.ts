@@ -109,7 +109,6 @@ export type ErrorDetails<TDef> = TDef extends {
 export interface ValidationErrorItem {
   path: string;
   message: string;
-  value?: unknown;
   type?: number;
 }
 
@@ -126,7 +125,13 @@ export class ValidationError extends Error {
     super(message);
     this.name = "ValidationError";
     this.status = status;
-    this.errors = errors;
+    // Only these fields: a rejected value (a password, a token) must not reach the client or the logs.
+    // `?.`: a body from a server that is not Brick may hold a null item.
+    this.errors = errors.map((item) => ({
+      path: item?.path,
+      message: item?.message,
+      type: item?.type,
+    }));
   }
 
   toJSON() {
