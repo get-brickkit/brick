@@ -42,6 +42,7 @@ import { localBroker, mountSockets, socketPath } from "./socket";
 import { DEFAULT_PREFIX, routeKey } from "./routes";
 import type { SocketBroker } from "./socket-types";
 import { corsHook, type CorsOptions } from "./cors";
+import { closeStorages } from "./storage";
 import { bodyLimitParser } from "./compiler/runtime";
 
 export interface CreateServerOptions {
@@ -428,6 +429,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     if (mounted) mountedRoutes.push(route.ir);
   }
 
+  app.onStop(() => closeStorages(services));
   mountSockets(
     app,
     sockets,

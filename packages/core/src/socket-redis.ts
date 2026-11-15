@@ -18,7 +18,7 @@ export function reconnectDelay(failures: number): number {
 }
 
 /** How long a call waits for Redis to connect before going on without it. */
-const REDIS_WAIT_MS = 1000;
+export const REDIS_WAIT_MS = 1000;
 
 /** One Redis connection that reconnects by itself and reports each fresh connection. */
 export function connection(

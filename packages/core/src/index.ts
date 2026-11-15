@@ -130,6 +130,18 @@ export {
 export { useDeps } from "./deps";
 export type { Identity } from "./identity";
 export {
+  defineStorage,
+  redis,
+  memory,
+  StorageUnavailableError,
+  type Counter,
+  type KeyValueDriver,
+  type KeyValueStorage,
+  type RedisStorageOptions,
+  type StorageDriver,
+  type StorageOf,
+} from "./storage";
+export {
   defineError,
   stepErrors,
   stepFailure,
