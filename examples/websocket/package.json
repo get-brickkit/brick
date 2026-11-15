@@ -10,13 +10,13 @@
     "typecheck": "bun run contract && tsc --noEmit"
   },
   "dependencies": {
-    "@better-auth/drizzle-adapter": "^1.7.15",
+    "@better-auth/drizzle-adapter": "^1.7.25",
     "@brickkit/cli": "workspace:*",
     "@brickkit/core": "workspace:*",
-    "better-auth": "^1.7.15"
+    "better-auth": "^1.7.25"
   },
   "devDependencies": {
-    "vite": "^8.3.5",
+    "vite": "^8.3.8",
     "typescript": "^7.0.2"
   }
 }

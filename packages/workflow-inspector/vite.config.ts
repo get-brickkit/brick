@@ -3,7 +3,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 import { BASE_PATH } from "./base-path";
 
-export default defineConfig(({ command, isSsrBuild }) => ({
+export default defineConfig(({ command }) => ({
   // The dashboard serves the page, and so its files, at BASE_PATH. Every URL the
   // build writes, in the page and in the scripts (preloads, the zstd wasm), then
   // points there and not at the dashboard's own /assets/.
@@ -11,12 +11,14 @@ export default defineConfig(({ command, isSsrBuild }) => ({
   build: {
     // A developer's tool for current browsers: no lowering of modern syntax.
     target: "es2022",
-    // The SSR entry is `server/app.ts`, built to `build/server/index.js`, which
-    // the CLI imports.
-    rollupOptions: isSsrBuild ? { input: "./server/app.ts" } : undefined,
     // Unminified, as upstream ships it: readable code, and no "obfuscated code"
     // flags from supply-chain scanners.
     minify: false,
+  },
+  // The SSR entry is `server/app.ts`, built to `build/server/index.js`, which
+  // the CLI imports.
+  environments: {
+    ssr: { build: { rollupOptions: { input: "./server/app.ts" } } },
   },
   // Bundle every dependency into the server build, so the package runs without
   // the UI's dependencies installed. Only Node.js built-ins stay external.

@@ -9,6 +9,8 @@
 import { decode, encode } from "cbor-x";
 import { rpcMethods } from "~/server/workflow-server-actions.server";
 import type { Route } from "./+types/api.rpc";
+import type { World } from "@workflow/world";
+import { worldContext } from "../server/inspector-host.server";
 
 function cborResponse(data: unknown, status = 200): Response {
   const encoded = encode(data);
@@ -53,8 +55,8 @@ export async function action({ request, context }: Route.ActionArgs) {
   // The client's `rpc()` is typed against `rpcMethods`; the body itself is not checked.
   // Each method catches its own errors and returns them.
   const handler = rpcMethods[method as keyof typeof rpcMethods] as (
-    world: typeof context.world,
+    world: World,
     params: object,
   ) => Promise<unknown>;
-  return cborResponse(await handler(context.world, params ?? {}));
+  return cborResponse(await handler(context.get(worldContext), params ?? {}));
 }

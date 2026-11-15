@@ -1,6 +1,5 @@
-import type { InspectorHost } from "../../server/handler";
+import type { World } from "@workflow/world";
+import { createContext } from "react-router";
 
-// Routes read the host's world from their load context.
-declare module "react-router" {
-  interface AppLoadContext extends InspectorHost {}
-}
+/** The host's world, set on each request's router context. */
+export const worldContext = createContext<World>();
