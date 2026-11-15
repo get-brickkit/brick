@@ -7,7 +7,7 @@ import {
   it,
   spyOn,
 } from "bun:test";
-import { format } from "node:util";
+import { format, inspect } from "node:util";
 import { sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { context, trace } from "@opentelemetry/api";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
@@ -740,6 +740,19 @@ it("keeps a record action's mark on its whole input, and passes a command's reve
   expect(() =>
     brick({ services: [other.service], requestLogging: false, docs: false }),
   ).toThrow("sensitive input field '/id' is a path parameter");
+
+  // A mark on a `t.Record` input's values is kept by the rebuilt input, so it is refused the same way.
+  const third = thingFixture();
+  third.thing.action({
+    name: "tag",
+    record: true,
+    access: "public",
+    input: t.Record(t.String(), t.Sensitive(t.String())) as any,
+    execute: () => true,
+  });
+  expect(() =>
+    brick({ services: [third.service], requestLogging: false, docs: false }),
+  ).toThrow("is a path parameter");
 });
 
 it("strips a sensitive field from an MCP call through the HTTP handler", async () => {
@@ -854,6 +867,8 @@ it("rejects an in-process call with the action's own error when it cannot be red
       controller.abort();
       return controller.signal.reason;
     },
+    // `Object.assign(new Error(), apiBody)` with a numeric message.
+    numeric: () => Object.assign(new Error("x"), { message: 404 as any }),
   };
   for (const [kind, make] of Object.entries(errors)) {
     const original = make();
@@ -1187,5 +1202,55 @@ it("registers what redact() is given as schema values are, and leaves booleans a
     expect(text).toContain("id: '[REDACTED]'");
     expect(text).toContain("id 2345678");
     expect(text).not.toContain("nested-secret-1");
+  }
+});
+
+it("logs a class with private fields, an error's cause and a regex match without throwing or leaking", async () => {
+  class Priv {
+    #token: string;
+    pub: string;
+    constructor(token: string) {
+      this.#token = token;
+      this.pub = token;
+    }
+    [inspect.custom]() {
+      return `Priv(${this.#token})`;
+    }
+  }
+  const secret = "zQ7!x";
+  const service = defineService("auth");
+  service.action({
+    name: "connect",
+    input: t.Object({ secret: t.Sensitive(t.String()) }),
+    execute: ({ input, ctx }) => {
+      // The redacted copy has no private field, so the class's own inspect throws on it.
+      ctx.logger.info(new Priv(input.secret));
+      // A match array carries the whole string as an extra `input` property.
+      ctx.logger.info(input.secret.match(/Q/));
+      const driver = Object.assign(new Error("duplicate key"), {
+        code: "23505",
+        pin: input.secret,
+      });
+      ctx.logger.error(new Error("Failed query", { cause: driver }));
+      return true;
+    },
+  });
+  const seen = await observe(async () => {
+    const response = await postJson(appOf(service), "/api/auth/connect", {
+      secret,
+    });
+    return response.status;
+  });
+  expect(seen.results).toEqual([200, 200]);
+  for (const text of [seen.console, seen.spans]) {
+    expect(text).not.toContain(secret);
+    for (const kept of [
+      "[Unreadable]",
+      "Failed query",
+      "[cause]",
+      "duplicate key",
+      "23505",
+    ])
+      expect(text).toContain(kept);
   }
 });

@@ -37,15 +37,31 @@ export function stripAnsi(text: string): string {
   return text.includes("\u001b") ? text.replace(ANSI, "") : text;
 }
 
+/** A redacted copy of a class instance has no private fields, so the class's own `inspect.custom` or `toString` can throw on it. */
+function printable(print: () => string): string {
+  try {
+    return print();
+  } catch {
+    return "[Unreadable]";
+  }
+}
+
 /**
  * What `console.log` would print, without terminal colors, with objects cut off
  * at a sensible size.
  */
 function render(args: unknown[]): string {
   let text = stripAnsi(
-    formatWithOptions(
-      { depth: 3, breakLength: 120, maxArrayLength: 50, maxStringLength: 1000 },
-      ...redactValues(args),
+    printable(() =>
+      formatWithOptions(
+        {
+          depth: 3,
+          breakLength: 120,
+          maxArrayLength: 50,
+          maxStringLength: 1000,
+        },
+        ...redactValues(args),
+      ),
     ),
   );
   // Before the cut, so a value cut in half is still found. Values first, then
@@ -109,7 +125,8 @@ export function createLogger(prefix: string | Record<Level, string>): Logger {
       )
         return;
       // One redacted string while the call has sensitive values, at console.log's own depth.
-      if (redacting()) args = [redactText(format(...redactValues(args)))];
+      if (redacting())
+        args = [redactText(printable(() => format(...redactValues(args))))];
       print(typeof prefix === "string" ? prefix : prefix[name], ...args);
     };
   return {

@@ -64,7 +64,7 @@ A removed field must not break the response's schema or the typed client's types
 - a record value or `additionalProperties` that would also match an unmarked property of another branch, such as `t.Intersect([t.Record(t.String(), t.Sensitive(t.String())), t.Object({ id: t.String() })])`, since that public field would be removed with it.
 
 ```
-Service 'integrations' action 'getCredential': sensitive output field '/accessToken' is removed unless `reveal` allows it, so the schema must let it be absent: make it t.Optional in every union or intersect branch, not an array item nor a record value under minProperties (or set `reveal: true`)
+Service 'integrations' action 'getCredential': sensitive output field '/accessToken' is removed unless `reveal` allows it, so the schema must let it be absent: make it t.Optional in every union or intersect branch, not an array item, a record value or a property under minProperties, nor inside a uniqueItems array (or set `reveal: true`)
 ```
 
 The client's types and OpenAPI then say what is sent: the field is optional, and with `reveal: true` it is required and always present.
@@ -81,7 +81,7 @@ execute: ({ input, ctx }) => {
 };
 ```
 
-An error's message and `details` are redacted in the HTTP error response, and an error that leaves an in-process or MCP call has its message, stack and `details` redacted, since whoever logs it next is outside the call. `details` is redacted at full depth, keys included, as it will be serialized. An error whose message cannot be written, such as a `DOMException` from an aborted `fetch` or a frozen error, is passed on unchanged. A call made in-process from inside another call adds its values to the outer call's set, so they stay redacted until the outer call ends.
+An error's message and `details` are redacted in the HTTP error response, and an error that leaves an in-process or MCP call has its message, stack and `details` redacted, since whoever logs it next is outside the call. `details` is redacted at full depth, keys included, as it will be serialized. When something in it is redacted, the caller gets a plain JSON copy, so a `Date` becomes a string. `details` that cannot be serialized (a `BigInt`, a cycle) become the string `[REDACTED]`. In a log line, an `Error` prints as its stack, then its own properties and its `cause` chain, with each redacted. An object the logger cannot print, such as an instance whose `inspect.custom` reads a private field, prints as `[Unreadable]`. An error whose message cannot be written, such as a `DOMException` from an aborted `fetch` or a frozen error, is passed on unchanged. A call made in-process from inside another call adds its values to the outer call's set, so they stay redacted until the outer call ends.
 
 Redaction runs in two passes:
 

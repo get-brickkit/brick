@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { inspect } from "node:util";
 import type { TSchema } from "@sinclair/typebox";
 
 /*
@@ -497,7 +498,8 @@ export function redacting(): boolean {
 /** `text` with the running call's redacted values replaced. */
 export function redactText(text: string): string {
   const set = redactions.getStore();
-  if (!set) return text;
+  // An error's `message` can hold a number or null, despite its type.
+  if (!set || typeof text !== "string") return text;
   if (set.full) return WITHHELD;
   // Longest first, so a value that contains another is replaced whole.
   set.sorted ??= [...set.values]
@@ -528,7 +530,8 @@ const LEAF_DEPTH = 5;
  * contains one passed through `redactText`; keys too. It fails safe: what it
  * does not look inside is replaced by a marker, never passed on as it is. It
  * walks plain objects, class instances, arrays, `Map` and `Set` (their first
- * 100 entries); an `Error` becomes its redacted stack; a getter, a cycle, an
+ * 100 entries); an `Error` becomes its redacted stack, own properties and
+ * cause chain; a getter, a cycle, an
  * object past depth 5 and anything else (a `Buffer`, a `URL`) become markers.
  * It never throws.
  */
@@ -574,7 +577,10 @@ export function redactValues<T>(value: T): T {
     if (Array.isArray(value)) {
       const { next, more, changed } = entries(value, value.length, depth);
       if (more) next.push(`... ${more} more items not shown`);
-      return changed ? next : value;
+      // Extra properties (a regex match's `input`) are not walked: the copy leaves them out.
+      return changed || Object.keys(value).length !== value.length
+        ? next
+        : value;
     }
     if (value instanceof Map || value instanceof Set) {
       const { next, more, changed } = entries(value, value.size, depth);
@@ -587,10 +593,19 @@ export function redactValues<T>(value: T): T {
       if (more) map.set("...", `${more} more entries not shown`);
       return map;
     }
-    if (value instanceof Error)
-      return redactText(
+    if (value instanceof Error) {
+      // As text, so the stack keeps its lines; then its own properties (a driver's `code`) and its cause.
+      let text = redactText(
         String(value.stack || `${value.name}: ${value.message}`),
       );
+      if (Object.keys(value).length)
+        text += ` ${inspect(visit({ ...value }, depth + 1), { depth: 2 })}`;
+      if (value.cause !== undefined) {
+        const cause = visit(value.cause, depth + 1);
+        text += `\n  [cause]: ${typeof cause === "string" ? cause : inspect(cause, { depth: 2 })}`;
+      }
+      return text;
+    }
     const tag = Object.prototype.toString.call(value);
     if (tag !== "[object Object]") return `[${tag.slice(8, -1)}]`;
     // Plain objects and class instances: own enumerable keys, getters left uncalled.

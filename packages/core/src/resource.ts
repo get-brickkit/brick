@@ -124,9 +124,15 @@ function defineResourceAction(
       throw new Error(`Record action '${name}' input must be an object`);
     input = Type.Object(
       { ...own?.properties, id: idSchema(resource.id) },
-      own?.additionalProperties === undefined
-        ? {}
-        : { additionalProperties: own.additionalProperties },
+      {
+        ...(own?.additionalProperties !== undefined && {
+          additionalProperties: own.additionalProperties,
+        }),
+        // A `t.Record` input: kept, so a mark on its values is seen and not silently dropped.
+        ...(own?.patternProperties !== undefined && {
+          patternProperties: own.patternProperties,
+        }),
+      },
     );
     // The rebuilt object would drop a mark on the input itself.
     if (isSensitive(own)) input = Sensitive(input);
