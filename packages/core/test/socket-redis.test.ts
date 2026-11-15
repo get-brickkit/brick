@@ -144,7 +144,8 @@ it("waits out the backoff instead of dialing Redis on every get()", async () => 
   bun.RedisClient = class extends original {
     constructor(...args: any[]) {
       super(...args);
-      dials++;
+      // Only this test's connection: another client in the process may reconnect meanwhile.
+      if (args[0] === "redis://127.0.0.1:1") dials++;
     }
   };
   try {
