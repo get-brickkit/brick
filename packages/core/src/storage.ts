@@ -51,7 +51,7 @@ export type StorageOf<D extends StorageDriver> = D extends KeyValueDriver
   ? KeyValueStorage
   : never;
 
-/** A storage could not be reached. Thrown by every call while it is down. */
+/** A storage could not be reached, or did not answer in time. Thrown by every call while it is down. A write that rejects with it may still have been applied. */
 export class StorageUnavailableError extends Error {
   override readonly name = "StorageUnavailableError";
 }

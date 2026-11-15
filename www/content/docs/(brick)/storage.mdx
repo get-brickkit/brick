@@ -53,7 +53,7 @@ Values are strings, and every duration is in milliseconds.
 
 `increment` counts only a key that holds an integer, as Redis writes one: `"5"` or `"-3"`, not `""`, `" 5 "`, `"1e3"` or `"0x10"`. On any other value both drivers throw the same `Error`, naming the key, and leave the value as it is.
 
-An app closes the storages among its services' deps and its plugins' deps when it stops, after the plugins' stop handlers have run. A storage that several apps in the process use is closed when the last of them stops.
+An app closes the storages among its services' deps and its plugins' deps when it stops, after the plugins' stop handlers have run. A storage that several apps in the process use is closed when the last of them stops. An app counts from `brick()`, not from when it starts listening, so an app that is created and never stopped keeps its storages open until the process exits.
 
 ## Drivers
 
@@ -72,7 +72,7 @@ Two storages on the same database without different prefixes share every key.
 
 The storage connects on its first call, not when it is defined: deps are created when the module is imported, and `brick info` and `brick gen` import the app without starting it. It reconnects by itself.
 
-When Redis can't be reached, a call rejects with `StorageUnavailableError`: the first after about a second, the following ones at once, until Redis is back; the error's `cause` says why the connection failed. A command Redis doesn't answer within a second rejects the same way, and the connection is dropped so the next call opens a new one. Nothing falls back to memory.
+When Redis can't be reached, a call rejects with `StorageUnavailableError`: the first after about a second, the following ones at once, until Redis is back; the error's `cause` says why the connection failed. A command Redis doesn't answer within a second rejects the same way, and the connection is dropped so the next call opens a new one. Nothing falls back to memory. A write that rejects this way may still have been applied, because Redis can finish a command after the wait ran out: do not retry an `increment` (the hit would count twice), and do not read a later `stored: false` from `putIfAbsent` as proof that the first call's work was done.
 
 ```ts
 import { StorageUnavailableError } from "@brickkit/core";

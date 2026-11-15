@@ -107,7 +107,7 @@ The hook returns an `Identity`, or `null` or `undefined` for an anonymous caller
 
 `ctx` is the service's own context, typed from what `context` returns and from the service's [deps](/docs/dependencies). Brick keeps only `id`, `label` and `tenant` of what the hook returns, so returning a whole user object hands nothing else on; an empty `id` is an error. Brick treats the strings as opaque: it compares and stores them, never parses them.
 
-The hook runs at most once per call, and only when a feature asks for the identity; a call that never needs it never runs it. A call is one HTTP request, socket connection, tool call or direct `action.execute`, together with the calls to the same service's actions it passes its `ctx` to. An in-process call to another service is a call of its own: it resolves that service's own `identity` against its own context.
+The hook runs at most once per call, and only when a feature asks for the identity; a call that never needs it never runs it. A call is one HTTP request, socket connection or socket message, tool call or direct `action.execute`, together with the calls to the same service's actions it passes its `ctx` to. An in-process call to another service is a call of its own: it resolves that service's own `identity` against its own context.
 
 The identity is resolved from `ctx` as it is the first time a feature asks, and stays fixed for the rest of the call, for copies of `ctx` too. Changing `ctx.user` on a copy, as in `inner.execute({ ctx: { ...ctx, user: admin } })`, changes what the action reads, not who the call is.
 
