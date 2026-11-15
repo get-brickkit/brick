@@ -9,7 +9,7 @@ import {
 import { DuplicateNameError, type Service } from "./types";
 import { getGlobalRegistry } from "./registry";
 import { getPluginEndpoints, installedPlugins } from "./plugin";
-import { pluginLifecycle, setupAppPlugins } from "./plugin-app";
+import { pluginDepsOf, pluginLifecycle, setupAppPlugins } from "./plugin-app";
 import type { PluginInstance } from "./define-plugin";
 import { OPENAPI_DEFAULTS, generateOpenApiSpec } from "./openapi";
 import { resolveSecrets, type SecretSource } from "./secrets";
@@ -43,6 +43,12 @@ import { DEFAULT_PREFIX, routeKey } from "./routes";
 import type { SocketBroker } from "./socket-types";
 import { corsHook, type CorsOptions } from "./cors";
 import { useStorages } from "./storage";
+import {
+  checkFileStorages,
+  LOCAL_FILES_ROUTE,
+  localFileDirs,
+  localFilesRoute,
+} from "./file-storage";
 import { portOf } from "./service-port";
 import { bodyLimitParser, rawBodyParser } from "./compiler/runtime";
 import { markAddressSource, type ClientIp } from "./rate-limit";
@@ -266,6 +272,16 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
 
   // Close declarations before anything reads them.
   for (const service of services) service.build();
+  for (const service of services)
+    checkFileStorages(service, [
+      portOf(service).deps,
+      ...installedPlugins(service).map(pluginDepsOf),
+    ]);
+  const localDirs = localFileDirs([
+    ...services.map((service) => portOf(service).deps),
+    ...plugins.deps,
+  ]);
+  if (localDirs.size) builtIn(LOCAL_FILES_ROUTE, localFilesRoute(localDirs));
 
   const endpointDefs: EndpointDefinition[] = [];
   let endpointRevision = 0;

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { fileStorage, type FileDriver, type FileStorage } from "./file-storage";
 import { connection, REDIS_WAIT_MS } from "./socket-redis";
 import { portOf } from "./service-port";
 import type { Service } from "./types";
@@ -42,7 +43,7 @@ export interface KeyValueDriver extends KeyValueMethods {
 }
 
 /** Every kind of storage driver; `kind` decides the handle `defineStorage` returns. */
-export type StorageDriver = KeyValueDriver;
+export type StorageDriver = KeyValueDriver | FileDriver;
 
 /** The handle of a key-value storage. App keys live apart from Brick's own. */
 export interface KeyValueStorage extends KeyValueMethods {
@@ -56,12 +57,16 @@ export interface FrameworkStorage extends KeyValueStorage {
 /** The handle `defineStorage` returns for a driver. */
 export type StorageOf<D extends StorageDriver> = D extends KeyValueDriver
   ? KeyValueStorage
-  : never;
+  : D extends FileDriver
+    ? FileStorage
+    : never;
 
 /** A storage could not be reached, or did not answer in time. Thrown by every call while it is down. A write that rejects with it may still have been applied. */
 export class StorageUnavailableError extends Error {
   override readonly name = "StorageUnavailableError";
   static [Symbol.hasInstance](value: unknown): boolean {
+    if (this !== StorageUnavailableError)
+      return Function.prototype[Symbol.hasInstance].call(this, value);
     return value instanceof Error && value.name === "StorageUnavailableError";
   }
 }
@@ -125,11 +130,14 @@ function side(driver: KeyValueDriver, prefix: string) {
 
 /**
  * Declare a storage. The driver decides its kind: `redis()` and `memory()` make
- * key-value storage. Pass it to a service as a dep, and read it as `ctx.deps.<name>`.
- * Nothing connects until the first call.
+ * key-value storage, `s3()` file storage kept per tenant. Pass it to a service
+ * as a dep, and read it as `ctx.deps.<name>`. Nothing connects until the first call.
  *
- * @param options - `driver`: `redis({ url })`, or `memory()` for tests and local development.
- * @returns The handle: `get`, `put`, `putIfAbsent`, `increment`, `delete` and `close`.
+ * @param options - `driver`: `redis({ url })`, or `memory()` for tests and local
+ * development; `s3({ bucket, prefix, local })` for files.
+ * @returns The handle. Key-value: `get`, `put`, `putIfAbsent`, `increment`,
+ * `delete` and `close`. File: `put`, `url`, `get`, `delete` in the caller's
+ * tenant, and `in(tenant)` outside a request.
  * @example
  * export const cache = defineStorage({ driver: redis({ url: process.env.REDIS_URL }) });
  * export const auth = defineService("auth", { deps: { cache } });
@@ -140,9 +148,10 @@ export function defineStorage<D extends StorageDriver>(options: {
   driver: D;
 }): StorageOf<D> {
   const driver = options?.driver;
+  if (driver?.kind === "file") return fileStorage(driver) as StorageOf<D>;
   if (driver?.kind !== "key-value")
     throw new Error(
-      "defineStorage needs a driver, such as redis() or memory()",
+      "defineStorage needs a driver, such as redis(), memory() or s3()",
     );
   const handle = side(driver, APP_PREFIX);
   frameworkSides.set(

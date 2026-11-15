@@ -153,6 +153,16 @@ export {
   type StorageOf,
 } from "./storage";
 export {
+  s3,
+  type CallDeps,
+  type CallFiles,
+  type FileDriver,
+  type FileStorage,
+  type S3StorageOptions,
+  type ScopedFiles,
+  type StoredFile,
+} from "./file-storage";
+export {
   defineError,
   stepErrors,
   stepFailure,

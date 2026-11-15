@@ -30,7 +30,6 @@ import {
   type BrickApp,
   type KeyValueDriver,
   type RateLimit,
-  type StorageDriver,
 } from "../src";
 import { sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { createTestApp } from "../src/testing";
@@ -64,7 +63,7 @@ function limited(
 const login = (app: BrickApp, email = "a@b.c", headers = {}) =>
   postJson(app, "/api/auth/login", { email }, headers);
 
-function suite(name: string, driver: () => StorageDriver, skip = false) {
+function suite(name: string, driver: () => KeyValueDriver, skip = false) {
   describe.skipIf(skip)(`rate limits on ${name}`, () => {
     let storage: ReturnType<typeof cache>;
     beforeEach(() => {
