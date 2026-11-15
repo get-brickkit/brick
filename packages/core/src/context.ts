@@ -89,3 +89,7 @@ export function resolvedDeps(
   const marked = ctx as Record<PropertyKey, any> | undefined;
   return marked?.[RESOLVED] === service ? marked[OWN_DEPS] : undefined;
 }
+
+export function serviceOf(ctx: object): Service<any, any> | undefined {
+  return (ctx as Record<PropertyKey, any>)[RESOLVED];
+}

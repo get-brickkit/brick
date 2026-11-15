@@ -1,4 +1,4 @@
-import type { ActionContext } from "./types";
+import type { ActionContext, Resource } from "./types";
 
 /** Where `hooks.*` stores a plugin's hooks on its host; `@brickkit/crud` runs them. */
 export const HOST_HOOKS = Symbol.for("brickkit.plugin.hooks");
@@ -7,6 +7,8 @@ interface HookBase<C> {
   ctx: C;
   /** The write's open transaction: write other tables through it. */
   tx: any;
+  /** The resource that is written. */
+  resource: Resource<any, any, any>;
 }
 
 /** The arguments each host CRUD hook receives, by hook name. */

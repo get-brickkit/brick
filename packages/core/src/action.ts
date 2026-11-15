@@ -15,6 +15,8 @@ import { actionMeta } from "./action-meta";
 import { baseContext } from "./context";
 import { invalid, runStages, type Stages } from "./compiler/runtime";
 import { enforceRateLimits, rateLimitsOf } from "./rate-limit";
+import { auditStage, type AuditStage, type AuditTable } from "./audit";
+import type { ServicePort } from "./service-port";
 import { sensitivity, withRedaction } from "./sensitive";
 
 /**
@@ -199,6 +201,7 @@ export function defineAction(config: any): any {
     sensitive: sensitivity(config),
   };
 
+  const auditStageOf = memoizedPerAuditTable(actionFn);
   const run = async (params: { input?: any; ctx?: any }) => {
     const meta = actionMeta(actionFn);
     // The registered service resolves the context once per request, and
@@ -207,7 +210,12 @@ export function defineAction(config: any): any {
       ? await meta.service.resolveContext(params?.ctx, meta.deps?.values)
       : { ...baseContext(params?.ctx ?? {}), ...params?.ctx };
     try {
-      return await runStages(stages, params?.input, ctx);
+      const audit = auditStageOf(meta.service);
+      return await runStages(
+        audit ? { ...stages, audit } : stages,
+        params?.input,
+        ctx,
+      );
     } catch (err) {
       throw normalizeActionError(err, ctx);
     }
@@ -217,4 +225,18 @@ export function defineAction(config: any): any {
     : run;
 
   return actionFn;
+}
+
+function memoizedPerAuditTable(action: Action<any, any, any, any>) {
+  let memo:
+    | { service?: unknown; table?: AuditTable; stage?: AuditStage }
+    | undefined;
+  return (service: ServicePort<any, any> | undefined) => {
+    const table = service?.getAuditTable();
+    if (memo && table === memo.table && service === memo.service)
+      return memo.stage;
+    const stage = service && auditStage(service, action);
+    memo = { service, table, stage };
+    return stage;
+  };
 }

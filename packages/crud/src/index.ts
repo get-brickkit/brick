@@ -4,6 +4,8 @@ import {
   idSchema as resourceIdSchema,
   t,
   setActionAccess,
+  setActionAudit,
+  isAuditTable,
 } from "@brickkit/core";
 import { type TSchema } from "@sinclair/typebox";
 import { getTableColumns, type Column } from "drizzle-orm";
@@ -321,6 +323,13 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
             : options.operations && options.operations[operation] === false
         )
           continue;
+        const writes =
+          ["create", "update", "delete"].includes(operation) ||
+          operation in bulkOperations;
+        if (writes && isAuditTable(resource.table))
+          throw new Error(
+            `CRUD resource '${resource.name}' is over the audit table, so its writes would let callers forge or delete audit rows. Make it read-only: operations: { create: false, update: false, delete: false }`,
+          );
         // Per-operation metadata: `create` never runs row-scoped (its scope
         // is always undefined, and a nonempty create scope is rejected with
         // FORBIDDEN), so it reports authorized rather than scoped.
@@ -359,6 +368,7 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
               : perform(operation as Operation, input, ctx, error),
         });
         setActionAccess(action, crudAccess);
+        setActionAudit(action, writes ? "inline" : "none");
         api[operation] = action;
       }
       service.contributePreparation({

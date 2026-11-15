@@ -43,6 +43,15 @@ import {
 import { freezeAsBuiltDeps, depsOverride } from "./deps";
 import { checkRateLimits, rateLimitsOf } from "./rate-limit";
 import {
+  auditStage,
+  inlineAudit,
+  isAuditTable,
+  recordInline,
+  type AuditTable,
+} from "./audit";
+import { addHostHooks } from "./plugin-hooks";
+import { hasIdentity } from "./identity";
+import {
   checkWebhook,
   defineWebhookMeta,
   isWebhook,
@@ -86,6 +95,8 @@ export class ServiceImpl<
   /** Where each `kind:name` was defined, to reject duplicates from another file. */
   private readonly sites = new Map<string, string | undefined>();
   private database?: DatabaseHandle<TDb>;
+  private auditTable?: AuditTable;
+  private auditHooked = false;
   private _isBuilt = false;
   private _events: Readonly<Record<string, EventRef>>;
   /** What a write needs to record events. Set by `brick({ events })`. */
@@ -105,6 +116,34 @@ export class ServiceImpl<
       throw new Error("Service database must be created with defineDatabase()");
     }
     this.database = options.database;
+    this.watchAudit();
+  }
+
+  private watchAudit(): void {
+    this.auditTable = Object.values(this.database?.tables ?? {}).find(
+      isAuditTable,
+    );
+    if (!this.auditTable || this.auditHooked) return;
+    this.auditHooked = true;
+    const record = (
+      operation: "create" | "update" | "delete",
+      { ctx, tx, resource, row, id }: any,
+    ) => {
+      const audit = inlineAudit();
+      return (
+        audit &&
+        recordInline(audit, tx, ctx, {
+          action: `${resource.name}.${operation}`,
+          resource: resource.name,
+          recordId: row ? row[resource.idField] : id,
+        })
+      );
+    };
+    addHostHooks(this, {
+      afterCreate: [(args) => record("create", args)],
+      afterUpdate: [(args) => record("update", args)],
+      afterDelete: [(args) => record("delete", args)],
+    });
   }
 
   /** The declared events: `service.events.<name>`. */
@@ -184,6 +223,10 @@ export class ServiceImpl<
       if (webhookOf(action)) checkWebhook(this, action, deps);
       else checkRateLimits(this, action, deps);
     }
+    if (this.auditTable && !hasIdentity(this))
+      throw new Error(
+        `Service "${this.name}": its database holds an audit table, but the service declares no identity, so the log would not say who. Add identity: (ctx) => ctx.user && { id: ctx.user.id } to defineService("${this.name}", { ... }).`,
+      );
     this._isBuilt = true;
     return this;
   }
@@ -350,6 +393,10 @@ export class ServiceImpl<
     return Object.values(this.database?.tables ?? {}).find(isScheduleTable);
   }
 
+  getAuditTable(): AuditTable | undefined {
+    return this.auditTable;
+  }
+
   setRecorder(recorder: ServiceEvents | undefined): void {
     this.recorder = recorder;
   }
@@ -367,6 +414,7 @@ export class ServiceImpl<
     if (!isDatabaseHandle(database))
       throw new Error("Use defineDatabase() to set a service database");
     this.database = database;
+    this.watchAudit();
     this.touch();
   }
 
@@ -422,6 +470,9 @@ export class ServiceImpl<
           hasScope: access.hasScope,
           accessPolicy: access.policy,
           errors: act.config.errors,
+          ...(auditStage(this as ServicePort<any, any>, act) && {
+            audited: true,
+          }),
           ...(rateLimitsOf(act.config) && {
             rateLimit: rateLimitsOf(act.config)!.map(({ max, windowMs }) => ({
               max,

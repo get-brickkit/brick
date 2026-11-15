@@ -42,6 +42,8 @@ export const publishArticle = articlesService.action({
 
 An action anyone may call, such as a login or a public form, should also cap how often it runs: see [Rate Limits](/docs/rate-limits). The limit runs before `authorize`, so calls it refuses count too.
 
+To keep a record of who changed what, give the service an [audit log](/docs/audit-log). It stores the actor the `identity` hook returns, and it records the calls `authorize` let through: a refused call leaves no row.
+
 A callback from a provider (a payment processor, a telephony service) is not called by your users, so it has no user to authorize: declare it with `service.webhook`, where a signature check takes the place of `authorize`. See [Provider Webhooks](/docs/webhooks).
 
 ### Automatic Type Narrowing

@@ -39,7 +39,8 @@ For each call, inside one database transaction:
 5. On a rejection, rolls back and answers with the error. Nothing is written and no event is recorded.
 6. Checks every emitted event against the catalog. An undeclared event or a payload that doesn't match fails the call before any write.
 7. Updates the row with `set`, then applies the child changes, then records the events in the outbox.
-8. Commits. Listeners get the events after the commit.
+8. When the service has an [audit table](/docs/audit-log), inserts the audit row, with the resource and the record's `id`. `audit: false` on the command leaves it out.
+9. Commits. Listeners get the events after the commit.
 
 The write and its events commit together or not at all, so an event can't be lost between the write and the emit, and an event is never sent for a write that rolled back. A command records only the events it emits: it does not also record the CRUD `<resource>.update` event.
 

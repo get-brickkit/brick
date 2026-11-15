@@ -19,12 +19,18 @@ import { webhookOf, type WebhookDefinition } from "../webhook";
 import { baseContext, markResolved, requestIds } from "../context";
 import type { ServicePort } from "../service-port";
 import { enforceRateLimits, rateLimitsOf } from "../rate-limit";
+import {
+  auditStage,
+  runAudited,
+  runUnaudited,
+  type AuditStage,
+} from "../audit";
 import { withRedaction, type Sensitivity } from "../sensitive";
 import type { Coercion, RouteIR } from "./ir";
 
 /*
  * The action pipeline, as stages: request ids → read input → validate →
- * rate limit → authorize → execute → validate output → map error. `bindRoute` runs them
+ * rate limit → authorize → [audit] → execute → validate output → map error. `bindRoute` runs them
  * for an HTTP route; `action.execute` runs the same stages in-process.
  */
 
@@ -283,6 +289,7 @@ export interface Stages {
   readonly checkInput: (input: unknown) => void;
   readonly rateLimit?: (input: unknown, ctx: any) => Promise<void>;
   readonly authorize?: (params: any) => unknown;
+  readonly audit?: AuditStage;
   readonly execute: (params: any) => unknown;
   readonly errorBuilder: unknown;
   /** @throws The output's validation error; else returns the output. */
@@ -306,9 +313,17 @@ export async function runStages(
   stages.sensitive?.input(input);
   if (stages.rateLimit) await stages.rateLimit(input, ctx);
   await authorizeCall(stages.authorize, ctx, input, stages.name);
-  const output = stages.checkOutput(
-    await stages.execute({ input, ctx, error: stages.errorBuilder }),
-  );
+  const output = stages.audit
+    ? await runAudited(stages.audit, input, ctx as ActionContext, async () =>
+        stages.checkOutput(
+          await stages.execute({ input, ctx, error: stages.errorBuilder }),
+        ),
+      )
+    : stages.checkOutput(
+        await runUnaudited(() =>
+          stages.execute({ input, ctx, error: stages.errorBuilder }),
+        ),
+      );
   return stages.sensitive
     ? stages.sensitive.output(output, input, ctx)
     : output;
@@ -405,6 +420,7 @@ function bindWebhook(plan: CompiledRoutePlan): CompiledHandler {
   const name = plan.route.action;
   const webhook = webhookOf(plan.action)!;
   const limits = rateLimitsOf(plan.action.config);
+  const audit = auditStage(plan.service, plan.action);
   const storage = webhook.replay ? serviceStorage(plan.service) : undefined;
   if (webhook.replay && !storage)
     throw new Error(
@@ -434,12 +450,16 @@ function bindWebhook(plan: CompiledRoutePlan): CompiledHandler {
       try {
         await resolveContext(delivery);
         await enforceWebhookRateLimits(delivery, input);
-        result = await execute({
-          input,
-          ctx: delivery.ctx,
-          error: plan.errorBuilder,
-          eventId: delivery.eventId,
-        });
+        const run = () =>
+          execute({
+            input,
+            ctx: delivery.ctx,
+            error: plan.errorBuilder,
+            eventId: delivery.eventId,
+          });
+        result = audit
+          ? await runAudited(audit, input, delivery.ctx, async () => run())
+          : await runUnaudited(run);
         if (plan.sensitive && !(result instanceof Response))
           result = await plan.sensitive.output(result, input, delivery.ctx);
       } catch (error) {
@@ -649,6 +669,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
   } = plan;
   const name = route.action;
   const limits = rateLimitsOf(plan.action.config);
+  const audit = auditStage(plan.service, plan.action);
   const stages: Stages = {
     name,
     dashboardOnly: plan.action.config.dashboard === true,
@@ -669,6 +690,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
           ctx,
         )),
     authorize,
+    audit,
     execute,
     errorBuilder,
     checkOutput: (result) => {
@@ -682,6 +704,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
     authorize ||
     stages.dashboardOnly ||
     limits ||
+    audit ||
     stages.sensitive
   ) {
     const brickAction = async (context: any) => {
@@ -702,7 +725,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
       ? (context) => withRedaction(() => brickAction(context))
       : brickAction;
   }
-  // Nothing to wait for before `execute`: the same stages, without `authorize` or `rateLimit`, synchronously.
+  // Nothing to wait for before `execute`: the same stages, without `authorize`, `rateLimit` or `audit`, synchronously.
   return function brickAction(context) {
     const ctx = requestContext(plan, context);
     try {
