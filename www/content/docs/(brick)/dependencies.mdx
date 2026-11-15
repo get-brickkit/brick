@@ -23,7 +23,7 @@ import { brick } from "@brickkit/core";
 export default brick({ services: [orders] });
 ```
 
-`deps` holds real values. `ctx.deps` is typed from that object, so there is nothing to declare twice.
+`deps` holds real values, as a plain object: Brick copies it, so a class instance would lose its methods and getters. `ctx.deps` is typed from that object, so there is nothing to declare twice. A dep set to `undefined` fails at startup: `Service "orders": dep "carrier" is undefined; pass a value or leave it out`.
 
 ### When deps are created
 
@@ -60,29 +60,33 @@ orders.action({
 
 ### Listeners, schedules and workflow steps
 
-Listeners and schedules belong to the app, not to a service, and a workflow step is a plain function the Workflow SDK calls by name, so it can't close over the service that started it. They call `useDeps()`, which returns the deps of every service of the app that runs them, by name. Give the type:
-
-```ts title="src/services/orders/deps.ts"
-export type OrdersDeps = { carrier: Carrier };
-```
+Listeners and schedules belong to the app, not to a service, and a workflow step is a plain function the Workflow SDK calls by name, so it can't close over the service that started it. They call `useDeps(service)`, which returns that service's deps, typed from it:
 
 ```ts title="src/services/orders/workflows/fulfil-order.workflow.ts"
 import { useDeps } from "@brickkit/core";
-import type { OrdersDeps } from "../deps";
+import { orders } from "../orders.service";
 
 async function bookCarrier(orderId: string) {
   "use step";
-  return useDeps<OrdersDeps>().carrier.book(orderId);
+  return useDeps(orders).carrier.book(orderId);
 }
 ```
 
-When two services give the same name different values, reading that name from `useDeps()` throws, because there is no single answer:
+This replaces module-level singletons such as a `setOrdersContext()` that the app calls at startup, which the `no-global-context` lint rule reports.
 
-```txt
-useDeps().carrier is ambiguous: services "orders" and "returns" both declare dep "carrier" with different values. Give one of them another name.
+When the code can't import the service, because a factory builds it (as `createOrdersApp` does in the events example), call `useDeps()` with no argument and give the type. In a listener, schedule or step of the app it returns the deps of every service of the app, by name; in one a [plugin](/docs/plugins/build-plugin#dependencies) adds, the plugin's deps:
+
+```ts
+useDeps<{ carrier: Carrier }>().carrier.book(orderId);
 ```
 
-`useDeps()` throws when called outside a listener, a schedule or a step of a running app. This replaces module-level singletons such as a `setOrdersContext()` that the app calls at startup, which the `no-global-context` lint rule reports.
+The type is not checked. When two services give the same name different values, that name has no single answer: spreading the result leaves it out, and reading it throws:
+
+```txt
+useDeps().carrier is ambiguous: services "orders" and "returns" both declare dep "carrier" with different values. Call useDeps(service) with the service you mean.
+```
+
+`useDeps()` with no argument throws when called outside a listener, a schedule or a step of a running app.
 
 ### Testing
 
@@ -95,7 +99,7 @@ await bookAction.execute({
 });
 ```
 
-Only a direct call does this. A context that another service resolved, such as the `ctx` of a calling action, never passes its deps on. To run a whole app on fakes, build the service in a factory that takes them, as `createOrdersApp({ carrier })` does in the events example.
+Only deps the test writes do this. Deps that Brick gave a context, such as the `ctx` of a calling action or a copy of it, never pass on: the called action runs with its own service's deps. A test's deps given to a plugin's action replace the plugin's deps for that action only. To run a whole app on fakes, build the service in a factory that takes them, as `createOrdersApp({ carrier })` does in the events example.
 
 ### Plugins
 
@@ -103,7 +107,7 @@ A plugin declares its own `deps`, and the user passes them when installing it: `
 
 ### Migrating from 0.15
 
-`port<T>()`, `Ports`, `DepsOf` and the `deps` option of `brick()` were removed in 0.16. Move each value into the service that uses it, and type `useDeps()` with a type instead of the ports:
+`port<T>()`, `Ports`, `DepsOf` and the `deps` option of `brick()` were removed in 0.16. Move each value into the service that uses it, and pass `useDeps()` the service instead of the ports:
 
 ```ts
 // Before (0.15)
@@ -121,7 +125,7 @@ export const orders = defineService("orders", {
   deps: { carrier: createCarrier() },
 });
 export default brick({ services: [orders] });
-useDeps<{ carrier: Carrier }>().carrier; // in a step
+useDeps(orders).carrier; // in a step
 ```
 
 `brick({ deps })` now fails at startup: `Brick: brick({ deps }) was removed in 0.16. Move each value into the service that uses it: defineService(name, { deps: { ... } })`. A plugin declares its deps with a placeholder of each type instead of `port<T>()`: `deps: { mailer: {} as Mailer }`. In a direct call, `ctx.deps` now replaces the service's deps per name; before, an app's deps won.

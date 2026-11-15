@@ -140,7 +140,7 @@ The `app` part also runs for a plugin installed on a service or resource, once p
 
 ## Dependencies
 
-A plugin declares what it needs from the app by name, each with a placeholder of its type, such as `{} as Mailer`. Only the names and types are used; the placeholder is never read. The user passes the values when installing, in the factory's second argument next to `prefix`:
+A plugin declares what it needs from the app by name, each with a placeholder of its type, such as `{} as Mailer`. Only the names and types are used: a value written there, even a real one, is never read. The user passes the values when installing, in the factory's second argument next to `prefix`:
 
 ```ts
 import { definePlugin, t } from "@brickkit/core";
@@ -169,7 +169,7 @@ orders.use(notify({}, { deps: { mailer: createMailer() } }));
 
 - **Required.** When a plugin declares deps, the install options and every dep in them are required: `notify()` does not compile. A JavaScript caller gets `@acme/brick-notify needs deps.mailer; pass it when installing: notify(options, { deps: { mailer } })`.
 - **Exact.** A key the plugin does not declare is a compile error, and at install `@acme/brick-notify does not declare deps.extra; it takes mailer`. A plugin without `deps` takes none.
-- **`ctx.deps` is the plugin's.** In every action, socket, endpoint and host hook the plugin adds, `ctx.deps` holds exactly the values passed at install, typed by its declaration. That includes actions on resources it creates and `crud()` it installs inside its setup. It never holds the host service's own deps; a plugin without deps sees `{}`. Create actions inside the setup: one action object registered by two installs with different deps is refused.
+- **`ctx.deps` is the plugin's.** In every action, socket, endpoint and host hook the plugin adds, `ctx.deps` holds exactly the values passed at install, typed by its declaration. That includes actions on resources it creates and `crud()` it installs inside its setup. It never holds the host service's own deps; a plugin without deps sees `{}`. Create actions inside the setup: one action object registered by two installs with different deps is refused. A test that calls a plugin's action directly with `ctx: { deps }` replaces the plugin's deps of those names for that action only.
 - **Setup and listeners.** Every part receives the values as `deps`, and `on("start")` and `on("stop")` handlers as `context.deps`. `useDeps()` in the `run` of a listener the plugin adds returns them too, and so does `useDeps()` in the steps of a workflow listener it adds.
 - **App plugins.** `brick({ plugins: [notify({}, { deps: { mailer } })] })` takes them the same way.
 

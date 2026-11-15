@@ -33,6 +33,7 @@ import {
 import { getActionAccess } from "./access";
 import { pluginOwner } from "./plugin-tables";
 import { baseContext, pickContextEnvelope } from "./context";
+import { brickDeps, depsOverride } from "./deps";
 import type { NamedService } from "./rpc";
 import { defineServiceSocket } from "./socket";
 import type {
@@ -86,7 +87,7 @@ export class ServiceImpl<
   ) {
     this.name = name;
     this.options = options;
-    this.deps = Object.freeze({ ...options.deps });
+    this.deps = ownDeps(name, options.deps);
     this._events = eventRefs(name, options.events);
     for (const key of Object.keys(this._events)) this.claim("event", key);
     if (options.database !== undefined && !isDatabaseHandle(options.database)) {
@@ -412,9 +413,23 @@ function pluginTables(tables: Record<string, unknown>) {
   return owners.length ? { plugins: Object.fromEntries(owners) } : {};
 }
 
-/** The deps a direct call passes in its context, unless another service resolved that context. */
-const depsOverride = (callCtx: any): Record<string, unknown> | undefined =>
-  callCtx?.[RESOLVED_SYMBOL] ? undefined : callCtx?.deps;
+/**
+ * A copy of a service's `deps`, frozen.
+ *
+ * @throws When `deps` is not a plain object, or one of its values is undefined.
+ */
+function ownDeps(service: string, deps: unknown = {}) {
+  if (deps === null || typeof deps !== "object" || Array.isArray(deps))
+    throw new Error(
+      `Service "${service}": deps must be an object of values by name, such as { carrier: createCarrier() }`,
+    );
+  for (const [name, value] of Object.entries(deps))
+    if (value === undefined)
+      throw new Error(
+        `Service "${service}": dep "${name}" is undefined; pass a value or leave it out`,
+      );
+  return brickDeps({ ...deps } as Record<string, unknown>);
+}
 
 /**
  * The context of a call to one of the service's actions or sockets. The one
@@ -439,6 +454,10 @@ async function resolveServiceContext<
         : { ...callCtx, deps }
     ) as BaseContext<TDb> & TServiceContext;
   }
+  // A direct call (a unit test) may replace some deps by name; a deps object Brick built never does.
+  const override = depsOverride(callCtx);
+  const merged = (deps: Readonly<Record<string, unknown>>) =>
+    brickDeps({ ...deps, ...override });
   const framework = baseContext({
     request: callCtx?.request,
     // Always this service's own database, never the caller's.
@@ -449,13 +468,10 @@ async function resolveServiceContext<
     services: callCtx?.services,
     metadata: callCtx?.metadata,
     dashboard: callCtx?.dashboard,
-    // The service's own deps. A direct call (a unit test) may replace some of them,
-    // but never with those of a context another service (or a plugin) resolved.
-    deps: depsOverride(callCtx)
-      ? Object.freeze({ ...service.deps, ...depsOverride(callCtx) })
-      : service.deps,
+    // The service's own deps; a direct call's override is for the action, so it reaches them only for a service action.
+    deps: override && !pluginDeps ? merged(service.deps) : service.deps,
   });
-  const fullBaseCtx: BaseContext<TDb> = {
+  const fullBaseCtx = {
     ...framework,
     ...pickContextEnvelope(callCtx),
   };
@@ -466,7 +482,11 @@ async function resolveServiceContext<
   const finalCtx: any = {
     ...fullBaseCtx,
     ...resolvedExtra,
-    deps: pluginDeps ?? framework.deps,
+    deps: pluginDeps
+      ? override
+        ? merged(pluginDeps)
+        : pluginDeps
+      : framework.deps,
     [RESOLVED_SYMBOL]: service,
     [OWN_DEPS]: framework.deps,
   };
@@ -514,20 +534,24 @@ export function defineService<
   TServiceContext extends Record<string, any> = Record<string, any>,
   const TEvents extends EventCatalog = {},
   const TName extends string = string,
-  TDeps extends Record<string, unknown> = {},
+  TDeps extends object = {},
 >(
   name: TName,
-  options?: ServiceOptions<TServiceContext, TDb> & {
+  options?: ServiceOptions<TServiceContext, TDb, TDeps> & {
     events?: TEvents;
-    deps?: TDeps;
   },
 ): Service<
   TDb,
-  {} extends TDeps ? TServiceContext : TServiceContext & { deps: TDeps },
+  [keyof TDeps] extends [never]
+    ? TServiceContext
+    : TServiceContext & { deps: TDeps },
   TEvents
 > &
   NamedService<TName> {
-  const service = new ServiceImpl<TDb, TServiceContext>(name, options);
+  const service = new ServiceImpl<TDb, TServiceContext>(
+    name,
+    options as ServiceOptions<TServiceContext, TDb>,
+  );
   getGlobalRegistry().register(service as any);
   return service as any;
 }

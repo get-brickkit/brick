@@ -626,26 +626,44 @@ describe("plugin deps", () => {
     }
   });
 
-  it("gives a host action called with a plugin's ctx the host's deps, even outside brick()", async () => {
+  it("gives a host action called with a plugin's ctx the host's deps, over HTTP and outside brick()", async () => {
     const relay = definePlugin({
       name: "@acme/relay",
       deps: { mailer: {} as Mailer },
       service: ({ service }) => {
         service.action({
           name: "relayOwn",
-          execute: ({ ctx }) => service.getAction("own")!.run(undefined, ctx),
+          execute: async ({ ctx }) => ({
+            plugin: ctx.deps.mailer.send("a"),
+            host: await service.getAction("own")!.run(undefined, ctx),
+          }),
         });
       },
     });
-    const service = defineService("bare");
+    const service = defineService("bare", {
+      deps: { mailer: mailer("host") },
+    });
     service.action({
       name: "own",
-      execute: ({ ctx }) => ({ keys: Object.keys(ctx.deps) }),
+      execute: ({ ctx }) => ctx.deps.mailer.send("a"),
     });
-    service.use(relay({}, { deps: { mailer: mailer("x") } }));
-    expect(await (service.getAction("relayOwn") as any).run()).toEqual({
-      keys: [],
+    service.use(relay({}, { deps: { mailer: mailer("plugin") } }));
+    const expected = { plugin: "plugin:a", host: "host:a" };
+    const app = brick({
+      services: [service],
+      requestLogging: false,
+      docs: false,
     });
+    expect(await post(app, "/api/bare/relay-own")).toEqual(expected);
+    expect(await (service.getAction("relayOwn") as any).run()).toEqual(
+      expected,
+    );
+    // A test's deps given to the plugin action replace the plugin's, and stop there.
+    expect(
+      await service.getAction("relayOwn")!.execute({
+        ctx: { deps: { mailer: mailer("fake") } } as any,
+      }),
+    ).toEqual({ plugin: "fake:a", host: "host:a" });
   });
 
   it("keeps a nested install's deps on its own actions, and the outer's on the rest", async () => {

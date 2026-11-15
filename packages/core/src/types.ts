@@ -762,16 +762,18 @@ export interface ResourceActionConfig<
 export interface ServiceOptions<
   TServiceContext extends Record<string, any> = Record<string, any>,
   TDb = any,
+  TDeps extends object = Record<string, unknown>,
 > {
   database?: DatabaseHandle<TDb>;
   /**
-   * The values the service's code uses, such as clients: `{ carrier: createCarrier() }`.
+   * The values the service's code uses, such as clients: `{ carrier: createCarrier() }`,
+   * as a plain object (it is copied, so a class instance would lose its methods).
    * Actions read them as `ctx.deps`, typed from this object. They are created
    * when the module is imported, so a dep should connect on first use.
    */
-  deps?: Record<string, unknown>;
+  deps?: TDeps;
   context?: (
-    baseCtx: BaseContext<TDb> & { user?: unknown },
+    baseCtx: BaseContext<TDb> & { user?: unknown; deps: Readonly<TDeps> },
   ) => Promise<TServiceContext> | TServiceContext;
   /**
    * The service's event catalog: payload schema by event name. Each becomes

@@ -4,6 +4,7 @@ import type { Static, TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { getTableName, type Table } from "drizzle-orm";
 import { actionMeta } from "./action-meta";
+import { brickDeps } from "./deps";
 import { portOf } from "./service-port";
 import type { EventCatalog, EventRef, EventRefs } from "./events/catalog";
 import type { EventListener } from "./events/types";
@@ -572,7 +573,7 @@ function checkDeps(
     throw new Error(
       `${plugin} needs ${missing.map((key) => `deps.${key}`).join(", ")}; pass it when installing: ${camelName}(options, { deps: { ${missing.join(", ")} } })`,
     );
-  return Object.freeze(
+  return brickDeps(
     Object.fromEntries(declared.map((key) => [key, provided[key]])),
   );
 }

@@ -42,6 +42,47 @@ orders.socket({
 
 const plain = defineService("plain");
 
+// useDeps(service) is typed from the service.
+const ordersDeps = useDeps(orders);
+const viaService: Carrier = ordersDeps.carrier;
+void viaService;
+// @ts-expect-error: only declared deps exist
+void ordersDeps.mailer;
+
+// deps typed as an interface.
+interface ReturnsDeps {
+  carrier: Carrier;
+}
+declare const returnsDeps: ReturnsDeps;
+defineService("returns", { deps: returnsDeps }).action({
+  name: "book",
+  execute: ({ ctx }) => ctx.deps.carrier.book("x"),
+});
+
+// All-optional deps still type ctx.deps.
+defineService("optional", { deps: {} as { carrier?: Carrier } }).action({
+  name: "book",
+  execute: ({ ctx }) => {
+    const maybe: Carrier | undefined = ctx.deps.carrier;
+    // @ts-expect-error: only declared deps exist
+    void ctx.deps.mailer;
+    return maybe ? 1 : 0;
+  },
+});
+
+// The context hook sees the service's deps, typed.
+defineService("hooked", {
+  deps: { carrier },
+  context: ({ deps }) => ({ booker: deps.carrier }),
+}).action({
+  name: "book",
+  execute: ({ ctx }) => {
+    const booker: Carrier = ctx.booker;
+    const own: Carrier = ctx.deps.carrier;
+    return [booker, own].length;
+  },
+});
+
 defineListener({
   name: "book",
   on: "order.update",
