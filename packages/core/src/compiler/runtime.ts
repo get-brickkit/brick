@@ -420,6 +420,7 @@ function bindWebhook(plan: CompiledRoutePlan): CompiledHandler {
   const name = plan.route.action;
   const webhook = webhookOf(plan.action)!;
   const limits = rateLimitsOf(plan.action.config);
+  const audit = auditStage(plan.service, plan.action);
   const storage = webhook.replay ? serviceStorage(plan.service) : undefined;
   if (webhook.replay && !storage)
     throw new Error(
@@ -449,12 +450,16 @@ function bindWebhook(plan: CompiledRoutePlan): CompiledHandler {
       try {
         await resolveContext(delivery);
         await enforceWebhookRateLimits(delivery, input);
-        result = await execute({
-          input,
-          ctx: delivery.ctx,
-          error: plan.errorBuilder,
-          eventId: delivery.eventId,
-        });
+        const run = () =>
+          execute({
+            input,
+            ctx: delivery.ctx,
+            error: plan.errorBuilder,
+            eventId: delivery.eventId,
+          });
+        result = audit
+          ? await runAudited(audit, input, delivery.ctx, async () => run())
+          : await runUnaudited(run);
         if (plan.sensitive && !(result instanceof Response))
           result = await plan.sensitive.output(result, input, delivery.ctx);
       } catch (error) {

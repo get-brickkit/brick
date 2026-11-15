@@ -12,6 +12,7 @@ import {
   createMcpRegistry,
   defineDatabase,
   defineService,
+  hmacSignature,
   recordAudit,
   resetGlobalRegistry,
   runInTransaction,
@@ -1077,5 +1078,59 @@ describe("the append-only triggers in the docs", () => {
     expect(made.rows().map((row) => row.actorId)).toEqual(["u1", "u1"]);
     await act.run(undefined, as("u1"));
     expect(made.rows()).toHaveLength(3);
+  });
+});
+
+describe("webhooks", () => {
+  it("records a handled delivery, and no row for a refused or failed one", async () => {
+    const { service, rows } = fixture({ context: false, identity: false });
+    const withIdentity = defineService("hooks", {
+      database: (service as any).options.database,
+      identity: () => null,
+    });
+    let fail = false;
+    withIdentity.webhook({
+      name: "billing",
+      verify: hmacSignature({ secret: "test-only", header: "x-signature" }),
+      replay: false,
+      input: t.Object({ id: t.String() }),
+      audit: { resource: "invoice", record: ({ input }: any) => input.id },
+      execute: () => {
+        if (fail) throw new Error("handler failed");
+      },
+    });
+    const app = brick({ services: [withIdentity], requestLogging: false });
+    const deliver = (body: string, signature: string) =>
+      app.handle(
+        new Request("http://localhost/api/hooks/billing", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-signature": signature,
+          },
+          body,
+        }),
+      );
+    const { createHmac } = await import("node:crypto");
+    const sign = (body: string) =>
+      createHmac("sha256", "test-only").update(body).digest("hex");
+    const body = JSON.stringify({ id: "in_1" });
+    expect((await deliver(body, sign(body))).status).toBe(200);
+    expect((await deliver(body, "forged")).status).toBe(401);
+    fail = true;
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect((await deliver(body, sign(body))).status).toBe(500);
+    } finally {
+      error.mockRestore();
+    }
+    expect(
+      rows().map((row) => [
+        row.action,
+        row.resource,
+        row.recordId,
+        row.actorId,
+      ]),
+    ).toEqual([["billing", "invoice", "in_1", null]]);
   });
 });
