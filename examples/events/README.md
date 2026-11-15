@@ -80,9 +80,13 @@ notifies the customer in a second step.
 
 ```sh
 docker run -d -p 6379:6379 redis:7
+export WORKFLOW_QUEUE_AUTH_KEY=$(node -e "console.log(crypto.randomBytes(32).toString('base64url'))")
 REDIS_URL=redis://localhost:6379 bun run --cwd examples/events dev
 REDIS_URL=redis://localhost:6379 bun run --cwd examples/events test   # the workflow tests run on both worlds
 ```
+
+The world refuses to start without `WORKFLOW_QUEUE_AUTH_KEY` (the tests set
+their own).
 
 `brick dev` and `brick start` build the workflow bundle into
 `.well-known/workflow/v1` before events start. What to look at:

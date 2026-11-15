@@ -265,6 +265,7 @@ It is also stricter. A service sees only its own deps: a call into another servi
 5. In a plugin, declare deps as a typed placeholder: `deps: { mailer: {} as Mailer }`.
 6. Stop reading `value` from validation error items.
 7. Add `rateLimit` to the actions `brick lint` now warns about.
+8. If the app runs workflows on `@brickkit/redis-world` or `@brickkit/bullmq-world`, set `WORKFLOW_QUEUE_AUTH_KEY` to the same secret on every process of the app (generate one with `node -e "console.log(crypto.randomBytes(32).toString('base64url'))"`).
 
 The [Migrating from 0.15](/docs/dependencies#migrating-from-015) section covers the deps steps.
 
@@ -280,3 +281,4 @@ The [Migrating from 0.15](/docs/dependencies#migrating-from-015) section covers 
 | `introspect()` leaves `deps` out of the service schema.                                                                                                                | Nothing, unless a tool of yours read them.                                                                      |
 | `ValidationErrorItem.value` is removed. Validation error responses and `validateWithSchema` results no longer include the rejected value.                              | Read `path` and `message`.                                                                                      |
 | Over HTTP, a context passed to another action of the same service is treated as resolved, as it already was in-process. The `context` hook no longer re-runs per call. | Nothing in most apps. A changed copy such as `{ ...ctx, user }` now reaches the sibling action as you wrote it. |
+| `@brickkit/redis-world` and `@brickkit/bullmq-world` authenticate every delivery to the workflow route, and refuse to start without a queue key.                       | Set `WORKFLOW_QUEUE_AUTH_KEY` on every process of the app, or pass `createWorld({ queueAuthKey })`.             |

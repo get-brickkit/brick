@@ -63,6 +63,16 @@ export interface RedisBackedWorldConfig {
    */
   httpTimeoutMs?: number;
 
+  /**
+   * The key every delivery to the flow route carries, so the Workflow SDK
+   * refuses a request that did not come from this world's queue. The same
+   * value on every process of the app: the app's own and each worker's.
+   * Generate one with
+   * `node -e "console.log(crypto.randomBytes(32).toString('base64url'))"`.
+   * Default: process.env.WORKFLOW_QUEUE_AUTH_KEY. Required.
+   */
+  queueAuthKey?: string;
+
   /** Maximum events a run may accumulate, reported as `EventResult.maxEvents`.
    * Default: `WORKFLOW_MAX_EVENTS` || 25_000 */
   maxEventsPerRun?: number;

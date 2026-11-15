@@ -2,6 +2,10 @@ import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    // A test-only key: deliveries must carry it (see `queueAuthKey`).
+    env: {
+      WORKFLOW_QUEUE_AUTH_KEY: "PFZaRa4dQzhgPdrVUNW-sHdEMFov59egd9dqo6Td2no",
+    },
     globals: true,
     globalSetup: ["./test/global-setup.ts"],
     environment: "node",

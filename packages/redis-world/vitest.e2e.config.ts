@@ -17,6 +17,10 @@ import { defineConfig } from "vitest/config";
 //   E2E_TRACE_WORLD=1                      workers log every events.create/list call (tuned workers only)
 export default defineConfig({
   test: {
+    // A test-only key: deliveries must carry it (see `queueAuthKey`).
+    env: {
+      WORKFLOW_QUEUE_AUTH_KEY: "PFZaRa4dQzhgPdrVUNW-sHdEMFov59egd9dqo6Td2no",
+    },
     globals: true,
     environment: "node",
     include: ["test/e2e/**/*.e2e.test.ts"],

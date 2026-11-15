@@ -300,7 +300,13 @@ export default brick({
 });
 ```
 
-Listeners and steps read what they need, such as the carrier, with `useDeps(service)`; the service holds it in `defineService({ deps })`. See [Dependencies](/docs/dependencies).
+The world needs a queue key: every delivery it sends to the app's workflow route carries it, and the Workflow SDK refuses a request without it, so nobody outside the app can start, fail or replay a run through that route. Set `WORKFLOW_QUEUE_AUTH_KEY` to the same value on every process of the app, the app's own and each worker's, or pass it as `createWorld({ queueAuthKey })`. The world refuses to start without one. Generate one with:
+
+```sh
+node -e "console.log(crypto.randomBytes(32).toString('base64url'))"
+```
+
+Keep it secret, like a database password. Listeners and steps read what they need, such as the carrier, with `useDeps(service)`; the service holds it in `defineService({ deps })`. See [Dependencies](/docs/dependencies).
 
 `brick dev` and `brick start` do the rest. Before the app loads they make the `"use workflow"` and `"use step"` files load as workflows and steps, and before events start they build the workflow bundle into `.well-known/workflow/v1` (add it to `.gitignore`). On a reload of `brick dev` the bundle is kept when nothing it was built from has changed (the workflow and step files, what they import, `package.json`, the lockfile, `tsconfig.json`), so editing a route costs nothing; adding or removing a source file, or giving one a `"use workflow"` or `"use step"` directive, rebuilds it. `brick start` and `brick build` always build. The world starts with the app's events and closes when they stop.
 

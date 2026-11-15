@@ -10,6 +10,10 @@ import {
   createAppRouteUrl,
   createWorkflowBaseUrl,
   createWorkflowUrl,
+  isQueueAuthRefusal,
+  isWellFormedQueueAuthKey,
+  QUEUE_AUTH_HEADER,
+  setQueueAuthKeySource,
 } from "@workflow/utils";
 import { monotonicFactory } from "ulid";
 import type { RedisBackedWorldConfig, ResolvedConfig } from "./config.js";
@@ -83,6 +87,19 @@ export interface WorldQueueOptions {
   runHasStarted?: (runId: string) => Promise<boolean>;
 }
 
+const GENERATE_KEY = `node -e "console.log(crypto.randomBytes(32).toString('base64url'))"`;
+
+/** @throws Unless the config or `WORKFLOW_QUEUE_AUTH_KEY` holds a well-formed key. */
+function queueAuthKeyOf(config: { queueAuthKey?: string }): string {
+  const key = config.queueAuthKey ?? process.env.WORKFLOW_QUEUE_AUTH_KEY;
+  if (isWellFormedQueueAuthKey(key)) return key;
+  throw new Error(
+    key
+      ? `WORKFLOW_QUEUE_AUTH_KEY is not a queue auth key (43 characters, base64url). Generate one with: ${GENERATE_KEY}`
+      : `Set WORKFLOW_QUEUE_AUTH_KEY to the same key on every process of the app, so the flow route accepts only this world's deliveries. Generate one with: ${GENERATE_KEY}`,
+  );
+}
+
 /** A response without a valid `{ timeoutSeconds }` acknowledges the message. */
 function parseReschedule(text: string): number | undefined {
   try {
@@ -104,11 +121,17 @@ export function createWorldQueue(
   backend: QueueBackend,
   config: Pick<
     ResolvedConfig<RedisBackedWorldConfig>,
-    "baseUrl" | "httpTimeoutMs"
+    "baseUrl" | "httpTimeoutMs" | "queueAuthKey"
   >,
   options: WorldQueueOptions & { debug: (...args: unknown[]) => void },
 ): WorldQueue {
   const { debug } = options;
+  const queueAuthKey = queueAuthKeyOf(config);
+  const keySourceId = `@brickkit/redis-world:${crypto.randomUUID()}`;
+  setQueueAuthKeySource(keySourceId, {
+    current: () => queueAuthKey,
+    reload: async () => queueAuthKey,
+  });
   const generateMessageId = monotonicFactory();
   const { httpTimeoutMs } = config;
   const directHandlers = new Map<
@@ -154,6 +177,7 @@ export function createWorldQueue(
     const { prefix } = parseQueueName(job.queueName);
     const headers = new Headers(job.headers);
     headers.set("content-type", "application/json");
+    headers.set(QUEUE_AUTH_HEADER, queueAuthKey);
     headers.set("x-vqs-queue-name", job.queueName);
     headers.set("x-vqs-message-id", job.messageId);
     headers.set("x-vqs-message-attempt", String(job.attempt));
@@ -198,6 +222,10 @@ export function createWorldQueue(
     }
 
     const text = await response.text();
+    if (isQueueAuthRefusal(response))
+      throw new Error(
+        "The flow route refused this delivery's queue key: give every process of the app the same WORKFLOW_QUEUE_AUTH_KEY",
+      );
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${text}`);
     return parseReschedule(text);
   };
@@ -259,6 +287,7 @@ export function createWorldQueue(
   };
 
   return {
+    queueAuthMode: "loopback",
     queue,
     createQueueHandler,
     getDeploymentId: async () => "redis",
@@ -273,6 +302,7 @@ export function createWorldQueue(
     async close() {
       closed = true;
       await backend.close();
+      setQueueAuthKeySource(keySourceId, undefined);
     },
   };
 }
