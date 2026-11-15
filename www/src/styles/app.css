@@ -575,6 +575,49 @@ html > body[data-scroll-locked] {
 .tour-serves code {
   color: var(--foreground);
 }
+.home-walkthrough {
+  border-top: 1px solid var(--border);
+}
+.home-walkthrough li {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 48px;
+  padding: 40px 0;
+  border-bottom: 1px solid var(--border);
+}
+.walkthrough-copy {
+  position: sticky;
+  top: 96px;
+  align-self: start;
+}
+.walkthrough-number {
+  font: 12px var(--font-mono);
+  color: var(--gopher);
+}
+.walkthrough-copy h3 {
+  margin-top: 10px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+.walkthrough-copy p {
+  margin-top: 8px;
+  max-width: 340px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--muted-foreground);
+}
+.walkthrough-code {
+  min-width: 0;
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+.walkthrough-file {
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--border);
+  font: 12px var(--font-mono);
+  color: var(--muted-foreground);
+}
 .home-section {
   padding: 96px 0;
   border-top: 1px solid var(--border);
@@ -729,8 +772,15 @@ html > body[data-scroll-locked] {
   .home-feature-index {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .home-split {
+  .home-split,
+  .home-walkthrough li {
     grid-template-columns: 1fr;
+  }
+  .home-walkthrough li {
+    gap: 20px;
+  }
+  .walkthrough-copy {
+    position: static;
   }
   .hero-copy {
     width: calc(100% - 48px);

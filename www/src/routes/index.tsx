@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import { BrickFront, BrickSingle } from "@/components/brick-art";
 import { HomeTour } from "@/components/home-tour";
+import { HomeWalkthrough } from "@/components/home-walkthrough";
 import { InstallCommand, InstallOptions } from "@/components/install-command";
 import { DitherCanvas, type Field } from "@/components/pixel-field";
 import { SourceCode } from "@/components/source-code";
@@ -249,6 +250,30 @@ function Home() {
           code and what it serves.
         </SectionHeading>
         <HomeTour />
+      </section>
+
+      <section id="walkthrough" className="home-section">
+        <SectionHeading
+          label="Your first app"
+          title={
+            <>
+              From empty folder
+              <br />
+              to running API.
+            </>
+          }
+        >
+          One file, a few minutes. Follow the steps or read the full{" "}
+          <Link
+            to="/docs/$"
+            params={{ _splat: "quickstart" }}
+            className="underline underline-offset-4"
+          >
+            quickstart
+          </Link>
+          .
+        </SectionHeading>
+        <HomeWalkthrough />
       </section>
 
       <section id="flow" className="home-section">
