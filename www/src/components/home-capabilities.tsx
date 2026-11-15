@@ -18,18 +18,23 @@ import { cn } from "@/lib/utils";
 import extensionSource from "../../../examples/extensions/src/extensions/comments/index.ts?raw";
 import appSource from "../../../examples/extensions/src/app.ts?raw";
 
-const resourceCode = extensionSource
-  .slice(
-    extensionSource.indexOf("  const comments ="),
-    extensionSource.indexOf("  const countComments ="),
-  )
-  .trim();
-const actionCode = extensionSource
-  .slice(
-    extensionSource.indexOf("  const countComments ="),
-    extensionSource.indexOf("  return { comments,"),
-  )
-  .trim();
+// Cut a snippet out of the real source, and fail loudly once a marker stops matching.
+function between(start: string, end: string) {
+  const from = extensionSource.indexOf(start);
+  const to = extensionSource.indexOf(end, from);
+  if (from < 0 || to < 0)
+    throw new Error(`comments extension snippet not found: ${start}`);
+  const lines = extensionSource.slice(from, to).trimEnd().split("\n");
+  const indent = Math.min(
+    ...lines.filter(Boolean).map((line) => line.search(/\S/)),
+  );
+  return lines.map((line) => line.slice(indent)).join("\n");
+}
+const pluginCode = between("export const comments =", "  resource: (");
+const resourceCode = between(
+  "    const comment = service",
+  "    return { comments: comment };",
+);
 const routes = [
   ["POST", "/api/comment/query", "List"],
   ["GET", "/api/comment/:id", "Read"],
@@ -66,7 +71,7 @@ function CodePanel({ title, code }: { title: string; code: string }) {
 }
 
 export function HomeCapabilities() {
-  const [example, setExample] = React.useState<"resource" | "action">(
+  const [example, setExample] = React.useState<"resource" | "plugin">(
     "resource",
   );
   return (
@@ -101,9 +106,9 @@ export function HomeCapabilities() {
           <div
             className="capability-tabs"
             role="tablist"
-            aria-label="Resource or custom action example"
+            aria-label="Resource or plugin definition example"
           >
-            {(["resource", "action"] as const).map((value) => (
+            {(["resource", "plugin"] as const).map((value) => (
               <button
                 type="button"
                 role="tab"
@@ -117,7 +122,9 @@ export function HomeCapabilities() {
                   example === value && "capability-tab-active",
                 )}
               >
-                {value === "resource" ? "Resource + hooks" : "Custom action"}
+                {value === "resource"
+                  ? "Resource + hooks"
+                  : "Plugin definition"}
               </button>
             ))}
           </div>
@@ -128,7 +135,7 @@ export function HomeCapabilities() {
           >
             <CodePanel
               title="comments/index.ts"
-              code={example === "resource" ? resourceCode : actionCode}
+              code={example === "resource" ? resourceCode : pluginCode}
             />
           </div>
           <p className="demo-caption">
