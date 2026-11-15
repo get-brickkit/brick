@@ -109,8 +109,15 @@ export type ErrorDetails<TDef> = TDef extends {
 export interface ValidationErrorItem {
   path: string;
   message: string;
-  value?: unknown;
   type?: number;
+}
+
+function withoutRejectedValue({
+  path,
+  message,
+  type,
+}: ValidationErrorItem): ValidationErrorItem {
+  return { path, message, type };
 }
 
 export class ValidationError extends Error {
@@ -126,7 +133,7 @@ export class ValidationError extends Error {
     super(message);
     this.name = "ValidationError";
     this.status = status;
-    this.errors = errors;
+    this.errors = errors.map(withoutRejectedValue);
   }
 
   toJSON() {

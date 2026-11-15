@@ -471,7 +471,7 @@ Response:
 HTTP/1.1 400 Bad Request
 Content-Type: application/json;charset=utf-8
 
-{"name":"ValidationError","code":"VALIDATION_FAILED","message":"Validation failed for action 'assign' input","status":400,"errors":[{"path":"/assignee","message":"Expected string length greater or equal to 1","value":""}],"requestId":"req_a"}
+{"name":"ValidationError","code":"VALIDATION_FAILED","message":"Validation failed for action 'assign' input","status":400,"errors":[{"path":"/assignee","message":"Expected string length greater or equal to 1"}],"requestId":"req_a"}
 ```
 
 Now send a number instead of a string:
@@ -488,10 +488,10 @@ Response:
 HTTP/1.1 400 Bad Request
 Content-Type: application/json;charset=utf-8
 
-{"name":"ValidationError","code":"VALIDATION_FAILED","message":"Validation failed for action 'assign' input","status":400,"errors":[{"path":"/assignee","message":"Expected string","value":123}],"requestId":"req_b"}
+{"name":"ValidationError","code":"VALIDATION_FAILED","message":"Validation failed for action 'assign' input","status":400,"errors":[{"path":"/assignee","message":"Expected string"}],"requestId":"req_b"}
 ```
 
-Each entry in `errors` gives the JSON pointer path to the invalid field, the validation message, and the offending value. Output validation works the same way: if an action returns data that violates its declared `output` schema, BrickKit returns `500 Internal Server Error` instead of sending clients malformed data.
+Each entry in `errors` gives the JSON pointer path to the invalid field and the validation message. Output validation works the same way: if an action returns data that violates its declared `output` schema, BrickKit returns `500 Internal Server Error` instead of sending clients malformed data.
 
 ## Enforce access control with request context
 
