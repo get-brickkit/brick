@@ -275,6 +275,21 @@ export type RateLimits<TInput = any, TCtx = ActionContext> =
   | RateLimit<TInput, TCtx>
   | readonly RateLimit<TInput, TCtx>[];
 
+/**
+ * How an action is recorded in the audit log: `false` leaves it out. `resource`
+ * names the record's kind and `record` returns its id, from the validated input
+ * and the result. Needs an audit table in the service's database; ignored without.
+ */
+export type AuditConfig<TInput = any, TResult = any> =
+  | false
+  | {
+      resource?: string;
+      record?: (args: {
+        input: TInput;
+        result: TResult;
+      }) => string | number | undefined;
+    };
+
 export interface ActionConfigWithAuthorize<
   TInputSchema extends TSchema | undefined = undefined,
   TOutputSchema extends TSchema | undefined = undefined,
@@ -297,6 +312,14 @@ export interface ActionConfigWithAuthorize<
   rateLimit?: RateLimits<
     TInputSchema extends TSchema ? Static<TInputSchema> : any,
     TContext
+  >;
+  /**
+   * Recorded in the audit log when the service has an audit table and the
+   * action's HTTP method is not `GET`. `false` leaves it out, for a `POST` that only reads.
+   */
+  audit?: AuditConfig<
+    TInputSchema extends TSchema ? Static<TInputSchema> : any,
+    TOutputSchema extends TSchema ? Static<TOutputSchema> : any
   >;
   authorize: (params: {
     user?: TContext extends { user: infer U } ? U : any;
@@ -334,6 +357,14 @@ export interface ActionConfigWithoutAuthorize<
   rateLimit?: RateLimits<
     TInputSchema extends TSchema ? Static<TInputSchema> : any,
     TContext
+  >;
+  /**
+   * Recorded in the audit log when the service has an audit table and the
+   * action's HTTP method is not `GET`. `false` leaves it out, for a `POST` that only reads.
+   */
+  audit?: AuditConfig<
+    TInputSchema extends TSchema ? Static<TInputSchema> : any,
+    TOutputSchema extends TSchema ? Static<TOutputSchema> : any
   >;
   authorize?: undefined;
   execute: (params: {
@@ -689,6 +720,14 @@ export interface CommandConfig<
    * service's key-value storage. Runs after input validation, before `authorize`.
    */
   rateLimit?: RateLimits<ResourceActionInput<TIn, true>, TCtx>;
+  /**
+   * Recorded in the audit log, with the resource and the record's `id`, in the
+   * command's transaction, when the service has an audit table. `false` leaves it out.
+   */
+  audit?: AuditConfig<
+    ResourceActionInput<TIn, true>,
+    TOut extends TSchema ? Static<TOut> : { id: string | number }
+  >;
   authorize?: (params: {
     user?: TCtx extends { user: infer U } ? U : any;
     input: ResourceActionInput<TIn, true>;
@@ -786,6 +825,15 @@ export interface ResourceActionConfig<
    * service's key-value storage. Runs after input validation, before `authorize`.
    */
   rateLimit?: RateLimits<ResourceActionInput<TIn, TRecord>, TCtx>;
+  /**
+   * Recorded in the audit log, with the resource and, for a record action, the
+   * `id`, when the service has an audit table and the action's HTTP method is not
+   * `GET`. `false` leaves it out.
+   */
+  audit?: AuditConfig<
+    ResourceActionInput<TIn, TRecord>,
+    TOut extends TSchema ? Static<TOut> : any
+  >;
   authorize?: (params: {
     user?: TCtx extends { user: infer U } ? U : any;
     input: ResourceActionInput<TIn, TRecord>;
@@ -858,6 +906,8 @@ export interface ActionSchema {
   accessPolicy?: ActionAccessPolicy;
   /** The action's rate limits, without their keys. */
   rateLimit?: { max: number; windowMs: number }[];
+  /** `true` when a call is recorded in the audit log; absent when it is not. */
+  audited?: boolean;
   errors?: Record<string, ActionErrorDefinition>;
   emits?: string[];
   tags?: string[];

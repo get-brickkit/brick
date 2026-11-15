@@ -1,29 +1,33 @@
 ---
-title: Audit Trail Plugin Recipe
-description: Record an audit row for every write to a resource, in the write's own transaction, with one use() call.
+title: Change History Plugin Recipe
+description: Keep the values an update wrote in a table of your own, in the write's transaction, and tie them to the built-in audit log by trace id.
 ---
 
-This recipe builds an audit trail plugin with `definePlugin`. It owns its log table and subscribes to the host resource's CRUD writes itself, so installing it is one line and there is nothing to wire by hand.
+Brick's built-in [audit log](/docs/audit-log) records who changed which record, and when. It deliberately copies no values: a log that held them would be a second copy of your data without its access rules. Use it for the question "who changed this".
+
+Some apps also need "what did it change". This recipe keeps that, in a table you can protect, prune and expose separately from the audit log. It builds a plugin with `definePlugin` that owns its table and subscribes to the host resource's updates, so installing it is one line.
+
+The plugin does not record the actor. The audit log already does, by the service's `identity` hook, and the two rows of one call share a `trace_id`.
 
 ## The plugin
 
-```ts title="src/plugins/audit/index.ts"
+```ts title="src/plugins/history/index.ts"
 import { definePlugin } from "@brickkit/core";
 
-export const audit = definePlugin({
-  name: "@acme/brick-audit",
+export const history = definePlugin({
+  name: "@acme/brick-history",
   brick: "^0.11.0",
   requires: ["@brickkit/crud"],
 
-  // Created in the host's database as <resource>_audit.
-  tables: ({ table, text, timestamp }) => ({
-    audit: table("audit", {
+  // Created in the host's database as <resource>_history.
+  tables: ({ table, text, timestamp, json }) => ({
+    history: table("history", {
       id: text("id")
         .primaryKey()
         .$defaultFn(() => crypto.randomUUID()),
       recordId: text("record_id").notNull(),
-      operation: text("operation").notNull(), // create | update | delete
-      userId: text("user_id"),
+      changes: json("changes").notNull(), // the fields the update wrote
+      traceId: text("trace_id").notNull(),
       at: timestamp("at")
         .notNull()
         .$defaultFn(() => new Date()),
@@ -31,30 +35,15 @@ export const audit = definePlugin({
   }),
 
   resource: ({ tables, hooks }) => {
-    const record =
-      (operation: "create" | "update" | "delete") =>
-      async ({
-        id,
-        row,
-        ctx,
-        tx,
-      }: {
-        id?: unknown;
-        row?: Record<string, unknown>;
-        ctx: any;
-        tx: any;
-      }) => {
-        await tx.insert(tables.audit).values({
-          recordId: String(row?.id ?? id),
-          operation,
-          userId: ctx.user?.id ?? null,
-        });
-      };
-    // Inside the write's transaction: the audit row commits or rolls back with it.
-    hooks.afterCreate(record("create"));
-    hooks.afterUpdate(record("update"));
-    hooks.afterDelete(record("delete"));
-    return { auditLog: tables.audit };
+    // Inside the write's transaction: the row commits or rolls back with it.
+    hooks.beforeUpdate(async ({ id, data, ctx, tx }) => {
+      await tx.insert(tables.history).values({
+        recordId: String(id),
+        changes: data,
+        traceId: ctx.traceId,
+      });
+    });
+    return { history: tables.history };
   },
 });
 ```
@@ -63,7 +52,7 @@ export const audit = definePlugin({
 
 ```ts title="src/services/accounts.ts"
 import { crud } from "@brickkit/crud";
-import { audit } from "../plugins/audit";
+import { history } from "../plugins/history";
 
 export const account = accountsService
   .resource({ name: "account", table: accountsTable, id: accountsTable.id })
@@ -76,51 +65,38 @@ export const account = accountsService
       },
     }),
   )
-  .use(audit());
+  .use(history());
 ```
 
-Every create, update and delete through `account`'s CRUD routes, its bulk routes and in-process calls now writes a row to `account_audit`. `account.auditLog` is the table, for reading the trail. `audit` must come after `crud()`: `requires` refuses it otherwise.
+Every update through `account`'s CRUD routes, its bulk routes and in-process calls now writes a row to `account_history`. `account.history` is the table. `history` must come after `crud()`: `requires` refuses it otherwise.
 
-To audit every resource of a service, give the plugin a `service` part with the same hooks and install it with `service.use(audit())`: hooks on a service see the writes of all its resources.
+To keep the history of every resource of a service, give the plugin a `service` part with the same hook and install it with `service.use(history())`: hooks on a service see the writes of all its resources.
 
-### Schema
+## Reading the two together
 
-export const auditSchemaFields = [
-  {
-    name: "id",
-    type: "text",
-    description: "Row identifier.",
-    isPrimaryKey: true,
-    defaultValue: "crypto.randomUUID() (application)",
-  },
-  {
-    name: "record_id",
-    type: "text",
-    description: "Identifier of the written row.",
-  },
-  {
-    name: "operation",
-    type: "text",
-    description: "create, update or delete.",
-  },
-  {
-    name: "user_id",
-    type: "text",
-    description: "The signed-in user's id, or null.",
-    isOptional: true,
-  },
-  {
-    name: "at",
-    type: "integer (SQLite) / timestamptz (Postgres)",
-    description: "When the write happened.",
-    defaultValue: "new Date() (application)",
-  },
-];
+The audit log says who and when; the history says what. Join them on the trace and the record:
 
-<DatabaseTable name="account_audit" fields={auditSchemaFields} />
+```ts
+const changes = await db
+  .select({
+    at: auditLog.at,
+    actor: auditLog.actorId,
+    changes: account.history.changes,
+  })
+  .from(auditLog)
+  .innerJoin(
+    account.history,
+    and(
+      eq(auditLog.traceId, account.history.traceId),
+      eq(auditLog.recordId, account.history.recordId),
+    ),
+  )
+  .where(eq(auditLog.action, "account.update"));
+```
 
 ## Considerations
 
-- **Atomic writes**: the hooks run inside the write's transaction and write through `tx`, so an audit row exists exactly when its write committed. A hook that throws rolls the write back. Side effects outside the database belong in `hooks.afterCommit`.
-- **Masking**: do not copy passwords, payment details or personal data into the audit table.
-- **Reading the trail**: expose `auditLog` through a separate resource with restricted access, not through the audited one.
+- **Atomic writes**: the hook runs inside the write's transaction and writes through `tx`, so a history row exists exactly when its write committed. A hook that throws rolls the write back. Side effects outside the database belong in `hooks.afterCommit`.
+- **The values are data**: they can include anything the update wrote. Do not copy passwords, payment details or personal data into the table, and give it the access rules of the table it describes. Strip such fields in the hook before inserting.
+- **Reading it**: expose `history` through a separate resource with restricted access, not through the resource it describes.
+- **Append-only**: the [audit log's triggers](/docs/audit-log#making-it-append-only) work on this table too, with its name in place of `brick_audit`.

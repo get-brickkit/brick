@@ -10,11 +10,12 @@ import { toErrorResponse } from "../error-response";
 import { baseContext, markResolved, requestIds } from "../context";
 import type { ServicePort } from "../service-port";
 import { enforceRateLimits, rateLimitsOf } from "../rate-limit";
+import { auditStage, runAudited, type AuditStage } from "../audit";
 import type { Coercion, RouteIR } from "./ir";
 
 /*
  * The action pipeline, as stages: request ids → read input → validate →
- * rate limit → authorize → execute → validate output → map error. `bindRoute` runs them
+ * rate limit → authorize → [audit] → execute → validate output → map error. `bindRoute` runs them
  * for an HTTP route; `action.execute` runs the same stages in-process.
  */
 
@@ -261,6 +262,8 @@ export interface Stages {
   /** Counts the call against the action's `rateLimit`; throws `RATE_LIMITED` over it. */
   readonly rateLimit?: (input: unknown, ctx: any) => Promise<void>;
   readonly authorize?: (params: any) => unknown;
+  /** How the call is recorded in the audit log; absent when it is not. */
+  readonly audit?: AuditStage;
   readonly execute: (params: any) => unknown;
   readonly errorBuilder: unknown;
   /** @throws The output's validation error; else returns the output. */
@@ -283,9 +286,13 @@ export async function runStages(
   // After validation, so a malformed call does not count; before authorize, so a refused one does.
   if (stages.rateLimit) await stages.rateLimit(input, ctx);
   await authorizeCall(stages.authorize, ctx, input, stages.name);
-  return stages.checkOutput(
-    await stages.execute({ input, ctx, error: stages.errorBuilder }),
-  );
+  const run = async () =>
+    stages.checkOutput(
+      await stages.execute({ input, ctx, error: stages.errorBuilder }),
+    );
+  return stages.audit
+    ? runAudited(stages.audit, input, ctx as ActionContext, run)
+    : run();
 }
 
 function mapError(
@@ -343,6 +350,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
   } = plan;
   const name = route.action;
   const limits = rateLimitsOf(plan.action.config);
+  const audit = auditStage(plan.service, plan.action);
   const stages: Stages = {
     name,
     dashboardOnly: plan.action.config.dashboard === true,
@@ -363,6 +371,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
           ctx,
         )),
     authorize,
+    audit,
     execute,
     errorBuilder,
     checkOutput: (result) => {
@@ -370,7 +379,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
       return result;
     },
   };
-  if (contextHook || authorize || stages.dashboardOnly || limits) {
+  if (contextHook || authorize || stages.dashboardOnly || limits || audit) {
     return async function brickAction(context) {
       const ctx = requestContext(plan, context);
       try {
@@ -387,7 +396,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
       }
     };
   }
-  // Nothing to wait for before `execute`: the same stages, without `authorize` or `rateLimit`, synchronously.
+  // Nothing to wait for before `execute`: the same stages, without `authorize`, `rateLimit` or `audit`, synchronously.
   return function brickAction(context) {
     const ctx = requestContext(plan, context);
     try {

@@ -105,6 +105,11 @@ export function getActionRoute(
   return actionRoute(action, action.serviceName ?? "", prefix);
 }
 
+/** The HTTP method an action's route gets: a plugin's, else its own, else POST. */
+export function actionMethod(action: Action<any, any, any, any>): HttpMethod {
+  return actionMeta(action).route?.method ?? action.config.method ?? "POST";
+}
+
 /** `getActionRoute` for an action that may not be registered yet, under `service`. */
 export function actionRoute(
   action: Action<any, any, any, any>,
@@ -114,7 +119,7 @@ export function actionRoute(
   const plugin = getPluginActionRoute(action, prefix);
   if (plugin === false) return false;
   if (plugin) return { method: plugin.method, path: plugin.path };
-  const method = action.config.method ?? "POST";
+  const method = actionMethod(action);
   const { resourceAction } = actionMeta(action);
   if (resourceAction) {
     const base = ownerPath(prefix, service, resourceAction.resource);

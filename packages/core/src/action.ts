@@ -15,6 +15,7 @@ import { actionMeta } from "./action-meta";
 import { baseContext } from "./context";
 import { invalid, runStages, type Stages } from "./compiler/runtime";
 import { enforceRateLimits, rateLimitsOf } from "./rate-limit";
+import { auditStage } from "./audit";
 
 /**
  * The `error` helpers an action receives: one function per error code that
@@ -205,7 +206,12 @@ export function defineAction(config: any): any {
       ? await meta.service.resolveContext(params?.ctx, meta.deps?.values)
       : { ...baseContext(params?.ctx ?? {}), ...params?.ctx };
     try {
-      return await runStages(stages, params?.input, ctx);
+      const audit = meta.service && auditStage(meta.service, actionFn);
+      return await runStages(
+        audit ? { ...stages, audit } : stages,
+        params?.input,
+        ctx,
+      );
     } catch (err) {
       throw normalizeActionError(err, ctx);
     }

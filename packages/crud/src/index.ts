@@ -3,6 +3,7 @@ import {
   idSchema as resourceIdSchema,
   t,
   setActionAccess,
+  setActionAudit,
 } from "@brickkit/core";
 import { type TSchema } from "@sinclair/typebox";
 import { getTableColumns, type Column } from "drizzle-orm";
@@ -340,6 +341,14 @@ export function crud<const F extends Fields, const O extends Operations = {}>(
               : perform(operation as Operation, input, ctx, error),
         });
         setActionAccess(action, crudAccess);
+        // A write is recorded in its transaction by the service's audit hook; a read is not.
+        setActionAudit(
+          action,
+          ["create", "update", "delete"].includes(operation) ||
+            operation in bulkOperations
+            ? "inline"
+            : "none",
+        );
         api[operation] = action;
       }
       service.contributePreparation({

@@ -22,6 +22,7 @@
     "routes",
     "access-control",
     "rate-limits",
+    "audit-log",
     "validation-and-errors",
     "hooks",
     "events",

@@ -10,6 +10,7 @@ import { actionMeta, type ResourceActionInfo } from "./action-meta";
 import { portOf } from "./service-port";
 import { Type } from "./typebox";
 import { runInTransaction } from "./events/transaction";
+import { entryOf, inlineAudit, recordInline } from "./audit";
 import { checkPayload, crudEventSource, type EventRef } from "./events/catalog";
 import {
   ActionExecutionError,
@@ -322,18 +323,25 @@ function defineCommand(
       for (const [eventName, payload] of emits)
         await record!(eventName, payload);
 
-      if (!config.output) return { id };
-      const [updated] = await tx
-        .select()
-        .from(resource.table)
-        .where(eq(resource.id, id))
-        .limit(1);
-      for (const child of loaded)
-        updated[child.name] = await tx
+      let reply: unknown = { id };
+      if (config.output) {
+        const [updated] = await tx
           .select()
-          .from(child.table)
-          .where(eq(child.parent, id));
-      return Value.Clean(config.output, updated);
+          .from(resource.table)
+          .where(eq(resource.id, id))
+          .limit(1);
+        for (const child of loaded)
+          updated[child.name] = await tx
+            .select()
+            .from(child.table)
+            .where(eq(child.parent, id));
+        reply = Value.Clean(config.output, updated);
+      }
+      // In the command's transaction: the row exists exactly when the write committed.
+      const audit = inlineAudit();
+      if (audit)
+        await recordInline(audit, tx, ctx, entryOf(audit, input, reply));
+      return reply;
     };
     return recorder
       ? recorder.transaction(
@@ -361,10 +369,13 @@ function defineCommand(
       ...(config.access === undefined ? {} : { access: config.access }),
       ...(config.authorize ? { authorize: config.authorize } : {}),
       ...(config.rateLimit ? { rateLimit: config.rateLimit } : {}),
+      ...(config.audit === undefined ? {} : { audit: config.audit }),
       execute: () => undefined,
     } as ResourceActionConfig<any, any, any, any, any, boolean>,
     run,
   );
+  // The command records itself, in its own transaction.
+  actionMeta(action).audit = "inline";
   Object.assign(action, { decide });
   return action;
 }

@@ -1,0 +1,236 @@
+---
+title: Audit Log
+description: Record who changed what, in the same transaction as the change, by adding one table to the database.
+---
+
+An audit log answers "who changed this record, when, and through which request". Give a service's database an audit table and Brick inserts a row for every change: each CRUD create, update and delete, each [command](/docs/commands), and each other action that is not a `GET`. A service without the table records nothing and pays nothing.
+
+Brick does not own your users. The actor is whatever the service's [`identity`](/docs/context#identity) hook returns, stored as the opaque strings it gave. The same goes for the tenant.
+
+## Minimal Example
+
+```ts title="src/services/orders.ts"
+import { auditTable, defineDatabase, defineService } from "@brickkit/core";
+
+// Brick does not create tables: your migration tool does, as for any table.
+export const auditLog = auditTable("postgres");
+
+export const database = defineDatabase({
+  engine: "postgres",
+  tables: { orders, auditLog },
+});
+
+export const ordersService = defineService("orders", {
+  database,
+  context: async ({ request }) => ({ user: await readUser(request) }),
+  // Required: the log says who from this hook.
+  identity: (ctx) =>
+    ctx.user && {
+      id: ctx.user.id,
+      label: ctx.user.email,
+      tenant: ctx.user.orgId,
+    },
+});
+
+export const order = ordersService
+  .resource({ name: "order", table: orders, id: orders.id })
+  .use(crud({ access: { authorize: ({ ctx }) => !!ctx.user }, fields }));
+```
+
+`order.create`, `order.update` and `order.delete` are now recorded, over HTTP and in-process, with no further code. A service with an audit table but no `identity` hook fails when it is built, naming the service.
+
+## What is recorded
+
+| Change                                                                             | Recorded                                                 | Written                                               |
+| :--------------------------------------------------------------------------------- | :------------------------------------------------------- | :---------------------------------------------------- |
+| CRUD `create`, `update`, `delete`                                                  | Always                                                   | In the write's own transaction                        |
+| CRUD `bulkCreate`, `bulkUpdate`, `bulkDelete`                                      | One row per record                                       | In the bulk call's one transaction                    |
+| A [command](/docs/commands)                                                        | Always, unless `audit: false`                            | In the command's own transaction                      |
+| Any other action, resource action or tool                                          | When its HTTP method is not `GET`, unless `audit: false` | After the action succeeded, in a statement of its own |
+| A `GET` action, a CRUD read, a refused call (401, 403, 429), an action that throws | Never                                                    |                                                       |
+
+The method is the one the action's route gets: `POST` unless the action says otherwise, whatever its name. An action named `getReport` that is a `POST` is recorded. A `POST` that only reads, such as a search, says so:
+
+```ts
+ordersService.action({
+  name: "search",
+  method: "POST",
+  audit: false,
+  execute,
+});
+```
+
+An MCP tool is an action too, so a tool counts as a `POST`: set `audit: false` on a read-only one.
+
+A plain action can say which record it changes, so a reader can find it:
+
+```ts
+ordersService.action({
+  name: "refund",
+  audit: { resource: "order", record: ({ input }) => input.orderId },
+  execute,
+});
+```
+
+`record` receives the validated `input` and the `result`, typed from the action, and returns the record's id. `audit` on an action of a service without an audit table is ignored.
+
+Each audited call records its own row. An action that calls another action in-process, passing its `ctx` or through `useService`, gets one row per call, and the rows share a `trace_id`.
+
+## The table
+
+The default name is `brick_audit`; `auditTable("postgres", { name: "audit_log" })` renames it. Brick only ever inserts into it.
+
+| Column                              | Holds                                                                    |
+| :---------------------------------- | :----------------------------------------------------------------------- |
+| `seq`                               | Primary key, in insertion order.                                         |
+| `id`                                | A unique row id.                                                         |
+| `at`                                | When the change ran.                                                     |
+| `service`, `action`                 | What ran: `orders` and `order.update`.                                   |
+| `resource`, `record_id`             | Which record: `order` and `42`. Null when the action does not say.       |
+| `actor_id`, `actor_label`, `tenant` | Exactly what `identity(ctx)` returned. All null for an anonymous call.   |
+| `trace_id`, `request_id`            | The ids of the call, to find its request in the dashboard.               |
+| `meta`                              | JSON. Only what your code passes to `recordAudit`; Brick never fills it. |
+
+Brick copies no input, output or row data into the log. A log that held the values would be a second copy of your data, with none of its access rules.
+
+### What `action` and `resource` hold
+
+They are stable, so you can filter on them:
+
+| Kind                       | `action`                                                                                   | `resource`                  | `record_id`                            |
+| :------------------------- | :----------------------------------------------------------------------------------------- | :-------------------------- | :------------------------------------- |
+| CRUD write, single or bulk | `<resource>.create`, `.update`, `.delete` (a bulk call writes the single operation's name) | The resource's name         | The row's id column                    |
+| Command                    | `<resource>.<command>`                                                                     | The resource's name         | The `id` of the call                   |
+| Resource action            | `<resource>.<action>`                                                                      | The resource's name         | The `id` of a record action, else null |
+| Other action               | The action's name                                                                          | `audit.resource`, else null | `audit.record`, else null              |
+| `recordAudit`              | Its `action`, else the running action's name                                               | Its `resource`, else null   | Its `recordId`, else null              |
+
+`audit.resource` and `audit.record` override these defaults on a resource action or command too.
+
+`record_id` is text. A number is stored as its decimal digits. A composite key has no single value, so give `record` the one string you filter by (`${org}:${slug}`); a value that is neither a string nor a number is stored as its JSON text rather than lost.
+
+## Atomic with the write
+
+A CRUD write and a command insert their row inside the transaction of the write itself. The row exists exactly when the write committed: if the write fails, or the commit fails, or the insert fails, none of it is kept. A bulk write records one row per record, all in its one transaction.
+
+A plain action owns no transaction Brick could join, since your `execute` does its own writes. Brick inserts the row after the output check succeeded, in a statement of its own:
+
+- An action that threw, or was refused, records nothing.
+- If the insert fails, Brick logs an error and keeps the action's result. The mutation already happened, and reporting a failure for it would be worse than a log line. If this is not acceptable for an action, write its row yourself in its transaction, as below.
+
+## Atomic with your own writes: `recordAudit`
+
+For a plain action that must have its row commit or roll back with its own writes, record it yourself through the same transaction, as `emitEvent(ctx, …, { tx })` does for events:
+
+```ts
+import { recordAudit } from "@brickkit/core";
+import { runInTransaction } from "@brickkit/core";
+
+ordersService.action({
+  name: "refund",
+  input: t.Object({ orderId: t.Number(), reason: t.String() }),
+  execute: async ({ input, ctx }) => {
+    await runInTransaction(ctx.db, async (tx) => {
+      await tx
+        .update(orders)
+        .set({ status: "refunded" })
+        .where(eq(orders.id, input.orderId));
+      await recordAudit(
+        ctx,
+        {
+          resource: "order",
+          recordId: input.orderId,
+          meta: { reason: input.reason },
+        },
+        { tx },
+      );
+    });
+  },
+});
+```
+
+When an action passes `tx`, that row is its record, and Brick does not write the automatic one for that call. Without `tx` the row is inserted at once, outside any transaction of yours, and the automatic row is still written.
+
+`action` defaults to the running action's name. Inside an action that is not itself recorded (a `GET`, or `audit: false`) pass `action`.
+
+`recordAudit` needs the `ctx` of an action of a service whose database holds an audit table, because that is where the service and the actor come from. A listener, a schedule or a workflow step has no such `ctx`, so it cannot call it.
+
+## Making it append-only
+
+Brick only inserts. Keeping other code from changing the log is the database's job, and the cleanest way is a trigger that refuses `UPDATE` and `DELETE`. Add it to the migration that creates the table. Replace `brick_audit` with your table name if you renamed it.
+
+```sql title="SQLite"
+CREATE TRIGGER brick_audit_no_update BEFORE UPDATE ON brick_audit
+BEGIN
+  SELECT RAISE(ABORT, 'brick_audit is append-only');
+END;
+
+CREATE TRIGGER brick_audit_no_delete BEFORE DELETE ON brick_audit
+BEGIN
+  SELECT RAISE(ABORT, 'brick_audit is append-only');
+END;
+```
+
+```sql title="Postgres"
+CREATE FUNCTION brick_audit_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION '% is append-only', TG_TABLE_NAME;
+END;
+$$;
+
+CREATE TRIGGER brick_audit_no_change BEFORE UPDATE OR DELETE ON brick_audit
+  FOR EACH ROW EXECUTE FUNCTION brick_audit_append_only();
+
+CREATE TRIGGER brick_audit_no_truncate BEFORE TRUNCATE ON brick_audit
+  FOR EACH STATEMENT EXECUTE FUNCTION brick_audit_append_only();
+```
+
+A trigger stops statements, not the database's owner, who can drop it. In production, run the app as a role that is not the table's owner and grant it only `INSERT` and `SELECT` on the table.
+
+## Reading the log
+
+The table is a Drizzle table, so you read it like any other. To show it in your app, give it a resource of your own with access restricted to the people who may see it, and nothing that writes:
+
+```ts title="src/services/orders.ts"
+export const auditEntry = ordersService
+  .resource({ name: "auditEntry", table: auditLog, id: auditLog.seq })
+  .use(
+    crud({
+      access: { authorize: ({ ctx }) => ctx.user?.role === "auditor" },
+      operations: { create: false, update: false, delete: false },
+      fields: {
+        seq: { read: true, sort: true, filter: ["gt"] },
+        at: { read: true, sort: true, filter: ["gte", "lte"] },
+        action: { read: true, filter: ["eq", "startsWith"] },
+        resource: { read: true, filter: ["eq"] },
+        recordId: { read: true, filter: ["eq"] },
+        actorId: { read: true, filter: ["eq"] },
+        actorLabel: { read: true },
+        tenant: { read: true, filter: ["eq"] },
+        traceId: { read: true, filter: ["eq"] },
+        meta: { read: true },
+      },
+    }),
+  );
+```
+
+Add a `scope` to `access` to show a tenant only its own rows. Reading the log is not itself recorded.
+
+## What it costs
+
+A service without an audit table pays nothing: its routes keep the [synchronous fast path](/docs/rate-limits) and no code of the audit log runs.
+
+On a service with one:
+
+- A `GET` action and a CRUD read are unchanged.
+- A CRUD write always runs in a transaction, which one without hooks or [events](/docs/events) would not, and adds one `INSERT` to it.
+- A command adds one `INSERT` to its transaction.
+- A plain action loses the synchronous fast path of its route (it returns a promise), runs the `identity` hook before `execute` (once per call, and shared with a per-actor [rate limit](/docs/rate-limits)), and after it succeeded runs one `INSERT` of its own. An action that does heavy work pays nothing noticeable; one that returns in microseconds does.
+
+Because the hook runs before `execute`, a hook that throws fails the call before anything changed.
+
+## What it does not do
+
+It does not record reads, refused calls, or the before and after values of fields; it does not chain or sign rows, prune old ones, or export them. A trigger and database grants are what make it hard to alter; export the table with your database's tools if an auditor wants a copy.
+
+`introspect()` says which actions are recorded: an action's schema has `audited: true`.
