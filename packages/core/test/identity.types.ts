@@ -37,3 +37,15 @@ defineService("wrong", {
   // @ts-expect-error id must be a string
   identity: (ctx) => ({ id: ctx.n }),
 });
+
+// A hook may return a whole user: it compiles, and Brick keeps only id, label and tenant.
+interface Account {
+  id: string;
+  email: string;
+  passwordHash: string;
+}
+declare function readAccount(): Account | undefined;
+defineService("whole", {
+  context: () => ({ user: readAccount() }),
+  identity: (ctx) => ctx.user,
+});

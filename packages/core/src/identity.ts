@@ -13,22 +13,27 @@ export interface Identity {
   tenant?: string;
 }
 
-/** On a resolved context: resolves its identity, once. Spreading the context keeps it. */
-const IDENTITY = Symbol("identity");
+/** On a resolved context: resolves its identity, once. Spreading the context keeps it. Global so a second core copy finds it. */
+const IDENTITY = Symbol.for("brickkit.identity");
 
-/** Give a resolved context its identity, resolved by `hook` on first ask and kept for the rest of the call. */
+/**
+ * Give a resolved context the service's identity: its hook runs on the first
+ * ask, against the context as it is then (with the service's own `deps`), and
+ * the result is kept for the rest of the call, copies of the context included.
+ * Nothing is attached when the service has no hook.
+ */
 export function attachIdentity(
   ctx: Record<PropertyKey, unknown>,
-  service: string,
-  hook: (() => unknown) | undefined,
+  service: Service<any, any>,
+  deps: Readonly<Record<string, unknown>>,
 ): void {
+  const hook = service.options.identity;
+  if (typeof hook !== "function") return;
   let identity: Promise<Identity | null> | undefined;
   ctx[IDENTITY] = () =>
-    (identity ??= hook
-      ? Promise.resolve()
-          .then(hook)
-          .then((value) => checked(service, value))
-      : Promise.resolve(null));
+    (identity ??= Promise.resolve()
+      .then(() => hook({ ...ctx, deps } as any))
+      .then((value) => checked(service.name, value)));
 }
 
 function checked(service: string, value: unknown): Identity | null {
@@ -36,13 +41,19 @@ function checked(service: string, value: unknown): Identity | null {
   const { id, label, tenant } = value as Partial<Identity>;
   if (
     typeof id !== "string" ||
+    !id ||
     (label !== undefined && typeof label !== "string") ||
     (tenant !== undefined && typeof tenant !== "string")
   )
     throw new Error(
-      `Service "${service}": identity must return { id: string, label?: string, tenant?: string }, null or undefined`,
+      `Service "${service}": identity must return { id: string, label?: string, tenant?: string } with a non-empty id, null or undefined`,
     );
-  return value as Identity;
+  // Only these fields: a hook that returns a whole user must not hand on the rest.
+  return {
+    id,
+    ...(label !== undefined && { label }),
+    ...(tenant !== undefined && { tenant }),
+  };
 }
 
 /**

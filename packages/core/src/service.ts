@@ -32,9 +32,13 @@ import {
 } from "./events/catalog";
 import { getActionAccess } from "./access";
 import { pluginOwner } from "./plugin-tables";
-import { baseContext, pickContextEnvelope } from "./context";
+import {
+  baseContext,
+  markResolved,
+  pickContextEnvelope,
+  resolvedDeps,
+} from "./context";
 import { brickDeps, depsOverride } from "./deps";
-import { attachIdentity } from "./identity";
 import type { NamedService } from "./rpc";
 import { defineServiceSocket } from "./socket";
 import type {
@@ -44,11 +48,6 @@ import type {
   SocketSchemas,
   RegisteredSocket,
 } from "./socket-types";
-
-// Symbol to tie context resolution to a specific service instance and invocation
-const RESOLVED_SYMBOL = Symbol("resolved");
-/** The deps a resolved context was resolved with, to restore them when a plugin's copy comes back. */
-const OWN_DEPS = Symbol("ownDeps");
 
 // The public overloads of `action`, `tool` and `resource`; the class implements them once, untyped.
 // Safe: the interface only adds signatures of methods the class defines.
@@ -454,8 +453,9 @@ async function resolveServiceContext<
   pluginDeps?: Readonly<Record<string, unknown>>,
 ): Promise<BaseContext<TDb> & TServiceContext> {
   // Only a context this service resolved itself is accepted as it is.
-  if ((callCtx as any)?.[RESOLVED_SYMBOL] === service) {
-    const deps = pluginDeps ?? (callCtx as any)[OWN_DEPS];
+  const ownDeps = resolvedDeps(callCtx, service);
+  if (ownDeps) {
+    const deps = pluginDeps ?? ownDeps;
     return (
       (callCtx as { deps?: unknown }).deps === deps
         ? callCtx
@@ -495,16 +495,9 @@ async function resolveServiceContext<
         ? merged(pluginDeps)
         : pluginDeps
       : framework.deps,
-    [RESOLVED_SYMBOL]: service,
-    [OWN_DEPS]: framework.deps,
   };
-  const identity = service.options.identity;
-  // Like `context`, the hook sees the service's own deps, never a plugin's.
-  attachIdentity(
-    finalCtx,
-    service.name,
-    identity && (() => identity({ ...finalCtx, deps: framework.deps })),
-  );
+  // Like `context`, the identity hook sees the service's own deps, never a plugin's.
+  markResolved(finalCtx, service, framework.deps);
   return finalCtx;
 }
 

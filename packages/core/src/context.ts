@@ -1,6 +1,7 @@
-import type { BaseContext, Logger } from "./types";
+import type { BaseContext, Logger, Service } from "./types";
 import { createLogger, DEFAULT_LOG_PREFIXES } from "./logger";
 import { dashboardIdentity } from "./dashboard-identity";
+import { attachIdentity } from "./identity";
 
 const DEFAULT_REQUEST = new Request("http://localhost");
 const EMPTY = Object.freeze({});
@@ -63,4 +64,34 @@ export function pickContextEnvelope(
   // In process only: the identity was verified when the outer request arrived.
   if (context.dashboard !== undefined) envelope.dashboard = context.dashboard;
   return envelope;
+}
+
+// Ties a context to the service instance that resolved it.
+const RESOLVED = Symbol("resolved");
+/** The deps a resolved context was resolved with, to restore them when a plugin's copy comes back. */
+const OWN_DEPS = Symbol("ownDeps");
+
+/**
+ * Marks a context as resolved by `service`, in process or for an HTTP request,
+ * so a call within the same service that passes it on reuses it, identity
+ * included; and gives it the service's identity.
+ */
+export function markResolved(
+  ctx: object,
+  service: Service<any, any>,
+  ownDeps: Readonly<Record<string, unknown>>,
+): void {
+  const marked = ctx as Record<PropertyKey, unknown>;
+  marked[RESOLVED] = service;
+  marked[OWN_DEPS] = ownDeps;
+  attachIdentity(marked, service, ownDeps);
+}
+
+/** The service's own deps, when `service` resolved this context; else `undefined`. */
+export function resolvedDeps(
+  ctx: unknown,
+  service: Service<any, any>,
+): Readonly<Record<string, unknown>> | undefined {
+  const marked = ctx as Record<PropertyKey, any> | undefined;
+  return marked?.[RESOLVED] === service ? marked[OWN_DEPS] : undefined;
 }
