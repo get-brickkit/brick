@@ -15,7 +15,6 @@ import type {
 } from "@sinclair/typebox";
 import type { BunSQLiteDatabase } from "./db/sqlite";
 import type { DatabaseHandle } from "./db/define";
-import type { Ports } from "./deps";
 import type { HttpMethod } from "./http";
 import type { StandardErrorCode } from "./protocol";
 import type { DashboardIdentity } from "./dashboard-identity";
@@ -342,6 +341,11 @@ export type ActionConfig<
       TContext
     >;
 
+/** What a direct call may pass as `ctx`: any part of the action's context, with `deps` replaceable per name. */
+export type CallContext<TContext> = {
+  [K in keyof TContext]?: K extends "deps" ? Partial<TContext[K]> : TContext[K];
+};
+
 export interface Action<
   TInputSchema extends TSchema | undefined = any,
   TOutputSchema extends TSchema | undefined = any,
@@ -353,7 +357,7 @@ export interface Action<
 > {
   (params: {
     input?: TInputSchema extends TSchema ? Static<TInputSchema> : any;
-    ctx?: Partial<TContext>;
+    ctx?: CallContext<TContext>;
   }): Promise<TOutputSchema extends TSchema ? Static<TOutputSchema> : any>;
 
   name: string;
@@ -361,11 +365,11 @@ export interface Action<
   config: ActionConfig<TInputSchema, TOutputSchema, TErrors, TContext>;
   run(
     input?: TInputSchema extends TSchema ? Static<TInputSchema> : any,
-    ctx?: Partial<TContext>,
+    ctx?: CallContext<TContext>,
   ): Promise<TOutputSchema extends TSchema ? Static<TOutputSchema> : any>;
   execute(params: {
     input?: TInputSchema extends TSchema ? Static<TInputSchema> : any;
-    ctx?: Partial<TContext>;
+    ctx?: CallContext<TContext>;
   }): Promise<TOutputSchema extends TSchema ? Static<TOutputSchema> : any>;
   validateInput(
     input: unknown,
@@ -770,16 +774,21 @@ export interface ResourceActionConfig<
 export interface ServiceOptions<
   TServiceContext extends Record<string, any> = Record<string, any>,
   TDb = any,
+  TDeps extends object = Record<string, unknown>,
 > {
   database?: DatabaseHandle<TDb>;
   /**
-   * What the service needs from the app, as typed slots: `{ carrier: port<Carrier>() }`.
-   * `brick({ deps })` provides the values, and actions read them as `ctx.deps`.
+   * The values the service's code uses, such as clients: `{ carrier: createCarrier() }`,
+   * as a plain object (a class instance or a Map as the whole object is refused when the module is imported).
+   * Actions read them as `ctx.deps`, typed from this object. They are created
+   * when the module is imported, so a dep should connect on first use.
    */
-  deps?: Ports;
+  deps?: TDeps;
   context?: (
-    baseCtx: BaseContext<TDb> & { user?: unknown },
-  ) => Promise<TServiceContext> | TServiceContext;
+    baseCtx: BaseContext<TDb> & { user?: unknown; deps: Readonly<TDeps> },
+  ) =>
+    | Promise<TServiceContext & { deps?: never }>
+    | (TServiceContext & { deps?: never });
   /**
    * The service's event catalog: payload schema by event name. Each becomes
    * `service.events.<name>`, recorded as `<service>.<name>`.

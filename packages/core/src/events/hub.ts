@@ -113,8 +113,8 @@ export class EventsHub {
 
   /**
    * @param options - The `events` option.
-   * @param deps - The app's `brick({ deps })`, which `useDeps()` returns in its
-   * listeners and workflow steps.
+   * @param deps - The deps of the app's services, which `useDeps()` returns in
+   * its listeners, schedules and workflow steps.
    */
   constructor(
     options: EventsOptions,

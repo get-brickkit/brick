@@ -12,11 +12,9 @@ export interface ServicePort<
   TDb = any,
   TServiceContext extends Record<string, any> = Record<string, any>,
 > extends Service<TDb, TServiceContext> {
-  /** The values of this service's `deps`. Set by `brick({ deps })`. */
-  readonly deps?: Readonly<Record<string, unknown>>;
+  readonly deps: Readonly<Record<string, unknown>>;
   /** Whether the service declares an event catalog. */
   readonly hasCatalog: boolean;
-  setDeps(deps: Readonly<Record<string, unknown>>): void;
   /** `resolveContext`, for an action or socket a plugin install created: it sees `pluginDeps`. */
   resolveContext(
     callCtx?: Partial<BaseContext<TDb> & TServiceContext>,

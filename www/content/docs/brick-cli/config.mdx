@@ -100,6 +100,6 @@ brick.config.ts: dev.dashboard.port must be a port number
 
 ## What stays out of the config
 
-Runtime behaviour stays in `brick()` in `app.ts`: `prefix`, `docs`, `telemetry`, `events`, the socket broker, `deps`. The app must run the same however it's started, including from tests that import it directly.
+Runtime behaviour stays in `brick()` in `app.ts`: `prefix`, `docs`, `telemetry`, `events`, the socket broker. The app must run the same however it's started, including from tests that import it directly.
 
 Secrets never go here. Read them through [secrets](/docs/reference/configuration#secrets-management-brickkitcore); the `no-env-outside-secrets` lint rule enforces it.

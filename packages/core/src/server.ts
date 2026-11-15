@@ -35,7 +35,7 @@ import {
 } from "./endpoints";
 import { instrumentDatabase, traceHttpRequest, withSpan } from "./telemetry";
 import { EventsHub } from "./events/hub";
-import { bindDeps } from "./deps";
+import { appDeps } from "./deps";
 import { WEBHOOK_ROUTE } from "./events/workflows";
 import type { EventsOptions } from "./events/types";
 import { localBroker, mountSockets, socketPath } from "./socket";
@@ -104,12 +104,6 @@ export interface CreateServerOptions {
    */
   sockets?: { broker?: SocketBroker; secret?: string };
   /**
-   * The values of the services' declared `deps` (`port<T>()`), by name. Every
-   * declared dep must be provided, and every provided one declared. Actions read
-   * them as `ctx.deps`, listeners and workflow steps with `useDeps()`.
-   */
-  deps?: Record<string, unknown>;
-  /**
    * App-wide plugins from `definePlugin`, in install order: their `app` part
    * adds start/stop lifecycle, middleware and listeners. Plugins installed with
    * `service.use()` or `resource.use()` take part too, before these.
@@ -138,11 +132,11 @@ export interface CreateServerOptions {
  * @param options - `prefix` for action routes (default `/api`), `services`,
  * `title`, `version`, and `description` for the OpenAPI document, `docs` and the
  * paths of its pages, `requestLogging`, `reference`, `endpoints`, `secrets`,
- * `telemetry`, `documentation`, `dashboard`, and `deps`. See `CreateServerOptions`.
+ * `telemetry`, `documentation`, and `dashboard`. See `CreateServerOptions`.
  * @returns The app, with `definition` (its services, prefix, and routes),
  * `endpoint()` to add raw routes, and `listEndpoints()` to list them.
  * @throws When a required secret is missing, `documentation` or `dashboard`
- * is invalid, or `deps` misses a dep a service declares or has one none declares.
+ * is invalid, or `deps` is passed (it moved to `defineService({ deps })`).
  * @example
  * import { brick } from "@brickkit/core";
  * import { pagesService } from "./services/pages";
@@ -154,6 +148,10 @@ export interface CreateServerOptions {
  * });
  */
 export function brick(options: CreateServerOptions = {}): BrickApp {
+  if ("deps" in options)
+    throw new Error(
+      "Brick: brick({ deps }) was removed in 0.16. Move each value into the service that uses it: defineService(name, { deps: { ... } }).",
+    );
   const prefix =
     options.prefix ?? options.compilation?.ir.prefix ?? DEFAULT_PREFIX;
   const title = options.title ?? OPENAPI_DEFAULTS.title;
@@ -231,7 +229,6 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
       );
     byName.set(service.name, service);
   }
-  bindDeps(services, options.deps);
   const eventsOptions = plugins.listeners.length
     ? {
         ...options.events,
@@ -239,7 +236,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
       }
     : options.events;
   const events = eventsOptions
-    ? new EventsHub(eventsOptions, options.deps).attach(services)
+    ? new EventsHub(eventsOptions, appDeps(services)).attach(services)
     : undefined;
   if (events?.workflows)
     app.all(WEBHOOK_ROUTE, ({ request }) => events.webhook(request));

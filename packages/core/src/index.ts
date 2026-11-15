@@ -127,7 +127,7 @@ export {
   type ServiceActionCaller,
   type UntypedServiceClient,
 } from "./rpc";
-export { port, useDeps, type Port, type Ports, type DepsOf } from "./deps";
+export { useDeps } from "./deps";
 export {
   defineError,
   stepErrors,

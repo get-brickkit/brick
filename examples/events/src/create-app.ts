@@ -10,7 +10,7 @@ import {
 import { orderEvents } from "./events";
 import { crud } from "@brickkit/crud";
 import { createCarrier, type Carrier } from "./carrier";
-import { ordersDeps } from "./deps";
+import type { OrdersDeps } from "./deps";
 import { createListeners } from "./listeners";
 import { createSchedules } from "./schedules";
 import { auditLog, notifications, orders, outbox, schedules } from "./schema";
@@ -39,7 +39,7 @@ export function createOrdersApp(options: OrdersAppOptions) {
   const service = defineService(options.serviceName ?? "orders", {
     database,
     events: orderEvents,
-    deps: ordersDeps,
+    deps: { db: database.getDb(), carrier } satisfies OrdersDeps,
   });
 
   const order = service
@@ -111,7 +111,6 @@ export function createOrdersApp(options: OrdersAppOptions) {
 
   const app = brick({
     services: [service],
-    deps: { db: database.getDb(), carrier },
     events: {
       listeners: createListeners(
         database.getDb() as never,

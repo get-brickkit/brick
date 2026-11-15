@@ -1,11 +1,11 @@
-import { definePlugin, defineService, port, t } from "../src";
+import { definePlugin, defineService, t } from "../src";
 
 type Mailer = { send(to: string): Promise<void> };
 const mailer: Mailer = { send: async () => undefined };
 
 export const notify = definePlugin({
   name: "@acme/brick-notify",
-  deps: { mailer: port<Mailer>() },
+  deps: { mailer: {} as Mailer },
   service: ({ service, deps }) => {
     const send: Mailer["send"] = deps.mailer.send;
     void send;

@@ -4,7 +4,6 @@ import {
   brick,
   defineService,
   defineListener,
-  port,
   t,
   useDeps,
   useService,
@@ -16,8 +15,8 @@ interface Carrier {
 
 // --- deps -------------------------------------------------------------------
 
-const ordersDeps = { carrier: port<Carrier>() };
-const orders = defineService("orders", { deps: ordersDeps });
+declare const carrier: Carrier;
+const orders = defineService("orders", { deps: { carrier } });
 
 orders.action({
   name: "ship",
@@ -43,18 +42,68 @@ orders.socket({
 
 const plain = defineService("plain");
 
+const ordersDeps = useDeps(orders);
+const viaService: Carrier = ordersDeps.carrier;
+void viaService;
+// @ts-expect-error
+void ordersDeps.mailer;
+
+const twoDeps = defineService("two", { deps: { carrier, label: "x" } });
+const labelled = twoDeps.action({ name: "label", execute: () => 1 });
+void labelled.execute({ ctx: { deps: { carrier } } });
+void labelled.run(undefined, { deps: { label: "y" } });
+// @ts-expect-error
+void labelled.execute({ ctx: { deps: { mailer: carrier } } });
+
+defineService("replaced", {
+  deps: { carrier },
+  // @ts-expect-error
+  context: ({ deps }) => ({ deps: { ...deps, clock: 1 } }),
+});
+
+interface ReturnsDeps {
+  carrier: Carrier;
+}
+declare const returnsDeps: ReturnsDeps;
+defineService("returns", { deps: returnsDeps }).action({
+  name: "book",
+  execute: ({ ctx }) => ctx.deps.carrier.book("x"),
+});
+
+defineService("optional", { deps: {} as { carrier?: Carrier } }).action({
+  name: "book",
+  execute: ({ ctx }) => {
+    const maybe: Carrier | undefined = ctx.deps.carrier;
+    // @ts-expect-error
+    void ctx.deps.mailer;
+    return maybe ? 1 : 0;
+  },
+});
+
+defineService("hooked", {
+  deps: { carrier },
+  context: ({ deps }) => ({ booker: deps.carrier }),
+}).action({
+  name: "book",
+  execute: ({ ctx }) => {
+    const booker: Carrier = ctx.booker;
+    const own: Carrier = ctx.deps.carrier;
+    return [booker, own].length;
+  },
+});
+
 defineListener({
   name: "book",
   on: "order.update",
   run: async () => {
-    const carrier: Carrier = useDeps(ordersDeps).carrier;
     const typed: Carrier = useDeps<{ carrier: Carrier }>().carrier;
-    void carrier;
     void typed;
   },
 });
 
-brick({ services: [orders], deps: { carrier: {} as Carrier } });
+brick({ services: [orders] });
+// @ts-expect-error
+brick({ services: [orders], deps: { carrier } });
 
 // --- useService ---------------------------------------------------------------
 

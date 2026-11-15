@@ -4,7 +4,6 @@ import {
   defineDatabase,
   definePlugin,
   defineService,
-  port,
   resetGlobalRegistry,
   sqliteTable,
   syncSchema,
@@ -140,7 +139,7 @@ it("plugin hooks and crud() inside a plugin read the plugin's deps as ctx.deps",
   const tags = sqliteTable("dp_tags", { id: text("id").primaryKey() });
   const tagger = definePlugin({
     name: "@acme/tagger",
-    deps: { label: port<string>() },
+    deps: { label: "" },
     service: ({ service, hooks }) => {
       hooks.afterCreate(({ ctx }) => void seen.push(`hook ${ctx.deps.label}`));
       service.resource({ name: "tag", table: tags, id: tags.id }).use(
@@ -158,7 +157,7 @@ it("plugin hooks and crud() inside a plugin read the plugin's deps as ctx.deps",
   const database = defineDatabase({ tables: { items, tags } });
   const service = defineService("tagshop", {
     database,
-    deps: { carrier: port<string>() },
+    deps: { carrier: "host" },
   });
   const item = service
     .resource({ name: "item", table: items, id: items.id })
@@ -175,7 +174,6 @@ it("plugin hooks and crud() inside a plugin read the plugin's deps as ctx.deps",
   syncSchema(service);
   brick({
     services: [service],
-    deps: { carrier: "host" },
     requestLogging: false,
     docs: false,
   });
