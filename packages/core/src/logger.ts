@@ -1,7 +1,8 @@
 import { ATTR, GLOBAL_SYMBOL, SPAN } from "./telemetry-names";
-import { formatWithOptions } from "node:util";
+import { format, formatWithOptions } from "node:util";
 import { trace, type Span } from "@opentelemetry/api";
 import type { Logger } from "./types";
+import { redactText, redactValues, redacting } from "./sensitive";
 
 type Level = keyof Logger;
 
@@ -36,16 +37,40 @@ export function stripAnsi(text: string): string {
   return text.includes("\u001b") ? text.replace(ANSI, "") : text;
 }
 
+const REDACTED_COPY_NOT_PRINTABLE = "[Unreadable]";
+
+function formatRedacted(
+  print: (...args: unknown[]) => string,
+  args: unknown[],
+): string {
+  let printed: string;
+  try {
+    printed = print(...redactValues(args));
+  } catch {
+    printed = REDACTED_COPY_NOT_PRINTABLE;
+  }
+  return redactText(printed);
+}
+
 /**
  * What `console.log` would print, without terminal colors, with objects cut off
  * at a sensible size.
  */
 function render(args: unknown[]): string {
-  const text = stripAnsi(
-    formatWithOptions(
-      { depth: 3, breakLength: 120, maxArrayLength: 50, maxStringLength: 1000 },
-      ...args,
-    ),
+  const text = formatRedacted(
+    (...values) =>
+      stripAnsi(
+        formatWithOptions(
+          {
+            depth: 3,
+            breakLength: 120,
+            maxArrayLength: 50,
+            maxStringLength: 1000,
+          },
+          ...values,
+        ),
+      ),
+    args,
   );
   return text.length > MAX_MESSAGE_LENGTH
     ? `${text.slice(0, MAX_MESSAGE_LENGTH)}…`
@@ -103,6 +128,7 @@ export function createLogger(prefix: string | Record<Level, string>): Logger {
         recordActive(name, args)
       )
         return;
+      if (redacting()) args = [formatRedacted(format, args)];
       print(typeof prefix === "string" ? prefix : prefix[name], ...args);
     };
   return {

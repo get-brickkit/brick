@@ -10,6 +10,7 @@ import { getActionAccess } from "./access";
 import { rateLimitsOf } from "./rate-limit";
 import { webhookOf } from "./webhook";
 import { fileFields } from "./typebox";
+import { writeOnly } from "./sensitive";
 import { getGlobalRegistry } from "./registry";
 import type { Service, ActionErrorDefinition } from "./types";
 
@@ -283,7 +284,7 @@ export function generateOpenApiSpec(
         responses,
       };
 
-      const inputSchema = action.config.input;
+      const inputSchema = writeOnly(action.config.input);
       const properties = inputSchema?.properties ?? {};
       const parameters: any[] = [...new Set(pathParams)].map((key) => ({
         name: key,
@@ -365,7 +366,6 @@ export function generateOpenApiSpec(
               properties: {
                 path: { type: "string" },
                 message: { type: "string" },
-                value: {},
               },
             },
           },

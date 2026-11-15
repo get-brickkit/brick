@@ -238,6 +238,7 @@ export {
 } from "./registry";
 
 export { Type, t, validateWithSchema } from "./typebox";
+export { hasSensitive, redact, type Reveal } from "./sensitive";
 export type { TSchema, Static } from "./typebox";
 
 export { generateOpenApiSpec } from "./openapi";

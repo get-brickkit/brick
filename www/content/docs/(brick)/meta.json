@@ -24,6 +24,7 @@
     "rate-limits",
     "webhooks",
     "validation-and-errors",
+    "sensitive-fields",
     "hooks",
     "events",
     "schedules",

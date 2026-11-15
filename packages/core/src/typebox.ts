@@ -10,6 +10,7 @@ import {
 } from "@sinclair/typebox";
 import { TypeCompiler, type TypeCheck } from "@sinclair/typebox/compiler";
 import type { ValidationErrorItem } from "./types";
+import { Sensitive } from "./sensitive";
 
 /**
  * Any JSON value: null, boolean, number, string, or an array or object of
@@ -60,9 +61,14 @@ function Files(
   return TypeBox.Array(File(file), { minItems, maxItems });
 }
 
-/** TypeBox's `Type` plus Brick's `Json`, `File` and `Files`. */
+/** TypeBox's `Type` plus Brick's `Json`, `File`, `Files` and `Sensitive`. */
 // TypeBox's `Type` is a module namespace at runtime, so its functions copy over.
-export const Type = Object.assign({}, TypeBox, { Json, File, Files });
+export const Type = Object.assign({}, TypeBox, {
+  Json,
+  File,
+  Files,
+  Sensitive,
+});
 export { Type as t };
 export type { TSchema, Static };
 
@@ -110,7 +116,8 @@ export function getCompiledCheck<T extends TSchema>(schema: T): TypeCheck<T> {
  * @param schema - A TypeBox schema, or `undefined` to accept anything.
  * @param value - The value to check.
  * @returns `{ success: true, data }`, or `{ success: false, errors }` with a
- * `path`, `message`, `type`, and the offending `value` for each problem.
+ * `path`, `message` and `type` for each problem. The offending value is
+ * left out so a rejected secret is never echoed or logged.
  */
 export function validateWithSchema<T extends TSchema>(
   schema: T | undefined,
@@ -132,7 +139,6 @@ export function validateWithSchema<T extends TSchema>(
     errors.push({
       path: error.path,
       message: error.message,
-      value: error.value,
       type: error.type,
     });
   }
