@@ -34,16 +34,37 @@ function Json(options?: SchemaOptions) {
 export interface FileOptions {
   /** The largest file accepted, in bytes. Also caps the request body before it is read. */
   maxSize?: number;
+  /**
+   * The content types accepted, such as `"application/pdf"` or `"image/*"`;
+   * `"*\/*"` accepts any. Over HTTP, Bun takes a file's type from the
+   * extension of its file name, not from the part's `Content-Type`.
+   */
+  accept?: string[];
   description?: string;
 }
 
-TypeRegistry.Set<{ maxSize?: number }>(
+function accepts(accept: string[] | undefined, type: string): boolean {
+  if (!accept) return true;
+  const given = type.split(";")[0]!.trim().toLowerCase();
+  return accept.some((pattern) => {
+    const wanted = pattern.toLowerCase();
+    if (wanted === "*/*") return true;
+    return wanted.endsWith("/*")
+      ? given.startsWith(wanted.slice(0, -1)) &&
+          given.length > wanted.length - 1
+      : given === wanted;
+  });
+}
+
+TypeRegistry.Set<{ maxSize?: number; accept?: string[] }>(
   "File",
   (schema, value) =>
-    value instanceof Blob && !(value.size > (schema.maxSize ?? Infinity)),
+    value instanceof Blob &&
+    !(value.size > (schema.maxSize ?? Infinity)) &&
+    accepts(schema.accept, value.type),
 );
 
-/** A file from a `multipart/form-data` body: a `File` (a `Blob`), at most `maxSize` bytes. */
+/** A file from a `multipart/form-data` body: a `File` (a `Blob`), at most `maxSize` bytes, of a type in `accept`. */
 function File(options: FileOptions = {}): TUnsafe<File> {
   return TypeBox.Unsafe<File>({
     [Kind]: "File",

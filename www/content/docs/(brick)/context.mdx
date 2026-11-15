@@ -99,11 +99,11 @@ export const crm = defineService("crm", {
 
 The hook returns an `Identity`, or `null` or `undefined` for an anonymous caller. It may be async.
 
-| Field    | Type     | Used as                                                             |
-| :------- | :------- | :------------------------------------------------------------------ |
-| `id`     | `string` | Who: the rate-limit key and the [audit log](/docs/audit-log) actor. |
-| `label`  | `string` | Optional. A display name for the audit log.                         |
-| `tenant` | `string` | Optional. Which tenant the caller acts in.                          |
+| Field    | Type     | Used as                                                                        |
+| :------- | :------- | :----------------------------------------------------------------------------- |
+| `id`     | `string` | Who: the rate-limit key and the [audit log](/docs/audit-log) actor.            |
+| `label`  | `string` | Optional. A display name for the audit log.                                    |
+| `tenant` | `string` | Optional. Which tenant the caller acts in: scopes [file storage](/docs/files). |
 
 `ctx` is the service's own context, typed from what `context` returns and from the service's [deps](/docs/dependencies). Brick keeps only `id`, `label` and `tenant` of what the hook returns, so returning a whole user object hands nothing else on; an empty `id` is an error. Brick treats the strings as opaque: it compares and stores them, never parses them.
 

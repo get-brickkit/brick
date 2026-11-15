@@ -9,6 +9,7 @@ import {
   resetGlobalRegistry,
   StorageUnavailableError,
   t,
+  type KeyValueDriver,
   type StorageDriver,
 } from "../src";
 import { createHash } from "node:crypto";
@@ -21,7 +22,7 @@ if (url && !(await redisReachable(url)))
 
 beforeEach(resetGlobalRegistry);
 
-function suite(name: string, driver: () => StorageDriver, skip = false) {
+function suite(name: string, driver: () => KeyValueDriver, skip = false) {
   describe.skipIf(skip)(`${name} storage`, () => {
     const storage = defineStorage({ driver: driver() });
     const key = (label: string) => `${label}:${crypto.randomUUID()}`;
@@ -262,6 +263,10 @@ describe("defineStorage", () => {
       StorageUnavailableError,
     );
     expect(new Error("x")).not.toBeInstanceOf(StorageUnavailableError);
+    class Narrower extends StorageUnavailableError {}
+    expect(new StorageUnavailableError("x")).not.toBeInstanceOf(Narrower);
+    expect(new Narrower("x")).toBeInstanceOf(Narrower);
+    expect(new Narrower("x")).toBeInstanceOf(StorageUnavailableError);
   });
 
   it("closes storages when the app stops", async () => {

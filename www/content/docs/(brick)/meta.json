@@ -17,6 +17,7 @@
     "context",
     "dependencies",
     "storage",
+    "files",
     "resources",
     "commands",
     "routes",
