@@ -10,6 +10,7 @@ import {
 } from "@sinclair/typebox";
 import { TypeCompiler, type TypeCheck } from "@sinclair/typebox/compiler";
 import type { ValidationErrorItem } from "./types";
+import { Sensitive } from "./sensitive";
 
 /**
  * Any JSON value: null, boolean, number, string, or an array or object of
@@ -60,9 +61,14 @@ function Files(
   return TypeBox.Array(File(file), { minItems, maxItems });
 }
 
-/** TypeBox's `Type` plus Brick's `Json`, `File` and `Files`. */
+/** TypeBox's `Type` plus Brick's `Json`, `File`, `Files` and `Sensitive`. */
 // TypeBox's `Type` is a module namespace at runtime, so its functions copy over.
-export const Type = Object.assign({}, TypeBox, { Json, File, Files });
+export const Type = Object.assign({}, TypeBox, {
+  Json,
+  File,
+  Files,
+  Sensitive,
+});
 export { Type as t };
 export type { TSchema, Static };
 

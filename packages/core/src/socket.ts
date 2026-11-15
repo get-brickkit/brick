@@ -35,6 +35,7 @@ import {
   SOCKET_TOKEN_PROTOCOL,
 } from "./protocol";
 import { publicOrigin } from "./cors";
+import { sensitivePointer } from "./sensitive";
 import type {
   BrickSocketConfig,
   BrickSocketSender,
@@ -201,6 +202,11 @@ export function defineServiceSocket<
   ]) {
     serializeSocketSchema(schema, path);
     getCompiledCheck(schema);
+    const at = sensitivePointer(schema);
+    if (at)
+      throw new Error(
+        `Service '${service}' socket '${config.name}': ${path} marks '${at}' t.Sensitive, which sockets do not support yet; keep the secret out of socket messages`,
+      );
   }
   const typed = (socket: SocketSender): BrickSocketSender<SocketPayloads<O>> =>
     socket;

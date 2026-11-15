@@ -16,6 +16,7 @@ import type {
 import type { BunSQLiteDatabase } from "./db/sqlite";
 import type { DatabaseHandle } from "./db/define";
 import type { HttpMethod } from "./http";
+import type { Reveal } from "./sensitive";
 import type { StandardErrorCode } from "./protocol";
 import type { DashboardIdentity } from "./dashboard-identity";
 import type { ServiceEvents } from "./events/types";
@@ -280,6 +281,15 @@ export interface ActionConfigWithAuthorize<
   TContext extends ActionContext = ActionContext,
 > extends BaseActionConfig<TInputSchema, TOutputSchema, TErrors> {
   /**
+   * Whether this call may receive the output's `t.Sensitive` fields; by default
+   * they are removed. `field` is the JSON pointer (`/items/0/token`). With
+   * anything but `true`, a sensitive output field must be `t.Optional`.
+   */
+  reveal?: Reveal<
+    TInputSchema extends TSchema ? Static<TInputSchema> : any,
+    TContext
+  >;
+  /**
    * `true` refuses (401) any HTTP call that did not come through the
    * dashboard's `/app/*` proxy, so only the dashboard's pages can reach it.
    * `ctx.dashboard` is then set.
@@ -308,6 +318,15 @@ export interface ActionConfigWithoutAuthorize<
   >,
   TContext extends ActionContext = ActionContext,
 > extends BaseActionConfig<TInputSchema, TOutputSchema, TErrors> {
+  /**
+   * Whether this call may receive the output's `t.Sensitive` fields; by default
+   * they are removed. `field` is the JSON pointer (`/items/0/token`). With
+   * anything but `true`, a sensitive output field must be `t.Optional`.
+   */
+  reveal?: Reveal<
+    TInputSchema extends TSchema ? Static<TInputSchema> : any,
+    TContext
+  >;
   /**
    * `true` refuses (401) any HTTP call that did not come through the
    * dashboard's `/app/*` proxy, so only the dashboard's pages can reach it.
@@ -658,6 +677,8 @@ export interface CommandConfig<
    * schema's properties. Without it the reply is `{ id }`.
    */
   output?: TOut;
+  /** As an action's `reveal`: which `t.Sensitive` output fields this call may receive. */
+  reveal?: Reveal<ResourceActionInput<TIn, true>, TCtx>;
   errors?: TErr;
   /** Which child tables to load with the row, by their name on the resource. */
   load?: { children?: TLoad };
@@ -753,6 +774,8 @@ export interface ResourceActionConfig<
    * answers 404 before `execute` runs.
    */
   record?: TRecord;
+  /** As an action's `reveal`: which `t.Sensitive` output fields this call may receive. */
+  reveal?: Reveal<ResourceActionInput<TIn, TRecord>, TCtx>;
   /** For a record action on a resource without `crud`: which rows it may load. */
   access?: ResourceActionAccess<TCtx>;
   authorize?: (params: {

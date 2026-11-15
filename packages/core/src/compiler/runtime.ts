@@ -9,6 +9,7 @@ import {
 import { toErrorResponse } from "../error-response";
 import { baseContext, requestIds } from "../context";
 import type { ServicePort } from "../service-port";
+import { withRedaction, type Sensitivity } from "../sensitive";
 import type { Coercion, RouteIR } from "./ir";
 
 /*
@@ -39,6 +40,7 @@ export interface CompiledRoutePlan {
   readonly contextHook?: (baseCtx: any) => unknown;
   readonly inputChecker?: Checker;
   readonly outputChecker?: Checker;
+  readonly sensitive?: Sensitivity;
   /** A plugin's check that runs before `inputChecker`. */
   readonly checkInput?: (input: unknown) => ValidationErrorItem[] | undefined;
   readonly errorBuilder: unknown;
@@ -258,6 +260,7 @@ export interface Stages {
   readonly errorBuilder: unknown;
   /** @throws The output's validation error; else returns the output. */
   readonly checkOutput: (result: unknown) => unknown;
+  readonly sensitive?: Sensitivity;
 }
 
 /** The stage order of every call, over HTTP and in-process: check input → authorize → execute → check output. */
@@ -273,10 +276,14 @@ export async function runStages(
       401,
     );
   stages.checkInput(input);
+  stages.sensitive?.input(input);
   await authorizeCall(stages.authorize, ctx, input, stages.name);
-  return stages.checkOutput(
+  const output = stages.checkOutput(
     await stages.execute({ input, ctx, error: stages.errorBuilder }),
   );
+  return stages.sensitive
+    ? stages.sensitive.output(output, input, ctx)
+    : output;
 }
 
 function mapError(
@@ -340,9 +347,10 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
       if (outputChecker) validate(outputChecker, result, name, "output");
       return result;
     },
+    sensitive: plan.sensitive,
   };
-  if (contextHook || authorize || stages.dashboardOnly) {
-    return async function brickAction(context) {
+  if (contextHook || authorize || stages.dashboardOnly || stages.sensitive) {
+    const brickAction = async (context: any) => {
       const ctx = requestContext(plan, context);
       try {
         const input = readInput(route, context);
@@ -356,6 +364,9 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
         return mapError(err, context.set, ctx);
       }
     };
+    return stages.sensitive
+      ? (context) => withRedaction(() => brickAction(context))
+      : brickAction;
   }
   // Nothing to wait for before `execute`: the same stages, without `authorize`, synchronously.
   return function brickAction(context) {
