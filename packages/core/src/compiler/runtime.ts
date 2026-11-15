@@ -9,12 +9,13 @@ import {
 import { toErrorResponse } from "../error-response";
 import { baseContext, markResolved, requestIds } from "../context";
 import type { ServicePort } from "../service-port";
+import { enforceRateLimits, rateLimitsOf } from "../rate-limit";
 import { withRedaction, type Sensitivity } from "../sensitive";
 import type { Coercion, RouteIR } from "./ir";
 
 /*
  * The action pipeline, as stages: request ids → read input → validate →
- * authorize → execute → validate output → map error. `bindRoute` runs them
+ * rate limit → authorize → execute → validate output → map error. `bindRoute` runs them
  * for an HTTP route; `action.execute` runs the same stages in-process.
  */
 
@@ -255,6 +256,7 @@ export interface Stages {
   readonly dashboardOnly?: boolean;
   /** @throws The input's validation error. */
   readonly checkInput: (input: unknown) => void;
+  readonly rateLimit?: (input: unknown, ctx: any) => Promise<void>;
   readonly authorize?: (params: any) => unknown;
   readonly execute: (params: any) => unknown;
   readonly errorBuilder: unknown;
@@ -263,7 +265,7 @@ export interface Stages {
   readonly sensitive?: Sensitivity;
 }
 
-/** The stage order of every call, over HTTP and in-process: check input → authorize → execute → check output. */
+/** The stage order of every call, over HTTP and in-process: check input → rate limit → authorize → execute → check output. */
 export async function runStages(
   stages: Stages,
   input: unknown,
@@ -277,6 +279,7 @@ export async function runStages(
     );
   stages.checkInput(input);
   stages.sensitive?.input(input);
+  if (stages.rateLimit) await stages.rateLimit(input, ctx);
   await authorizeCall(stages.authorize, ctx, input, stages.name);
   const output = stages.checkOutput(
     await stages.execute({ input, ctx, error: stages.errorBuilder }),
@@ -293,6 +296,13 @@ function mapError(
 ) {
   const response = toErrorResponse(err, options);
   set.status = response.status;
+  const retry = (
+    response.details as { retryAfterSeconds?: unknown } | undefined
+  )?.retryAfterSeconds;
+  if (response.status === 429 && Number.isFinite(retry))
+    set.headers["retry-after"] = String(
+      BigInt(Math.max(1, Math.ceil(retry as number))),
+    );
   return response;
 }
 
@@ -336,12 +346,26 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
     errorBuilder,
   } = plan;
   const name = route.action;
+  const limits = rateLimitsOf(plan.action.config);
   const stages: Stages = {
     name,
     dashboardOnly: plan.action.config.dashboard === true,
     checkInput: (input) => {
       if (inputChecker) validateInput(inputChecker, input, name, checkInput);
     },
+    rateLimit:
+      limits &&
+      ((input, ctx) =>
+        enforceRateLimits(
+          plan.service,
+          (plan.action as { kind?: string }).kind === "tool"
+            ? "tool"
+            : "action",
+          name,
+          limits,
+          input,
+          ctx,
+        )),
     authorize,
     execute,
     errorBuilder,
@@ -351,7 +375,13 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
     },
     sensitive: plan.sensitive,
   };
-  if (contextHook || authorize || stages.dashboardOnly || stages.sensitive) {
+  if (
+    contextHook ||
+    authorize ||
+    stages.dashboardOnly ||
+    limits ||
+    stages.sensitive
+  ) {
     const brickAction = async (context: any) => {
       const ctx = requestContext(plan, context);
       try {
@@ -370,7 +400,7 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
       ? (context) => withRedaction(() => brickAction(context))
       : brickAction;
   }
-  // Nothing to wait for before `execute`: the same stages, without `authorize`, synchronously.
+  // Nothing to wait for before `execute`: the same stages, without `authorize` or `rateLimit`, synchronously.
   return function brickAction(context) {
     const ctx = requestContext(plan, context);
     try {

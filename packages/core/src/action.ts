@@ -14,13 +14,14 @@ import { validateWithSchema } from "./typebox";
 import { actionMeta } from "./action-meta";
 import { baseContext } from "./context";
 import { invalid, runStages, type Stages } from "./compiler/runtime";
+import { enforceRateLimits, rateLimitsOf } from "./rate-limit";
 import { sensitivity, withRedaction } from "./sensitive";
 
 /**
  * The `error` helpers an action receives: one function per error code that
  * throws an `ActionExecutionError` with that code and status. The standard HTTP
  * codes (`BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`,
- * `INTERNAL_SERVER_ERROR`) are always there; the action's own `errors` add to
+ * `RATE_LIMITED`, `INTERNAL_SERVER_ERROR`) are always there; the action's own `errors` add to
  * them or replace one.
  *
  * @param errorsDef - The action's `errors`: for each code, its `message` and
@@ -165,6 +166,7 @@ export function defineAction(config: any): any {
     return actionFn.execute({ input, ctx });
   };
 
+  const limits = rateLimitsOf(config);
   const stages: Stages = {
     name: config.name,
     dashboardOnly: config.dashboard === true,
@@ -173,6 +175,17 @@ export function defineAction(config: any): any {
       const checked = actionFn.validateInput(input);
       if (!checked.success) throw invalid(config.name, "input", checked.errors);
     },
+    rateLimit:
+      limits &&
+      ((input, ctx) =>
+        enforceRateLimits(
+          actionMeta(actionFn).service,
+          (actionFn as { kind?: string }).kind === "tool" ? "tool" : "action",
+          config.name,
+          limits,
+          input,
+          ctx,
+        )),
     authorize: config.authorize,
     execute: config.execute,
     errorBuilder: errorHelpers,

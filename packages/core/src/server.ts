@@ -45,6 +45,7 @@ import { corsHook, type CorsOptions } from "./cors";
 import { useStorages } from "./storage";
 import { portOf } from "./service-port";
 import { bodyLimitParser } from "./compiler/runtime";
+import { markAddressSource, type ClientIp } from "./rate-limit";
 
 export interface CreateServerOptions {
   port?: number;
@@ -118,6 +119,15 @@ export interface CreateServerOptions {
    * Other origins get no `Access-Control-Allow-Origin`. Preflights are answered.
    */
   cors?: false | CorsOptions;
+  /**
+   * Where the client address is, for `rateLimit: { per: "ip" }`. By default it
+   * is the socket peer; behind a proxy, read the header your proxy sets. Brick
+   * never reads `X-Forwarded-For` or any other header itself.
+   *
+   * @example
+   * clientIp: ({ request, peer }) => request.headers.get("fly-client-ip") ?? peer,
+   */
+  clientIp?: ClientIp;
 }
 
 /**
@@ -179,9 +189,16 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     services.flatMap((service) => installedPlugins(service)),
     options.plugins ?? [],
   );
+  const addressSource = {
+    clientIp: options.clientIp,
+    server: () => app.server,
+  };
   // CORS first, so preflights are answered and its headers reach responses
   // from middleware, which skips the later lifecycle hooks.
-  app.onRequest(({ request }) => markDashboardArrival(request));
+  app.onRequest(({ request }) => {
+    markDashboardArrival(request);
+    markAddressSource(request, addressSource);
+  });
   if (options.cors) app.onRequest(corsHook(options.cors));
   for (const handler of plugins.middleware) app.onRequest(handler);
 
@@ -397,6 +414,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   }
   const mountedRoutes: RouteIR[] = [];
   for (const route of compilation.routes) {
+    const { handler } = route;
     const invoke = (context: any) => {
       const result = telemetry
         ? withSpan(
@@ -405,9 +423,9 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
               [ATTR.service]: route.ir.service,
               [ATTR.action]: route.ir.action,
             },
-            () => route.handler(context),
+            () => handler(context),
           )
-        : route.handler(context);
+        : handler(context);
       return result &&
         typeof (result as PromiseLike<unknown>).then === "function"
         ? Promise.resolve(result).then(jsonActionResult)
