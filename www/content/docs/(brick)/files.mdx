@@ -125,7 +125,7 @@ Static keys, environment variables and a session token are supported. A credenti
 
 Nothing connects and no credential is read when the module is imported: deps are created at import, and `brick info` and `brick gen` import the app without starting it. The client is created on the first call.
 
-Give the credentials `s3:ListBucket` on the bucket as well as `s3:GetObject`, `s3:PutObject` and `s3:DeleteObject`: without it, S3 answers a read of a missing file with 403 instead of 404, and `get` throws instead of returning `undefined`. A read that gets no answer from S3 within 30 seconds fails the same way as an unreachable S3, with an error that names no URL.
+Give the credentials `s3:ListBucket` on the bucket as well as `s3:GetObject`, `s3:PutObject` and `s3:DeleteObject`: without it, S3 answers a read of a missing file with 403 instead of 404, and `get` throws instead of returning `undefined`. A read that receives nothing from S3 for 30 seconds fails the same way as an unreachable S3, with an error that names no URL. A slow download that keeps moving is not cut off.
 
 ## Download links
 

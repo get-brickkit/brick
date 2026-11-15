@@ -919,34 +919,54 @@ describe("the s3 driver, against a local stand-in", () => {
     }
   });
 
-  it("gives up on a read whose body stalls, with the plain error", async () => {
-    const stalled = Bun.serve({
-      port: 0,
-      fetch: () =>
-        new Response(
-          new ReadableStream({ start: (c) => c.enqueue(new Uint8Array(1)) }),
-        ),
-    });
-    const real = AbortSignal.timeout.bind(AbortSignal);
-    const timeout = spyOn(AbortSignal, "timeout").mockImplementation(() =>
-      real(50),
-    );
-    try {
-      const files = defineStorage({
-        driver: s3({
-          bucket: "b",
-          endpoint: `http://localhost:${stalled.port}`,
-          accessKeyId: "AK",
-          secretAccessKey: "SK",
-        }),
+  it("gives up on a read that stops moving, and not on a slow one that keeps moving", async () => {
+    const pause = 30;
+    const body = (chunks: number, thenStall: boolean) =>
+      new ReadableStream({
+        async start(controller) {
+          for (let i = 0; i < chunks; i++) {
+            controller.enqueue(new Uint8Array([i]));
+            await Bun.sleep(pause);
+          }
+          if (!thenStall) controller.close();
+        },
       });
-      await expect(files.in("acme").get(crypto.randomUUID())).rejects.toThrow(
+    const server = Bun.serve({
+      port: 0,
+      fetch: (request) =>
+        new Response(body(5, new URL(request.url).pathname.includes("stall")), {
+          headers: { "content-type": "application/octet-stream" },
+        }),
+    });
+    const realSetTimeout = globalThis.setTimeout;
+    const shortIdle = spyOn(globalThis, "setTimeout").mockImplementation(((
+      run: () => void,
+      ms?: number,
+    ) => realSetTimeout(run, ms === 30_000 ? pause * 3 : ms)) as any);
+    try {
+      const reading = (prefix: string) =>
+        defineStorage({
+          driver: s3({
+            bucket: "b",
+            prefix,
+            endpoint: `http://localhost:${server.port}`,
+            accessKeyId: "AK",
+            secretAccessKey: "SK",
+          }),
+        })
+          .in("acme")
+          .get(crypto.randomUUID());
+      const slow = await reading("moving/");
+      expect(new Uint8Array(await slow!.arrayBuffer())).toEqual(
+        new Uint8Array([0, 1, 2, 3, 4]),
+      );
+      expect(slow!.type).toBe("application/octet-stream");
+      await expect(reading("stall/")).rejects.toThrow(
         "S3 failed reading a file",
       );
-      expect(timeout).toHaveBeenCalledWith(30_000);
     } finally {
-      timeout.mockRestore();
-      stalled.stop(true);
+      shortIdle.mockRestore();
+      server.stop(true);
     }
   });
 

@@ -95,7 +95,7 @@ export interface S3StorageOptions {
 const DEFAULT_EXPIRY_MS = 5 * 60_000;
 /** The longest a link may last: S3 refuses a presigned URL valid for longer. */
 const MAX_EXPIRY_MS = 7 * 24 * 60 * 60_000;
-const S3_READ_TIMEOUT_MS = 30_000;
+const S3_READ_IDLE_TIMEOUT_MS = 30_000;
 export const LOCAL_FILES_ROUTE = "/_brick/files";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -364,15 +364,35 @@ export function s3(options: S3StorageOptions = {}): FileDriver {
     },
     read: async (key) => {
       const url = presign(key, 60_000);
-      const response = await rethrowWithoutUrl("reading", () =>
-        fetch(url, { signal: AbortSignal.timeout(S3_READ_TIMEOUT_MS) }),
-      );
-      if (response.status === 404) return undefined;
-      if (!response.ok)
-        throw new Error(
-          `File storage: S3 answered ${response.status} reading a file`,
+      const stalled = new AbortController();
+      let idle: ReturnType<typeof setTimeout> | undefined;
+      const stillMoving = () => {
+        clearTimeout(idle);
+        idle = setTimeout(() => stalled.abort(), S3_READ_IDLE_TIMEOUT_MS);
+      };
+      stillMoving();
+      try {
+        const response = await rethrowWithoutUrl("reading", () =>
+          fetch(url, { signal: stalled.signal }),
         );
-      return rethrowWithoutUrl("reading", () => response.blob());
+        if (response.status === 404) return undefined;
+        if (!response.ok)
+          throw new Error(
+            `File storage: S3 answered ${response.status} reading a file`,
+          );
+        return await rethrowWithoutUrl("reading", async () => {
+          const chunks: Uint8Array[] = [];
+          for await (const chunk of response.body ?? []) {
+            stillMoving();
+            chunks.push(chunk);
+          }
+          return new Blob(chunks as BlobPart[], {
+            type: response.headers.get("content-type") ?? "",
+          });
+        });
+      } finally {
+        clearTimeout(idle);
+      }
     },
     remove: async (key) => {
       const client = open();

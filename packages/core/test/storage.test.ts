@@ -205,6 +205,10 @@ describe("defineStorage", () => {
       StorageUnavailableError,
     );
     expect(new Error("x")).not.toBeInstanceOf(StorageUnavailableError);
+    class Narrower extends StorageUnavailableError {}
+    expect(new StorageUnavailableError("x")).not.toBeInstanceOf(Narrower);
+    expect(new Narrower("x")).toBeInstanceOf(Narrower);
+    expect(new Narrower("x")).toBeInstanceOf(StorageUnavailableError);
   });
 
   it("closes storages when the app stops", async () => {

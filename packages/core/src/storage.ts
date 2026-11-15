@@ -58,6 +58,8 @@ export type StorageOf<D extends StorageDriver> = D extends KeyValueDriver
 export class StorageUnavailableError extends Error {
   override readonly name = "StorageUnavailableError";
   static [Symbol.hasInstance](value: unknown): boolean {
+    if (this !== StorageUnavailableError)
+      return Function.prototype[Symbol.hasInstance].call(this, value);
     return value instanceof Error && value.name === "StorageUnavailableError";
   }
 }
