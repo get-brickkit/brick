@@ -6,6 +6,7 @@ import type {
   ValidationErrorItem,
 } from "./types";
 import type { ServicePort } from "./service-port";
+import type { WebhookDefinition } from "./webhook";
 
 /** Where a plugin mounted one of its actions or endpoints. */
 export interface PluginRouteBinding {
@@ -48,6 +49,7 @@ export interface ActionMeta {
   access?: ActionAccessInfo;
   /** The deps of the plugin install that created the action, and when they were bound. */
   deps?: { values: Readonly<Record<string, unknown>>; at: number };
+  webhook?: WebhookDefinition;
   runtimeOutput?: PluginActionChecks["runtimeOutput"];
   /** Runs before input validation; errors reject the input. */
   checkInput?: PluginActionChecks["checkInput"];

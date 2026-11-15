@@ -21,6 +21,7 @@ import type { StandardErrorCode } from "./protocol";
 import type { DashboardIdentity } from "./dashboard-identity";
 import type { Identity } from "./identity";
 import type { RateLimit } from "./rate-limit";
+import type { WebhookConfig } from "./webhook";
 import type { ServiceEvents } from "./events/types";
 import type { EventCatalog, EventRefs } from "./events/catalog";
 import type { EventsDefinition } from "./events/hub";
@@ -888,6 +889,8 @@ export interface ActionSchema {
   accessPolicy?: ActionAccessPolicy;
   /** The action's rate limits, without their keys. */
   rateLimit?: { max: number; windowMs: number }[];
+  /** Set on a webhook (`service.webhook`): a verified provider callback, not an action callers invoke. */
+  webhook?: true;
   errors?: Record<string, ActionErrorDefinition>;
   emits?: string[];
   tags?: string[];
@@ -992,6 +995,20 @@ export interface Service<
       BaseContext<TDb> & TServiceContext
     >,
   ): Action<TIn, TOut, TErr, BaseContext<TDb> & TServiceContext>;
+
+  /**
+   * Declare a provider webhook: an action in which `verify` accepts the
+   * delivery before anything else runs. See `WebhookConfig`.
+   */
+  webhook<
+    TIn extends TSchema,
+    TErr extends Record<string, ActionErrorDefinition> = Record<
+      string,
+      ActionErrorDefinition
+    >,
+  >(
+    config: WebhookConfig<TIn, TErr, BaseContext<TDb> & TServiceContext>,
+  ): Action<TIn, undefined, TErr, BaseContext<TDb> & TServiceContext>;
 
   tool<
     TIn extends TSchema | undefined = undefined,

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { connection, REDIS_WAIT_MS } from "./socket-redis";
 import { portOf } from "./service-port";
 import type { Service } from "./types";
@@ -36,6 +37,8 @@ interface KeyValueMethods {
 /** A driver for key-value storage, such as `redis()` or `memory()`. It sees full keys. */
 export interface KeyValueDriver extends KeyValueMethods {
   readonly kind: "key-value";
+  /** Deletes the key only while it holds exactly `expected`; says whether it did. Atomic. */
+  compareAndDelete(key: string, expected: string): Promise<boolean>;
 }
 
 /** Every kind of storage driver; `kind` decides the handle `defineStorage` returns. */
@@ -44,6 +47,10 @@ export type StorageDriver = KeyValueDriver;
 /** The handle of a key-value storage. App keys live apart from Brick's own. */
 export interface KeyValueStorage extends KeyValueMethods {
   readonly kind: "key-value";
+}
+
+export interface FrameworkStorage extends KeyValueStorage {
+  compareAndDelete(key: string, expected: string): Promise<boolean>;
 }
 
 /** The handle `defineStorage` returns for a driver. */
@@ -62,7 +69,8 @@ export class StorageUnavailableError extends Error {
 const APP_PREFIX = "app:";
 const BRICK_PREFIX = "brick:storage:";
 
-const frameworkSides: WeakMap<object, KeyValueStorage> = ((globalThis as any)[
+/** The framework side of each storage handle; global so a second core copy finds it. */
+const frameworkSides: WeakMap<object, FrameworkStorage> = ((globalThis as any)[
   Symbol.for("brickkit.storage")
 ] ??= new WeakMap());
 
@@ -84,7 +92,17 @@ function ttl(ttlMs: number | undefined, required: boolean): void {
     throw new Error(`Storage ttlMs must be a positive integer, got ${ttlMs}`);
 }
 
-function side(driver: KeyValueDriver, prefix: string): KeyValueStorage {
+export function storageKey(feature: string, parts: unknown[]): string {
+  return `${feature}:${JSON.stringify(
+    parts.map((part) =>
+      typeof part === "string" && part.length > 128
+        ? { sha256: createHash("sha256").update(part).digest("hex") }
+        : part,
+    ),
+  )}`;
+}
+
+function side(driver: KeyValueDriver, prefix: string) {
   return Object.freeze({
     kind: "key-value",
     get: async (key: string) => driver.get(prefix + key),
@@ -127,14 +145,22 @@ export function defineStorage<D extends StorageDriver>(options: {
       "defineStorage needs a driver, such as redis() or memory()",
     );
   const handle = side(driver, APP_PREFIX);
-  frameworkSides.set(handle, side(driver, BRICK_PREFIX));
+  frameworkSides.set(
+    handle,
+    Object.freeze({
+      ...side(driver, BRICK_PREFIX),
+      compareAndDelete: async (key: string, expected: string) =>
+        driver.compareAndDelete(BRICK_PREFIX + key, expected),
+    }),
+  );
   return handle as StorageOf<D>;
 }
 
 export function serviceStorage(
   service: Service<any, any>,
   deps: Readonly<Record<string, unknown>> = portOf(service).deps,
-): KeyValueStorage | undefined {
+): FrameworkStorage | undefined {
+  // One handle under two names is one storage.
   const found = Object.entries(deps).filter(
     ([, value], index, all) =>
       frameworkSides.has(value as object) &&
@@ -190,6 +216,8 @@ if t < 0 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) t = tonumber(ARGV[1]) end
 return {n, t}`;
 const PUT_IF_ABSENT = `if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'PX', ARGV[2]) then return {1, ARGV[1]} end
 return {0, redis.call('GET', KEYS[1])}`;
+const COMPARE_AND_DELETE = `if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+return 0`;
 const TIMED_OUT = Symbol("timed out");
 const UNAVAILABLE_REPLY =
   /^(LOADING|READONLY|OOM|BUSY|MASTERDOWN|CLUSTERDOWN|NOREPLICAS|MISCONF|TRYAGAIN)\b/;
@@ -295,6 +323,13 @@ export function redis(options: RedisStorageOptions = {}): KeyValueDriver {
     delete: async (key) => {
       await send("DEL", [prefix + key]);
     },
+    compareAndDelete: async (key, expected) =>
+      (await send("EVAL", [
+        COMPARE_AND_DELETE,
+        "1",
+        prefix + key,
+        expected,
+      ])) === 1,
     close: async () => {
       conn?.close();
       conn = undefined;
@@ -344,6 +379,8 @@ export function memory(): KeyValueDriver {
     delete: async (key) => {
       entries.delete(key);
     },
+    compareAndDelete: async (key, expected) =>
+      readEvictingExpired(key)?.value === expected && entries.delete(key),
     close: async () => {},
   };
 }

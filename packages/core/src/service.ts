@@ -12,6 +12,7 @@ import type {
   Resource,
   PreparationContribution,
 } from "./types";
+import { DuplicateNameError } from "./types";
 import { defineTool, isTool } from "./tool";
 import { defineAction } from "./action";
 import { sensitivity } from "./sensitive";
@@ -41,6 +42,12 @@ import {
 } from "./context";
 import { freezeAsBuiltDeps, depsOverride } from "./deps";
 import { checkRateLimits, rateLimitsOf } from "./rate-limit";
+import {
+  checkWebhook,
+  defineWebhookMeta,
+  isWebhook,
+  webhookOf,
+} from "./webhook";
 import type { NamedService } from "./rpc";
 import { defineServiceSocket } from "./socket";
 import type {
@@ -57,7 +64,10 @@ import type {
 export interface ServiceImpl<
   TDb = BunSQLiteDatabase<Record<string, unknown>>,
   TServiceContext extends Record<string, any> = Record<string, any>,
-> extends Pick<Service<TDb, TServiceContext>, "action" | "tool" | "resource"> {}
+> extends Pick<
+  Service<TDb, TServiceContext>,
+  "action" | "tool" | "resource" | "webhook"
+> {}
 export class ServiceImpl<
   TDb = BunSQLiteDatabase<Record<string, unknown>>,
   TServiceContext extends Record<string, any> = Record<string, any>,
@@ -169,12 +179,11 @@ export class ServiceImpl<
       const resource = info?.record && this.resources.get(info.resource);
       if (resource) checkRecordAccess(resource, info);
     }
-    for (const action of [...this.actions.values(), ...this.tools.values()])
-      checkRateLimits(
-        this,
-        action,
-        actionMeta(action).deps?.values ?? this.deps,
-      );
+    for (const action of [...this.actions.values(), ...this.tools.values()]) {
+      const deps = actionMeta(action).deps?.values ?? this.deps;
+      if (webhookOf(action)) checkWebhook(this, action, deps);
+      else checkRateLimits(this, action, deps);
+    }
     this._isBuilt = true;
     return this;
   }
@@ -239,14 +248,36 @@ export class ServiceImpl<
       ? actionOrConfig
       : defineAction(actionOrConfig);
 
-    if (this.actions.get(actionInstance.name) !== actionInstance)
-      this.claim("action", actionInstance.name);
+    const previous = this.actions.get(actionInstance.name);
+    if (previous !== actionInstance) this.claim("action", actionInstance.name);
+    if (previous && isWebhook(previous) !== isWebhook(actionInstance))
+      throw new DuplicateNameError(
+        `Service '${this.name}': "${actionInstance.name}" is defined both as a webhook and as an action. Give one of them another name: an action of the same name would answer in place of the webhook, without its check.`,
+      );
     if (isTool(actionInstance)) actionInstance.config.http = true;
     actionInstance.serviceName = this.name;
     actionMeta(actionInstance).service = this;
     this.actions.set(actionInstance.name, actionInstance);
     this.touch();
     return isActionFunction ? this : actionInstance;
+  }
+
+  webhook(config: any): any {
+    const webhook = defineWebhookMeta(this.name, config);
+    const {
+      verify: _verify,
+      eventId: _eventId,
+      replay: _replay,
+      maxBodyBytes: _maxBodyBytes,
+      ...action
+    } = config;
+    const instance = defineAction({
+      ...action,
+      method: config.method ?? "POST",
+    });
+    actionMeta(instance).webhook = webhook;
+    this.action(instance);
+    return instance;
   }
 
   tool(toolOrConfig: any): any {
@@ -397,6 +428,7 @@ export class ServiceImpl<
               windowMs,
             })),
           }),
+          ...(webhookOf(act) && { webhook: true as const }),
           emits: act.config.emits,
           tags: act.config.tags,
         };

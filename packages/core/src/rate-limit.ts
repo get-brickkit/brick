@@ -4,10 +4,10 @@ import {
   type Service,
 } from "./types";
 import { hasIdentity, identityOf } from "./identity";
-import { createHash } from "node:crypto";
 import { isIPv4, isIPv6 } from "node:net";
 import {
   serviceStorage,
+  storageKey,
   StorageUnavailableError,
   type Counter,
   type KeyValueStorage,
@@ -303,17 +303,6 @@ async function increment(
   }
 }
 
-const MAX_KEY_PART_LENGTH = 128;
-
-function counterKey(parts: readonly (string | number)[]): string {
-  const bounded = parts.map((part) =>
-    typeof part === "string" && part.length > MAX_KEY_PART_LENGTH
-      ? createHash("sha256").update(part).digest("hex")
-      : part,
-  );
-  return `rate-limit:${JSON.stringify(bounded)}`;
-}
-
 async function keyOf(
   limit: RateLimit,
   input: unknown,
@@ -356,7 +345,7 @@ export async function enforceRateLimits(
     if (!key) continue;
     const { count, expiresInMs } = await increment(
       storage,
-      counterKey([service.name, kind, action, index, ...key]),
+      storageKey("rate-limit", [service.name, kind, action, index, ...key]),
       limit.windowMs,
     );
     if (count > limit.max) {

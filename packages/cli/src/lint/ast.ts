@@ -210,6 +210,7 @@ export const DEFINE_FUNCTIONS: Record<string, Definition["kind"]> = {
 const ATTACH_METHODS: Record<string, Definition["kind"]> = {
   action: "action",
   tool: "tool",
+  webhook: "webhook",
   socket: "socket",
   resource: "resource",
   command: "command",
