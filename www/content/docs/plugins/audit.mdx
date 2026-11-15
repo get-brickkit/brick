@@ -95,10 +95,11 @@ const changes = await db
     ),
   )
   .where(eq(auditLog.action, "account.update"))
+  .groupBy(account.history.id, auditLog.actorId)
   .orderBy(account.history.at);
 ```
 
-One trace can update the same record more than once, for example a `bulkUpdate` with the same id twice. Each audit row of the record then matches each of its history rows, so the join repeats every change. Keep one row per history `id`, and order by the history row's own `at`.
+One trace can update the same record more than once, for example a `bulkUpdate` with the same id twice. Each audit row of the record then matches each of its history rows, so the join alone would repeat every change. The `groupBy` keeps one row per history `id`, and the order is the history row's own `at`.
 
 ## Considerations
 
