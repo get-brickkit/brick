@@ -1,11 +1,17 @@
 import { beforeEach, expect, it } from "bun:test";
-import { brick, defineService, resetGlobalRegistry, t } from "@brickkit/core";
+import {
+  brick,
+  defineService,
+  resetGlobalRegistry,
+  t,
+  type ValidationError,
+} from "@brickkit/core";
+import { decodeError } from "../src/protocol";
 
 const SECRET = "hunter2-SECRET-9f3a";
 
 beforeEach(resetGlobalRegistry);
 
-// The output side (500 body and log) is covered in typed-errors.test.ts.
 it("does not echo a rejected input value in the 400 body", async () => {
   const service = defineService("auth");
   service.action({
@@ -30,4 +36,16 @@ it("does not echo a rejected input value in the 400 body", async () => {
     { path: "/password", message: expect.any(String) },
   ]);
   expect(JSON.stringify(body)).not.toContain(SECRET);
+});
+
+it("drops the value and any item that is not an object when rebuilding a server's error", () => {
+  const error = decodeError(
+    {
+      name: "ValidationError",
+      errors: [null, "x", { path: "/password", message: "bad", value: SECRET }],
+    },
+    400,
+  ) as ValidationError;
+  expect(error.errors).toEqual([{ path: "/password", message: "bad" }]);
+  expect(JSON.stringify(error)).not.toContain(SECRET);
 });

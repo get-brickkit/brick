@@ -112,6 +112,14 @@ export interface ValidationErrorItem {
   type?: number;
 }
 
+function withoutRejectedValue({
+  path,
+  message,
+  type,
+}: ValidationErrorItem): ValidationErrorItem {
+  return { path, message, type };
+}
+
 export class ValidationError extends Error {
   readonly code = "VALIDATION_FAILED";
   readonly status: number;
@@ -125,13 +133,7 @@ export class ValidationError extends Error {
     super(message);
     this.name = "ValidationError";
     this.status = status;
-    // Only these fields: a rejected value (a password, a token) must not reach the client or the logs.
-    // `?.`: a body from a server that is not Brick may hold a null item.
-    this.errors = errors.map((item) => ({
-      path: item?.path,
-      message: item?.message,
-      type: item?.type,
-    }));
+    this.errors = errors.map(withoutRejectedValue);
   }
 
   toJSON() {
