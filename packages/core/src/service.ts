@@ -12,8 +12,10 @@ import type {
   Resource,
   PreparationContribution,
 } from "./types";
+import { DuplicateNameError } from "./types";
 import { defineTool, isTool } from "./tool";
 import { defineAction } from "./action";
+import { sensitivity } from "./sensitive";
 import { claimName, definitionSite } from "./definition-site";
 import { getGlobalRegistry } from "./registry";
 import { getTableName, isDatabaseHandle, type DatabaseHandle } from "./db";
@@ -49,6 +51,12 @@ import {
 } from "./audit";
 import { addHostHooks } from "./plugin-hooks";
 import { hasIdentity } from "./identity";
+import {
+  checkWebhook,
+  defineWebhookMeta,
+  isWebhook,
+  webhookOf,
+} from "./webhook";
 import type { NamedService } from "./rpc";
 import { defineServiceSocket } from "./socket";
 import type {
@@ -65,7 +73,10 @@ import type {
 export interface ServiceImpl<
   TDb = BunSQLiteDatabase<Record<string, unknown>>,
   TServiceContext extends Record<string, any> = Record<string, any>,
-> extends Pick<Service<TDb, TServiceContext>, "action" | "tool" | "resource"> {}
+> extends Pick<
+  Service<TDb, TServiceContext>,
+  "action" | "tool" | "resource" | "webhook"
+> {}
 export class ServiceImpl<
   TDb = BunSQLiteDatabase<Record<string, unknown>>,
   TServiceContext extends Record<string, any> = Record<string, any>,
@@ -207,12 +218,11 @@ export class ServiceImpl<
       const resource = info?.record && this.resources.get(info.resource);
       if (resource) checkRecordAccess(resource, info);
     }
-    for (const action of [...this.actions.values(), ...this.tools.values()])
-      checkRateLimits(
-        this,
-        action,
-        actionMeta(action).deps?.values ?? this.deps,
-      );
+    for (const action of [...this.actions.values(), ...this.tools.values()]) {
+      const deps = actionMeta(action).deps?.values ?? this.deps;
+      if (webhookOf(action)) checkWebhook(this, action, deps);
+      else checkRateLimits(this, action, deps);
+    }
     if (this.auditTable && !hasIdentity(this))
       throw new Error(
         `Service "${this.name}": its database holds an audit table, but the service declares no identity, so the log would not say who. Add identity: (ctx) => ctx.user && { id: ctx.user.id } to defineService("${this.name}", { ... }).`,
@@ -276,12 +286,17 @@ export class ServiceImpl<
   action(actionOrConfig: any): any {
     const isActionFunction =
       typeof actionOrConfig === "function" && "config" in actionOrConfig;
+    if (!isActionFunction) sensitivity(actionOrConfig, this.name);
     const actionInstance: Action<any, any, any, any> = isActionFunction
       ? actionOrConfig
       : defineAction(actionOrConfig);
 
-    if (this.actions.get(actionInstance.name) !== actionInstance)
-      this.claim("action", actionInstance.name);
+    const previous = this.actions.get(actionInstance.name);
+    if (previous !== actionInstance) this.claim("action", actionInstance.name);
+    if (previous && isWebhook(previous) !== isWebhook(actionInstance))
+      throw new DuplicateNameError(
+        `Service '${this.name}': "${actionInstance.name}" is defined both as a webhook and as an action. Give one of them another name: an action of the same name would answer in place of the webhook, without its check.`,
+      );
     if (isTool(actionInstance)) actionInstance.config.http = true;
     actionInstance.serviceName = this.name;
     actionMeta(actionInstance).service = this;
@@ -290,8 +305,27 @@ export class ServiceImpl<
     return isActionFunction ? this : actionInstance;
   }
 
+  webhook(config: any): any {
+    const webhook = defineWebhookMeta(this.name, config);
+    const {
+      verify: _verify,
+      eventId: _eventId,
+      replay: _replay,
+      maxBodyBytes: _maxBodyBytes,
+      ...action
+    } = config;
+    const instance = defineAction({
+      ...action,
+      method: config.method ?? "POST",
+    });
+    actionMeta(instance).webhook = webhook;
+    this.action(instance);
+    return instance;
+  }
+
   tool(toolOrConfig: any): any {
     const existing = isTool(toolOrConfig);
+    if (!existing) sensitivity(toolOrConfig, this.name);
     const tool = existing ? toolOrConfig : defineTool(toolOrConfig);
     this.claim("tool", tool.name);
     tool.serviceName = this.name;
@@ -445,6 +479,7 @@ export class ServiceImpl<
               windowMs,
             })),
           }),
+          ...(webhookOf(act) && { webhook: true as const }),
           emits: act.config.emits,
           tags: act.config.tags,
         };

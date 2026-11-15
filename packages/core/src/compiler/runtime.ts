@@ -6,7 +6,16 @@ import {
   type Logger,
   type ValidationErrorItem,
 } from "../types";
+import { Value } from "@sinclair/typebox/value";
 import { toErrorResponse } from "../error-response";
+import { recordWebhook } from "../telemetry";
+import {
+  serviceStorage,
+  StorageUnavailableError,
+  storageKey,
+  type FrameworkStorage,
+} from "../storage";
+import { webhookOf, type WebhookDefinition } from "../webhook";
 import { baseContext, markResolved, requestIds } from "../context";
 import type { ServicePort } from "../service-port";
 import { enforceRateLimits, rateLimitsOf } from "../rate-limit";
@@ -16,6 +25,7 @@ import {
   runUnaudited,
   type AuditStage,
 } from "../audit";
+import { withRedaction, type Sensitivity } from "../sensitive";
 import type { Coercion, RouteIR } from "./ir";
 
 /*
@@ -46,6 +56,7 @@ export interface CompiledRoutePlan {
   readonly contextHook?: (baseCtx: any) => unknown;
   readonly inputChecker?: Checker;
   readonly outputChecker?: Checker;
+  readonly sensitive?: Sensitivity;
   /** A plugin's check that runs before `inputChecker`. */
   readonly checkInput?: (input: unknown) => ValidationErrorItem[] | undefined;
   readonly errorBuilder: unknown;
@@ -111,6 +122,22 @@ export function bodyLimitParser(limit: number) {
     Number(request.headers.get("content-length")) > limit
       ? BODY_TOO_LARGE
       : undefined;
+}
+
+export function rawBodyParser(limit: number) {
+  return async ({ request }: { request: Request }) => {
+    if (Number(request.headers.get("content-length")) > limit)
+      return BODY_TOO_LARGE;
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    if (request.body)
+      for await (const chunk of request.body as AsyncIterable<Uint8Array>) {
+        size += chunk.byteLength;
+        if (size > limit) return BODY_TOO_LARGE;
+        chunks.push(chunk);
+      }
+    return new Uint8Array(Buffer.concat(chunks));
+  };
 }
 
 /** The action's input from the path, query and body, coerced by its schema. */
@@ -215,11 +242,7 @@ function validate(
   throw invalid(
     action,
     stage,
-    Array.from(check.Errors(value)).map((err: any) => ({
-      path: err.path,
-      message: err.message,
-      value: err.value,
-    })),
+    Array.from(check.Errors(value), ({ path, message }) => ({ path, message })),
   );
 }
 
@@ -271,6 +294,7 @@ export interface Stages {
   readonly errorBuilder: unknown;
   /** @throws The output's validation error; else returns the output. */
   readonly checkOutput: (result: unknown) => unknown;
+  readonly sensitive?: Sensitivity;
 }
 
 /** The stage order of every call, over HTTP and in-process: check input → rate limit → authorize → execute → check output. */
@@ -286,19 +310,23 @@ export async function runStages(
       401,
     );
   stages.checkInput(input);
+  stages.sensitive?.input(input);
   if (stages.rateLimit) await stages.rateLimit(input, ctx);
   await authorizeCall(stages.authorize, ctx, input, stages.name);
-  if (!stages.audit)
-    return stages.checkOutput(
-      await runUnaudited(() =>
-        stages.execute({ input, ctx, error: stages.errorBuilder }),
-      ),
-    );
-  return runAudited(stages.audit, input, ctx as ActionContext, async () =>
-    stages.checkOutput(
-      await stages.execute({ input, ctx, error: stages.errorBuilder }),
-    ),
-  );
+  const output = stages.audit
+    ? await runAudited(stages.audit, input, ctx as ActionContext, async () =>
+        stages.checkOutput(
+          await stages.execute({ input, ctx, error: stages.errorBuilder }),
+        ),
+      )
+    : stages.checkOutput(
+        await runUnaudited(() =>
+          stages.execute({ input, ctx, error: stages.errorBuilder }),
+        ),
+      );
+  return stages.sensitive
+    ? stages.sensitive.output(output, input, ctx)
+    : output;
 }
 
 function mapError(
@@ -341,12 +369,289 @@ function requestContext(
   return ctx as ActionContext & { requestId: string };
 }
 
+const HANDLED = "handled";
+const IN_FLIGHT_CLAIM_MS = 5 * 60_000;
+
+const eventIdFrom = (value: unknown): string | undefined =>
+  Number.isSafeInteger(value)
+    ? String(value)
+    : typeof value === "string" && value
+      ? value
+      : undefined;
+
+const refuse = (code: string, message: string, status: number) =>
+  new ActionExecutionError(code, message, status);
+
+function fieldsOf(params: URLSearchParams): Record<string, unknown> {
+  const grouped = new Map<string, string[]>();
+  for (const [name, value] of params)
+    grouped.set(name, [...(grouped.get(name) ?? []), value]);
+  return Object.fromEntries(
+    [...grouped].map(([name, values]) => [
+      name,
+      values.length > 1 ? values : values[0],
+    ]),
+  );
+}
+
+function webhookInput(route: RouteIR, request: Request, rawBody: Uint8Array) {
+  const text = new TextDecoder().decode(rawBody);
+  const form =
+    route.method === "GET"
+      ? new URL(request.url).searchParams
+      : /^application\/x-www-form-urlencoded/i.test(
+            request.headers.get("content-type") ?? "",
+          )
+        ? new URLSearchParams(text)
+        : undefined;
+  if (form) return readInput(route, { query: fieldsOf(form) });
+  if (!text) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw invalid(route.action, "input", [
+      { path: "", message: "Body is not valid JSON" },
+    ]);
+  }
+}
+
+function bindWebhook(plan: CompiledRoutePlan): CompiledHandler {
+  const { execute } = plan;
+  const name = plan.route.action;
+  const webhook = webhookOf(plan.action)!;
+  const limits = rateLimitsOf(plan.action.config);
+  const storage = webhook.replay ? serviceStorage(plan.service) : undefined;
+  if (webhook.replay && !storage)
+    throw new Error(
+      `Webhook '${name}' remembers the events it has handled, but its service has no key-value storage`,
+    );
+  const brickWebhook = async (context: any) => {
+    const delivery: Delivery = {
+      plan,
+      webhook,
+      storage,
+      limits,
+      request: context.request,
+      ctx: requestContext(plan, context),
+      outcome: "failed",
+    };
+    try {
+      rejectOversizedBody(delivery, context.body);
+      const rawBody = rawBodyOf(context.body);
+      await verifyDelivery(delivery, rawBody);
+      const input = parseAndCheckInput(delivery, rawBody);
+      plan.sensitive?.input(input);
+      await resolveEventId(delivery, input);
+      if ((await claimEvent(delivery)) === ALREADY_HANDLED)
+        return { duplicate: true };
+
+      let result: unknown;
+      try {
+        await resolveContext(delivery);
+        await enforceWebhookRateLimits(delivery, input);
+        result = await execute({
+          input,
+          ctx: delivery.ctx,
+          error: plan.errorBuilder,
+          eventId: delivery.eventId,
+        });
+        if (plan.sensitive && !(result instanceof Response))
+          result = await plan.sensitive.output(result, input, delivery.ctx);
+      } catch (error) {
+        await releaseClaim(delivery);
+        throw error;
+      }
+      await settleClaim(delivery, result);
+      return result === undefined ? { ok: true } : result;
+    } catch (err) {
+      return mapError(err, context.set, delivery.ctx);
+    } finally {
+      recordWebhook(name, delivery.eventId, delivery.outcome);
+    }
+  };
+  return plan.sensitive
+    ? (context) => withRedaction(() => brickWebhook(context))
+    : brickWebhook;
+}
+
+interface Claim {
+  readonly key: string;
+  readonly mine: string;
+}
+interface Delivery {
+  readonly plan: CompiledRoutePlan;
+  readonly webhook: WebhookDefinition;
+  readonly storage: FrameworkStorage | undefined;
+  readonly limits: ReturnType<typeof rateLimitsOf>;
+  readonly request: Request;
+  readonly ctx: ActionContext & { requestId: string };
+  outcome: string;
+  eventId?: string;
+  claim?: Claim;
+}
+
+const ALREADY_HANDLED = Symbol("alreadyHandled");
+
+function rejectOversizedBody(delivery: Delivery, body: unknown) {
+  if (body !== BODY_TOO_LARGE) return;
+  delivery.outcome = "too_large";
+  throw refuse(
+    "PAYLOAD_TOO_LARGE",
+    `Request body exceeds ${delivery.webhook.maxBodyBytes} bytes`,
+    413,
+  );
+}
+
+const rawBodyOf = (body: unknown) =>
+  body instanceof Uint8Array ? body : new Uint8Array();
+
+function logVerifierThrowWithoutItsMessage(
+  { plan, ctx }: Delivery,
+  error: unknown,
+) {
+  plan.logger.warn("A webhook verifier threw, so its delivery was refused", {
+    service: plan.service.name,
+    webhook: plan.route.action,
+    error: error instanceof Error ? error.constructor.name : typeof error,
+    requestId: ctx.requestId,
+  });
+}
+
+async function verifyDelivery(delivery: Delivery, rawBody: Uint8Array) {
+  const { webhook, request } = delivery;
+  let verdict: unknown;
+  try {
+    verdict = await webhook.verify({
+      rawBody,
+      headers: request.headers,
+      url: request.url,
+      method: request.method,
+    });
+  } catch (error) {
+    logVerifierThrowWithoutItsMessage(delivery, error);
+    verdict = false;
+  }
+  const given = eventIdFrom((verdict as { eventId?: unknown } | null)?.eventId);
+  if (verdict !== true && !given) {
+    delivery.outcome = "refused";
+    throw refuse("UNAUTHORIZED", "Webhook verification failed", 401);
+  }
+  delivery.eventId = verdict === true ? undefined : given;
+}
+
+function parseAndCheckInput(delivery: Delivery, rawBody: Uint8Array) {
+  const { plan, request } = delivery;
+  const { route, inputChecker, checkInput } = plan;
+  delivery.outcome = "invalid";
+  let input = webhookInput(route, request, rawBody);
+  if (inputChecker)
+    validateInput(inputChecker, input, route.action, checkInput);
+  input = Value.Clean(plan.action.config.input, input);
+  delivery.outcome = "failed";
+  return input;
+}
+
+async function resolveEventId(delivery: Delivery, input: unknown) {
+  const { webhook, request } = delivery;
+  delivery.eventId ??= eventIdFrom(
+    await webhook.eventId?.({
+      input,
+      headers: request.headers,
+      url: request.url,
+      method: request.method,
+    }),
+  );
+}
+async function claimEvent(delivery: Delivery) {
+  const { plan, storage, eventId } = delivery;
+  if (!storage) return;
+  if (!eventId) {
+    delivery.outcome = "no_event_id";
+    throw refuse("BAD_REQUEST", "The delivery has no event id", 400);
+  }
+  const claim = (delivery.claim = {
+    key: storageKey("webhook", [plan.service.name, plan.route.action, eventId]),
+    mine: `pending:${crypto.randomUUID()}`,
+  });
+  try {
+    const claimed = await storage.putIfAbsent(
+      claim.key,
+      claim.mine,
+      IN_FLIGHT_CLAIM_MS,
+    );
+    if (claimed.stored) return;
+    if (claimed.value === HANDLED) {
+      delivery.outcome = "duplicate";
+      return ALREADY_HANDLED;
+    }
+    delivery.outcome = "in_flight";
+    throw refuse(
+      "CONFLICT",
+      "Another delivery of this event is being handled; retry later",
+      409,
+    );
+  } catch (error) {
+    if (!(error instanceof StorageUnavailableError)) throw error;
+    releaseClaim(delivery);
+    delivery.outcome = "unavailable";
+    throw new ActionExecutionError(
+      "SERVICE_UNAVAILABLE",
+      "Webhook storage is unavailable; retry later",
+      503,
+      undefined,
+      { cause: error },
+    );
+  }
+}
+
+async function resolveContext({ plan, ctx }: Delivery) {
+  if (!plan.contextHook) return;
+  const extra = await plan.contextHook(ctx);
+  if (extra) Object.assign(ctx, extra);
+  restoreServiceDeps(ctx, plan);
+}
+
+async function enforceWebhookRateLimits(
+  { plan, limits, ctx }: Delivery,
+  input: unknown,
+) {
+  if (limits)
+    await enforceRateLimits(
+      plan.service,
+      "action",
+      plan.route.action,
+      limits,
+      input,
+      ctx,
+    );
+}
+async function releaseClaim({ storage, claim }: Delivery) {
+  await storage?.compareAndDelete(claim!.key, claim!.mine).catch(() => {});
+}
+async function settleClaim(delivery: Delivery, result: unknown) {
+  const { plan, webhook, storage, claim, ctx } = delivery;
+  const failed = result instanceof Response && result.status >= 400;
+  if (storage && failed) await releaseClaim(delivery);
+  else if (storage && webhook.replay)
+    await storage
+      .put(claim!.key, HANDLED, webhook.replay.ttlMs)
+      .catch((error) =>
+        plan.logger.warn(
+          "Webhook handled, but its id was not recorded; a retry may run it again",
+          { requestId: ctx.requestId },
+          error,
+        ),
+      );
+  delivery.outcome = failed ? "failed" : "processed";
+}
+
 function restoreServiceDeps(ctx: any, plan: CompiledRoutePlan) {
   ctx.deps = plan.deps ?? plan.service.deps;
 }
 
 /** The HTTP handler of one route: the pipeline's stages, synchronous when no stage needs to wait. */
 export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
+  if (plan.route.kind === "webhook") return bindWebhook(plan);
   const {
     route,
     execute,
@@ -387,9 +692,17 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
       if (outputChecker) validate(outputChecker, result, name, "output");
       return result;
     },
+    sensitive: plan.sensitive,
   };
-  if (contextHook || authorize || stages.dashboardOnly || limits || audit) {
-    return async function brickAction(context) {
+  if (
+    contextHook ||
+    authorize ||
+    stages.dashboardOnly ||
+    limits ||
+    audit ||
+    stages.sensitive
+  ) {
+    const brickAction = async (context: any) => {
       const ctx = requestContext(plan, context);
       try {
         const input = readInput(route, context);
@@ -403,6 +716,9 @@ export function bindRoute(plan: CompiledRoutePlan): CompiledHandler {
         return mapError(err, context.set, ctx);
       }
     };
+    return stages.sensitive
+      ? (context) => withRedaction(() => brickAction(context))
+      : brickAction;
   }
   // Nothing to wait for before `execute`: the same stages, without `authorize`, `rateLimit` or `audit`, synchronously.
   return function brickAction(context) {

@@ -44,6 +44,8 @@ An action anyone may call, such as a login or a public form, should also cap how
 
 To keep a record of who changed what, give the service an [audit log](/docs/audit-log). It stores the actor the `identity` hook returns, and it records the calls `authorize` let through: a refused call leaves no row.
 
+A callback from a provider (a payment processor, a telephony service) is not called by your users, so it has no user to authorize: declare it with `service.webhook`, where a signature check takes the place of `authorize`. See [Provider Webhooks](/docs/webhooks).
+
 ### Automatic Type Narrowing
 
 When an action declares an `authorize` guard, Brick's types use `NarrowAuthorizedContext<TCtx>`: inside `execute({ ctx })`, `ctx.user` is narrowed from `User | null` to `User`. This is a type-level assumption. Brick doesn't check `ctx.user` at runtime, so your `authorize` must return `false` when there's no user. Narrowing only applies when your context resolver returns a typed `user`.

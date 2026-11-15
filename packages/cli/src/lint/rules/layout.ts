@@ -36,6 +36,7 @@ function onDefinitions(
 const SERVICE_FOLDERS: Partial<Record<string, string>> = {
   action: "actions",
   tool: "tools",
+  webhook: "webhooks",
   socket: "sockets",
   listener: "listeners",
   schedule: "schedules",
@@ -75,7 +76,7 @@ export const layoutRules: Record<string, Rule> = {
   ),
 
   "file-suffixes": rule(
-    "Each kind of definition goes in a file with its suffix: .service, .action, .command, .tool, .socket, .listener, .schedule, .workflow, .step, .resource, .table, .events.",
+    "Each kind of definition goes in a file with its suffix: .service, .action, .command, .tool, .webhook, .socket, .listener, .schedule, .workflow, .step, .resource, .table, .events.",
     (context) => {
       const info = fileInfo(context);
       if (info.exempt) return {};

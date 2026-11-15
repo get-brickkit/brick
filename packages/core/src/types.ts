@@ -16,10 +16,12 @@ import type {
 import type { BunSQLiteDatabase } from "./db/sqlite";
 import type { DatabaseHandle } from "./db/define";
 import type { HttpMethod } from "./http";
+import type { Reveal } from "./sensitive";
 import type { StandardErrorCode } from "./protocol";
 import type { DashboardIdentity } from "./dashboard-identity";
 import type { Identity } from "./identity";
 import type { RateLimit } from "./rate-limit";
+import type { WebhookConfig } from "./webhook";
 import type { ServiceEvents } from "./events/types";
 import type { EventCatalog, EventRefs } from "./events/catalog";
 import type { EventsDefinition } from "./events/hub";
@@ -110,8 +112,15 @@ export type ErrorDetails<TDef> = TDef extends {
 export interface ValidationErrorItem {
   path: string;
   message: string;
-  value?: unknown;
   type?: number;
+}
+
+function withoutRejectedValue({
+  path,
+  message,
+  type,
+}: ValidationErrorItem): ValidationErrorItem {
+  return { path, message, type };
 }
 
 export class ValidationError extends Error {
@@ -127,7 +136,7 @@ export class ValidationError extends Error {
     super(message);
     this.name = "ValidationError";
     this.status = status;
-    this.errors = errors;
+    this.errors = errors.map(withoutRejectedValue);
   }
 
   toJSON() {
@@ -300,6 +309,15 @@ export interface ActionConfigWithAuthorize<
   TContext extends ActionContext = ActionContext,
 > extends BaseActionConfig<TInputSchema, TOutputSchema, TErrors> {
   /**
+   * Whether this call may receive the output's `t.Sensitive` fields; by default
+   * they are removed. `field` is the JSON pointer (`/items/0/token`). With
+   * anything but `true`, a sensitive output field must be `t.Optional`.
+   */
+  reveal?: Reveal<
+    TInputSchema extends TSchema ? Static<TInputSchema> : any,
+    TContext
+  >;
+  /**
    * `true` refuses (401) any HTTP call that did not come through the
    * dashboard's `/app/*` proxy, so only the dashboard's pages can reach it.
    * `ctx.dashboard` is then set.
@@ -344,6 +362,15 @@ export interface ActionConfigWithoutAuthorize<
   >,
   TContext extends ActionContext = ActionContext,
 > extends BaseActionConfig<TInputSchema, TOutputSchema, TErrors> {
+  /**
+   * Whether this call may receive the output's `t.Sensitive` fields; by default
+   * they are removed. `field` is the JSON pointer (`/items/0/token`). With
+   * anything but `true`, a sensitive output field must be `t.Optional`.
+   */
+  reveal?: Reveal<
+    TInputSchema extends TSchema ? Static<TInputSchema> : any,
+    TContext
+  >;
   /**
    * `true` refuses (401) any HTTP call that did not come through the
    * dashboard's `/app/*` proxy, so only the dashboard's pages can reach it.
@@ -710,6 +737,8 @@ export interface CommandConfig<
    * schema's properties. Without it the reply is `{ id }`.
    */
   output?: TOut;
+  /** As an action's `reveal`: which `t.Sensitive` output fields this call may receive. */
+  reveal?: Reveal<ResourceActionInput<TIn, true>, TCtx>;
   errors?: TErr;
   /** Which child tables to load with the row, by their name on the resource. */
   load?: { children?: TLoad };
@@ -818,6 +847,8 @@ export interface ResourceActionConfig<
    * answers 404 before `execute` runs.
    */
   record?: TRecord;
+  /** As an action's `reveal`: which `t.Sensitive` output fields this call may receive. */
+  reveal?: Reveal<ResourceActionInput<TIn, TRecord>, TCtx>;
   /** For a record action on a resource without `crud`: which rows it may load. */
   access?: ResourceActionAccess<TCtx>;
   /**
@@ -908,6 +939,8 @@ export interface ActionSchema {
   rateLimit?: { max: number; windowMs: number }[];
   /** `true` when a call is recorded in the audit log; absent when it is not. */
   audited?: boolean;
+  /** Set on a webhook (`service.webhook`): a verified provider callback, not an action callers invoke. */
+  webhook?: true;
   errors?: Record<string, ActionErrorDefinition>;
   emits?: string[];
   tags?: string[];
@@ -1012,6 +1045,20 @@ export interface Service<
       BaseContext<TDb> & TServiceContext
     >,
   ): Action<TIn, TOut, TErr, BaseContext<TDb> & TServiceContext>;
+
+  /**
+   * Declare a provider webhook: an action in which `verify` accepts the
+   * delivery before anything else runs. See `WebhookConfig`.
+   */
+  webhook<
+    TIn extends TSchema,
+    TErr extends Record<string, ActionErrorDefinition> = Record<
+      string,
+      ActionErrorDefinition
+    >,
+  >(
+    config: WebhookConfig<TIn, TErr, BaseContext<TDb> & TServiceContext>,
+  ): Action<TIn, undefined, TErr, BaseContext<TDb> & TServiceContext>;
 
   tool<
     TIn extends TSchema | undefined = undefined,

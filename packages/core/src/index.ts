@@ -246,6 +246,7 @@ export {
 } from "./registry";
 
 export { Type, t, validateWithSchema } from "./typebox";
+export { hasSensitive, redact, type Reveal } from "./sensitive";
 export type { TSchema, Static } from "./typebox";
 
 export { generateOpenApiSpec } from "./openapi";
@@ -276,3 +277,14 @@ export type {
 } from "./mcp";
 
 export type { ErrorEnvelope } from "./error-response";
+export {
+  hmacSignature,
+  standardWebhooks,
+  twilioSignature,
+  type HmacSignatureOptions,
+  type StandardWebhooksOptions,
+  type TwilioSignatureOptions,
+  type WebhookSecret,
+} from "./webhook-verifiers";
+export { isWebhook } from "./webhook";
+export type { WebhookConfig, WebhookRequest, WebhookVerifier } from "./webhook";

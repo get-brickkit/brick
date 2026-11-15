@@ -1,4 +1,4 @@
-import { beforeEach, expect, it } from "bun:test";
+import { afterAll, beforeEach, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join as joinPath } from "node:path";
@@ -9,6 +9,7 @@ import type { ChatMessage } from "../src/store";
 import { createChatStore } from "../src/store";
 
 beforeEach(resetGlobalRegistry);
+afterAll(resetGlobalRegistry);
 const origin = "http://localhost:5178";
 
 async function signIn(base: string) {

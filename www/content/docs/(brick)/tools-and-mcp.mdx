@@ -67,6 +67,8 @@ app.listen(4000);
 
 `tools/list` gives each tool with an `output` schema an `outputSchema`, and `tools/call` returns the result as `structuredContent` as well as text. MCP requires an object schema, so a tool whose output is a string, array or union is described as `{ result: <schema> }` and returns `{ result: value }`.
 
+A [provider webhook](/docs/webhooks) is not a tool and is not listed by MCP.
+
 ## Tools (`defineTool` / `service.tool`)
 
 Tools are specialized actions designed for invocation by Large Language Models:
