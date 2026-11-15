@@ -9,7 +9,7 @@ import {
 } from "react";
 import { jsx, jsxs } from "react/jsx-runtime";
 import defaultMdxComponents from "@fumadocs/base-ui/mdx";
-import "@fumadocs/base-ui/components/image-zoom2.css";
+import "@fumadocs/base-ui/components/image-zoom.css";
 import { Accordion, Accordions } from "@fumadocs/base-ui/components/accordion";
 import { Banner } from "@fumadocs/base-ui/components/banner";
 import { Callout } from "@fumadocs/base-ui/components/callout";

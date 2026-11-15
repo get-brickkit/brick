@@ -1,7 +1,12 @@
 import "react-router";
 // The React Router server build (virtual module).
 import * as serverBuild from "virtual:react-router/server-build";
-import { createRequestHandler, type ServerBuild } from "react-router";
+import {
+  createRequestHandler,
+  RouterContextProvider,
+  type ServerBuild,
+} from "react-router";
+import { worldContext } from "../app/server/inspector-host.server";
 import { BASE_PATH } from "../base-path";
 import type { CreateFetchHandler } from "./handler";
 
@@ -23,5 +28,9 @@ export const createFetchHandler: CreateFetchHandler = (basename, host) => {
     serverBuild as unknown as ServerBuild,
     "production",
   );
-  return (request: Request) => handler(request, { world: host.world });
+  return (request: Request) => {
+    const context = new RouterContextProvider();
+    context.set(worldContext, host.world);
+    return handler(request, context);
+  };
 };

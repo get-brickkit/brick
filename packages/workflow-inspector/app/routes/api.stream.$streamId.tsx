@@ -14,6 +14,7 @@
 import { STREAM_CURSOR_HEADER, STREAM_DONE_HEADER } from "~/lib/types";
 import { readStreamChunksServerAction } from "~/server/workflow-server-actions.server";
 import type { Route } from "./+types/api.stream.$streamId";
+import { worldContext } from "../server/inspector-host.server";
 
 export async function loader({ params, request, context }: Route.LoaderArgs) {
   const { streamId } = params;
@@ -39,7 +40,7 @@ export async function loader({ params, request, context }: Route.LoaderArgs) {
 
   // The action catches its own errors and returns them.
   const result = await readStreamChunksServerAction(
-    context.world,
+    context.get(worldContext),
     streamId,
     runId,
     cursor,

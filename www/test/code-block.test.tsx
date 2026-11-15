@@ -11,8 +11,9 @@ describe("code blocks", () => {
       </Pre>,
     );
 
-    // The scroll region is the element with role="region", which holds the code.
-    const region = html.match(/<div[^>]*role="region"[^>]*>/)?.[0] ?? "";
+    const region =
+      html.match(/<div[^>]*class="[^"]*fd-scroll-container[^"]*"[^>]*>/)?.[0] ??
+      "";
     expect(region).toContain("max-h-none");
     expect(region).not.toContain("max-h-[600px]");
     expect(region).toContain("overflow-auto");
