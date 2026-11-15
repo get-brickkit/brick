@@ -1,0 +1,282 @@
+---
+title: "Brick v0.16: the security checks an audit asked for"
+description: "Rate limits on the action, verified provider webhooks, sensitive fields in schemas, tenant-scoped file storage and an audit log, plus deps as plain values on the service, and every breaking change."
+date: "2026-11-15"
+category: release
+version: "0.16.0"
+---
+
+v0.16 started from a security audit of a production app built on Brick 0.15, done while the app prepared for SOC 2. The app had built each of these checks itself, and where it forgot one or got one wrong the audit found a real vulnerability:
+
+- **Login, one-time-code and public form endpoints had no rate limit.** The app had a helper for it and applied it unevenly.
+- **A billing webhook trusted fields of its payload,** and telephony callbacks did the same.
+- **Bearer tokens and credentials reached responses and logs,** because each action had to remember to remove them.
+- **A URL sent by the client was read as a storage key,** which reached any object in the bucket, and one tenant could delete another tenant's file.
+
+The fifth item is not a vulnerability. SOC 2 asks for evidence of who changed what, and every app would otherwise build that record for itself.
+
+None of these is hard to do right once. They are hard to do right in every handler. So this release moves each one out of the handler and into the place where it is declared: the action, the schema, the service.
+
+| Item             | Value                                                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------------------------ |
+| Previous release | `v0.15.0`                                                                                              |
+| Current release  | `v0.16.0`                                                                                              |
+| Packages         | `@brickkit/core`, `@brickkit/crud`, `@brickkit/cli`, `@brickkit/redis-world`, `@brickkit/bullmq-world` |
+
+There are breaking changes, most of them in how a service gets its dependencies. They're all listed at the [end of this post](#every-breaking-change), each with what to do.
+
+## 1. Two foundations: who is calling, and where to keep state
+
+Three of the five features need to know who the caller is, and three need somewhere to keep small pieces of state. Both are new in this release, and both are useful on their own.
+
+### `identity` on the service
+
+Brick does not own your users, sessions or tenants, and it still doesn't. The `identity` hook is where your app says who a caller is, in three strings:
+
+```ts
+export const crm = defineService("crm", {
+  database,
+  context: async ({ request }) => ({ user: await readUser(request) }),
+  identity: (ctx) =>
+    ctx.user && {
+      id: ctx.user.id,
+      label: ctx.user.email,
+      tenant: ctx.user.orgId,
+    },
+});
+```
+
+Brick keeps `id`, `label` and `tenant` as opaque strings and reads nothing else. The hook runs at most once per call, and only when a feature asks: a rate limit per actor, a file read, an audit row. An app that uses none of them never runs it.
+
+### `defineStorage`
+
+A storage is a handle your service takes as a dep. The driver decides its kind:
+
+```ts
+import { defineStorage, redis, s3 } from "@brickkit/core";
+
+export const cache = defineStorage({
+  driver: redis({ url: process.env.REDIS_URL }),
+});
+export const files = defineStorage({ driver: s3({ bucket: "crm-uploads" }) });
+
+export const crm = defineService("crm", { database, deps: { cache, files } });
+```
+
+The key-value kind (`redis()`, or `memory()` for tests) has `get`, `put`, `putIfAbsent`, `increment` and `delete`. Your app can use it for its own keys, such as a one-time code:
+
+```ts
+await ctx.deps.cache.put(`otp:${input.email}`, code, 5 * 60_000);
+```
+
+Brick keeps its own keys, the rate-limit counters and webhook event ids, apart from yours on the same storage. Nothing connects when the module is imported. When Redis cannot be reached or does not answer within a second, a call rejects with `StorageUnavailableError`.
+
+## 2. Rate limits on the action
+
+```ts
+export default auth.action({
+  name: "login",
+  input: t.Object({ email: t.String(), password: t.String() }),
+  rateLimit: [
+    { per: "ip", max: 20, windowMs: 60_000 },
+    {
+      per: ({ input, ctx }) =>
+        `${clientAddress(ctx)} ${input.email.toLowerCase()}`,
+      max: 5,
+      windowMs: 15 * 60_000,
+    },
+  ],
+  execute: ({ input }) => signIn(input),
+});
+```
+
+`per` is `"ip"`, `"actor"` (the id from `identity`, else the address) or a function that returns a key. Over the limit, the caller gets `429 RATE_LIMITED` with a `Retry-After` header, and the typed client knows the code.
+
+- **Counted in the service's storage,** so every process of the app shares the count. A service with a limited action and no key-value storage fails at startup.
+- **After validation, before `authorize`.** A malformed call is not counted; a refused one is.
+- **The address is the TCP peer.** Brick never reads `X-Forwarded-For` by itself, because any client can send it. Behind a proxy, say where the address is: `brick({ clientIp: ({ request, peer }) => request.headers.get("fly-client-ip") ?? peer })`.
+- **An IPv6 client is counted by its /64,** since one client usually holds a whole /64 and could otherwise pick a fresh address per call.
+- **When Redis is down, calls are neither failed nor let through unlimited.** Brick counts in the process's memory until Redis has answered for ten seconds, and logs one warning each way.
+- **A lint rule, `public-rate-limit`,** warns on an action anyone can call that has no limit.
+
+A nested call keeps the client's address only when it passes its `ctx` on. So put the limit on the action the client calls.
+
+## 3. Verified provider webhooks
+
+```ts
+export default integrations.webhook({
+  name: "github", // POST /api/integrations/github
+  verify: hmacSignature({
+    secret: githubSecret,
+    header: "x-hub-signature-256",
+    prefix: "sha256=",
+  }),
+  eventId: ({ headers }) => headers.get("x-github-delivery") ?? undefined,
+  input: t.Object({
+    action: t.String(),
+    repository: t.Object({ id: t.Number() }),
+  }),
+  execute: async ({ input, ctx }) => {
+    // runs only for a delivery GitHub signed
+  },
+});
+```
+
+A webhook is a kind of action whose handler cannot run over HTTP without the check. The order is fixed: Brick reads the raw body, verifies the signature over those bytes, and only then parses and validates the input.
+
+- **Three verifiers are built in.** `hmacSignature` for an HMAC of the body, `standardWebhooks` for the Standard Webhooks scheme (including Svix's `svix-*` headers), and `twilioSignature`. A function of `{ rawBody, headers, url, method }` covers the rest, for example around a provider's SDK.
+- **A repeated delivery does not run twice.** Brick claims the event id in the service's storage. A second delivery of a handled event gets `200 { "duplicate": true }`, and one that arrives while the first is running gets `409`.
+- **No secret is not an empty secret.** A missing, empty or whitespace-only secret refuses every delivery.
+- **Mistakes fail at startup:** a webhook with no verifier, one with no way to tell deliveries apart, an action on the same route.
+
+Two limits are worth knowing before you rely on it. Delivery is at least once, not exactly once, so handlers should be safe to run twice. And an event id stops a replayed capture only when the signature covers it. GitHub's delivery id is a header outside the signature, so it stops GitHub's own repeats and nothing more. The [webhooks page](/docs/webhooks) says which ids are covered.
+
+## 4. Sensitive fields in schemas
+
+```ts
+const Credential = t.Object({
+  id: t.String(),
+  provider: t.String(),
+  accessToken: t.Optional(t.Sensitive(t.String())),
+});
+
+integrations.action({
+  name: "getCredential",
+  output: Credential,
+  execute: ({ ctx, input }) => ctx.db.query.credentials.findFirst(/* … */),
+});
+```
+
+`t.Sensitive` marks a field once, on the schema. An action that returns the whole row no longer returns the token: sensitive fields are removed from the output unless the action's `reveal` says otherwise.
+
+```ts
+keys.action({
+  name: "createApiKey",
+  output: t.Object({ id: t.String(), secret: t.Sensitive(t.String()) }),
+  reveal: true, // shown once, at creation
+  execute,
+});
+```
+
+The same marker covers the places a value leaks to by accident. Values at sensitive paths in a call's input and output are replaced in logs, spans, the dev dashboard and error responses. In OpenAPI a sensitive input is `writeOnly`. In CRUD, a sensitive field cannot be readable, filterable or sortable.
+
+A shape Brick cannot protect is refused when the app starts, with the service, the action and the path in the message. A sensitive path parameter is one: the path is logged and traced.
+
+It is not a guarantee about everything your code logs. A value your handler loads and logs before returning it is not known yet; `redact(value)` registers it. The [sensitive fields page](/docs/sensitive-fields) has a table of what is covered.
+
+Alongside this, validation errors no longer echo the value they rejected. In 0.15 a rejected password came back in the `400` body.
+
+## 5. File storage that is always per tenant
+
+```ts
+export const attach = crm.action({
+  name: "attachFile",
+  input: t.Object({
+    file: t.File({
+      maxSize: 10 * 1024 * 1024,
+      accept: ["application/pdf", "image/*"],
+    }),
+    contactId: t.String(),
+  }),
+  authorize: ({ user }) => !!user,
+  execute: async ({ input, ctx }) => {
+    const stored = await ctx.deps.files.put(input.file);
+    await ctx.db.insert(attachments).values({
+      fileId: stored.id,
+      contactId: input.contactId,
+      name: input.file.name,
+    });
+    return { fileId: stored.id };
+  },
+});
+```
+
+No method of a file storage takes a key, a path or a URL. `put` returns an id that Brick generated, and `get`, `url` and `delete` take that id and look for it under the caller's tenant, which comes from `identity`. Another tenant's id, `../` or a pasted URL resolves to a file that does not exist.
+
+- **A call without a tenant throws.** Nothing falls back to an unscoped prefix.
+- **`ctx.deps.files` cannot name another tenant.** Code outside a request, such as a listener or a schedule, imports the handle and says which: `files.in(orgId).get(id)`.
+- **Download links are short-lived and served as attachments,** so a stored file is downloaded, not rendered from your storage origin.
+- **Local mode.** `s3({ bucket, local: ".brick/files" })` stores under a directory instead, with the same checks, so uploads can be tested on your machine with no bucket and no credentials.
+
+`accept` checks the type derived from the file's name, not its bytes. Files are served as attachments for that reason.
+
+## 6. An audit log from one table
+
+```ts
+export const auditLog = auditTable("postgres");
+
+export const database = defineDatabase({
+  engine: "postgres",
+  tables: { orders, auditLog },
+});
+```
+
+A service whose database holds the audit table records who changed what, with no code in the handlers.
+
+| Change                                             | When the row is written              |
+| -------------------------------------------------- | ------------------------------------ |
+| CRUD `create`, `update`, `delete`, and bulk writes | In the write's own transaction       |
+| A command                                          | In the command's own transaction     |
+| Any other action that is not a `GET`               | After it succeeded, as its own write |
+
+The actor is exactly what `identity` returned. The row says which action ran, on which resource and record, by whom, in which tenant, with the trace and request ids. It holds no input and no output, so the log does not become a second copy of your data.
+
+- **`audit: false`** leaves an action out, and `audit: { resource, record }` says which record a plain action changed.
+- **`recordAudit(ctx, entry, { tx })`** writes a row inside your own transaction, for a change that must never be recorded without having happened, or the reverse.
+- **Append-only is the database's job.** The docs give the triggers for Postgres and SQLite and the grants for a Postgres role, and the test suite runs them as written.
+
+One limit matters here. A plain action's row is written after the action succeeded, as a separate write. If that insert fails, the change stays and the full row goes to the error log instead. CRUD writes and commands do not have this gap. The [audit log page](/docs/audit-log) lists what is not recorded, such as changes made from an event listener.
+
+## 7. Deps are values on the service
+
+This is the breaking change most apps will meet. In 0.15 a service declared the shape of a dependency and the app filled it in:
+
+```ts
+// v0.15
+export const orders = defineService("orders", {
+  database,
+  deps: { carrier: port<Carrier>() },
+});
+export default brick({
+  services: [orders],
+  deps: { carrier: createCarrier() },
+});
+
+// v0.16
+export const orders = defineService("orders", {
+  database,
+  deps: { carrier: createCarrier() },
+});
+export default brick({ services: [orders] });
+```
+
+`ctx.deps` is typed from the object you gave. There is no `port`, and `brick()` takes no `deps`.
+
+It is also stricter. A service sees only its own deps: a call into another service runs with that service's deps, by every route we could find, so a storage or a client handed to one service cannot leak to another through a nested call. A unit test can still replace a dep by calling the action with `ctx: { deps: { carrier: fake } }`.
+
+`useDeps(service)` returns a service's deps, typed, from a listener, a schedule or a workflow step.
+
+## Upgrade checklist
+
+1. Move every dep from `brick({ deps })` onto its service's `defineService`, as the real value, and delete `port<T>()`.
+2. Remove imports of `port`, `Port`, `Ports`, `DepsOf` and `bindDeps`.
+3. Make each dep open its connection on first use, not when it is created. `brick info` and `brick gen` import the app without starting it.
+4. Replace `useDeps<T>()` with `useDeps(service)` where you can.
+5. In a plugin, declare deps as a typed placeholder: `deps: { mailer: {} as Mailer }`.
+6. Stop reading `value` from validation error items.
+7. Add `rateLimit` to the actions `brick lint` now warns about.
+
+The [Migrating from 0.15](/docs/dependencies#migrating-from-015) section covers the deps steps.
+
+## Every breaking change
+
+| Change                                                                                                                                                                 | What to do                                                                                                      |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `port`, `Port`, `Ports`, `DepsOf` and `bindDeps` are removed, exports included.                                                                                        | Give the service the real value: `deps: { carrier: createCarrier() }`.                                          |
+| `brick({ deps })` throws at startup.                                                                                                                                   | Move each dep onto the service that uses it.                                                                    |
+| `deps` must be a plain object. A class instance, a `Map`, an array or a dep whose value is `undefined` is refused.                                                     | Wrap the value: `deps: { client }`.                                                                             |
+| A service `context` hook can no longer return `deps`.                                                                                                                  | Declare them on `defineService`.                                                                                |
+| Dep values are created when the service module is imported.                                                                                                            | Open connections on first use.                                                                                  |
+| `introspect()` leaves `deps` out of the service schema.                                                                                                                | Nothing, unless a tool of yours read them.                                                                      |
+| `ValidationErrorItem.value` is removed. Validation error responses and `validateWithSchema` results no longer include the rejected value.                              | Read `path` and `message`.                                                                                      |
+| Over HTTP, a context passed to another action of the same service is treated as resolved, as it already was in-process. The `context` hook no longer re-runs per call. | Nothing in most apps. A changed copy such as `{ ...ctx, user }` now reaches the sibling action as you wrote it. |
