@@ -12,6 +12,7 @@ import type {
   Resource,
   PreparationContribution,
 } from "./types";
+import { DuplicateNameError } from "./types";
 import { defineTool, isTool } from "./tool";
 import { defineAction } from "./action";
 import { claimName, definitionSite } from "./definition-site";
@@ -241,8 +242,16 @@ export class ServiceImpl<
       ? actionOrConfig
       : defineAction(actionOrConfig);
 
-    if (this.actions.get(actionInstance.name) !== actionInstance)
-      this.claim("action", actionInstance.name);
+    const previous = this.actions.get(actionInstance.name);
+    if (previous !== actionInstance) this.claim("action", actionInstance.name);
+    // The same file may define a name again (a reload), but never swap a webhook's check away.
+    if (
+      previous &&
+      !actionMeta(previous).webhook !== !actionMeta(actionInstance).webhook
+    )
+      throw new DuplicateNameError(
+        `Service '${this.name}': "${actionInstance.name}" is defined both as a webhook and as an action. Give one of them another name: an action of the same name would answer in place of the webhook, without its check.`,
+      );
     if (isTool(actionInstance)) actionInstance.config.http = true;
     actionInstance.serviceName = this.name;
     actionMeta(actionInstance).service = this;

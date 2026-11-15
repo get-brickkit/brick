@@ -367,9 +367,9 @@ const HANDLED = "handled";
  */
 const LEASE_MS = 5 * 60_000;
 
-/** A delivery's id: a non-empty string or a finite number (`7` and `"7"` are one id); anything else is none. */
+/** A delivery's id: a non-empty string or a safe integer (`7` and `"7"` are one id; a larger number has lost digits); anything else is none. */
 const idOf = (value: unknown): string | undefined =>
-  typeof value === "number" && Number.isFinite(value)
+  Number.isSafeInteger(value)
     ? String(value)
     : typeof value === "string" && value
       ? value
@@ -467,12 +467,12 @@ function bindWebhook(plan: CompiledRoutePlan): CompiledHandler {
         );
         verdict = false;
       }
-      const given = (verdict as { eventId?: unknown } | null)?.eventId;
-      if (verdict !== true && !(typeof given === "string" && given)) {
+      const given = idOf((verdict as { eventId?: unknown } | null)?.eventId);
+      if (verdict !== true && !given) {
         outcome = "refused";
         throw refuse("UNAUTHORIZED", "Webhook verification failed", 401);
       }
-      eventId = verdict === true ? undefined : (given as string);
+      eventId = verdict === true ? undefined : given;
 
       outcome = "invalid";
       let input = webhookInput(route, request, rawBody);

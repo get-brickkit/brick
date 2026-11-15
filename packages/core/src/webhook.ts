@@ -27,7 +27,10 @@ export interface WebhookRequest {
  */
 export type WebhookVerifier = ((
   request: WebhookRequest,
-) => boolean | { eventId: string } | Promise<boolean | { eventId: string }>) & {
+) =>
+  | boolean
+  | { eventId: string | number }
+  | Promise<boolean | { eventId: string | number }>) & {
   suppliesEventId?: true;
   /** Set on a verifier that signs the body (a GET has none, so it cannot serve one). */
   signsBody?: true;
@@ -52,7 +55,7 @@ export interface WebhookConfig<
   input: TInput;
   /**
    * The delivery's id, so one sent twice runs once: a non-empty string or a
-   * finite number (`7` and `"7"` are one id); anything else, `undefined`
+   * safe integer (`7` and `"7"` are one id); anything else, `undefined`
    * included, is no id. Not needed when the verifier supplies one.
    */
   eventId?: (args: {

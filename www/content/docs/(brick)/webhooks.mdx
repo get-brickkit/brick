@@ -84,11 +84,11 @@ verify: hmacSignature({
 }),
 ```
 
-A hex signature is accepted in either case. It signs the body alone, so it neither checks a timestamp nor stops a replay: give the webhook an `eventId`, and read [What the id protects against](#what-the-id-protects-against). A `GET` has no body to sign, so a `GET` webhook cannot use it (startup error), and the verifier refuses any request that is not a `POST`.
+A hex signature is accepted in either case. It signs the body alone, so it neither checks a timestamp nor stops a replay: give the webhook an `eventId`, and read [What the id protects against](#what-the-id-protects-against). A secret that is empty or only whitespace refuses every delivery. A `GET` has no body to sign, so a `GET` webhook cannot use it (startup error), and the verifier refuses any request that is not a `POST`.
 
 ### `standardWebhooks`
 
-The [Standard Webhooks](https://www.standardwebhooks.com) scheme, used by Svix and the services built on it: the `webhook-id`, `webhook-timestamp` and `webhook-signature` headers, a base64 HMAC-SHA256 over `id.timestamp.body`, a `whsec_…` secret, several space-separated `v1,…` signatures during a rotation, and a timestamp tolerance (default 5 minutes, either way; `toleranceMs` changes it). The `webhook-id` is the event id, so the webhook needs no `eventId`; the signature covers it, so a replayed capture cannot change it. The key is the base64 after `whsec_` (as the reference libraries read it): a secret that is not base64, or decodes to no bytes, refuses every delivery and logs a warning, so it is never taken for an empty key. Like `hmacSignature` it signs the body, so a `GET` webhook cannot use it.
+The [Standard Webhooks](https://www.standardwebhooks.com) scheme, used by Svix and the services built on it: the `webhook-id`, `webhook-timestamp` and `webhook-signature` headers (or Svix's own `svix-id`, `svix-timestamp` and `svix-signature`, read the same way), a base64 HMAC-SHA256 over `id.timestamp.body`, a `whsec_…` secret, several space-separated `v1,…` signatures during a rotation, and a timestamp tolerance (default 5 minutes, either way; `toleranceMs` changes it). The id header is the event id, so the webhook needs no `eventId`; the signature covers it, so a replayed capture cannot change it. The key is the base64 after `whsec_` (as the reference libraries read it), in the standard alphabet, with spaces and newlines around the secret ignored: a secret that is not base64, or decodes to no bytes, refuses every delivery and logs a warning, so it is never taken for an empty key. Like `hmacSignature` it signs the body, so a `GET` webhook cannot use it.
 
 ```ts
 billing.webhook({
@@ -103,9 +103,18 @@ billing.webhook({
 
 Twilio's scheme: `X-Twilio-Signature` is a base64 HMAC-SHA1, keyed with the auth token, over the URL Twilio called followed by the form parameters sorted by name, each as name and value. For a JSON body Twilio signs the URL alone and puts the body's SHA-256 in its `bodySHA256` query parameter, which Brick checks against the body.
 
-The signature depends on the public URL the provider called, which Brick cannot know behind a proxy, so your app supplies it as a string or a function of the request. Twilio signs the URL as it was configured, so a port, a query string or a trailing slash that differs from the configured URL fails verification; Twilio drops the port for HTTPS voice callbacks. For a `GET` webhook, the signature is over the URL alone, query string included.
+The signature depends on the public URL the provider called, which Brick cannot know behind a proxy, so your app supplies it as a string or a function of the request. Twilio signs the URL as it was configured, so a port, a query string or a trailing slash that differs from the configured URL fails verification; Twilio drops the port for HTTPS voice callbacks.
 
-Give it the URL you configured at Twilio, as a constant. A function that returns `request.url` trusts the `Host` header: a delivery signed for another host that shares your auth token would be accepted here.
+For a form `POST`, give it the URL you configured at Twilio, as a constant. A `GET` webhook is signed over the URL alone, and its input is the query, which differs with each delivery; a JSON body is signed with a `bodySHA256` query parameter that differs too. For those two, pass a function that puts the request's path and query on your own origin:
+
+```ts
+url: ({ url }) => {
+  const called = new URL(url);
+  return `https://api.example.com${called.pathname}${called.search}`;
+},
+```
+
+A `GET` whose query is not the query of the signed URL is refused, so a constant URL verifies only the one query it names. Never take the host from the request: a function that returns `request.url` trusts the `Host` header, and a delivery signed for another host that shares your auth token would be accepted here.
 
 ```ts
 telephony.webhook({
@@ -115,16 +124,19 @@ telephony.webhook({
     url: "https://api.example.com/api/telephony/voice-status", // as configured at Twilio
   }),
   eventId: ({ input }) => `${input.CallSid}:${input.CallStatus}`,
-  replay: false, // see "Repeated deliveries": a repeat is not answered with TwiML
   input: t.Object({ CallSid: t.String(), CallStatus: t.String() }),
-  execute: () =>
-    new Response("<Response/>", { headers: { "content-type": "text/xml" } }),
+  execute: async ({ input, ctx }) => {
+    await ctx.db
+      .update(calls)
+      .set({ status: input.CallStatus })
+      .where(eq(calls.sid, input.CallSid));
+  },
 });
 ```
 
 Twilio supplies no event id of its own: build one from what makes the callback unique, as above. Twilio signs the names and values of the form joined with no separators, so one signature also verifies a body of another shape (`a=bc` and `ab=c` sign alike). Build the event id from fields with strict schemas (a pattern, a literal, an enum), so that a reshaped body cannot pass as another event.
 
-As written, the example above sets `replay: false`: a repeated delivery is answered with a JSON body, which a provider that reads the response (Twilio reads TwiML) cannot use. Then the handler runs for every delivery and must be safe to run twice.
+A repeated delivery is answered with a JSON body. A status callback like this one ignores the response, but where the provider reads it, as Twilio reads TwiML from a voice or messaging webhook, set `replay: false` and leave `eventId` out: the handler then runs for every delivery, answers each with its own response, and must be safe to run twice.
 
 ### Your own verifier
 
@@ -132,24 +144,28 @@ A verifier is a function of `{ rawBody, headers, url, method }`. It returns `tru
 
 ```ts
 verify: ({ rawBody, headers }) => {
-  stripe.webhooks.constructEvent(
-    Buffer.from(rawBody),
-    headers.get("stripe-signature")!,
-    stripeSecret.require(),
-  );
-  return true; // throwing or returning false refuses
+  try {
+    stripe.webhooks.constructEvent(
+      Buffer.from(rawBody),
+      headers.get("stripe-signature")!,
+      stripeSecret.require(),
+    );
+    return true;
+  } catch {
+    return false; // a bad signature: refused, and not logged
+  }
 },
 ```
 
-The signed-timestamp scheme of Stripe (`t=…,v1=…`) is checked this way, with the SDK doing the work. What a verifier throws is never sent, and its message is never logged: the response is always `Webhook verification failed`.
+The signed-timestamp scheme of Stripe (`t=…,v1=…`) is checked this way, with the SDK doing the work. What a verifier throws is never sent, and its message is never logged: the response is always `Webhook verification failed`. A throw also refuses, but logs a warning each time (see [Logs and traces](#logs-and-traces)), so return `false` for a bad signature, which anyone can send, and keep throws for what you want to hear about.
 
 A verifier that always returns `{ eventId }` can say so with `suppliesEventId = true` on the function, as `standardWebhooks` does, so the webhook needs no `eventId` option. Otherwise give an `eventId`: Brick cannot tell at startup what a function will return. A verifier that signs only the body can say so with `signsBody = true`, so that a `GET` webhook cannot be defined with it; a verifier of your own that does should also refuse a request that is not a `POST`.
 
 ## Repeated deliveries
 
-A provider can deliver one event more than once, after a timeout or a retry, or a redelivery you ask for. A webhook claims each event id in the service's storage under a key that names the service, the webhook and the id, and `execute` runs at least once per id: once, unless a handler outlives its lease (below).
+A provider can deliver one event more than once, after a timeout or a retry, or a redelivery you ask for. A webhook claims each event id in the service's storage under a key that names the service, the webhook and the id, and `execute` runs at least once per id. It runs once, except when a handler outlives its lease (below), when the id could not be recorded after the handler succeeded (a warning is logged), or when the provider sends the event again after `replay.ttlMs`.
 
-The id comes from the verifier's `{ eventId }`, or from the `eventId` option: a function of `{ input, headers, url, method }` that returns the delivery's id: a non-empty string or a finite number (`0` is an id, and `7` and `"7"` are the same one). Anything else, `undefined` included, is no id, and a verified delivery with no id is answered `400` and does not run. The verifier's own id wins: when it supplies one, `eventId` is not called. An id over 128 characters is stored as its hash, which cannot equal another id.
+The id comes from the verifier's `{ eventId }`, or from the `eventId` option: a function of `{ input, headers, url, method }` that returns the delivery's id: a non-empty string or a whole number up to 2^53 (`0` is an id, and `7` and `"7"` are the same one). The same holds for the id a verifier returns. Anything else, `undefined` included, is no id, and a verified delivery with no id is answered `400` and does not run. The verifier's own id wins: when it supplies one, `eventId` is not called. An id over 128 characters is stored as its hash, which cannot equal another id.
 
 | What the claim finds                                                    | The answer                                                                                               |
 | :---------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------- |
@@ -166,7 +182,7 @@ A failure releases only its own claim. A claim that is still in flight when its 
 
 ### What the id protects against
 
-An id stops the provider's own repeats. It stops a replayed capture only when the signature covers the id: a field of the signed body, or the `webhook-id` of `standardWebhooks`. An id from a header the signature does not cover, such as the `x-github-delivery` of the lead example, can be changed by anyone who captured one signed delivery: they send the same body again with a new header value, and the handler runs again. When replays matter, take the id from the signed body, or make the handler idempotent by what the body says.
+An id stops the provider's own repeats. It stops a replayed capture only when the signature covers the id (a field of the signed body, or the id header of `standardWebhooks`), and only for as long as the id is remembered: `hmacSignature` checks no timestamp, so a capture sent again after `replay.ttlMs` runs again. An id from a header the signature does not cover, such as the `x-github-delivery` of the lead example, can be changed by anyone who captured one signed delivery: they send the same body again with a new header value, and the handler runs again. When replays matter, take the id from the signed body, or make the handler idempotent by what the body says.
 
 ### The lease, and a handler that outlives it
 
@@ -204,7 +220,9 @@ A repeated delivery is answered with a JSON body (`{ "duplicate": true }`), so s
 | `errors`       |          | Declared errors, as for an action.                                                                                                                               |
 | `tags`         |          | OpenAPI tags.                                                                                                                                                    |
 
-A webhook shares the URL space and the name rules of the service's actions: two cannot claim one URL segment. A webhook also cannot share its route (method and path) with an action or an endpoint: that fails at startup and names both, because the other route would otherwise run in place of the check.
+A webhook shares the URL space and the name rules of the service's actions. It cannot share its name, or its route (method and path), with an action or an endpoint: that fails when it is defined or at startup and names both, because the other route would otherwise run in place of the check.
+
+Brick compares routes exactly. It does not see a pattern that overlaps a webhook's path (an action at `/hooks/stripe` beside a webhook at `/hooks/:name` answers that URL itself), nor a route you mount on the app yourself after `brick()`, such as `app.post(...)`, which replaces the webhook's. Keep a webhook's path to itself.
 
 ## Where a webhook shows
 
@@ -212,7 +230,7 @@ A webhook is not for callers of your API, so it is left out of the [typed client
 
 ## Logs and traces
 
-The raw body, the signature headers and the secrets are never logged and never put on a span. A verifier that throws, or a missing or unusable secret, logs one warning with the service, the webhook and the error's class name, so a misconfigured secret is not mistaken for forged traffic; the error's message is not logged. A signature that is merely wrong is not logged. The span records the webhook's name, the event id, and the outcome (`processed`, `duplicate`, `in_flight`, `refused`, `invalid`, `too_large`, `no_event_id`, `unavailable` or `failed`).
+The raw body, the signature headers and the secrets are never logged and never put on a span. A verifier that throws, or a missing or unusable secret, logs one warning with the service, the webhook and the error's class name, so a misconfigured secret is not mistaken for forged traffic; the error's message is not logged. A delivery that a verifier refuses by returning `false`, as the built-in ones do for a wrong signature, is not logged; one warning is logged for every delivery a verifier throws on, with no limit on how many. The span records the webhook's name, the event id, and the outcome (`processed`, `duplicate`, `in_flight`, `refused`, `invalid`, `too_large`, `no_event_id`, `unavailable` or `failed`).
 
 ## Testing
 

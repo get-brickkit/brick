@@ -289,6 +289,19 @@ describe("hmacSignature", () => {
   });
 });
 
+it("refuses an hmacSignature secret that is only whitespace", async () => {
+  const verify = hmacSignature({ secret: " \n", header: "x-sig" });
+  const rawBody = new TextEncoder().encode("{}");
+  const signature = createHmac("sha256", " \n").update(rawBody).digest("hex");
+  const request = {
+    rawBody,
+    headers: new Headers({ "x-sig": signature }),
+    url: "http://localhost/",
+    method: "POST",
+  };
+  expect(() => verify(request)).toThrow("secret is empty");
+});
+
 describe("standardWebhooks", () => {
   // The example of the Standard Webhooks and Svix documentation.
   const SW_SECRET = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
@@ -331,6 +344,34 @@ describe("standardWebhooks", () => {
     // No eventId option, and the same id is not run twice.
     expect(await (await send(base)).json()).toEqual({ duplicate: true });
     expect(calls).toHaveLength(1);
+  });
+
+  it("reads Svix's svix-* headers the same way, and a secret that ends in a newline", async () => {
+    setSystemTime(new Date(Number(TIMESTAMP) * 1000));
+    const calls: unknown[] = [];
+    const service = defineService("billing", {
+      deps: { cache: defineStorage({ driver: memory() }) },
+    });
+    service.webhook({
+      name: "payments",
+      verify: standardWebhooks({ secret: ` ${SW_SECRET}\r\n` }),
+      input: t.Object({ test: t.Number() }),
+      execute: ({ eventId }) => {
+        calls.push(eventId);
+      },
+    });
+    const response = await post(
+      serve(service),
+      BODY,
+      {
+        "svix-id": ID,
+        "svix-timestamp": TIMESTAMP,
+        "svix-signature": SIGNATURE,
+      },
+      "/api/billing/payments",
+    );
+    expect(response.status).toBe(200);
+    expect(calls).toEqual([ID]);
   });
 
   it("refuses a missing, wrong, altered and unsupported signature", async () => {
@@ -645,6 +686,13 @@ describe("a GET webhook", () => {
       });
     expect((await call(urlSignature)).status).toBe(200);
     expect(calls).toEqual([{ CallSid: "CA1" }]);
+    // The input of a GET is its query, so the same signature over another query is refused.
+    const forged = await fetch(
+      `${base}/api/telephony/status?CallSid=CA999&Amount=1000000`,
+      { headers: { "x-twilio-signature": urlSignature } },
+    );
+    expect(forged.status).toBe(401);
+    expect(calls).toHaveLength(1);
     expect((await call("AAAA/OH5YylLD5NRKLltdqwSvS0BnU=")).status).toBe(401);
     // A form in the body of a GET is not signed: the URL alone is.
     const verify = twilioSignature({ authToken: token, url });
@@ -710,6 +758,20 @@ describe("a webhook's route", () => {
     expect(() => app.endpoint(endpoint)).toThrow(/webhook 'billing\.stripe'/);
   });
 
+  it("is not replaced by an action of the same name, nor replaces one", () => {
+    for (const webhookFirst of [true, false]) {
+      resetGlobalRegistry();
+      const service = defineService("billing", {});
+      const adds = [
+        () => service.webhook(webhook as never),
+        () => service.action({ name: "stripe", execute: () => "unverified" }),
+      ];
+      if (!webhookFirst) adds.reverse();
+      adds[0]!();
+      expect(adds[1]!).toThrow(/both as a webhook and as an action/);
+    }
+  });
+
   it("leaves two plain actions on one route as they were: the later is shadowed", () => {
     const service = defineService("billing", {});
     service.action({ ...action, name: "a" } as never);
@@ -764,6 +826,9 @@ describe("a custom verifier", () => {
     const named = verifier(() => ({ eventId: "evt_9" }));
     expect((await send(named.base)).status).toBe(200);
     expect(named.calls).toEqual([{ input: { n: 1 }, eventId: "evt_9" }]);
+    const numbered = verifier(() => ({ eventId: 7 }));
+    expect((await send(numbered.base)).status).toBe(200);
+    expect(numbered.calls).toEqual([{ input: { n: 1 }, eventId: "7" }]);
   });
 
   it("refuses on false, on a throw, on a rejection and on anything else", async () => {
@@ -779,7 +844,8 @@ describe("a custom verifier", () => {
       () => null as never,
       () => "true" as never,
       () => ({ eventId: "" }),
-      () => ({ eventId: 7 }) as never,
+      () => ({ eventId: 1.5 }),
+      () => ({ eventId: {} }) as never,
     ]) {
       const { base, calls } = verifier(verify);
       const response = await send(base);
@@ -805,7 +871,8 @@ describe("a custom verifier", () => {
       expect((await send(base)).status).toBe(401);
       const [warn] = spies;
       expect(warn!).toHaveBeenCalledTimes(1);
-      const logged = JSON.stringify(spies.flatMap((spy) => spy.mock.calls));
+      // Bun.inspect, not JSON: JSON.stringify of an Error is "{}", which would hide a logged message.
+      const logged = Bun.inspect(spies.flatMap((spy) => spy.mock.calls));
       expect(logged).toContain("custom");
       expect(logged).toContain("events");
       expect(logged).toContain("VaultError");
@@ -1429,13 +1496,15 @@ function replaySuite(
       expect(calls.map((call) => call.eventId)).toEqual(["0", "7"]);
     });
 
-    it("answers an id that is not a non-empty string or a finite number as no id", async () => {
+    it("answers an id that is not a non-empty string or a safe integer as no id", async () => {
       const ids: Record<string, unknown> = {
         empty: "",
         object: { id: 1 },
         array: ["a"],
         flag: true,
         nan: Number.NaN,
+        fraction: 1.5,
+        unsafe: 2 ** 53 + 2,
         infinity: Number.POSITIVE_INFINITY,
         none: null,
       };

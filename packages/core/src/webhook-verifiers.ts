@@ -13,7 +13,8 @@ function valuesOf(secret: WebhookSecret): string[] {
   const values = list.map((item: SecretInput) =>
     typeof item === "string" ? item : item.require(),
   );
-  if (!values.length || values.some((value) => !value))
+  // Whitespace alone is no secret either: an unset variable often arrives as one.
+  if (!values.length || values.some((value) => !value.trim()))
     throw new Error("A webhook secret is empty");
   return values;
 }
@@ -47,8 +48,8 @@ export interface HmacSignatureOptions {
 
 /**
  * Verifies an HMAC of the raw body, compared in constant time with a header.
- * It signs the body alone, so it neither checks a timestamp nor stops a
- * replay: give the webhook an `eventId` for that.
+ * It signs the body alone and checks no timestamp. Give the webhook an
+ * `eventId`: it stops a replayed capture only when it comes from the signed body.
  *
  * @example
  * verify: hmacSignature({ secret: githubSecret, header: "x-hub-signature-256", prefix: "sha256=" })
@@ -76,7 +77,8 @@ export function hmacSignature(options: HmacSignatureOptions): WebhookVerifier {
 
 /** The key of a `whsec_` secret: its base64 bytes. Anything else throws, so a misread secret never becomes a key an attacker can sign with. */
 function keyOf(secret: string): Buffer {
-  const encoded = secret.replace(/^whsec_/, "");
+  // Trimmed: a secret read from a file or a variable often ends in a newline.
+  const encoded = secret.trim().replace(/^whsec_/, "");
   const key = /^[A-Za-z0-9+/]+={0,2}$/.test(encoded)
     ? Buffer.from(encoded, "base64")
     : Buffer.alloc(0);
@@ -96,7 +98,8 @@ export interface StandardWebhooksOptions {
  * Verifies the Standard Webhooks scheme (standardwebhooks.com): a base64
  * HMAC-SHA256 of `id.timestamp.body` in `webhook-signature`, as `v1,<signature>`
  * entries separated by spaces, with the timestamp in `webhook-timestamp`.
- * The `webhook-id` is the event id, so the webhook needs no `eventId`.
+ * Svix's `svix-id`, `svix-timestamp` and `svix-signature` are read the same way.
+ * The id header is the event id, so the webhook needs no `eventId`.
  *
  * @example
  * verify: standardWebhooks({ secret: billingSecret })
@@ -107,9 +110,12 @@ export function standardWebhooks(
   const toleranceMs = options.toleranceMs ?? 5 * 60_000;
   const verify: WebhookVerifier = ({ rawBody, headers, method }) => {
     if (method !== "POST") return false;
-    const id = headers.get("webhook-id");
-    const timestamp = headers.get("webhook-timestamp");
-    const signatures = headers.get("webhook-signature");
+    // Svix, and the providers built on it, send the same three as `svix-*`.
+    const header = (name: string) =>
+      headers.get(`webhook-${name}`) ?? headers.get(`svix-${name}`);
+    const id = header("id");
+    const timestamp = header("timestamp");
+    const signatures = header("signature");
     if (!id || !timestamp || !signatures || !/^\d{1,15}$/.test(timestamp))
       return false;
     if (Math.abs(Date.now() - Number(timestamp) * 1000) > toleranceMs)
@@ -149,7 +155,8 @@ export interface TwilioSignatureOptions {
  * auth token, of the URL followed by the form parameters sorted by name, each
  * as name and value. For a JSON body, Twilio signs the URL alone and puts the
  * body's SHA-256 (hex) in its `bodySHA256` query parameter, which is checked
- * against the body. For a GET, it signs the URL alone. It supplies no event id: give the webhook an `eventId`.
+ * against the body. For a GET, it signs the URL alone,
+ * and a request whose query is not the signed URL's is refused. It supplies no event id: give the webhook an `eventId`.
  *
  * @example
  * verify: twilioSignature({ authToken, url: "https://api.example.com/api/telephony/voice-status" })
@@ -164,6 +171,12 @@ export function twilioSignature(
       typeof options.url === "string"
         ? options.url
         : await options.url(request);
+    // A GET's input is its query, so it must be the query that was signed.
+    if (
+      request.method !== "POST" &&
+      new URL(url).search !== new URL(request.url).search
+    )
+      return false;
     let signed = url;
     if (request.headers.get("content-type")?.includes("json")) {
       const claimed = new URL(url).searchParams.get("bodySHA256");
