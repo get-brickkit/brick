@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { blogSource } from "@/lib/blog";
 import { getExamples } from "@/lib/examples";
 import { site } from "@/lib/site";
+import { redirects } from "@/lib/redirects";
 import { marketingPages } from "@/lib/social";
 import { source } from "@/lib/source";
 
@@ -15,10 +16,14 @@ export const Route = createFileRoute("/sitemap.xml")({
           ...blogSource.getPages().map((page) => page.url),
           ...getExamples().map((example) => `/examples/${example.slug}`),
         ]);
-        const urls = [...paths].sort().map((path) => {
-          const url = new URL(path, site.url).href.replaceAll("&", "&amp;");
-          return `  <url><loc>${url}</loc></url>`;
-        });
+        // Only final URLs: never a path that redirects.
+        const urls = [...paths]
+          .filter((path) => !(path in redirects))
+          .sort()
+          .map((path) => {
+            const url = new URL(path, site.url).href.replaceAll("&", "&amp;");
+            return `  <url><loc>${url}</loc></url>`;
+          });
         return new Response(
           [
             '<?xml version="1.0" encoding="UTF-8"?>',

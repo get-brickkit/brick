@@ -13,31 +13,45 @@ import usersSource from "../../../examples/showcase/src/services/users.ts?raw";
 
 export const Route = createFileRoute("/")({
   head: () => ({
-    meta: [
-      {
-        name: "keywords",
-        content: "Brick, TypeScript backend framework, Bun, API, MCP",
-      },
-    ],
     scripts: [
       {
         type: "application/ld+json",
         children: JSON.stringify({
           "@context": "https://schema.org",
-          "@type": "SoftwareApplication",
-          name: "Brick",
-          description: site.description,
-          url: site.url,
-          applicationCategory: "DeveloperApplication",
-          operatingSystem: "Bun",
-          keywords: "TypeScript backend framework",
-          sameAs: ["https://github.com/get-brickkit/brick"],
-          publisher: {
-            "@type": "Organization",
-            name: "Brick",
-            url: site.url,
-            sameAs: ["https://github.com/get-brickkit"],
-          },
+          "@graph": [
+            {
+              "@type": "WebSite",
+              "@id": `${site.url}/#website`,
+              name: site.name,
+              alternateName: "BrickKit",
+              url: `${site.url}/`,
+              description: site.description,
+            },
+            {
+              "@type": "SoftwareApplication",
+              "@id": `${site.url}/#software`,
+              name: site.name,
+              description: site.description,
+              url: `${site.url}/`,
+              applicationCategory: "DeveloperApplication",
+              operatingSystem: "Linux, macOS, Windows",
+              softwareVersion: site.version,
+              offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+              sameAs: [site.repo],
+            },
+            {
+              "@type": "SoftwareSourceCode",
+              "@id": `${site.url}/#source`,
+              name: site.name,
+              description: site.description,
+              codeRepository: site.repo,
+              programmingLanguage: "TypeScript",
+              runtimePlatform: "Bun",
+              license: "https://opensource.org/licenses/MIT",
+              version: site.version,
+              targetProduct: { "@id": `${site.url}/#software` },
+            },
+          ],
         }),
       },
     ],

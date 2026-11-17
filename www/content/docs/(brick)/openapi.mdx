@@ -1,6 +1,6 @@
 ---
-title: OpenAPI 3.1 & Interactive Documentation
-description: Generate OpenAPI 3.1 specifications and serve interactive Scalar and Swagger docs automatically.
+title: Generate OpenAPI 3.1 from TypeScript
+description: Generate an OpenAPI 3.1 spec from your actions and CRUD resources, and serve Scalar or Swagger docs for it.
 ---
 
 Brick-TS automatically generates compliant OpenAPI 3.1 JSON specifications from TypeBox schemas and serves interactive documentation via Scalar and Swagger UI.
@@ -129,3 +129,9 @@ Brick automatically flags protected operations in the OpenAPI specification:
 
 - Actions with `authorize` guards advertise authentication requirements in their operation definition.
 - CRUD resources with `access !== "public"` automatically advertise security requirements while public CRUD resources omit them.
+
+## Related
+
+- [Typed client](/docs/typed-client)
+- [brick gen](/docs/brick-cli/gen)
+- [Validation and errors](/docs/validation-and-errors)

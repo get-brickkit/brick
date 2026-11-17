@@ -1,6 +1,6 @@
 ---
-title: Events
-description: Record an event in the same transaction as a write, and run listeners for it after the commit.
+title: Events and the Transactional Outbox
+description: Write an event to an outbox table in the same transaction as your data, then run listeners after the commit, with retries.
 ---
 
 Events let code react to a write without the write waiting for it. Every generated CRUD `create`, `update` and `delete` records an event in the same database transaction as the row it changes. After the commit, Brick delivers the event to your listeners and retries one that fails.
@@ -418,3 +418,9 @@ Whether to ship workflows depends on the project, not on the env the build runs 
 - **Order.** Events are not ordered across listeners, or between two deliveries of one listener when one is retried.
 - **Exactly once.** Delivery is at least once.
 - **Exactly-once handlers.** A `run` handler can still run twice for one event. A workflow starts one run per delivery.
+
+## Related
+
+- [Commands](/docs/commands)
+- [Schedules and cron jobs](/docs/schedules)
+- [Durable workflows with events](/blog/durable-workflows-with-brick-events)

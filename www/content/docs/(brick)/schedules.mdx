@@ -1,6 +1,6 @@
 ---
-title: Schedules
-description: Run code on a cron expression or at an interval, once per due time across every process of the app.
+title: Schedules and Cron Jobs
+description: Run a cron expression or an interval once per due time, however many processes of the app are running, on PostgreSQL or SQLite.
 ---
 
 A schedule runs code at set times: a nightly report, a backup every six hours, a sweep of expired sessions. You declare it, and Brick runs it in one of the app's processes, keeps its state in your database, and retries it when it fails. You don't write timers, locks or "last run" rows.
@@ -227,3 +227,8 @@ defineSchedule({ name: "db-backup", cron: "0 */6 * * *", run: backupDatabase });
 ```
 
 The schedule runs on time rather than up to ten minutes late, keeps its due time until the run succeeds, and is retried within minutes of a failure.
+
+## Related
+
+- [Events and the outbox](/docs/events)
+- [Testing](/docs/testing)

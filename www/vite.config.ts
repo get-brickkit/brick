@@ -6,6 +6,7 @@ import mdx from "fumadocs-mdx/vite";
 import { nitro } from "nitro/vite";
 import { fileURLToPath } from "node:url";
 import { docsPagePaths } from "./scripts/docs-pages.ts";
+import { redirects } from "./src/lib/redirects.ts";
 
 // Every docs page is prerendered.
 const docsPages = docsPagePaths(
@@ -16,7 +17,22 @@ const docsPages = docsPagePaths(
 // share a URL, so caches must key on Accept, and a request for markdown goes to
 // the server function.
 const docsPath = "^/(?:docs(?:/.*)?)?$";
-const docsRoutes = [
+type VercelRoute = {
+  src: string;
+  status?: number;
+  headers?: Record<string, string>;
+  continue?: boolean;
+  has?: { type: string; key: string; value: string }[];
+  dest?: string;
+};
+const docsRoutes: VercelRoute[] = [
+  // One URL per page: no trailing slash, and moved pages go to their new home.
+  { src: "^/(.+)/$", status: 308, headers: { Location: "/$1" } },
+  ...Object.entries(redirects).map(([from, to]) => ({
+    src: `^${from}(\\.md)?$`,
+    status: 308,
+    headers: { Location: `${to}$1` },
+  })),
   { src: docsPath, headers: { Vary: "Accept" }, continue: true },
   {
     src: docsPath,
@@ -50,7 +66,10 @@ export default defineConfig({
         enabled: true,
         failOnError: true,
         // The markdown pages stay with the server, which sets their headers.
-        filter: (page) => !page.path.endsWith(".md"),
+        // Crawled #anchor links are the same file as their page; rendering them
+        // again wrote that file concurrently and left /docs/api-reference/core cut off.
+        filter: (page) =>
+          !page.path.endsWith(".md") && !page.path.includes("#"),
       },
     }),
     react(),

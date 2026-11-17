@@ -1,6 +1,6 @@
 ---
-title: Access Control and Policies
-description: Secure actions and CRUD operations with role-based authorization and row scoping.
+title: Access Control and Row Scoping
+description: Protect actions and CRUD routes with role checks, and limit each user to their own rows with row scoping.
 ---
 
 Brick-TS provides two complementary layers of access control: operation-level authorization guards on actions and row-level scoping on CRUD resources.
@@ -171,3 +171,9 @@ export const documentFields = [
 ];
 
 <DatabaseTable name="documents" fields={documentFields} />
+
+## Related
+
+- [Resources and CRUD](/docs/resources)
+- [Execution context](/docs/context)
+- [Error catalog](/docs/reference/errors)

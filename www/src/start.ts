@@ -40,7 +40,7 @@ const llmMiddleware = createMiddleware().server(async ({ next, request }) => {
     ) {
       const page = source.getPage(slugs);
       if (!page) return markdownNotFound();
-      return markdownResponse(await getLLMText(page), true);
+      return markdownResponse(await getLLMText(page), true, page.url);
     }
     const result = await next();
     const vary = result.response.headers.get("Vary");

@@ -2,6 +2,7 @@ import { loader } from "fumadocs-core/source";
 import { docs } from "collections/server";
 import { lucideIconsPlugin } from "fumadocs-core/source/lucide-icons";
 import { docsRoute } from "./shared";
+import { site } from "./site";
 import type { Node } from "fumadocs-core/page-tree";
 
 export const source = loader({
@@ -78,11 +79,21 @@ export function getDocsSections() {
   return sections.filter((section) => section.pages.length > 0);
 }
 
-export function markdownResponse(markdown: string, negotiated = false) {
+export function markdownResponse(
+  markdown: string,
+  negotiated = false,
+  canonicalPath?: string,
+) {
   return new Response(markdown, {
     headers: {
       "Content-Type": "text/markdown; charset=utf-8",
       ...(negotiated ? { Vary: "Accept" } : {}),
+      // The .md copy of a page points search engines at the HTML page.
+      ...(canonicalPath
+        ? {
+            Link: `<${new URL(canonicalPath, site.url).href}>; rel="canonical"`,
+          }
+        : {}),
     },
   });
 }
