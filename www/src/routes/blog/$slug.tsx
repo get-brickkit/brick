@@ -8,6 +8,7 @@ import { EditOnGitHub } from "@/components/edit-on-github";
 import { getMDXComponents } from "@/components/mdx";
 import { blogSource } from "@/lib/blog";
 import { site } from "@/lib/site";
+import { socialMeta } from "@/lib/social";
 
 const loadPost = createServerFn({ method: "GET" })
   .validator((slug: string) => slug)
@@ -18,7 +19,9 @@ const loadPost = createServerFn({ method: "GET" })
       path: page.path,
       title: page.data.title,
       description: page.data.description,
-      image: new URL(`/og/blog/${slug}.png`, site.url).href,
+      url: page.url,
+      date: page.data.date,
+      author: page.data.author,
     };
   });
 
@@ -57,21 +60,28 @@ export const Route = createFileRoute("/blog/$slug")({
   },
   head: ({ loaderData }) => ({
     meta: loaderData
+      ? socialMeta({
+          title: `${loaderData.title} · Brick blog`,
+          description: loaderData.description,
+          path: loaderData.url,
+          type: "article",
+        })
+      : [],
+    scripts: loaderData
       ? [
-          { title: `${loaderData.title} — BrickKit` },
-          { name: "description", content: loaderData.description },
-          { property: "og:title", content: loaderData.title },
-          { property: "og:description", content: loaderData.description },
-          { property: "og:type", content: "article" },
-          { property: "og:image", content: loaderData.image },
-          { property: "og:image:width", content: "1200" },
-          { property: "og:image:height", content: "630" },
-          { property: "og:image:alt", content: loaderData.title },
-          { name: "twitter:card", content: "summary_large_image" },
-          { name: "twitter:title", content: loaderData.title },
-          { name: "twitter:description", content: loaderData.description },
-          { name: "twitter:image", content: loaderData.image },
-          { name: "twitter:image:alt", content: loaderData.title },
+          {
+            type: "application/ld+json",
+            children: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "BlogPosting",
+              headline: loaderData.title,
+              description: loaderData.description,
+              datePublished: loaderData.date,
+              author: { "@type": "Organization", name: loaderData.author },
+              url: new URL(loaderData.url, site.url).href,
+              image: new URL(`/og${loaderData.url}.png`, site.url).href,
+            }),
+          },
         ]
       : [],
   }),

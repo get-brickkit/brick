@@ -5,22 +5,24 @@ import {
   markdownResponse,
   source,
 } from "@/lib/source";
+import { redirectFor } from "@/lib/redirects";
 
 export const Route = createFileRoute("/docs/{$}.md")({
   server: {
     handlers: {
       GET: async ({ params }) => {
-        const slugs = markdownPathToSlugs(params._splat?.split("/") ?? []);
-        if (slugs.length === 1 && slugs[0] === "getting-started") {
+        const target = redirectFor(`/docs/${params._splat ?? ""}`);
+        if (target) {
           return new Response(null, {
-            status: 301,
-            headers: { Location: "/docs/quickstart.md" },
+            status: 308,
+            headers: { Location: target },
           });
         }
+        const slugs = markdownPathToSlugs(params._splat?.split("/") ?? []);
         const page = source.getPage(slugs);
         if (!page) throw notFound();
 
-        return markdownResponse(await getLLMText(page));
+        return markdownResponse(await getLLMText(page), false, page.url);
       },
     },
   },

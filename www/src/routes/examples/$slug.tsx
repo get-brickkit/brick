@@ -22,7 +22,7 @@ export const Route = createFileRoute("/examples/$slug")({
   head: ({ loaderData }) => ({
     meta: loaderData
       ? socialMeta({
-          title: `${loaderData.title} example — BrickKit`,
+          title: `${loaderData.title}: Brick example app`,
           description: loaderData.description,
           path: `/examples/${loaderData.slug}`,
         })

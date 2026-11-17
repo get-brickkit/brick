@@ -1,6 +1,6 @@
 ---
-title: Resources and CRUD
-description: Expose database tables via CRUD resources with field-level access, filtering, and security policies.
+title: "Resources: CRUD APIs from Drizzle Tables"
+description: Turn a Drizzle table into typed CRUD routes with field-level access, filters and row scoping, without writing the handlers.
 ---
 
 Resources link Drizzle database tables to services, while the `@brickkit/crud` plugin provides type-safe, field-level data operations.
@@ -309,3 +309,10 @@ On a resource with `crud()`, a resource action can't be named after a CRUD route
 For a state change with rules and events, such as shipping an order, declare a [command](/docs/commands) instead: a record action whose body is a pure `decide` function, run in one transaction with the events it emits.
 
 Plugins that need the same row loading can call `loadRecord(resource, { id, ctx, db?, access })` from `@brickkit/core`.
+
+## Related
+
+- [Access control and row scoping](/docs/access-control)
+- [Lifecycle hooks](/docs/hooks)
+- [Tutorial: build a REST API](/docs/tutorial)
+- [Relations and joins](/docs/relations)

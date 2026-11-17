@@ -21,17 +21,14 @@ import { Wordmark } from "@/components/logo";
 import { useMDXComponents } from "@/components/mdx";
 import { baseOptions } from "@/lib/layout.shared";
 import { gitConfig, repoUrl } from "@/lib/shared";
+import { redirectFor } from "@/lib/redirects";
 import { slugsToMarkdownPath, source } from "@/lib/source";
 import { socialMeta } from "@/lib/social";
 
 export const Route = createFileRoute("/docs/$")({
   beforeLoad: ({ params }) => {
-    if (params._splat === "getting-started") {
-      throw redirect({
-        to: "/docs/$",
-        params: { _splat: "quickstart" },
-      });
-    }
+    const target = redirectFor(`/docs/${params._splat ?? ""}`);
+    if (target) throw redirect({ href: target, statusCode: 308 });
   },
   component: Page,
   loader: async ({ params }) => {
@@ -43,7 +40,7 @@ export const Route = createFileRoute("/docs/$")({
   head: ({ loaderData }) => ({
     meta: loaderData
       ? socialMeta({
-          title: loaderData.title,
+          title: `${loaderData.title} · Brick docs`,
           description: loaderData.description,
           path: loaderData.url,
         })

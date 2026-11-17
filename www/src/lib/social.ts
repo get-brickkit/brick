@@ -3,19 +3,19 @@ import { site } from "./site";
 export const marketingPages = {
   "/": { title: site.title, description: site.description },
   "/brand": {
-    title: "Brand · Brick",
+    title: "Brick logo and brand assets",
     description:
-      "The Brick identity: the angular knot, logo downloads, usage guidelines, and brand applications.",
+      "Download the Brick logo, see the angular knot mark, and read the guidelines for using it.",
   },
   "/blog": {
-    title: "Blog — BrickKit",
+    title: "Brick blog: releases and guides",
     description:
-      "Framework updates and practical guides for building with BrickKit.",
+      "Release notes for Brick and guides to building TypeScript backends on Bun: REST APIs, typed clients, events and the dev dashboard.",
   },
   "/examples": {
-    title: "Examples — BrickKit",
+    title: "Brick examples: TypeScript backend apps you can run",
     description:
-      "Runnable BrickKit examples with their service graph, routes, database tables and source.",
+      "Runnable Brick apps on Bun, each with its service graph, HTTP routes, database tables and source code.",
   },
 };
 
@@ -27,10 +27,12 @@ export function socialMeta({
   title,
   description,
   path,
+  type = "website",
 }: {
   title: string;
   description: string;
   path: string;
+  type?: "website" | "article";
 }) {
   const image = new URL(socialImagePath(path), site.url).href;
   return [
@@ -38,7 +40,12 @@ export function socialMeta({
     { name: "description", content: description },
     { property: "og:title", content: title },
     { property: "og:description", content: description },
-    { property: "og:type", content: "website" },
+    { property: "og:type", content: type },
+    {
+      property: "og:url",
+      content: new URL(path.replace(/\/+$/, "") || "/", site.url).href,
+    },
+    { property: "og:site_name", content: site.name },
     { property: "og:image", content: image },
     { property: "og:image:width", content: "1200" },
     { property: "og:image:height", content: "630" },
