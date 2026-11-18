@@ -145,7 +145,7 @@ export function RequestDrawer({
   return (
     <aside
       aria-label="Request details"
-      className={cn("flex flex-col border bg-background", className)}
+      className={cn("flex flex-col border bg-card", className)}
     >
       <header className="flex items-center gap-1 border-b p-2 pl-3">
         {source?.method && (

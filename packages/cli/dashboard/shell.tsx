@@ -142,7 +142,7 @@ export function Sidebar({
                 aria-current={item.key === current ? "page" : undefined}
                 onClick={desktop ? undefined : sidebar.close}
                 className={cn(
-                  "relative flex h-8 items-center gap-2 rounded-lg text-sm font-medium whitespace-nowrap text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 aria-[current=page]:bg-muted aria-[current=page]:text-foreground [&_svg]:size-4 [&_svg]:shrink-0",
+                  "relative flex h-8 items-center gap-2 rounded-lg text-sm font-medium whitespace-nowrap text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 aria-[current=page]:bg-muted aria-[current=page]:text-foreground aria-[current=page]:[&_svg]:text-ring [&_svg]:size-4 [&_svg]:shrink-0",
                   expanded ? "px-2" : "w-8 justify-center",
                 )}
               >

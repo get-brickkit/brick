@@ -44,6 +44,10 @@
   --ds-shadow-modal: var(--ds-shadow-large);
   --ds-shadow-fullscreen: var(--ds-shadow-large);
 
+  /* web-shared's surfaces take the dashboard's, so its controls sit on the same paper. */
+  --ds-background-100: var(--card);
+  --ds-background-200: var(--background);
+
   /* Legacy aliases used by trace-viewer.module.css */
   --geist-background: var(--ds-background-100);
   --accents-2: var(--ds-gray-300);
@@ -74,6 +78,10 @@
   --ds-shadow-menu: var(--ds-shadow-medium);
   --ds-shadow-modal: var(--ds-shadow-large);
   --ds-shadow-fullscreen: var(--ds-shadow-large);
+
+  /* web-shared's surfaces take the dashboard's, so its controls sit on the same paper. */
+  --ds-background-100: var(--card);
+  --ds-background-200: var(--background);
 
   /* Legacy aliases used by trace-viewer.module.css */
   --geist-background: var(--ds-background-100);
