@@ -25,8 +25,14 @@ import {
   type OpenApiDocument,
   type ReferenceOptions,
 } from "./docs";
-import { normalizeDashboard, type DashboardOptions } from "./dashboard";
-import { markDashboardArrival } from "./dashboard-identity";
+import {
+  DASHBOARD_MCP_ROUTE,
+  DASHBOARD_MCP_TOOLS,
+  normalizeDashboard,
+  type DashboardOptions,
+} from "./dashboard";
+import { createMcpHandler, createMcpRegistry } from "./mcp";
+import { dashboardIdentity, markDashboardArrival } from "./dashboard-identity";
 import {
   createEndpointHandler,
   endpointPaths,
@@ -319,6 +325,28 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   }
   // Built from `definition`, below.
   builtIn("/_brick/services", (context: any) => architecture(context));
+
+  // The tools marked `dashboard: true`, for the dashboard's `/mcp`. Only a
+  // request the dashboard signed gets an answer; each call then runs as
+  // the tool says, with the signed identity as `ctx.dashboard`.
+  const dashboardTools = services
+    .flatMap((service) => service.listTools())
+    .filter((tool) => tool.config.dashboard === true);
+  for (const tool of dashboardTools)
+    if ((DASHBOARD_MCP_TOOLS as readonly string[]).includes(tool.name))
+      throw new DuplicateNameError(
+        `Brick: the tool '${tool.name}' is marked dashboard: true, but the dashboard's MCP endpoint has a tool of that name. Rename yours.`,
+      );
+  const dashboardMcp = createMcpHandler({
+    registry: createMcpRegistry({ tools: dashboardTools }),
+    serverInfo: { name: title, version },
+  });
+  app.post(DASHBOARD_MCP_ROUTE, ({ request }) =>
+    dashboardIdentity(request)
+      ? dashboardMcp(request)
+      : new Response("Unauthorized", { status: 401 }),
+  );
+  registeredRoutes.set(routeKey("POST", DASHBOARD_MCP_ROUTE), false);
 
   const sockets = services.flatMap((service) =>
     service.listSockets().map((definition) => ({

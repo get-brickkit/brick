@@ -83,9 +83,29 @@ export interface DashboardOptions {
    * messages, log lines (which can hold what your users typed), error stacks,
    * and span attributes such as SQL text. Turn it on only for a dashboard
    * whose data you are willing to send there.
+   *
+   * It also serves the app's own tools marked `dashboard: true` (see
+   * `service.tool`), next to the dashboard's. A tool that is not marked
+   * `readOnlyHint: true` can change data, and is offered only to a signed-in
+   * user (one `auth.authorize` returned as `{ user }`).
    */
   mcp?: boolean;
 }
+
+/**
+ * Where the app answers MCP for the dashboard's `/mcp`: its tools marked
+ * `dashboard: true`. Only a request signed by the dashboard gets in.
+ */
+export const DASHBOARD_MCP_ROUTE = "/_brick/dashboard/mcp";
+
+/** The dashboard's own MCP tools. A `dashboard: true` tool may not take one of these names. */
+export const DASHBOARD_MCP_TOOLS = [
+  "summary",
+  "list_requests",
+  "get_trace",
+  "list_errors",
+  "app_overview",
+] as const;
 
 const MIN_TOKEN_LENGTH = 16;
 

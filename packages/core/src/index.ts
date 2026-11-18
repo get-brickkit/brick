@@ -57,6 +57,7 @@ export {
 export { traceRoute } from "./telemetry";
 export { SPAN, ATTR, GLOBAL_SYMBOL } from "./telemetry-names";
 export type { DashboardAuth, DashboardOptions } from "./dashboard";
+export { DASHBOARD_MCP_ROUTE, DASHBOARD_MCP_TOOLS } from "./dashboard";
 export {
   dashboardUser,
   dashboardKey,
