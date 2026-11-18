@@ -55,6 +55,9 @@ export async function startViteDashboard(options: {
   options.logger.info(
     `  ➜  Brick dashboard: http://127.0.0.1:${dashboard.port}`,
   );
+  options.logger.info(
+    `  ➜  Brick MCP:       http://127.0.0.1:${dashboard.port}${ROUTES.mcp.path} (claude mcp add --transport http brick <url>)`,
+  );
 
   let stopped = false;
   let origin: string | undefined;

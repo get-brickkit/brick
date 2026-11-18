@@ -73,9 +73,10 @@ interface RouteSpec {
   methods?: readonly string[];
   /**
    * Served by the production dashboard; `"extension"`: only when it has one;
-   * `"inspector"`: only with `dashboard.inspector` and a running inspector.
+   * `"inspector"`: only with `dashboard.inspector` and a running inspector;
+   * `"mcp"`: only with `dashboard.mcp`.
    */
-  production: boolean | "extension" | "inspector";
+  production: boolean | "extension" | "inspector" | "mcp";
   /** The page's view that needs it; a view whose routes production lacks is hidden there. */
   view?: ViewName;
   /** It changes something, so the request must carry `CSRF_HEADER`. */
@@ -134,6 +135,8 @@ export const ROUTES = {
     production: "inspector",
     view: "schedules",
   },
+  /** A coding agent's read-only view of the data, over MCP. Any other method answers 405. */
+  mcp: { path: "/mcp", production: "mcp" },
   ingest: {
     path: "/api/ingest",
     methods: ["POST"],

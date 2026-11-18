@@ -13,6 +13,7 @@ import type { DevHistory } from "./dev-history";
 import { decodeHistoryQuery, type HistoryQuery } from "./dashboard-query";
 import type { DevTelemetryStore } from "./dev-telemetry-store";
 import { dashboardShell } from "./dev-dashboard-shell";
+import { createDashboardMcp } from "./dashboard-mcp";
 import {
   DASHBOARD_IDENTITY_HEADER,
   signDashboardIdentity,
@@ -51,6 +52,7 @@ import {
 const KEEPALIVE_MS = 15_000;
 const MAX_INGEST_BYTES = 5 * 1024 * 1024;
 const MAX_PROXY_BYTES = 10 * 1024 * 1024;
+const MAX_MCP_BYTES = 1024 * 1024;
 // Request headers that describe one hop or the dashboard's own page, and
 // response headers that fetch has already applied or that mean nothing here.
 const NOT_FORWARDED = new Set([
@@ -116,6 +118,12 @@ export interface DevDashboardOptions {
   /** Who may use the dashboard, checked before anything but `/_health`. */
   auth?: DashboardAuth;
   inspector?: boolean;
+  /**
+   * Serve `/mcp`, a coding agent's read-only view of requests, traces, logs and
+   * errors. `brick dev` always does; production only when the app sets
+   * `dashboard.mcp`.
+   */
+  mcp?: boolean;
   /** Whether the app answers; `/_health` reports it, for uptime monitors. */
   probe?: () => Promise<boolean>;
   store: DevTelemetryStore;
@@ -238,9 +246,10 @@ export function startDevDashboard(
   }
 
   function servedInProduction(route: RouteName): boolean {
-    const served: boolean | "extension" | "inspector" =
+    const served: boolean | "extension" | "inspector" | "mcp" =
       ROUTES[route].production;
     if (served === "extension") return Boolean(extension?.active);
+    if (served === "mcp") return Boolean(options.mcp);
     return served === "inspector"
       ? Boolean(options.inspector && options.store.inspectorTarget())
       : served;
@@ -332,6 +341,7 @@ export function startDevDashboard(
       return inspector(request, response, url, identity);
     },
     schedules: inspector,
+    mcp: mcpRoute,
     ingest,
     restart(request, response) {
       if (!options.restart) {
@@ -342,6 +352,48 @@ export function startDevDashboard(
       send(response, 202, "");
     },
   };
+
+  const mcp = createDashboardMcp({
+    store: options.store,
+    history: options.history,
+    mode: production ? "production" : "dev",
+  });
+
+  /**
+   * The MCP endpoint. Browsers have no use for it, so a request from another
+   * origin is refused: that also stops DNS rebinding. Access was checked
+   * before, as for every route.
+   */
+  async function mcpRoute(
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL,
+  ): Promise<void> {
+    if (!fromOwnPage(request)) {
+      send(response, 403, "Forbidden");
+      return;
+    }
+    const body = isBodyless(request)
+      ? undefined
+      : await readBytes(request, MAX_MCP_BYTES);
+    if (!isBodyless(request) && !body) {
+      tooLarge(response);
+      return;
+    }
+    const headers = forwardedHeaders(request);
+    const answer = await mcp(
+      new Request(`http://127.0.0.1${url.pathname}`, {
+        method: request.method,
+        headers,
+        ...(body ? { body: body as BodyInit } : {}),
+      }),
+    );
+    const returned: Record<string, string> = { "cache-control": "no-store" };
+    answer.headers.forEach((value, name) => {
+      returned[name] = value;
+    });
+    send(response, answer.status, await answer.text(), returned);
+  }
 
   function snapshot(): DashboardSnapshot {
     return {

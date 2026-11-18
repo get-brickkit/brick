@@ -71,6 +71,7 @@ export async function startProductionDashboard(
     portHint: "Set dashboard.port in brick() to another.",
     auth: config.auth,
     inspector: config.inspector,
+    mcp: config.mcp,
     dashboard: options.dashboard,
     plugins: app.definition.plugins,
     appUrl: `http://127.0.0.1:${options.appPort}`,
