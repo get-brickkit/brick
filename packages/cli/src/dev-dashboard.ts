@@ -353,10 +353,20 @@ export function startDevDashboard(
     },
   };
 
+  /**
+   * Who may change something through the dashboard: in production only a
+   * signed-in user (`authorize` returned `{ user }`), as in the inspector; on
+   * a developer's own machine, anyone who reaches it.
+   */
+  const mayChange = (identity: DashboardIdentity) =>
+    !production || Boolean(identity.user);
+
   const mcp = createDashboardMcp({
     store: options.store,
     history: options.history,
     mode: production ? "production" : "dev",
+    appUrl: () => options.appUrl ?? options.store.apiSnapshot()?.appUrl,
+    mayChange,
   });
 
   /**
@@ -368,6 +378,7 @@ export function startDevDashboard(
     request: IncomingMessage,
     response: ServerResponse,
     url: URL,
+    identity: DashboardIdentity,
   ): Promise<void> {
     if (!fromOwnPage(request)) {
       send(response, 403, "Forbidden");
@@ -387,6 +398,7 @@ export function startDevDashboard(
         headers,
         ...(body ? { body: body as BodyInit } : {}),
       }),
+      identity,
     );
     const returned: Record<string, string> = { "cache-control": "no-store" };
     answer.headers.forEach((value, name) => {
@@ -535,8 +547,7 @@ export function startDevDashboard(
       `http://127.0.0.1:${target.port}${url.pathname}${url.search}`,
       (headers) => {
         headers.set(INSPECTOR_TOKEN_HEADER, target.token);
-        if (production && !identity.user)
-          headers.set(INSPECTOR_READ_ONLY_HEADER, "1");
+        if (!mayChange(identity)) headers.set(INSPECTOR_READ_ONLY_HEADER, "1");
         else headers.delete(INSPECTOR_READ_ONLY_HEADER);
       },
       "Could not reach the workflow inspector.",

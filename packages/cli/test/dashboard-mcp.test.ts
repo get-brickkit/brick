@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Attributes } from "@opentelemetry/api";
+import { DASHBOARD_MCP_TOOLS } from "@brickkit/core";
 import { MAX_TRACE_CHARS } from "../src/dashboard-mcp";
 import type { TelemetryRecord } from "../src/dashboard-protocol";
 import { startDevDashboard } from "../src/dev-dashboard";
@@ -243,6 +244,10 @@ describe("the dashboard's MCP endpoint", () => {
         "get_trace",
         "list_errors",
         "app_overview",
+      ]);
+      // The names an app may not take for its own tool: core refuses them at startup.
+      expect(result.tools.map((tool: { name: string }) => tool.name)).toEqual([
+        ...DASHBOARD_MCP_TOOLS,
       ]);
       for (const tool of result.tools) {
         expect(tool.annotations).toEqual({ readOnlyHint: true });

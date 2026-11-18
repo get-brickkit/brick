@@ -1,6 +1,10 @@
 import {
   createMcpHandler,
+  DASHBOARD_IDENTITY_HEADER,
+  DASHBOARD_MCP_ROUTE,
+  signDashboardIdentity,
   UnknownToolError,
+  type DashboardIdentity,
   type McpRegistry,
   type McpToolDefinition,
 } from "@brickkit/core";
@@ -619,15 +623,179 @@ export function createDashboardMcpRegistry(options: {
   };
 }
 
-export function createDashboardMcp(
-  options: Parameters<typeof createDashboardMcpRegistry>[0],
-): (request: Request) => Promise<Response> {
-  return createMcpHandler({
-    registry: createDashboardMcpRegistry(options),
-    serverInfo: {
-      name: "brick-dashboard",
-      title: "Brick dashboard",
-      version: cliPkg.version,
+/** Core's mark on an output schema that wraps a value that is not an object. */
+const WRAP_RESULT = "x-brick-wrap-result";
+const LIST_TIMEOUT_MS = 5000;
+const CALL_TIMEOUT_MS = 30_000;
+const BUILT_IN = new Set(TOOLS.map((tool) => tool.name));
+
+/** A tool the app offers is a write tool unless its author says it only reads. */
+const writes = (tool: McpToolDefinition) =>
+  tool.annotations?.readOnlyHint !== true;
+
+interface AppTools {
+  /** The app's `dashboard: true` tools, when it answered. */
+  tools: McpToolDefinition[];
+  /** Why it did not. */
+  failed?: string;
+}
+
+/**
+ * The app's MCP for the dashboard, over its HTTP, signed as the dashboard's
+ * `/app` is: the tool runs as for an extension page, with `ctx.dashboard` set,
+ * and its own `authorize`, rate limit, sensitive-field removal and audit apply.
+ */
+async function askApp(
+  appUrl: string,
+  identity: DashboardIdentity,
+  method: string,
+  params: unknown,
+  timeoutMs: number,
+) {
+  const answer = await fetch(
+    `${new URL(appUrl).origin}${DASHBOARD_MCP_ROUTE}`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [DASHBOARD_IDENTITY_HEADER]: signDashboardIdentity(identity),
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      signal: AbortSignal.timeout(timeoutMs),
     },
-  });
+  );
+  if (!answer.ok) throw new Error(`HTTP ${answer.status}`);
+  return (await answer.json()) as {
+    result?: {
+      content?: { text?: string }[];
+      structuredContent?: unknown;
+      isError?: boolean;
+      tools?: McpToolDefinition[];
+    };
+    error?: { message: string };
+  };
+}
+
+/** The built-in tools, and the app's own beside them, for one caller. */
+function withAppTools(
+  base: McpRegistry,
+  app: AppTools | undefined,
+  caller: {
+    identity: DashboardIdentity;
+    appUrl: string | undefined;
+    mayChange: boolean;
+  },
+): McpRegistry {
+  const own = (app?.tools ?? []).filter((tool) => !BUILT_IN.has(tool.name));
+  return {
+    listTools: () => [
+      ...base.listTools(),
+      ...own
+        // A tool that can change data is offered only to one who may change it.
+        .filter((tool) => !writes(tool) || caller.mayChange)
+        .map((tool) =>
+          writes(tool)
+            ? {
+                ...tool,
+                annotations: {
+                  ...tool.annotations,
+                  destructiveHint: tool.annotations?.destructiveHint ?? true,
+                },
+              }
+            : tool,
+        ),
+    ],
+    async callTool(name, args) {
+      if (BUILT_IN.has(name)) return base.callTool(name, args);
+      if (app?.failed)
+        throw new Error(
+          `The app did not answer (${app.failed}), so its tools are unavailable. It may be restarting.`,
+        );
+      const tool = own.find((item) => item.name === name);
+      if (!tool || !caller.appUrl) throw new UnknownToolError(name);
+      if (writes(tool) && !caller.mayChange)
+        throw new Error(
+          `${name} can change data, so only a signed-in user may call it: dashboard.auth.authorize must return { user }. A token, or authorize returning true, can only read.`,
+        );
+      const answer = await askApp(
+        caller.appUrl,
+        caller.identity,
+        "tools/call",
+        { name, arguments: args ?? {} },
+        CALL_TIMEOUT_MS,
+      );
+      const text = answer.result?.content?.map((part) => part.text).join("\n");
+      if (answer.error || answer.result?.isError)
+        throw new Error(answer.error?.message ?? text);
+      const structured = answer.result?.structuredContent;
+      if (structured === undefined) return text ?? "";
+      return (tool.outputSchema as Record<string, unknown> | undefined)?.[
+        WRAP_RESULT
+      ]
+        ? (structured as { result: unknown }).result
+        : structured;
+    },
+  };
+}
+
+/**
+ * The MCP endpoint's handler: the dashboard's five tools, and the app's tools
+ * marked `dashboard: true`. Those that are not `readOnlyHint: true` can change
+ * data, and go only to a caller `mayChange` allows.
+ */
+export function createDashboardMcp(
+  options: Parameters<typeof createDashboardMcpRegistry>[0] & {
+    /** Where the app listens, when it does. */
+    appUrl: () => string | undefined;
+    /** Whether this caller may use tools that change data. */
+    mayChange: (identity: DashboardIdentity) => boolean;
+  },
+): (request: Request, identity: DashboardIdentity) => Promise<Response> {
+  const base = createDashboardMcpRegistry(options);
+  return async (request, identity) => {
+    // Only a list, or a call to a tool that is not the dashboard's own, asks the app.
+    const rpc = (await request
+      .clone()
+      .json()
+      .catch(() => undefined)) as
+      | { method?: unknown; params?: { name?: unknown } }
+      | undefined;
+    const appUrl = options.appUrl();
+    let app: AppTools | undefined;
+    if (
+      appUrl &&
+      (rpc?.method === "tools/list" ||
+        (rpc?.method === "tools/call" &&
+          typeof rpc.params?.name === "string" &&
+          !BUILT_IN.has(rpc.params.name)))
+    ) {
+      try {
+        const answer = await askApp(
+          appUrl,
+          identity,
+          "tools/list",
+          undefined,
+          LIST_TIMEOUT_MS,
+        );
+        app = { tools: answer.result?.tools ?? [] };
+      } catch (error) {
+        app = {
+          tools: [],
+          failed: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+    return createMcpHandler({
+      registry: withAppTools(base, app, {
+        identity,
+        appUrl,
+        mayChange: options.mayChange(identity),
+      }),
+      serverInfo: {
+        name: "brick-dashboard",
+        title: "Brick dashboard",
+        version: cliPkg.version,
+      },
+    })(request);
+  };
 }
