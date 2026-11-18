@@ -117,6 +117,15 @@ site's `:root` and `.dark`.
   compared in constant time, and the app's `authorize` with a five-second limit)
   before anything but `/_health`. Spans reach the store in-process, with no
   worker or ingest endpoint.
+- **MCP endpoint:** `/mcp` (`ROUTES.mcp`, `src/dashboard-mcp.ts`) is a read-only
+  view of the same data for coding agents, a stateless `createMcpHandler` over
+  five tools (`summary`, `list_requests`, `get_trace`, `list_errors`,
+  `app_overview`) that call the history store, or the in-memory store when
+  history is off, with the rules in `dashboard-query.ts`. It is served by
+  `brick dev` and the Vite plugin; production serves it only with
+  `dashboard.mcp` (route marked `"mcp"`). It goes through the same access check
+  as every route, refuses a request with another `Origin`, and has no tool that
+  writes, whoever the identity is. A trace answer is cut to about 50 KB.
 - **Request log:** laid out like a hosting dashboard's logs. Four cards (requests,
   error rate, median, slowest 5%) follow the range and filters. A timeline strip
   across the top (drag to zoom), a Custom picker beside the ranges (from and to,
