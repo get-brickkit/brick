@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import type { IncomingMessage } from "node:http";
-import { createAccess, isLoopbackHost } from "../src/dashboard-access";
+import {
+  createAccess,
+  isInternalAppPath,
+  isLoopbackHost,
+} from "../src/dashboard-access";
 
 const token = "0123456789abcdef-secret";
 const other = "fedcba9876543210-rotated";
@@ -235,5 +239,55 @@ describe("createAccess with both", () => {
         "www-authenticate"
       ],
     ).toContain("Basic");
+  });
+});
+
+describe("isInternalAppPath", () => {
+  it("finds a path under /_brick/ however it is written", () => {
+    for (const path of [
+      "/_brick/dashboard/mcp",
+      "/_brick/services",
+      "//_brick/dashboard/mcp",
+      "///_brick//dashboard/mcp",
+      "/./_brick/x",
+      "/api/../_brick/x",
+      "/a/b/../../_brick/x",
+      "/%5Fbrick/x",
+      "/%5fbrick/x",
+      "/_brick%2Fdashboard%2Fmcp",
+      "/%2F_brick/x",
+      "/%252F_brick/x",
+      "/%255Fbrick/x",
+      "/%2e%2e/_brick/x",
+      "/api/%2e%2e/_brick/x",
+      "/api/..%2F_brick/x",
+      "/_BRICK/x",
+      "/_Brick/x",
+      "\\_brick\\x",
+      "/api\\..\\_brick/x",
+      "/_brick",
+      "/_brick/",
+      // Cannot be decoded, or decodes without end: refused.
+      "/_brick%",
+      "/%E0%A4%A/_brick",
+      "/%25252525252F_brick",
+    ])
+      expect([path, isInternalAppPath(path)]).toEqual([path, true]);
+  });
+
+  it("lets other paths through", () => {
+    for (const path of [
+      "/",
+      "/api/orders/order",
+      "/api/_brick/x",
+      "/api/orders/order/query",
+      "/_bricks/x",
+      "/x_brick/y",
+      "/api/a%20b",
+      "/api/a%2Fb",
+      "/api/../api/orders",
+      "/admin/queues",
+    ])
+      expect([path, isInternalAppPath(path)]).toEqual([path, false]);
   });
 });

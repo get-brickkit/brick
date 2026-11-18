@@ -326,7 +326,7 @@ describe("the dashboard's MCP endpoint", () => {
         endpoint: "GET /api/slow",
         requests: 1,
       });
-      expect(data.slowestEndpoints[0].p95Ms).toBeGreaterThan(800);
+      expect(data.slowestEndpoints[0].avgMs).toBeGreaterThan(800);
 
       // Nothing happened in a window that ended an hour and a half ago.
       const empty = (await call(base, "summary", {
@@ -413,6 +413,22 @@ describe("the dashboard's MCP endpoint", () => {
         to: String(Date.now() + 120_000),
       })) as any;
       expect(later.data.requests).toBe(0);
+    } finally {
+      stop();
+    }
+  });
+
+  it("reads a short string of digits as a date, not as epoch milliseconds", async () => {
+    const { base, stop } = await dev();
+    try {
+      const answer = (await call(base, "summary", {
+        from: "2026",
+        to: "2027",
+      })) as any;
+      expect(answer.data.window).toEqual({
+        from: new Date("2026").toISOString(),
+        to: new Date("2027").toISOString(),
+      });
     } finally {
       stop();
     }
@@ -568,6 +584,39 @@ describe("the dashboard's MCP endpoint", () => {
       }
     } finally {
       stop();
+    }
+  });
+
+  it("ranks the slowest endpoints the same from memory and from history", async () => {
+    const memory = await dev();
+    const stored = await dev({ history: true });
+    try {
+      const [fromMemory, fromHistory] = await Promise.all(
+        [memory, stored].map(
+          async ({ base }) => ((await call(base, "summary")) as any).data,
+        ),
+      );
+      expect([fromMemory.source, fromHistory.source]).toEqual([
+        "memory",
+        "history",
+      ]);
+      expect(fromHistory.slowestEndpoints).toEqual(fromMemory.slowestEndpoints);
+      expect(fromMemory.slowestEndpoints[0]).toMatchObject({
+        endpoint: "GET /api/slow",
+        requests: 1,
+        serverErrors: 0,
+      });
+      expect(fromMemory.slowestEndpoints[0].avgMs).toBeGreaterThan(800);
+      expect(fromMemory.slowestEndpoints[0].maxMs).toBe(
+        fromMemory.slowestEndpoints[0].avgMs,
+      );
+      const failing = fromMemory.slowestEndpoints.find(
+        (item: { endpoint: string }) => item.endpoint === "GET /api/pages/:id",
+      );
+      expect(failing).toMatchObject({ requests: 3, serverErrors: 1 });
+    } finally {
+      memory.stop();
+      stored.stop();
     }
   });
 

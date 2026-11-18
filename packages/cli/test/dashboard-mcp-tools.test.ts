@@ -4,6 +4,7 @@ import {
   definePlugin,
   defineService,
   resetGlobalRegistry,
+  signDashboardIdentity,
   t,
 } from "@brickkit/core";
 import { startDevDashboard } from "../src/dev-dashboard";
@@ -78,6 +79,7 @@ function appWithTools() {
     input: t.Object({}),
     execute: () => "x",
   });
+  service.action({ name: "ping", dashboard: true, execute: () => "pong" });
   service.use(support());
   return brick({ services: [service], requestLogging: false });
 }
@@ -114,7 +116,10 @@ async function setup(
       void server.stop(true);
     },
   });
-  return { base: `http://127.0.0.1:${dashboard.port}` };
+  return {
+    base: `http://127.0.0.1:${dashboard.port}`,
+    appUrl: `http://127.0.0.1:${server.port}`,
+  };
 }
 
 const post = (
@@ -298,5 +303,68 @@ describe("the app's tools on /mcp, in production", () => {
     const answer = await call(base, "find_order", { id: "o1" });
     expect(answer.result.isError).toBe(true);
     expect(answer.result.content[0].text).toContain("did not answer");
+  });
+});
+
+describe("the /app proxy and the app's MCP route", () => {
+  it("does not forward to Brick's own routes, so a token cannot reach the MCP route through /app", async () => {
+    const { base } = await setup({ auth: { token } });
+    const headers = {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    };
+    const body = rpc("tools/call", {
+      name: "create_refund",
+      arguments: { orderId: "o1" },
+    });
+    for (const path of [
+      "/app/_brick/dashboard/mcp",
+      "/app//_brick/dashboard/mcp",
+      "/app/%5Fbrick/dashboard/mcp",
+      "/app/_brick%2Fdashboard%2Fmcp",
+      "/app/%5fbrick%2fdashboard/mcp",
+      "/app/api/../_brick/dashboard/mcp",
+      "/app/api/%2e%2e/_brick/dashboard/mcp",
+      "/app/%252F_brick/dashboard/mcp",
+      "/app/_BRICK/dashboard/mcp",
+      "/app/_brick/services",
+    ]) {
+      const response = await fetch(`${base}${path}`, {
+        method: "POST",
+        headers,
+        body,
+      });
+      expect([path, response.status]).toEqual([path, 404]);
+    }
+    expect(refunds).toEqual([]);
+  });
+
+  it("still forwards the paths pages use", async () => {
+    const { base } = await setup({ auth: { token } });
+    const headers = { authorization: `Bearer ${token}` };
+    const ping = await fetch(`${base}/app/api/billing/ping`, {
+      method: "POST",
+      headers,
+    });
+    expect(ping.status).toBe(200);
+    expect(await ping.text()).toBe("pong");
+  });
+
+  it("does not let a /app-signed request run a write tool at the app", async () => {
+    const { appUrl } = await setup({ auth: { token } });
+    // What /app signs for a token caller: an identity with no user, no scope.
+    const replay = await fetch(`${appUrl}/_brick/dashboard/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-brick-dashboard": signDashboardIdentity({}),
+      },
+      body: rpc("tools/call", {
+        name: "create_refund",
+        arguments: { orderId: "o1" },
+      }),
+    });
+    expect(replay.status).toBe(401);
+    expect(refunds).toEqual([]);
   });
 });

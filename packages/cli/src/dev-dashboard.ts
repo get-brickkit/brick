@@ -22,6 +22,7 @@ import {
 } from "@brickkit/core";
 import {
   createAccess,
+  isInternalAppPath,
   isLoopbackHost,
   requestProtocol,
 } from "./dashboard-access";
@@ -371,8 +372,9 @@ export function startDevDashboard(
 
   /**
    * The MCP endpoint. Browsers have no use for it, so a request from another
-   * origin is refused: that also stops DNS rebinding. Access was checked
-   * before, as for every route.
+   * origin is refused (`fromOwnPage` accepts an `Origin` that matches the
+   * `Host`, so it does not stop DNS rebinding: the `allowedHosts` check in
+   * `respond` does, on loopback). Access was checked before, as for every route.
    */
   async function mcpRoute(
     request: IncomingMessage,
@@ -568,6 +570,12 @@ export function startDevDashboard(
   ): Promise<void> {
     if (!fromOwnPage(request)) {
       send(response, 403, "Forbidden");
+      return;
+    }
+    // Brick's own routes (`/_brick/...`) are not for pages: the one that
+    // answers MCP for the dashboard must be reached only by its `/mcp`.
+    if (isInternalAppPath(url.pathname.slice(ROUTES.app.path.length))) {
+      send(response, 404, "Not found");
       return;
     }
     const appUrl = options.appUrl ?? options.store.apiSnapshot()?.appUrl;

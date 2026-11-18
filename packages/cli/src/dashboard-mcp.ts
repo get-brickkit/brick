@@ -2,9 +2,10 @@ import {
   createMcpHandler,
   DASHBOARD_IDENTITY_HEADER,
   DASHBOARD_MCP_ROUTE,
-  signDashboardIdentity,
+  signDashboardMcp,
   UnknownToolError,
   type DashboardIdentity,
+  type DashboardMcpCaller,
   type McpRegistry,
   type McpToolDefinition,
 } from "@brickkit/core";
@@ -22,6 +23,8 @@ import {
 import {
   applyFilters,
   computeFacets,
+  slowestEndpoints,
+  type EndpointStats,
   findException,
   OUTCOMES,
   outcomeOf,
@@ -35,9 +38,11 @@ import type { DevHistory } from "./dev-history";
 import type { DevTelemetryStore } from "./dev-telemetry-store";
 
 /*
- * The dashboard's data for a coding agent, over MCP at `/mcp`. Every tool only
- * reads, for every caller, a signed-in user included: log lines carry what end
- * users typed, and an agent that reads them must not be able to act on them.
+ * The dashboard's data for a coding agent, over MCP at `/mcp`. The five tools
+ * here only read, for every caller, a signed-in user included: log lines carry
+ * what end users typed, and an agent that reads them must not be able to act on
+ * them. The app's own tools marked `dashboard: true` come beside them (below):
+ * those that can change data go only to a signed-in user, or in `brick dev`.
  */
 
 const MINUTE = 60_000;
@@ -61,6 +66,7 @@ type Args = Record<string, unknown>;
 interface Source {
   name: "history" | "memory";
   summary(query: HistoryQuery): HistorySummary;
+  slowestEndpoints(query: HistoryQuery, limit: number): EndpointStats[];
   traces(query: HistoryQuery): { total: number; traces: HistoryTrace[] };
   facets(query: HistoryQuery): HistoryFacets;
   trace(traceId: string): TraceSummary | undefined;
@@ -76,6 +82,7 @@ function memorySource(store: DevTelemetryStore): Source {
   return {
     name: "memory",
     summary: (query) => summarizeRows(applyFilters(rows(query), query)),
+    slowestEndpoints: (query, limit) => slowestEndpoints(rows(query), limit),
     traces(query) {
       const found = applyFilters(rows(query), query);
       const offset = query.offset ?? 0;
@@ -96,6 +103,7 @@ function sourceOf(store: DevTelemetryStore, history?: DevHistory): Source {
   return {
     name: "history",
     summary: (query) => history.summary(query),
+    slowestEndpoints: (query, limit) => history.slowestEndpoints(query, limit),
     traces: (query) => history.traces(query),
     facets: (query) => history.facets(query),
     // A request still running is not on disk yet.
@@ -110,7 +118,8 @@ function time(value: unknown, name: string, now: number): number | undefined {
   if (value === undefined) return undefined;
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
-    if (/^\d+$/.test(value.trim())) return Number(value.trim());
+    // Ten digits or more is epoch milliseconds; a shorter string, such as "2026", is a date.
+    if (/^\d{10,}$/.test(value.trim())) return Number(value.trim());
     const ago = /^(\d+)\s*([smhd])$/.exec(value.trim());
     if (ago) return now - Number(ago[1]) * UNITS[ago[2] as keyof typeof UNITS];
     const parsed = Date.parse(value);
@@ -312,7 +321,7 @@ const TOOLS: McpToolDefinition[] = [
   {
     name: "summary",
     description:
-      "How the app is doing over a time window: request count, how many failed (client errors 4xx, server errors 5xx or thrown), the share that failed on the server, median and p95 duration, and the slowest endpoints. Start here to see whether something is wrong. Default window: the last hour.",
+      "How the app is doing over a time window: request count, how many failed (client errors 4xx, server errors 5xx or thrown), the share that failed on the server, median and p95 duration, and the five endpoints with the highest average duration (with their request counts, server errors and slowest request). Start here to see whether something is wrong. Default window: the last hour.",
     inputSchema: {
       type: "object",
       properties: {
@@ -456,15 +465,7 @@ export function createDashboardMcpRegistry(options: {
       const source = sourceOf(store, history);
       const query: HistoryQuery = { from, to };
       const total = source.summary(query);
-      // Per endpoint, among the busiest: the facets list at most 30.
-      const slowest = source
-        .facets(query)
-        .endpoint.map(({ value }) => ({
-          endpoint: value,
-          ...source.summary({ ...query, endpoints: [value] }),
-        }))
-        .sort((a, b) => b.p95Ms - a.p95Ms)
-        .slice(0, SLOWEST_ENDPOINTS);
+      const slowest = source.slowestEndpoints(query, SLOWEST_ENDPOINTS);
       return out({
         window: { from: iso(from), to: iso(to) },
         source: source.name,
@@ -477,11 +478,9 @@ export function createDashboardMcpRegistry(options: {
         medianMs: round(total.medianMs),
         p95Ms: round(total.p95Ms),
         slowestEndpoints: slowest.map((endpoint) => ({
-          endpoint: endpoint.endpoint,
-          requests: endpoint.total,
-          serverErrors: endpoint.serverErrors,
-          medianMs: round(endpoint.medianMs),
-          p95Ms: round(endpoint.p95Ms),
+          ...endpoint,
+          avgMs: round(endpoint.avgMs),
+          maxMs: round(endpoint.maxMs),
         })),
       });
     },
@@ -630,7 +629,7 @@ const LIST_TIMEOUT_MS = 5000;
 const CALL_TIMEOUT_MS = 30_000;
 const BUILT_IN = new Set(TOOLS.map((tool) => tool.name));
 
-/** A tool the app offers is a write tool unless its author says it only reads. */
+/** A tool the app offers is a write tool unless its author says it only reads (it then advertises `destructiveHint`). */
 const writes = (tool: McpToolDefinition) =>
   tool.annotations?.readOnlyHint !== true;
 
@@ -643,12 +642,13 @@ interface AppTools {
 
 /**
  * The app's MCP for the dashboard, over its HTTP, signed as the dashboard's
- * `/app` is: the tool runs as for an extension page, with `ctx.dashboard` set,
- * and its own `authorize`, rate limit, sensitive-field removal and audit apply.
+ * `/app` is, but with a scope of its own that `/app` never signs, and the
+ * claim that the caller may change data or not. The tool runs with
+ * `ctx.dashboard` set as for an extension page, and its own `authorize`, rate limit, sensitive-field removal and audit apply.
  */
 async function askApp(
   appUrl: string,
-  identity: DashboardIdentity,
+  caller: DashboardMcpCaller,
   method: string,
   params: unknown,
   timeoutMs: number,
@@ -659,7 +659,7 @@ async function askApp(
       method: "POST",
       headers: {
         "content-type": "application/json",
-        [DASHBOARD_IDENTITY_HEADER]: signDashboardIdentity(identity),
+        [DASHBOARD_IDENTITY_HEADER]: signDashboardMcp(caller),
       },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
       signal: AbortSignal.timeout(timeoutMs),
@@ -673,7 +673,7 @@ async function askApp(
       isError?: boolean;
       tools?: McpToolDefinition[];
     };
-    error?: { message: string };
+    error?: { code?: number; message: string };
   };
 }
 
@@ -712,25 +712,25 @@ function withAppTools(
         throw new Error(
           `The app did not answer (${app.failed}), so its tools are unavailable. It may be restarting.`,
         );
+      if (!caller.appUrl) throw new UnknownToolError(name);
+      // Not in the list does not mean unknown: the app leaves a write tool out
+      // for a caller who may not write, and says why when it is called. The app
+      // decides; it is told the caller's claim, signed.
       const tool = own.find((item) => item.name === name);
-      if (!tool || !caller.appUrl) throw new UnknownToolError(name);
-      if (writes(tool) && !caller.mayChange)
-        throw new Error(
-          `${name} can change data, so only a signed-in user may call it: dashboard.auth.authorize must return { user }. A token, or authorize returning true, can only read.`,
-        );
       const answer = await askApp(
         caller.appUrl,
-        caller.identity,
+        { ...caller.identity, write: caller.mayChange },
         "tools/call",
         { name, arguments: args ?? {} },
         CALL_TIMEOUT_MS,
       );
       const text = answer.result?.content?.map((part) => part.text).join("\n");
+      if (answer.error?.code === -32602) throw new UnknownToolError(name);
       if (answer.error || answer.result?.isError)
         throw new Error(answer.error?.message ?? text);
       const structured = answer.result?.structuredContent;
       if (structured === undefined) return text ?? "";
-      return (tool.outputSchema as Record<string, unknown> | undefined)?.[
+      return (tool?.outputSchema as Record<string, unknown> | undefined)?.[
         WRAP_RESULT
       ]
         ? (structured as { result: unknown }).result
@@ -773,7 +773,7 @@ export function createDashboardMcp(
       try {
         const answer = await askApp(
           appUrl,
-          identity,
+          { ...identity, write: options.mayChange(identity) },
           "tools/list",
           undefined,
           LIST_TIMEOUT_MS,

@@ -135,7 +135,12 @@ export const ROUTES = {
     production: "inspector",
     view: "schedules",
   },
-  /** A coding agent's read-only view of the data, over MCP. Any other method answers 405. */
+  /**
+   * A coding agent's view of the data, over MCP: five read-only tools of the
+   * dashboard's, and the app's own tools marked `dashboard: true`, of which those
+   * that change data go only to a signed-in user (or in dev). Any method but POST
+   * answers 405.
+   */
   mcp: { path: "/mcp", production: "mcp" },
   ingest: {
     path: "/api/ingest",

@@ -257,6 +257,48 @@ export function percentile(sorted: number[], fraction: number): number {
   );
 }
 
+/** How one endpoint did over a window: for the slowest-endpoints list. */
+export interface EndpointStats {
+  endpoint: string;
+  requests: number;
+  serverErrors: number;
+  avgMs: number;
+  maxMs: number;
+}
+
+/** The `limit` endpoints with the highest average duration; requests without a duration are not counted. */
+export function slowestEndpoints(
+  rows: HistoryTrace[],
+  limit: number,
+): EndpointStats[] {
+  const byEndpoint = new Map<
+    string,
+    { requests: number; serverErrors: number; totalMs: number; maxMs: number }
+  >();
+  for (const row of rows) {
+    if (row.durationMs === undefined) continue;
+    const stats = byEndpoint.get(row.endpoint) ?? {
+      requests: 0,
+      serverErrors: 0,
+      totalMs: 0,
+      maxMs: 0,
+    };
+    stats.requests += 1;
+    if (outcomeOf(row) === "server") stats.serverErrors += 1;
+    stats.totalMs += row.durationMs;
+    stats.maxMs = Math.max(stats.maxMs, row.durationMs);
+    byEndpoint.set(row.endpoint, stats);
+  }
+  return [...byEndpoint.entries()]
+    .map(([endpoint, { totalMs, ...stats }]) => ({
+      endpoint,
+      ...stats,
+      avgMs: totalMs / stats.requests,
+    }))
+    .sort((a, b) => b.avgMs - a.avgMs || b.requests - a.requests)
+    .slice(0, limit);
+}
+
 /** The numbers for the cards at the top of the log, for these requests. */
 export function summarizeRows(rows: HistoryTrace[]): HistorySummary {
   let clientErrors = 0;

@@ -24,6 +24,37 @@ export function isLoopbackHost(host: string): boolean {
   );
 }
 
+/**
+ * Whether a path, as the app will route it, is under `/_brick/`: Brick's own
+ * routes, such as the one that answers the dashboard's MCP, which the `/app`
+ * proxy must never reach. It decodes percent-encoding until nothing changes
+ * (`%2F`, `%5F`, `%252F`), reads `\` as `/`, drops empty and `.` segments,
+ * resolves `..`, and compares without regard to case. A path it cannot decode
+ * is refused too.
+ */
+export function isInternalAppPath(path: string): boolean {
+  let current = path;
+  for (let round = 0; ; round++) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(current);
+    } catch {
+      return true;
+    }
+    if (decoded === current) break;
+    // Still changing after this many rounds: no honest path does that.
+    if (round === 4) return true;
+    current = decoded;
+  }
+  const resolved: string[] = [];
+  for (const segment of current.replace(/\\/g, "/").split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") resolved.pop();
+    else resolved.push(segment);
+  }
+  return resolved[0]?.toLowerCase() === "_brick";
+}
+
 const NOT_COPIED = new Set([
   "set-cookie",
   "content-length",

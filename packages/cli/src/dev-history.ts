@@ -21,6 +21,7 @@ import {
   SEARCHED,
   SERVER_ERROR,
   tracesToCsv,
+  type EndpointStats,
   type Facet,
   type HistoryQuery,
 } from "./dashboard-query";
@@ -502,6 +503,28 @@ export class DevHistory {
       medianMs: percentile(durations, 0.5),
       p95Ms: percentile(durations, 0.95),
     };
+  }
+
+  /** The endpoints with the highest average duration, in one grouped query. */
+  slowestEndpoints(query: HistoryQuery, limit: number): EndpointStats[] {
+    this.flush();
+    const { sql, params } = filterSql(query);
+    return this.#database
+      .prepare(
+        `SELECT endpoint, COUNT(*) AS n,
+           SUM(CASE WHEN ${OUTCOME_CASE} = 'server' THEN 1 ELSE 0 END) AS errors,
+           AVG(duration_ms) AS avg_ms, MAX(duration_ms) AS max_ms
+         FROM traces WHERE ${sql} AND duration_ms IS NOT NULL
+         GROUP BY endpoint ORDER BY avg_ms DESC, n DESC LIMIT ?`,
+      )
+      .all(...params, limit)
+      .map((row) => ({
+        endpoint: String(row.endpoint),
+        requests: Number(row.n),
+        serverErrors: Number(row.errors),
+        avgMs: Number(row.avg_ms),
+        maxMs: Number(row.max_ms),
+      }));
   }
 
   /** Write what is queued and release the database. */
