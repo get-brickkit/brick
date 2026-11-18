@@ -169,7 +169,7 @@ function OrdersPage() {
 
 Inputs and results are typed from the contract `brick dev` generates (pass its `contract` value too: CRUD and other plugin routes need it), so a renamed action breaks the extension's build. Writes are plain calls: `await api.orders.order.ship({ id, trackingId })`.
 
-The dashboard server passes `/app/*` to your app, as it passes `/workflows` to the workflow inspector. `/app/api/admin/queues` reaches `/api/admin/queues`, from the dashboard's own origin, so there are no cross-origin problems. Only the dashboard's own page may use it. The dashboard's cookies, and in production the credential you signed in to the dashboard with, aren't passed on: send your app's own `authorization` header in `init` when it needs one.
+The dashboard server passes `/app/*` to your app, as it passes `/workflows` to the workflow inspector. `/app/api/admin/queues` reaches `/api/admin/queues`, from the dashboard's own origin, so there are no cross-origin problems. Only the dashboard's own page may use it, and it refuses any path under `/_brick/`, Brick's own routes. The dashboard's cookies, and in production the credential you signed in to the dashboard with, aren't passed on: send your app's own `authorization` header in `init` when it needs one.
 
 ### Who is calling
 
@@ -231,9 +231,8 @@ billing.tool({
     amountCents: t.Optional(t.Integer({ minimum: 1 })),
   }),
   output: t.Object({ refundId: t.String() }),
-  authorize: ({ ctx }) => ctx.dashboard?.user !== undefined,
   execute: ({ input, ctx }) =>
-    refund(input, { requestedBy: ctx.dashboard?.user?.id }),
+    refund(input, { requestedBy: ctx.dashboard?.user?.id ?? "dev" }),
 });
 ```
 
@@ -241,9 +240,10 @@ How it works:
 
 - **Which tools.** Those marked `dashboard: true`, including the tools a [plugin](#plugins) installs on a service. A tool without the mark never appears on `/mcp`, so a tool you serve to agents from your own endpoint stays there. In production they come with `dashboard.mcp: true`, with no other switch. Their names may not be `summary`, `list_requests`, `get_trace`, `list_errors` or `app_overview`: `brick()` throws at startup when one is.
 - **Read or write.** A tool with `annotations.readOnlyHint: true` is a read tool, and anything else is a write tool. So mark your read tools.
-- **Who may call.** A read tool: anyone the dashboard lets in, with a token or with `authorize`. A write tool, in production: only a signed-in user, one that `dashboard.auth.authorize` returned as `{ user }`, for example after it checked an API key you gave the agent. To a token, or an `authorize` that returns `true`, a write tool is not listed, and calling it by name is a tool error that says why. Under `brick dev` the dashboard listens only on your machine, so write tools work there; `ctx.dashboard` is set, with no `user`, as for an extension page.
+- **Who may call.** A read tool: anyone the dashboard lets in, with a token or with `authorize`. A write tool, in production: only a signed-in user (so it needs no `authorize` to keep a token out; add one to narrow it further, and know that `brick dev` sets no `user`), one that `dashboard.auth.authorize` returned as `{ user }`, for example after it checked an API key you gave the agent. To a token, or an `authorize` that returns `true`, a write tool is not listed, and calling it by name is a tool error that says why. Under `brick dev` the dashboard listens only on your machine, so write tools work there; `ctx.dashboard` is set, with no `user`, as for an extension page.
 - **Agents ask first.** Every write tool is listed with `destructiveHint: true`, unless you set the hint yourself, so agents ask the person before they call it.
-- **The same path as `/app`.** The dashboard calls your app with its signed identity, so the tool sees `ctx.dashboard.user` as an extension page's call would. Its own `authorize`, `rateLimit`, sensitive-field removal and [audit](/docs/audit-log) apply unchanged, so the audit log records who made the change. A `per: "ip"` rate limit sees the dashboard's address, not the agent's, so count by user.
+- **The app enforces it.** The dashboard signs each call with a claim of its own, which says whether the caller may write. Only `/mcp` makes it: a signature made for `/app` is not accepted there, and `/app` will not forward to it. The app lists and runs a write tool only when the claim allows.
+- **The same identity as `/app`.** The dashboard calls your app with its signed identity, so the tool sees `ctx.dashboard.user` as an extension page's call would. Its own `authorize`, `rateLimit`, sensitive-field removal and [audit](/docs/audit-log) apply unchanged, so the audit log records who made the change. A `per: "ip"` rate limit sees the dashboard's address, not the agent's, so count by user.
 - **Seen by the model.** What a tool returns goes to the agent's model provider. Return no more than the agent needs.
 
 A write tool is reachable by an agent that has read a log line with an injected instruction in it. `destructiveHint` makes agents ask, but only a person's approval stops a bad call, so keep write tools narrow and let `authorize` check the user.

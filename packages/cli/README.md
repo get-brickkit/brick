@@ -181,8 +181,8 @@ delete `.brick/` to start over.
 Requests that send a W3C `traceparent` header join the caller's trace, and the
 dashboard shows them under that trace id.
 
-`brick dev` also serves `/mcp` on the dashboard's port, a read-only MCP endpoint
-for coding agents (Claude Code, Cursor, Codex): `summary`, `list_requests`,
+`brick dev` also serves `/mcp` on the dashboard's port, an MCP endpoint
+for coding agents (Claude Code, Cursor, Codex) with five read-only tools: `summary`, `list_requests`,
 `get_trace`, `list_errors` and `app_overview`. It prints the address on start;
 connect with `claude mcp add --transport http brick http://127.0.0.1:9400/mcp`.
 Those five only read, and a request from another origin is refused. Tools of

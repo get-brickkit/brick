@@ -333,17 +333,16 @@ billing.tool({
   description: "Refund an order.",
   dashboard: true,
   input: t.Object({ orderId: t.String() }),
-  authorize: ({ ctx }) => ctx.dashboard?.user !== undefined,
   execute: ({ input, ctx }) =>
-    refund(input, { requestedBy: ctx.dashboard?.user?.id }),
+    refund(input, { requestedBy: ctx.dashboard?.user?.id ?? "dev" }),
 });
 ```
 
-A tool without `readOnlyHint: true` is a write tool. In production only a signed-in user sees it: `authorize` must return `{ user }`, for example after it checks an API key you gave the agent. A token sees only the read tools. The call runs as an extension page's call does, so the tool's own `authorize`, rate limit and audit apply, and the audit log records the user. A plugin's tools count too. How it behaves:
+A tool without `readOnlyHint: true` is a write tool. In production only a signed-in user sees it: `authorize` must return `{ user }`, for example after it checks an API key you gave the agent. A token sees only the read tools. The call runs as an extension page's call does, so the tool's rate limit, audit and any `authorize` of its own apply, and the audit log records the user. A plugin's tools count too. How it behaves:
 
 - **The built-in tools are read-only; your own can write, for a signed-in user only.** None of the five changes anything, not even for a signed-in user: log lines carry what your users typed, and an agent that reads them must not be able to act on them. Tools you add with `dashboard: true` can change data. See below.
 - **Same access as the dashboard.** A non-loopback dashboard still needs `auth`, and `/mcp` checks the same token or `authorize` as every other route.
-- **Browsers can't use it.** A request with an `Origin` header from another site gets a 403, which also stops DNS rebinding.
+- **Browsers can't use it.** A request with an `Origin` header from another site gets a 403. The dashboard's local `Host` check is what stops DNS rebinding.
 - **Traces are capped.** `get_trace` cuts a long trace to about 50 KB, shortens long strings, and says what it left out.
 - **Without history it reads memory.** With `historyDays: 0` the tools read the last 200 requests, as the Requests tab does for Live.
 
