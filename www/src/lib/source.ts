@@ -88,7 +88,6 @@ export function markdownResponse(
     headers: {
       "Content-Type": "text/markdown; charset=utf-8",
       ...(negotiated ? { Vary: "Accept" } : {}),
-      // The .md copy of a page points search engines at the HTML page.
       ...(canonicalPath
         ? {
             Link: `<${new URL(canonicalPath, site.url).href}>; rel="canonical"`,
