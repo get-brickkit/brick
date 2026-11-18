@@ -62,9 +62,11 @@ export {
   dashboardUser,
   dashboardKey,
   signDashboardIdentity,
+  signDashboardMcp,
   DASHBOARD_IDENTITY_HEADER,
   DASHBOARD_KEY_ENV,
   type DashboardIdentity,
+  type DashboardMcpCaller,
   type DashboardUser,
 } from "./dashboard-identity";
 export {

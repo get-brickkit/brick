@@ -31,8 +31,13 @@ import {
   normalizeDashboard,
   type DashboardOptions,
 } from "./dashboard";
-import { createMcpHandler, createMcpRegistry } from "./mcp";
-import { dashboardIdentity, markDashboardArrival } from "./dashboard-identity";
+import {
+  createMcpHandler,
+  createMcpRegistry,
+  type McpRegistry,
+  type McpToolDefinition,
+} from "./mcp";
+import { dashboardMcpCaller, markDashboardArrival } from "./dashboard-identity";
 import {
   createEndpointHandler,
   endpointPaths,
@@ -327,8 +332,11 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   builtIn("/_brick/services", (context: any) => architecture(context));
 
   // The tools marked `dashboard: true`, for the dashboard's `/mcp`. Only a
-  // request the dashboard signed gets an answer; each call then runs as
-  // the tool says, with the signed identity as `ctx.dashboard`.
+  // request the dashboard's MCP signed for this route gets an answer, and one
+  // the `/app` proxy signed does not. A tool that is not `readOnlyHint: true`
+  // can change data: it is listed and run only when the signature says the
+  // caller may write. Each call runs as the tool says, with the signed identity
+  // as `ctx.dashboard`.
   const dashboardTools = services
     .flatMap((service) => service.listTools())
     .filter((tool) => tool.config.dashboard === true);
@@ -337,15 +345,35 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
       throw new DuplicateNameError(
         `Brick: the tool '${tool.name}' is marked dashboard: true, but the dashboard's MCP endpoint has a tool of that name. Rename yours.`,
       );
-  const dashboardMcp = createMcpHandler({
-    registry: createMcpRegistry({ tools: dashboardTools }),
-    serverInfo: { name: title, version },
+  const toolRegistry = createMcpRegistry({ tools: dashboardTools });
+  const readsOnly = (tool: McpToolDefinition) =>
+    tool.annotations.readOnlyHint === true;
+  const forCaller = (write: boolean): McpRegistry => ({
+    listTools: () =>
+      toolRegistry.listTools().filter((tool) => write || readsOnly(tool)),
+    callTool(name, args, ctx) {
+      const tool = toolRegistry.listTools().find((item) => item.name === name);
+      if (tool && !write && !readsOnly(tool))
+        throw new Error(
+          `${name} can change data, so only a signed-in user may call it: dashboard.auth.authorize must return { user }. A token, or authorize returning true, can only read.`,
+        );
+      return toolRegistry.callTool(name, args, ctx);
+    },
   });
-  app.post(DASHBOARD_MCP_ROUTE, ({ request }) =>
-    dashboardIdentity(request)
-      ? dashboardMcp(request)
-      : new Response("Unauthorized", { status: 401 }),
+  const mcpHandlers = [false, true].map((write) =>
+    createMcpHandler({
+      registry: forCaller(write),
+      serverInfo: { name: title, version },
+    }),
   );
+  app.post(DASHBOARD_MCP_ROUTE, ({ request }) => {
+    const caller = dashboardMcpCaller(request);
+    return caller
+      ? mcpHandlers[caller.write ? 1 : 0]!(request, {
+          dashboard: caller.user ? { user: caller.user } : {},
+        })
+      : new Response("Unauthorized", { status: 401 });
+  });
   registeredRoutes.set(routeKey("POST", DASHBOARD_MCP_ROUTE), false);
 
   const sockets = services.flatMap((service) =>

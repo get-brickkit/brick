@@ -6,10 +6,13 @@ import {
   defineService,
   resetGlobalRegistry,
   signDashboardIdentity,
+  signDashboardMcp,
   t,
 } from "../src";
 
 beforeEach(resetGlobalRegistry);
+
+const changes: (string | undefined)[] = [];
 
 function setup() {
   const service = defineService("billing");
@@ -22,54 +25,89 @@ function setup() {
     output: t.Object({ id: t.String() }),
     execute: ({ input }) => ({ id: input.id }),
   });
+  // Not marked read-only, so it is a write tool.
   service.tool({
-    name: "who",
+    name: "change",
     dashboard: true,
-    execute: ({ ctx }) => ctx.dashboard?.user?.id ?? "nobody",
+    execute: ({ ctx }) => {
+      changes.push(ctx.dashboard?.user?.id);
+      return ctx.dashboard?.user?.id ?? "nobody";
+    },
   });
   service.tool({ name: "for_agents_only", execute: () => "x" });
+  service.action({
+    name: "ping",
+    dashboard: true,
+    execute: () => "pong",
+  });
   return brick({ services: [service], requestLogging: false });
 }
 
-const rpc = (
-  app: ReturnType<typeof setup>,
-  method: string,
-  params?: unknown,
-  identity?: object,
-) =>
+type App = ReturnType<typeof setup>;
+const post = (app: App, path: string, signature?: string, body?: unknown) =>
   app.handle(
-    new Request(`http://localhost${DASHBOARD_MCP_ROUTE}`, {
+    new Request(`http://localhost${path}`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...(identity
-          ? { [DASHBOARD_IDENTITY_HEADER]: signDashboardIdentity(identity) }
-          : {}),
+        ...(signature ? { [DASHBOARD_IDENTITY_HEADER]: signature } : {}),
       },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      body: JSON.stringify(body ?? {}),
     }),
   );
+const rpc = (app: App, method: string, params?: unknown, signature?: string) =>
+  post(app, DASHBOARD_MCP_ROUTE, signature, {
+    jsonrpc: "2.0",
+    id: 1,
+    method,
+    params,
+  });
+
+const reader = signDashboardMcp({ write: false });
+const writer = (id = "u1") => signDashboardMcp({ user: { id }, write: true });
 
 describe("the app's MCP for the dashboard", () => {
-  it("answers only a request the dashboard signed", async () => {
+  it("answers only a request the dashboard's MCP signed for it", async () => {
     const app = setup();
     expect((await rpc(app, "tools/list")).status).toBe(401);
-    const forged = await app.handle(
-      new Request(`http://localhost${DASHBOARD_MCP_ROUTE}`, {
-        method: "POST",
-        headers: { [DASHBOARD_IDENTITY_HEADER]: "e30.AAAA" },
-        body: "{}",
-      }),
+    expect((await rpc(app, "tools/list", {}, "e30.AAAA")).status).toBe(401);
+    expect((await rpc(app, "tools/list", {}, reader)).status).toBe(200);
+  });
+
+  it("does not take a signature the /app proxy made", async () => {
+    const app = setup();
+    const viaApp = signDashboardIdentity({ user: { id: "u1" } });
+    expect((await rpc(app, "tools/list", {}, viaApp)).status).toBe(401);
+    expect(
+      (await rpc(app, "tools/list", {}, signDashboardIdentity({}))).status,
+    ).toBe(401);
+    const call = await rpc(
+      app,
+      "tools/call",
+      { name: "change", arguments: {} },
+      viaApp,
     );
-    expect(forged.status).toBe(401);
+    expect(call.status).toBe(401);
+    expect(changes).toEqual([]);
+  });
+
+  it("is not an identity for anything else: a dashboard-only action refuses it", async () => {
+    const app = setup();
+    const ping = (signature: string) =>
+      post(app, "/api/billing/ping", signature).then((r) => r.status);
+    expect(await ping(signDashboardIdentity({}))).toBe(200);
+    expect(await ping(writer())).toBe(401);
+    expect(await ping(reader)).toBe(401);
   });
 
   it("lists the tools marked dashboard: true, and no others", async () => {
     const app = setup();
-    const { result } = await (await rpc(app, "tools/list", {}, {})).json();
+    const { result } = await (
+      await rpc(app, "tools/list", {}, writer())
+    ).json();
     expect(result.tools.map((tool: { name: string }) => tool.name)).toEqual([
       "find_order",
-      "who",
+      "change",
     ]);
     expect(result.tools[0]).toMatchObject({
       description: "Look an order up",
@@ -78,16 +116,53 @@ describe("the app's MCP for the dashboard", () => {
     expect(result.tools[0].inputSchema.properties.id).toBeDefined();
   });
 
-  it("runs a tool with the signed identity as ctx.dashboard", async () => {
+  it("leaves a write tool out of the list, and refuses a call to it, without the write claim", async () => {
     const app = setup();
-    const call = async (identity: object) =>
+    const { result } = await (await rpc(app, "tools/list", {}, reader)).json();
+    expect(result.tools.map((tool: { name: string }) => tool.name)).toEqual([
+      "find_order",
+    ]);
+    const call = await (
+      await rpc(app, "tools/call", { name: "change", arguments: {} }, reader)
+    ).json();
+    expect(call.result.isError).toBe(true);
+    expect(call.result.content[0].text).toContain("can change data");
+    // A user in the claim is not enough: `write` decides.
+    const withUser = signDashboardMcp({ user: { id: "u1" }, write: false });
+    const again = await (
+      await rpc(app, "tools/call", { name: "change", arguments: {} }, withUser)
+    ).json();
+    expect(again.result.isError).toBe(true);
+    expect(changes).toEqual([]);
+    // A read tool still runs.
+    const read = await (
+      await rpc(
+        app,
+        "tools/call",
+        { name: "find_order", arguments: { id: "o1" } },
+        reader,
+      )
+    ).json();
+    expect(read.result.structuredContent).toEqual({ id: "o1" });
+  });
+
+  it("runs a write tool with the signed user as ctx.dashboard", async () => {
+    const app = setup();
+    const call = async (signature: string) =>
       (
         await (
-          await rpc(app, "tools/call", { name: "who", arguments: {} }, identity)
+          await rpc(
+            app,
+            "tools/call",
+            { name: "change", arguments: {} },
+            signature,
+          )
         ).json()
       ).result.content[0].text;
-    expect(await call({ user: { id: "u1", name: "Ada" } })).toBe("u1");
-    expect(await call({})).toBe("nobody");
+    expect(await call(writer("u1"))).toBe("u1");
+    // On a developer's machine the claim allows writes and there is no user.
+    expect(await call(signDashboardMcp({ write: true }))).toBe("nobody");
+    expect(changes).toEqual(["u1", undefined]);
   });
 
   it("refuses a dashboard tool the dashboard's MCP already has a tool for", () => {
