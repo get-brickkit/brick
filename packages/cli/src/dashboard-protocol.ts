@@ -71,7 +71,10 @@ interface RouteSpec {
   prefix?: boolean;
   /** The methods it answers; any when absent. */
   methods?: readonly string[];
-  /** Served by the production dashboard; `"extension"`: only when it has one. */
+  /**
+   * Served by the production dashboard; `"extension"`: only when it has one;
+   * `"inspector"`: only with `dashboard.inspector` and a running inspector.
+   */
   production: boolean | "extension" | "inspector";
   /** The page's view that needs it; a view whose routes production lacks is hidden there. */
   view?: ViewName;

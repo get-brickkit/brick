@@ -202,9 +202,10 @@ It listens on a port of its own, so it can be kept private or mounted at another
 address, and it answers while the app's routes do not. It shows Requests, Logs,
 Errors, Overview, and Reloads; there is no restart, API proxy, APIs, or Docs, and
 OpenAPI documents are not served. `dashboard: { inspector: true }` adds
-Schedules and Workflows, where only a signed-in user can change anything. Setting it turns `telemetry` on, and from then
-`ctx.logger` and `console` lines written during a request go to the dashboard
-and not to the container's console.
+Schedules and Workflows, where only a signed-in user can change anything.
+Setting it turns `telemetry` on, and from then `ctx.logger` and `console`
+lines written during a request go to the dashboard and not to the container's
+console.
 
 Beyond loopback, access control is required, and `brick start` will not run the
 dashboard without it. `auth.token` is a secret (or several, to rotate), at least
@@ -212,13 +213,16 @@ dashboard without it. `auth.token` is a secret (or several, to rotate), at least
 secret as the password), and monitors send `Authorization: Bearer <secret>`.
 `auth.authorize(request)` is your own check, for the auth the app already has
 (Better Auth, Clerk, a header from a proxy): it gets a standard `Request` without
-a body and returns `true`, `false`, or a `Response` such as a redirect to a login
-page; a throw or five seconds without an answer refuses the request with 503. A
-request passes with a valid token or when `authorize` allows it.
+a body and returns `true`, `false`, `{ user }` for someone signed in, or a
+`Response` such as a redirect to a login page; a throw or five seconds without
+an answer refuses the request with 503. A request passes with a valid token or
+when `authorize` allows it.
 
 `GET /_health` on the dashboard's port needs no sign-in: 200 while the app answers
 its own `/_health`, 503 when it does not, for uptime monitors. Responses are
-`no-store`, with a strict Content-Security-Policy and `X-Frame-Options: DENY`;
+`no-store`, with a strict Content-Security-Policy and `X-Frame-Options: DENY`
+(the Workflows page and an extension's `/app` pages may be framed by the
+dashboard itself);
 serve it over HTTPS. Failed sign-ins are not rate limited, so use long random
 tokens. The dashboard runs in the app's process: it survives errors in handlers,
 not the process dying. `brick dev` has its own dashboard and ignores the option.
