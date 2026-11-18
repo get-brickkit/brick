@@ -256,6 +256,34 @@ It is also stricter. A service sees only its own deps: a call into another servi
 
 `useDeps(service)` returns a service's deps, typed, from a listener, a schedule or a workflow step.
 
+## 8. Schedules and Workflows in the production dashboard
+
+The Schedules and Workflows tabs used to exist only under `brick dev`. The production dashboard now has them too, if the app asks:
+
+```ts
+dashboard: {
+  host: "0.0.0.0",
+  inspector: true,
+  auth: {
+    token: process.env.DASHBOARD_TOKEN,
+    authorize: async (request) => {
+      const session = await auth.api.getSession({ headers: request.headers });
+      if (session?.user.role !== "admin") return false;
+      return { user: { id: session.user.id, name: session.user.name } };
+    },
+  },
+},
+```
+
+They are off by default because they do more than show data. **Run now** starts a schedule, and the workflow inspector can cancel, replay or wake a run and resume a hook. So the dashboard separates who can look from who can change things:
+
+- **Look**: anyone the dashboard lets in. That includes every run's input and output, so turn `inspector` on only where everyone who can sign in may read them.
+- **Change**: only a signed-in user, meaning `authorize` returned `{ user }`, acting from the dashboard's own page. A token, an `authorize` that returns `true`, and a loopback dashboard with no `auth` can only look. A change from any of them gets a 403 that says why.
+
+`authorize` can now return `{ user }` as well as `true`, `false` or a `Response`. That return is what allows someone to make changes.
+
+The inspector ships inside `@brickkit/cli`, so there is nothing else to install. The app serves it on a loopback port with a random token that only the dashboard holds. An app with schedules and no workflow world gets only the Schedules tab. An app with neither starts as usual and says so once. See [Schedules and Workflows in production](/docs/brick-cli/dev-and-start#schedules-and-workflows-in-production).
+
 ## Upgrade checklist
 
 1. Move every dep from `brick({ deps })` onto its service's `defineService`, as the real value, and delete `port<T>()`.
