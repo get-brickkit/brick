@@ -171,4 +171,14 @@ describe("the app's MCP for the dashboard", () => {
     other.tool({ name: "summary", execute: () => "x" });
     expect(() => brick({ services: [other] })).not.toThrow();
   });
+
+  it("names both services when two mark a tool of the same name", () => {
+    const billing = defineService("billing");
+    billing.tool({ name: "lookup", dashboard: true, execute: () => "b" });
+    const orders = defineService("orders");
+    orders.tool({ name: "lookup", dashboard: true, execute: () => "o" });
+    expect(() => brick({ services: [billing, orders] })).toThrow(
+      /'billing' and 'orders' both have a tool 'lookup'/,
+    );
+  });
 });

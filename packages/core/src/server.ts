@@ -6,7 +6,7 @@ import {
   type CompiledApplication,
   type RouteIR,
 } from "./compiler";
-import { DuplicateNameError, type Service } from "./types";
+import { DuplicateNameError, type Service, type Tool } from "./types";
 import { getGlobalRegistry } from "./registry";
 import { getPluginEndpoints, installedPlugins } from "./plugin";
 import { pluginDepsOf, pluginLifecycle, setupAppPlugins } from "./plugin-app";
@@ -331,14 +331,23 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   // Built from `definition`, below.
   builtIn("/_brick/services", (context: any) => architecture(context));
 
-  const dashboardTools = services
-    .flatMap((service) => service.listTools())
-    .filter((tool) => tool.config.dashboard === true);
-  for (const tool of dashboardTools)
-    if ((DASHBOARD_MCP_TOOLS as readonly string[]).includes(tool.name))
-      throw new DuplicateNameError(
-        `Brick: the tool '${tool.name}' is marked dashboard: true, but the dashboard's MCP endpoint has a tool of that name. Rename yours.`,
-      );
+  const dashboardTools: Tool<any, any, any, any>[] = [];
+  const dashboardToolService = new Map<string, string>();
+  for (const service of services)
+    for (const tool of service.listTools()) {
+      if (tool.config.dashboard !== true) continue;
+      if ((DASHBOARD_MCP_TOOLS as readonly string[]).includes(tool.name))
+        throw new DuplicateNameError(
+          `Brick: the tool '${tool.name}' is marked dashboard: true, but the dashboard's MCP endpoint has a tool of that name. Rename yours.`,
+        );
+      const other = dashboardToolService.get(tool.name);
+      if (other !== undefined)
+        throw new DuplicateNameError(
+          `Brick: the services '${other}' and '${service.name}' both have a tool '${tool.name}' marked dashboard: true. The dashboard's MCP endpoint needs one name per tool, so rename one of them.`,
+        );
+      dashboardToolService.set(tool.name, service.name);
+      dashboardTools.push(tool);
+    }
   const toolRegistry = createMcpRegistry({ tools: dashboardTools });
   const readsOnly = (tool: McpToolDefinition) =>
     tool.annotations.readOnlyHint === true;
