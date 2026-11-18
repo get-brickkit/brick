@@ -177,6 +177,18 @@ export function Sidebar({
         <div className="mt-auto">
           <Slot name="sidebar.footer" expanded={expanded} />
         </div>
+        {/* The rail: click the sidebar's edge to open or close it. Out of the tab order, as the top bar button and ⌘B do the same. */}
+        <button
+          type="button"
+          aria-label="Toggle sidebar"
+          tabIndex={-1}
+          title="Toggle sidebar"
+          onClick={sidebar.toggle}
+          className={cn(
+            "absolute inset-y-0 right-0 z-10 w-2 after:absolute after:inset-y-0 after:right-0 after:w-px after:transition-colors hover:after:bg-ring",
+            expanded ? "cursor-w-resize" : "cursor-e-resize",
+          )}
+        />
       </nav>
     </>
   );
