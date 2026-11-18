@@ -110,6 +110,7 @@ function time(value: unknown, name: string, now: number): number | undefined {
   if (value === undefined) return undefined;
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
+    if (/^\d+$/.test(value.trim())) return Number(value.trim());
     const ago = /^(\d+)\s*([smhd])$/.exec(value.trim());
     if (ago) return now - Number(ago[1]) * UNITS[ago[2] as keyof typeof UNITS];
     const parsed = Date.parse(value);

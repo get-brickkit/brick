@@ -1,6 +1,6 @@
 ---
 title: "Brick v0.16: the security checks an audit asked for"
-description: "Rate limits on the action, verified provider webhooks, sensitive fields in schemas, tenant-scoped file storage and an audit log, plus deps as plain values on the service, a read-only MCP endpoint on the dashboard for coding agents, and every breaking change."
+description: "Rate limits on the action, verified provider webhooks, sensitive fields in schemas, tenant-scoped file storage and an audit log, plus deps as plain values on the service, Schedules and Workflows in the production dashboard, an MCP endpoint on the dashboard for coding agents, and every breaking change."
 date: "2026-11-15"
 category: release
 version: "0.16.0"
@@ -347,7 +347,7 @@ A tool without `readOnlyHint: true` is a write tool. In production only a signed
 - **Traces are capped.** `get_trace` cuts a long trace to about 50 KB, shortens long strings, and says what it left out.
 - **Without history it reads memory.** With `historyDays: 0` the tools read the last 200 requests, as the Requests tab does for Live.
 
-Limits, honestly. A write tool can be reached by an agent that read an injected instruction in a log line. Agents are told the tool is destructive, so they ask first, but only a person's approval stops a bad call: keep write tools narrow. What the agent reads goes to its model provider: request paths, error messages, stacks, SQL text and log lines, which can include user input. Turn `mcp` on only where you are willing to send that. `list_errors` covers what the dashboard has seen since the process started, and 4xx responses are in `list_requests`, not in `list_errors`. There are no tools for schedules or workflows yet, no stdio bridge for agents that can't speak HTTP, and no OAuth: the token is the only way in. See [Coding agents (MCP)](/docs/brick-cli/dev-and-start#coding-agents-mcp).
+Limits, honestly. A write tool can be reached by an agent that read an injected instruction in a log line. Agents are told the tool is destructive, so they ask first, but only a person's approval stops a bad call: keep write tools narrow. What the agent reads goes to its model provider: request paths, error messages, stacks, SQL text and log lines, which can include user input. Turn `mcp` on only where you are willing to send that. `list_errors` reads only the failures held in memory since the process started (the last 200), even when history is kept on disk, so older ones are found with `list_requests` and `outcome: "server"`. 4xx responses are in `list_requests`, not in `list_errors`. There are no tools for schedules or workflows yet, no stdio bridge for agents that can't speak HTTP, and no OAuth: the token is the only way in. See [Coding agents (MCP)](/docs/brick-cli/dev-and-start#coding-agents-mcp).
 
 ## Upgrade checklist
 

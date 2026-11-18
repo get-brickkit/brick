@@ -398,6 +398,26 @@ describe("the dashboard's MCP endpoint", () => {
     }
   });
 
+  it("takes a time as epoch milliseconds, a number or a string of digits", async () => {
+    const { base, stop } = await dev();
+    try {
+      const hourAgo = Date.now() - 3_600_000;
+      for (const from of [hourAgo, String(hourAgo)]) {
+        const answer = (await call(base, "list_requests", { from })) as any;
+        expect(answer.data.total).toBe(4);
+        expect(answer.data.window.from).toBe(new Date(hourAgo).toISOString());
+      }
+      // A window that starts after the requests held none.
+      const later = (await call(base, "summary", {
+        from: String(Date.now() + 60_000),
+        to: String(Date.now() + 120_000),
+      })) as any;
+      expect(later.data.requests).toBe(0);
+    } finally {
+      stop();
+    }
+  });
+
   it("refuses arguments that make no sense, as tool errors", async () => {
     const { base, stop } = await dev();
     try {

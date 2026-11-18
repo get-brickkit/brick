@@ -188,7 +188,9 @@ connect with `claude mcp add --transport http brick http://127.0.0.1:9400/mcp`.
 Those five only read, and a request from another origin is refused. Tools of
 the app's own marked `dashboard: true` (`service.tool`, or a plugin's) are
 listed beside them; one without `readOnlyHint: true` can change data and is
-advertised as destructive. What an agent reads (paths, errors, SQL text, log lines) goes to its
+advertised as destructive. `list_errors` reads only the failures held in memory
+since the process started (the last 200), even when history is kept on disk;
+older ones are found with `list_requests` and `outcome: "server"`. What an agent reads (paths, errors, SQL text, log lines) goes to its
 model provider.
 
 ### Monitoring dashboard for production

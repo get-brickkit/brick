@@ -116,7 +116,7 @@ The agent gets five tools of the dashboard's. Each one only reads:
 | `summary`       | Requests, client and server errors, error rate, median and p95 duration, and the slowest endpoints for a window. Default: the last hour.                                                                     |
 | `list_requests` | Requests as rows, with the Requests tab's filters: `outcome` (ok, client, server), `endpoint`, `method`, `service`, `query`, `min_ms`, `sort`, `from`, `to`, `limit` (default 20, at most 100) and `offset`. |
 | `get_trace`     | One request by trace id, as a tree of spans.                                                                                                                                                                 |
-| `list_errors`   | Recent server errors and crashes, newest first, with the message, route, service, action, stack and trace id.                                                                                                |
+| `list_errors`   | Recent server errors and crashes since the process started (the last 200), newest first, with the message, route, service, action, stack and trace id.                                                       |
 | `app_overview`  | The app's architecture: services, actions and their routes, tools, sockets, events, listeners, schedules and workflows, and plugins.                                                                         |
 
 `from` and `to` take an ISO 8601 time, epoch milliseconds, or a time ago such as `"30m"`, `"2h"` or `"7d"`. Without request history (`--history-days 0`), the tools read the last 200 requests in memory, as the Requests tab does for Live.
@@ -388,7 +388,7 @@ authorize: async (request) => {
 },
 ```
 
-The tool runs with that user as `ctx.dashboard.user`, so its audit log records who made the change. The dashboard's tools read what the dashboard keeps: the requests since the process started, or `historyDays` of them on disk.
+The tool runs with that user as `ctx.dashboard.user`, so its audit log records who made the change. The dashboard's tools read the requests since the process started, or `historyDays` of them on disk. `list_errors` is the exception: it reads only the failures held in memory since the process started (the last 200), even when history is kept on disk. Find older failures with `list_requests` and `outcome: "server"`.
 
 **Trace data goes to the agent's model provider.** A trace holds request paths, error messages and stacks, SQL statement text and log lines, which can include what your users typed or sent. Turn `mcp` on only for a dashboard whose data you are willing to send there, and give agents a token of their own, so you can rotate it without signing anyone out.
 
