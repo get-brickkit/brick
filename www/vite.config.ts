@@ -26,7 +26,6 @@ type VercelRoute = {
   dest?: string;
 };
 const docsRoutes: VercelRoute[] = [
-  // One URL per page: no trailing slash, and moved pages go to their new home.
   { src: "^/(.+)/$", status: 308, headers: { Location: "/$1" } },
   ...Object.entries(redirects).map(([from, to]) => ({
     src: `^${from}(\\.md)?$`,
@@ -66,8 +65,8 @@ export default defineConfig({
         enabled: true,
         failOnError: true,
         // The markdown pages stay with the server, which sets their headers.
-        // Crawled #anchor links are the same file as their page; rendering them
-        // again wrote that file concurrently and left /docs/api-reference/core cut off.
+        // The crawler dedupes by path with its #hash but writes the file without it,
+        // so every crawled anchor rewrote its page file at once and truncated it.
         filter: (page) =>
           !page.path.endsWith(".md") && !page.path.includes("#"),
       },

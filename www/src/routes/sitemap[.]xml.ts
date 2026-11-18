@@ -16,7 +16,6 @@ export const Route = createFileRoute("/sitemap.xml")({
           ...blogSource.getPages().map((page) => page.url),
           ...getExamples().map((example) => `/examples/${example.slug}`),
         ]);
-        // Only final URLs: never a path that redirects.
         const urls = [...paths]
           .filter((path) => !(path in redirects))
           .sort()

@@ -1,8 +1,3 @@
-/**
- * Permanent redirects for URLs that were removed or merged into another page.
- * Vercel serves them as 308s (see vite.config.ts); the docs routes use the same
- * map in development. Each target must be a live page, never another redirect.
- */
 export const redirects: Record<string, string> = {
   "/benchmarks": "/docs/why-brick",
   "/docs/benchmarking": "/docs/why-brick",
@@ -21,7 +16,6 @@ export const redirects: Record<string, string> = {
   "/docs/brick-cli/schema-dump": "/docs/brick-cli/info",
 };
 
-/** The redirect target for a docs path or its `.md` twin, if it moved. */
 export function redirectFor(path: string): string | undefined {
   const md = path.endsWith(".md");
   const target = redirects[md ? path.slice(0, -3) : path];
