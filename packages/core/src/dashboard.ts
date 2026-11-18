@@ -75,8 +75,8 @@ export interface DashboardOptions {
    * Let a coding agent (Claude Code, Cursor, Codex) read the dashboard's data
    * over MCP at `/mcp`, while it debugs: requests, traces, logs, errors and the
    * app's architecture. Default false; `brick dev` always has it, since it only
-   * listens on this machine. It is read-only, even for a signed-in user, and it
-   * passes the same checks as the rest of the dashboard: the agent sends
+   * listens on this machine. Its own tools only read, even for a signed-in
+   * user, and it passes the same checks as the rest of the dashboard: the agent sends
    * `Authorization: Bearer <token>` with one of `auth.token`.
    *
    * What the agent reads goes to its model provider: request paths and

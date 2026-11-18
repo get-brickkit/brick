@@ -120,9 +120,10 @@ export interface DevDashboardOptions {
   auth?: DashboardAuth;
   inspector?: boolean;
   /**
-   * Serve `/mcp`, a coding agent's read-only view of requests, traces, logs and
-   * errors. `brick dev` always does; production only when the app sets
-   * `dashboard.mcp`.
+   * Serve `/mcp`: a coding agent's view of requests, traces, logs and errors
+   * (read-only), plus the app's `dashboard: true` tools, whose writes go only
+   * to a signed-in user, or anyone in `brick dev`. `brick dev` always serves
+   * it; production only when the app sets `dashboard.mcp`.
    */
   mcp?: boolean;
   /** Whether the app answers; `/_health` reports it, for uptime monitors. */

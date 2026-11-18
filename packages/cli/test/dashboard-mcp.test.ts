@@ -522,6 +522,29 @@ describe("the dashboard's MCP endpoint", () => {
     }
   });
 
+  it("leaves the spans out when even the harshest cut is over the cap", async () => {
+    const { base, store, stop } = await dev({ seeded: false });
+    try {
+      store.ingest(
+        request("huge-key-1", Date.now(), {
+          spans: 50,
+          // Attribute keys are never shortened.
+          attributes: { ["k".repeat(MAX_TRACE_CHARS)]: "v" },
+        }).flat(),
+        1,
+      );
+      const answer = (await call(base, "get_trace", {
+        trace_id: "huge-key-1",
+      })) as any;
+      expect(answer.text.length).toBeLessThanOrEqual(MAX_TRACE_CHARS);
+      expect(answer.data.spans).toEqual([]);
+      expect(answer.data.truncated.note).toContain("spans are left out");
+      expect(answer.data.traceId).toBe("huge-key-1");
+    } finally {
+      stop();
+    }
+  });
+
   it("answers an unknown trace id with a tool error, not a crash", async () => {
     const { base, stop } = await dev();
     try {

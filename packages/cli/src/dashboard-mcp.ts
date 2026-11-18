@@ -304,9 +304,23 @@ function traceAnswer(trace: TraceSummary): string {
         ...cuts,
       };
     answer = out(body);
-    if (answer.length <= MAX_TRACE_CHARS) break;
+    if (answer.length <= MAX_TRACE_CHARS) return answer;
   }
-  return answer;
+  // Even the harshest cut is too big (very long names or keys): send the
+  // request without its spans rather than break the cap.
+  const {
+    spans: _spans,
+    truncated: _truncated,
+    ...request
+  } = JSON.parse(answer) as Record<string, unknown>;
+  return out({
+    ...request,
+    message: cut(trace.message, 500),
+    spans: [],
+    truncated: {
+      note: `This trace is too large to send even cut down, so its spans are left out. It is about ${Math.round(answer.length / 1000)} KB; open it in the dashboard instead.`,
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
