@@ -19,6 +19,7 @@ describe("brick({ dashboard })", () => {
         host: " 0.0.0.0 ",
         historyDays: 7,
         inspector: true,
+        mcp: true,
       },
     });
     expect(definition.dashboard).toEqual({
@@ -26,6 +27,7 @@ describe("brick({ dashboard })", () => {
       host: "0.0.0.0",
       historyDays: 7,
       inspector: true,
+      mcp: true,
     });
     expect(definition.telemetry).toBe(true);
     expect(Object.isFrozen(definition.dashboard)).toBe(true);
@@ -71,6 +73,7 @@ describe("brick({ dashboard })", () => {
     expect(build({ historyDays: -1 })).toThrow(/historyDays/);
     expect(build({ historyDays: 1.5 })).toThrow(/historyDays/);
     expect(build({ inspector: "yes" })).toThrow(/inspector must be true/);
+    expect(build({ mcp: "yes" })).toThrow(/mcp must be true/);
     expect(build({ auth: { token: "short" } })).toThrow(
       /at least 16 characters/,
     );
