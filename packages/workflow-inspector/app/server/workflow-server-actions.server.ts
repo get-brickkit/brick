@@ -400,6 +400,20 @@ export const rpcMethods = {
 
 export type RpcMethods = typeof rpcMethods;
 
+/** Brick change: the methods a read-only caller may use. */
+export const READ_METHODS: ReadonlySet<string> = new Set<keyof RpcMethods>([
+  "fetchRuns",
+  "fetchRun",
+  "fetchStep",
+  "fetchEvents",
+  "fetchEvent",
+  "fetchEventsByCorrelationId",
+  "fetchHooks",
+  "fetchHook",
+  "fetchStreams",
+  "getEncryptionKeyForRun",
+]);
+
 const CHUNKS_PAGE_SIZE = 500;
 
 export interface StreamChunksResult {

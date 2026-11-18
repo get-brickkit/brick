@@ -2,7 +2,11 @@ import { describe, expect, it, spyOn } from "bun:test";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { brick } from "@brickkit/core";
-import { INSPECTOR_TOKEN_HEADER, ROUTES } from "../src/dashboard-protocol";
+import {
+  INSPECTOR_READ_ONLY_HEADER,
+  INSPECTOR_TOKEN_HEADER,
+  ROUTES,
+} from "../src/dashboard-protocol";
 import { startInspector } from "../src/dev-inspector";
 
 const built = join(import.meta.dir, "..", "inspector-dist");
@@ -126,6 +130,60 @@ describe("startInspector", () => {
           })
         ).status,
       ).toBe(404);
+    } finally {
+      inspector?.stop();
+    }
+  });
+
+  it("lets a caller the dashboard marks read-only look, and change nothing", async () => {
+    const triggered: string[] = [];
+    const inspector = await startInspector({
+      events: {
+        workflows: {
+          world: {
+            runs: {
+              list: async () => ({ data: [], cursor: null, hasMore: false }),
+            },
+          },
+        },
+        schedules: {
+          list: async () => [{ name: "backup" }],
+          trigger: async (name: string) => triggered.push(name) > 0,
+        },
+        describe: () => ({ schedules: [{ name: "backup" }] }),
+      },
+    } as never);
+    try {
+      const base = `http://127.0.0.1:${inspector!.port}`;
+      const headers = {
+        [INSPECTOR_TOKEN_HEADER]: inspector!.token,
+        [INSPECTOR_READ_ONLY_HEADER]: "1",
+      };
+      const rpc = (method: string) =>
+        fetch(`${base}/workflows/api/rpc`, {
+          method: "POST",
+          headers: { ...headers, "content-type": "application/json" },
+          body: JSON.stringify({ method, params: {} }),
+        });
+
+      const list = await fetch(`${base}${ROUTES.schedules.path}`, { headers });
+      expect(await list.json()).toEqual([{ name: "backup" }]);
+      expect((await fetch(`${base}/workflows/`, { headers })).status).toBe(200);
+      expect((await rpc("fetchRuns")).status).toBe(200);
+
+      const run = await fetch(`${base}${ROUTES.schedules.path}/backup`, {
+        method: "POST",
+        headers,
+      });
+      expect(run.status).toBe(403);
+      expect(await run.text()).toContain("sign in as a user");
+      expect(triggered).toEqual([]);
+      expect((await rpc("cancelRun")).status).toBe(403);
+      const missing = await fetch(`${base}${ROUTES.schedules.path}/nope`, {
+        method: "POST",
+        headers,
+      });
+      expect(missing.status).toBe(404);
     } finally {
       inspector?.stop();
     }

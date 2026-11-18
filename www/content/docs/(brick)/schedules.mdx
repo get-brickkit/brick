@@ -168,7 +168,7 @@ A handler is the default because it needs nothing beyond the database. Use a wor
 
 ## Seeing and running schedules
 
-In `brick dev`, the dashboard gains a **Schedules** tab for an app with schedules: when each is next due, whether it is running, its last runs with their errors, and a **Run now** button. A workflow schedule's runs show in the Workflows tab too.
+In `brick dev`, the dashboard gains a **Schedules** tab for an app with schedules: when each is next due, whether it is running, its last runs with their errors, and a **Run now** button. A workflow schedule's runs show in the Workflows tab too. The production dashboard of `brick start` has the same tab when the app sets `dashboard.inspector`; there **Run now** needs a signed-in user. See [Schedules and Workflows in production](/docs/brick-cli/dev-and-start#schedules-and-workflows-in-production).
 
 From the command line, against the app's database:
 

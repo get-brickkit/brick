@@ -37,12 +37,7 @@ import { ReloadsView } from "@/views/reloads";
 import { RequestsView } from "@/views/requests";
 import { SchedulesView } from "@/views/schedules";
 import { WorkflowsView } from "@/views/workflows";
-import {
-  CSRF_HEADER,
-  CSRF_VALUE,
-  PRODUCTION_HIDDEN_VIEWS,
-  ROUTES,
-} from "../src/dashboard-protocol";
+import { CSRF_HEADER, CSRF_VALUE, ROUTES } from "../src/dashboard-protocol";
 
 // Fumadocs' components and Shiki's styles are only needed for the Docs tab.
 const DocsView = lazy(() => import("@/views/docs"));
@@ -64,9 +59,10 @@ export function App({ loaded = {} }: { loaded?: LoadedExtension }) {
   const filterRef = useRef<HTMLInputElement>(null);
   const [seenFailure, setSeenFailure] = useState(0);
   const production = state.mode === "production";
+  const { hiddenViews } = state;
   const shown = useCallback(
-    (view: View) => !(production && PRODUCTION_HIDDEN_VIEWS.has(view)),
-    [production],
+    (view: View) => !(hiddenViews as string[]).includes(view),
+    [hiddenViews],
   );
   // The API reference loads on first visit, then stays alive in the background.
   const [apisOpened, setApisOpened] = useState(route.view === "apis");
@@ -119,7 +115,7 @@ export function App({ loaded = {} }: { loaded?: LoadedExtension }) {
   // A link to a view this dashboard hides lands on Requests.
   useEffect(() => {
     if (!shown(route.view)) location.replace(routeHref("requests"));
-  }, [production, route.view, shown]);
+  }, [route.view, shown]);
 
   // The errors dot clears once the Errors view has shown the newest failure.
   useEffect(() => {

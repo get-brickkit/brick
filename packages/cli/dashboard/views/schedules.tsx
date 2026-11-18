@@ -39,7 +39,7 @@ function RunBadge({ run }: { run: ScheduleRunRecord }) {
 }
 
 /**
- * The app's schedules, read from its schedule table through the dev server:
+ * The app's schedules, read from its schedule table through the dashboard:
  * when each is next due, its last runs, and a button to run one now.
  */
 export function SchedulesView() {

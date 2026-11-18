@@ -6,7 +6,10 @@ import {
   RouterContextProvider,
   type ServerBuild,
 } from "react-router";
-import { worldContext } from "../app/server/inspector-host.server";
+import {
+  callerContext,
+  worldContext,
+} from "../app/server/inspector-host.server";
 import { BASE_PATH } from "../base-path";
 import type { CreateFetchHandler } from "./handler";
 
@@ -28,9 +31,10 @@ export const createFetchHandler: CreateFetchHandler = (basename, host) => {
     serverBuild as unknown as ServerBuild,
     "production",
   );
-  return (request: Request) => {
+  return (request, caller) => {
     const context = new RouterContextProvider();
     context.set(worldContext, host.world);
+    context.set(callerContext, caller);
     return handler(request, context);
   };
 };

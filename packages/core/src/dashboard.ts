@@ -62,6 +62,15 @@ export interface DashboardOptions {
    * lost when it restarts. Needs a folder that outlives the container.
    */
   historyDays?: number;
+  /**
+   * Show the Schedules and Workflows views, which `brick dev` always has: each
+   * schedule's next run and last runs, and the workflow inspector with every
+   * run's steps. Default false, because they do more than monitor: a signed-in
+   * user (one `auth.authorize` returned as `{ user }`) can run a schedule now,
+   * cancel or replay a run, and resume a hook. Anyone else the dashboard lets
+   * in (by token, or by `authorize` returning `true`) can only look.
+   */
+  inspector?: boolean;
 }
 
 const MIN_TOKEN_LENGTH = 16;
@@ -75,7 +84,7 @@ export function normalizeDashboard(
   options: DashboardOptions | undefined,
 ): DashboardOptions | undefined {
   if (options === undefined) return undefined;
-  const { port, host, auth, historyDays } = options;
+  const { port, host, auth, historyDays, inspector } = options;
   if (
     port !== undefined &&
     (!Number.isInteger(port) || port < 1 || port > 65535)
@@ -94,10 +103,13 @@ export function normalizeDashboard(
     throw new Error(
       `Brick: dashboard historyDays must be a whole number of days, not ${String(historyDays)}.`,
     );
+  if (inspector !== undefined && typeof inspector !== "boolean")
+    throw new Error("Brick: dashboard inspector must be true or false.");
   const normalized: DashboardOptions = {
     ...(port !== undefined ? { port } : {}),
     ...(host !== undefined ? { host: host.trim() } : {}),
     ...(historyDays !== undefined ? { historyDays } : {}),
+    ...(inspector !== undefined ? { inspector } : {}),
   };
   if (auth !== undefined) {
     const tokens =

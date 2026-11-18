@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { ROUTES, SHELL } from "../../src/dashboard-protocol";
 
 /**
- * The Workflow SDK's own inspector, served by the dev server at `/workflows`
+ * The Workflow SDK's own inspector, served by the dashboard at `/workflows`
  * and shown whole in a frame. Like the API reference it stays mounted once
  * opened (`hidden` only hides it), so a run you were reading is still open when
  * you come back, and after the app restarts.

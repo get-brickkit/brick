@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import {
   defineAction,
+  defineDatabase,
+  defineSchedule,
   defineService,
   resetGlobalRegistry,
+  scheduleTable,
+  syncSchema,
   t,
   brick,
 } from "@brickkit/core";
 import { startDevDashboard } from "../src/dev-dashboard";
+import { startInspector } from "../src/dev-inspector";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
 import { startProductionDashboard } from "../src/production-dashboard";
 import { freePort, raw, resetTracing, waitFor } from "./helpers";
@@ -67,8 +72,8 @@ describe("the production dashboard server", () => {
         "/api/openapi",
         "/api/docs",
         "/api/docs/search?q=x",
-        // The workflow inspector can cancel runs: a developer's tool only.
         "/workflows/",
+        "/api/schedules",
       ])
         expect(await answer(path)).toBe(404);
       for (const path of [
@@ -76,8 +81,16 @@ describe("the production dashboard server", () => {
         "/api/restart",
         "/api/proxy",
         "/workflows/api/rpc",
+        "/api/schedules/backup",
       ])
         expect(await answer(path, "POST")).toBe(404);
+      const state = await fetch(`${base}/api/state`, { headers: bearer });
+      expect((await state.json()).hiddenViews.sort()).toEqual([
+        "apis",
+        "docs",
+        "schedules",
+        "workflows",
+      ]);
     } finally {
       dashboard.stop();
     }
@@ -205,6 +218,165 @@ describe("the production dashboard server", () => {
   });
 });
 
+describe("the production dashboard with the inspector", () => {
+  const staff = { cookie: "session=staff" };
+  const ownPage = (base: string) => ({
+    origin: base,
+    "sec-fetch-site": "same-origin",
+  });
+
+  async function withInspector(
+    run: (context: {
+      base: string;
+      triggered: string[];
+      cancelled: unknown[];
+    }) => Promise<void>,
+  ) {
+    const triggered: string[] = [];
+    const cancelled: unknown[] = [];
+    const inspector = await startInspector({
+      events: {
+        workflows: {
+          world: {
+            runs: {
+              list: async () => ({ data: [], cursor: null, hasMore: false }),
+              get: async () => ({ runId: "run_1", status: "running" }),
+            },
+            events: {
+              create: async (...event: unknown[]) => {
+                cancelled.push(event);
+                return {};
+              },
+            },
+          },
+        },
+        schedules: {
+          list: async () => [{ name: "backup" }],
+          trigger: async (name: string) => {
+            triggered.push(name);
+            return true;
+          },
+        },
+        describe: () => ({ schedules: [{ name: "backup" }] }),
+      },
+    } as never);
+    const { store, dashboard, base } = await production({
+      inspector: true,
+      auth: {
+        token,
+        authorize: (request) => {
+          const cookie = request.headers.get("cookie") ?? "";
+          if (cookie.includes("session=staff")) return { user: { id: "u1" } };
+          return cookie.includes("session=anonymous");
+        },
+      },
+    });
+    store.setInspector(inspector!);
+    try {
+      await run({ base, triggered, cancelled });
+    } finally {
+      dashboard.stop();
+      inspector!.stop();
+    }
+  }
+
+  const rpc = (base: string, method: string, headers: object) =>
+    fetch(`${base}/workflows/api/rpc`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...ownPage(base),
+        ...headers,
+      },
+      body: JSON.stringify({ method, params: { runId: "run_1" } }),
+    });
+
+  it("shows the two views and lists the schedules to anyone it lets in, and to nobody else", async () => {
+    await withInspector(async ({ base }) => {
+      expect((await fetch(`${base}/api/schedules`)).status).toBe(401);
+      expect((await fetch(`${base}/workflows/`)).status).toBe(401);
+      for (const headers of [bearer, staff]) {
+        const list = await fetch(`${base}/api/schedules`, { headers });
+        expect(await list.json()).toEqual([{ name: "backup" }]);
+        const state = await fetch(`${base}/api/state`, { headers });
+        expect(await state.json()).toMatchObject({
+          inspector: true,
+          hiddenViews: ["docs", "apis"],
+        });
+      }
+    });
+  });
+
+  it("lets the dashboard, and nothing else, frame the inspector", async () => {
+    await withInspector(async ({ base }) => {
+      for (const path of ["/workflows/", "/workflows/run/run_1"]) {
+        const frame = await fetch(`${base}${path}`, { headers: bearer });
+        expect(frame.status).toBe(200);
+        expect(frame.headers.get("content-type")).toContain("text/html");
+        expect(frame.headers.get("x-frame-options")).toBe("SAMEORIGIN");
+        const policy = frame.headers.get("content-security-policy") ?? "";
+        expect(policy).toContain("frame-ancestors 'self'");
+        expect(policy).toContain("default-src 'self'");
+        expect(policy).toContain("connect-src 'self'");
+        expect(policy).toContain(
+          "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval';",
+        );
+        expect(frame.headers.get("x-content-type-options")).toBe("nosniff");
+        expect(frame.headers.get("cache-control")).toBe("no-store");
+      }
+      for (const path of ["/", "/api/state", "/api/schedules"]) {
+        const other = await fetch(`${base}${path}`, { headers: bearer });
+        expect(other.headers.get("x-frame-options")).toBe("DENY");
+        const policy = other.headers.get("content-security-policy") ?? "";
+        expect(policy).toContain("frame-ancestors 'none'");
+        expect(policy).not.toContain("wasm-unsafe-eval");
+      }
+    });
+  });
+
+  it("runs a schedule for a signed-in user on the dashboard's own page, and for nobody else", async () => {
+    await withInspector(async ({ base, triggered }) => {
+      const run = (headers: object) =>
+        fetch(`${base}/api/schedules/backup`, { method: "POST", headers });
+
+      expect((await run(ownPage(base))).status).toBe(401);
+      for (const headers of [bearer, { cookie: "session=anonymous" }]) {
+        const refused = await run({ ...ownPage(base), ...headers });
+        expect(refused.status).toBe(403);
+        expect(await refused.text()).toContain("sign in as a user");
+      }
+      for (const headers of [
+        { origin: "https://evil.example" },
+        { "sec-fetch-site": "cross-site" },
+      ])
+        expect((await run({ ...staff, ...headers })).status).toBe(403);
+      expect(triggered).toEqual([]);
+
+      const started = await run({ ...staff, ...ownPage(base) });
+      expect(await started.json()).toEqual({ started: true });
+      expect(triggered).toEqual(["backup"]);
+    });
+  });
+
+  it("lets a token read runs, and only a signed-in user change one", async () => {
+    await withInspector(async ({ base, cancelled }) => {
+      expect((await rpc(base, "fetchRuns", bearer)).status).toBe(200);
+      for (const method of ["cancelRun", "recreateRun", "resumeHook"])
+        expect((await rpc(base, method, bearer)).status).toBe(403);
+      expect(cancelled).toEqual([]);
+      expect((await rpc(base, "cancelRun", staff)).status).toBe(200);
+      expect(cancelled).toHaveLength(1);
+      const foreign = await rpc(base, "cancelRun", {
+        ...staff,
+        origin: "https://evil.example",
+        "sec-fetch-site": "cross-site",
+      });
+      expect(foreign.status).toBe(403);
+      expect(cancelled).toHaveLength(1);
+    });
+  });
+});
+
 describe("startProductionDashboard", () => {
   function appWith(dashboard: object) {
     const service = defineService("pages", {});
@@ -282,6 +454,76 @@ describe("startProductionDashboard", () => {
     } finally {
       dashboard?.stop();
       log.mockRestore();
+    }
+  });
+
+  it("serves the schedules of an app that asks for the inspector, until it stops", async () => {
+    const schedules = scheduleTable("sqlite");
+    const database = defineDatabase({ tables: { schedules } });
+    syncSchema([schedules], database.getDb());
+    const port = await freePort();
+    const serve = spyOn(Bun, "serve");
+    const app = brick({
+      services: [defineService("reports", { database })],
+      events: {
+        schedules: [
+          defineSchedule({ name: "nightly", every: "6h", run: () => {} }),
+        ],
+      },
+      requestLogging: false,
+      docs: false,
+      dashboard: { port, auth: { token }, inspector: true },
+    });
+    const warnings: string[] = [];
+    const dashboard = await startProductionDashboard(app, {
+      appPort: 1,
+      warn: (message) => warnings.push(message),
+    });
+    const inspector = serve.mock.results
+      .map((result) => result.value as { port: number; hostname: string })
+      .find((server) => server.port !== port)!;
+    serve.mockRestore();
+    try {
+      expect(warnings).toEqual([]);
+      expect(inspector.hostname).toBe("127.0.0.1");
+      const base = `http://127.0.0.1:${port}`;
+      const list = await fetch(`${base}/api/schedules`, { headers: bearer });
+      expect(await list.json()).toMatchObject([{ name: "nightly" }]);
+      const state = await (
+        await fetch(`${base}/api/state`, { headers: bearer })
+      ).json();
+      expect(state.inspector).toBe(false);
+      expect(state.hiddenViews).not.toContain("schedules");
+      const direct = `http://127.0.0.1:${inspector.port}/api/schedules`;
+      expect((await fetch(direct)).status).toBe(403);
+      dashboard?.stop();
+      await expect(fetch(direct)).rejects.toThrow();
+    } finally {
+      dashboard?.stop();
+    }
+  });
+
+  it("starts without the two views, and says why once, when the app has nothing for them", async () => {
+    const port = await freePort();
+    const warnings: string[] = [];
+    const dashboard = await startProductionDashboard(
+      appWith({ port, auth: { token }, inspector: true }),
+      { appPort: 1, warn: (message) => warnings.push(message) },
+    );
+    try {
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("no workflows and no schedules");
+      const base = `http://127.0.0.1:${port}`;
+      const state = await (
+        await fetch(`${base}/api/state`, { headers: bearer })
+      ).json();
+      expect(state.hiddenViews).toEqual(
+        expect.arrayContaining(["schedules", "workflows"]),
+      );
+      const list = await fetch(`${base}/api/schedules`, { headers: bearer });
+      expect(list.status).toBe(404);
+    } finally {
+      dashboard?.stop();
     }
   });
 

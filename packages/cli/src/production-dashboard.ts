@@ -1,6 +1,7 @@
 import { getGlobalRegistry, type BrickApp } from "@brickkit/core";
 import type { DashboardExtensionOptions } from "./dashboard-extension";
 import { openDashboard } from "./dashboard-host";
+import { startInspector, type Inspector } from "./dev-inspector";
 import { installTracing } from "./dev-telemetry";
 
 export interface ProductionDashboard {
@@ -15,6 +16,11 @@ export interface ProductionDashboard {
  * stays up when the app's routes do not answer, and its `/_health` tells an
  * uptime monitor whether the app does. From here on `ctx.logger` and `console`
  * lines written during a request go to the dashboard, not the console.
+ *
+ * With `dashboard.inspector` it also serves the workflow inspector and the
+ * schedules, on a loopback port only the dashboard knows, for the Workflows
+ * and Schedules views. An app with neither, or an inspector that cannot start,
+ * costs those views and a warning, nothing else.
  *
  * Call it before the app starts listening. Returns undefined when the app
  * asks for no dashboard, or when it cannot start (the app runs on without it,
@@ -41,6 +47,20 @@ export async function startProductionDashboard(
   if (!config) return undefined;
   const warn = options.warn ?? ((message) => console.warn(message));
   const host = config.host ?? "127.0.0.1";
+  let inspector: Inspector | undefined;
+  if (config.inspector) {
+    try {
+      inspector = await startInspector(app);
+      if (!inspector)
+        warn(
+          "[Brick-TS] dashboard.inspector is on, but the app has no workflows and no schedules, so there is nothing for it to show.",
+        );
+    } catch (error) {
+      warn(
+        `[Brick-TS] Could not start the workflow inspector, so the dashboard has no Schedules and Workflows views: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
   const started = await openDashboard({
     directory: options.directory ?? process.cwd(),
     historyDays: config.historyDays ?? 0,
@@ -50,6 +70,7 @@ export async function startProductionDashboard(
     mode: "production",
     portHint: "Set dashboard.port in brick() to another.",
     auth: config.auth,
+    inspector: config.inspector,
     dashboard: options.dashboard,
     plugins: app.definition.plugins,
     appUrl: `http://127.0.0.1:${options.appPort}`,
@@ -60,9 +81,16 @@ export async function startProductionDashboard(
       );
       return response.ok;
     },
+  }).catch((error: unknown) => {
+    inspector?.stop();
+    throw error;
   });
-  if (!started) return undefined;
+  if (!started) {
+    inspector?.stop();
+    return undefined;
+  }
   const { store } = started;
+  if (inspector) store.setInspector(inspector);
 
   const registered = installTracing((records) =>
     store.ingest(records, store.latestGeneration),
@@ -77,5 +105,12 @@ export async function startProductionDashboard(
     getGlobalRegistry().exportArchitecture(app.definition),
     generation,
   );
-  return { host, port: started.port, stop: () => started.stop() };
+  return {
+    host,
+    port: started.port,
+    stop() {
+      inspector?.stop();
+      started.stop();
+    },
+  };
 }

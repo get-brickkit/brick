@@ -200,8 +200,9 @@ export default brick({
 
 It listens on a port of its own, so it can be kept private or mounted at another
 address, and it answers while the app's routes do not. It shows Requests, Logs,
-Errors, Overview, and Reloads; there is no restart, API proxy, APIs, Docs, or Workflows, and
-OpenAPI documents are not served. Setting it turns `telemetry` on, and from then
+Errors, Overview, and Reloads; there is no restart, API proxy, APIs, or Docs, and
+OpenAPI documents are not served. `dashboard: { inspector: true }` adds
+Schedules and Workflows, where only a signed-in user can change anything. Setting it turns `telemetry` on, and from then
 `ctx.logger` and `console` lines written during a request go to the dashboard
 and not to the container's console.
 

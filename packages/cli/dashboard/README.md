@@ -103,9 +103,12 @@ Follows Efferd's Dashboard 9. Tokens live in `styles.css` for both themes.
   app's `dashboard` option). The server then answers only the routes
   marked `production` in `ROUTES` (`src/dashboard-protocol.ts`: the shell and
   assets, `/api/state`, `/api/events`, `/api/history*`), adds security headers,
-  and puts `mode` in the snapshot. The page then hides the views whose routes
-  production lacks (APIs, Docs, Workflows) and the restart button, and shows a
-  Production badge. `src/dashboard-access.ts` checks each request against `auth` (tokens
+  and puts `mode` and `hiddenViews` in the snapshot. The page then hides the
+  views whose routes production lacks (APIs, Docs) and the restart button, and
+  shows a Production badge. Workflows and Schedules are hidden too unless the
+  app sets `dashboard.inspector`: their routes are marked `"inspector"`, the
+  production dashboard then starts the inspector itself (`src/dev-inspector.ts`),
+  and only an identity with a `user` may change anything through them. `src/dashboard-access.ts` checks each request against `auth` (tokens
   compared in constant time, and the app's `authorize` with a five-second limit)
   before anything but `/_health`. Spans reach the store in-process, with no
   worker or ingest endpoint.
