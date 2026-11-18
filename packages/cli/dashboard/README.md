@@ -124,8 +124,14 @@ site's `:root` and `.dark`.
   history is off, with the rules in `dashboard-query.ts`. It is served by
   `brick dev` and the Vite plugin; production serves it only with
   `dashboard.mcp` (route marked `"mcp"`). It goes through the same access check
-  as every route, refuses a request with another `Origin`, and has no tool that
-  writes, whoever the identity is. A trace answer is cut to about 50 KB.
+  as every route, refuses a request with another `Origin`, and the five built-in
+  tools never write, whoever the identity is. A trace answer is cut to about
+  50 KB. The app's tools marked `dashboard: true` are listed beside them: the
+  dashboard asks the app for them at `DASHBOARD_MCP_ROUTE` (`@brickkit/core`,
+  answered only for a signed request) and calls them with the identity it signs,
+  as `/app` does. A tool without `readOnlyHint: true` is a write tool: listed
+  with `destructiveHint`, and only to an identity that `mayChange` allows (in
+  production one with a `user`, the check the inspector uses; in dev anyone).
 - **Request log:** laid out like a hosting dashboard's logs. Four cards (requests,
   error rate, median, slowest 5%) follow the range and filters. A timeline strip
   across the top (drag to zoom), a Custom picker beside the ranges (from and to,

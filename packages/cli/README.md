@@ -185,8 +185,10 @@ dashboard shows them under that trace id.
 for coding agents (Claude Code, Cursor, Codex): `summary`, `list_requests`,
 `get_trace`, `list_errors` and `app_overview`. It prints the address on start;
 connect with `claude mcp add --transport http brick http://127.0.0.1:9400/mcp`.
-It has no tool that changes anything, and a request from another origin is
-refused. What an agent reads (paths, errors, SQL text, log lines) goes to its
+Those five only read, and a request from another origin is refused. Tools of
+the app's own marked `dashboard: true` (`service.tool`, or a plugin's) are
+listed beside them; one without `readOnlyHint: true` can change data and is
+advertised as destructive. What an agent reads (paths, errors, SQL text, log lines) goes to its
 model provider.
 
 ### Monitoring dashboard for production
@@ -211,8 +213,11 @@ address, and it answers while the app's routes do not. It shows Requests, Logs,
 Errors, Overview, and Reloads; there is no restart, API proxy, APIs, or Docs, and
 OpenAPI documents are not served. `dashboard: { inspector: true }` adds
 Schedules and Workflows, where only a signed-in user can change anything.
-`dashboard: { mcp: true }` serves `/mcp` for coding agents, read-only, behind the
-same `auth` (agents send `Authorization: Bearer <token>`); it is off otherwise.
+`dashboard: { mcp: true }` serves `/mcp` for coding agents behind the same
+`auth` (agents send `Authorization: Bearer <token>`); it is off otherwise. The
+dashboard's own tools only read; the app's `dashboard: true` tools that can
+change data are offered only to a signed-in user (`authorize` returned
+`{ user }`).
 Setting it turns `telemetry` on, and from then `ctx.logger` and `console`
 lines written during a request go to the dashboard and not to the container's
 console.

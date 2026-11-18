@@ -314,15 +314,40 @@ dashboard: {
 },
 ```
 
-The agent sends the token as `Authorization: Bearer <token>`. How it behaves:
+The agent sends the token as `Authorization: Bearer <token>`.
 
-- **Read-only, for everyone.** There are no tools that change anything, not even for a signed-in user. Log lines carry what your users typed, and an agent that reads them must not be able to act on them.
+Your own tools join the five. Mark a tool `dashboard: true`, and say whether it only reads:
+
+```ts
+billing.tool({
+  name: "find_order",
+  description: "Look an order up by id.",
+  dashboard: true,
+  annotations: { readOnlyHint: true },
+  input: t.Object({ id: t.String() }),
+  execute: ({ input }) => findOrder(input.id),
+});
+
+billing.tool({
+  name: "create_refund",
+  description: "Refund an order.",
+  dashboard: true,
+  input: t.Object({ orderId: t.String() }),
+  authorize: ({ ctx }) => ctx.dashboard?.user !== undefined,
+  execute: ({ input, ctx }) =>
+    refund(input, { requestedBy: ctx.dashboard?.user?.id }),
+});
+```
+
+A tool without `readOnlyHint: true` is a write tool. In production only a signed-in user sees it: `authorize` must return `{ user }`, for example after it checks an API key you gave the agent. A token sees only the read tools. The call runs as an extension page's call does, so the tool's own `authorize`, rate limit and audit apply, and the audit log records the user. A plugin's tools count too. How it behaves:
+
+- **The built-in tools are read-only; your own can write, for a signed-in user only.** None of the five changes anything, not even for a signed-in user: log lines carry what your users typed, and an agent that reads them must not be able to act on them. Tools you add with `dashboard: true` can change data. See below.
 - **Same access as the dashboard.** A non-loopback dashboard still needs `auth`, and `/mcp` checks the same token or `authorize` as every other route.
 - **Browsers can't use it.** A request with an `Origin` header from another site gets a 403, which also stops DNS rebinding.
 - **Traces are capped.** `get_trace` cuts a long trace to about 50 KB, shortens long strings, and says what it left out.
 - **Without history it reads memory.** With `historyDays: 0` the tools read the last 200 requests, as the Requests tab does for Live.
 
-Limits, honestly. What the agent reads goes to its model provider: request paths, error messages, stacks, SQL text and log lines, which can include user input. Turn `mcp` on only where you are willing to send that. `list_errors` covers what the dashboard has seen since the process started, and 4xx responses are in `list_requests`, not in `list_errors`. There are no tools for schedules or workflows yet, no stdio bridge for agents that can't speak HTTP, and no OAuth: the token is the only way in. See [Coding agents (MCP)](/docs/brick-cli/dev-and-start#coding-agents-mcp).
+Limits, honestly. A write tool can be reached by an agent that read an injected instruction in a log line. Agents are told the tool is destructive, so they ask first, but only a person's approval stops a bad call: keep write tools narrow. What the agent reads goes to its model provider: request paths, error messages, stacks, SQL text and log lines, which can include user input. Turn `mcp` on only where you are willing to send that. `list_errors` covers what the dashboard has seen since the process started, and 4xx responses are in `list_requests`, not in `list_errors`. There are no tools for schedules or workflows yet, no stdio bridge for agents that can't speak HTTP, and no OAuth: the token is the only way in. See [Coding agents (MCP)](/docs/brick-cli/dev-and-start#coding-agents-mcp).
 
 ## Upgrade checklist
 
