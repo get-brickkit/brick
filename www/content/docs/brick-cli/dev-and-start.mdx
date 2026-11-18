@@ -83,6 +83,48 @@ brick dev src/server.ts --no-dashboard          # API only
 
 The Overview tab draws the app as a graph of clients, services, and databases. Each service shows its actions and tools, each database its name, engine, and tables, and the calls, durations, and health fill in from recent requests. Below it are each HTTP route with its action and recent request and failure counts, and the services with their databases and resources. SQL statements appear as child spans under the action that ran them, with the statement text on hover. Spans are colored by type: request, action, service call, and SQL.
 
+### Coding agents (MCP)
+
+`brick dev` also serves `/mcp` on the dashboard's port, so a coding agent can read what you see in the dashboard while it debugs: the requests, the trace of one request with its log lines, the errors, and how the app is built. `brick dev` prints the address on start:
+
+```
+🤖 Agent MCP:           http://127.0.0.1:9400/mcp (claude mcp add --transport http brick <url>)
+```
+
+The Vite plugin's dashboard serves it too. Connect an agent with the HTTP transport. Use the dashboard's port if you changed it with `--dashboard-port`.
+
+```bash
+# Claude Code
+claude mcp add --transport http brick http://127.0.0.1:9400/mcp
+```
+
+```json
+// Cursor: .cursor/mcp.json
+{ "mcpServers": { "brick": { "url": "http://127.0.0.1:9400/mcp" } } }
+```
+
+```toml
+# Codex: ~/.codex/config.toml
+[mcp_servers.brick]
+url = "http://127.0.0.1:9400/mcp"
+```
+
+The agent gets five tools. Each one only reads:
+
+| Tool            | What it returns                                                                                                                                                                                              |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `summary`       | Requests, client and server errors, error rate, median and p95 duration, and the slowest endpoints for a window. Default: the last hour.                                                                     |
+| `list_requests` | Requests as rows, with the Requests tab's filters: `outcome` (ok, client, server), `endpoint`, `method`, `service`, `query`, `min_ms`, `sort`, `from`, `to`, `limit` (default 20, at most 100) and `offset`. |
+| `get_trace`     | One request by trace id, as a tree of spans.                                                                                                                                                                 |
+| `list_errors`   | Recent server errors and crashes, newest first, with the message, route, service, action, stack and trace id.                                                                                                |
+| `app_overview`  | The app's architecture: services, actions and their routes, tools, sockets, events, listeners, schedules and workflows, and plugins.                                                                         |
+
+`from` and `to` take an ISO 8601 time, epoch milliseconds, or a time ago such as `"30m"`, `"2h"` or `"7d"`. Without request history (`--history-days 0`), the tools read the last 200 requests in memory, as the Requests tab does for Live.
+
+A trace holds each span's name, when it started and how long it took (in milliseconds from the start of the request), its status and attributes, such as SQL statement text, and its events. A log line written with `ctx.logger` or `console` during the request is an event named `log` with a level and a message, and an error comes with its type, message and stack. A trace is cut to about 50 KB: long strings are shortened and the spans, events and attributes beyond a limit are left out. The answer says what was cut.
+
+**It is read-only for everyone.** There are no tools that change anything, not even for a signed-in user: log lines carry what your users typed, and an agent that reads them must not be able to act on them. It passes the same checks as the rest of the dashboard (local `Host`, the dashboard's `auth`), and a request that carries an `Origin` header from another site is refused, so a web page cannot reach it. What the agent reads goes to its model provider: paths, error messages, stacks, SQL text and log lines. That is your own machine's data under `brick dev`, but it still leaves the machine.
+
 ### API Reference
 
 The APIs tab renders the app's OpenAPI documents with [Fumadocs OpenAPI](https://www.fumadocs.dev/docs/integrations/openapi), inside the dashboard and in its colors, with no separate page to serve. A sidebar lists each document's operations by tag, with a filter. The open operation shows its parameters, responses, and example requests, which default to JavaScript `fetch`. Try in Playground sends the call to the app, so a call made there shows up in the Requests tab, and under the response the dashboard shows the app's trace of that call (when the app has `telemetry` on): the error, the stack trace if the app threw one, and the spans. The dashboard forwards those calls itself, because the app is a different origin, and it forwards only to the app it is showing.
@@ -267,7 +309,7 @@ authorize: async (request) => {
 
 `GET /_health` on the dashboard's port needs no sign-in, so an uptime monitor can use it: it answers 200 `{"status":"ok","app":"up"}` while the app answers its own `/_health`, and 503 when it does not. It says nothing else.
 
-**What it shows, and what it does not.** Requests, spans, errors, logs, and the shape of the service, from the time the process started. Restart, the APIs and Docs tabs, the API proxy, and OpenAPI documents are not served at all, so a signed-in viewer can look but not change or call anything. The Schedules and Workflows tabs are off too, unless you [turn them on](#schedules-and-workflows-in-production), which lets the users that `authorize` returns as `{ user }` make changes. Responses carry `Cache-Control: no-store`, a strict Content-Security-Policy, and `X-Frame-Options: DENY`. Serve it over HTTPS (terminate it at your proxy): a token sent over plain HTTP can be read on the way. There is no limit on failed sign-ins, so use long random tokens.
+**What it shows, and what it does not.** Requests, spans, errors, logs, and the shape of the service, from the time the process started. Restart, the APIs and Docs tabs, the API proxy, and OpenAPI documents are not served at all, so a signed-in viewer can look but not change or call anything. The Schedules and Workflows tabs are off too, unless you [turn them on](#schedules-and-workflows-in-production), which lets the users that `authorize` returns as `{ user }` make changes. The `/mcp` endpoint for coding agents is off unless you [turn it on](#coding-agents-mcp-in-production); it only reads. Responses carry `Cache-Control: no-store`, a strict Content-Security-Policy, and `X-Frame-Options: DENY`. Serve it over HTTPS (terminate it at your proxy): a token sent over plain HTTP can be read on the way. There is no limit on failed sign-ins, so use long random tokens.
 
 **Logs go to the dashboard, not the console.** While the dashboard is on, `ctx.logger` and `console.log`, `info`, `warn`, `error`, and `debug` lines written during a request are kept for the dashboard and are not printed, so they stay out of the container's logs. Lines outside a request (startup, shutdown) and crashes still print. See [Logs](#logs).
 
@@ -302,6 +344,41 @@ Who may do what:
 - **Change** (run a schedule; cancel, replay or wake a run; resume a hook): only a signed-in user, one that `authorize` returned as `{ user }`. A token, an `authorize` that returns `true`, and a loopback dashboard with no `auth` can look and no more: a change is answered 403, with a message that says why. The request must also come from the dashboard's own page, so a page on another site cannot make a change for someone who is signed in. So `authorize` decides who may change things: return `{ user }` for those people, and `true` for the ones who should only look.
 
 The inspector's UI ships inside `@brickkit/cli`, the package a built server already loads the dashboard from, so there is nothing else to install. The app serves the inspector and the schedules on a loopback port with a random token that only the dashboard holds, and the dashboard passes requests on, so nothing else can reach them. The Workflows tab is the one page the dashboard frames: its responses allow framing by the dashboard itself, and WebAssembly (which decodes payloads a world compressed). Every other response keeps `X-Frame-Options: DENY`.
+
+#### Coding agents (MCP) in production
+
+The dashboard can also serve `/mcp` for coding agents, as `brick dev` does (see [Coding agents (MCP)](#coding-agents-mcp)). It is off in production. Turn it on with `mcp`:
+
+```ts
+dashboard: {
+  host: "0.0.0.0",
+  mcp: true,
+  auth: { token: process.env.DASHBOARD_TOKEN },
+},
+```
+
+Nothing about access changes: `brick start` still refuses a dashboard on an address others can reach without `auth`, and the endpoint needs the same token or `authorize` as every other route. An agent sends the token as a Bearer header:
+
+```bash
+claude mcp add --transport http brick-prod https://dashboard.example.com/mcp \
+  --header "Authorization: Bearer $DASHBOARD_TOKEN"
+```
+
+```json
+// Cursor: .cursor/mcp.json
+{
+  "mcpServers": {
+    "brick-prod": {
+      "url": "https://dashboard.example.com/mcp",
+      "headers": { "Authorization": "Bearer ${env:DASHBOARD_TOKEN}" }
+    }
+  }
+}
+```
+
+The tools are the same five, and they only read, whoever the caller is, including a user that `authorize` returned as `{ user }`. They read what the dashboard keeps: the requests since the process started, or `historyDays` of them on disk.
+
+**Trace data goes to the agent's model provider.** A trace holds request paths, error messages and stacks, SQL statement text and log lines, which can include what your users typed or sent. Turn `mcp` on only for a dashboard whose data you are willing to send there, and give agents a token of their own, so you can rotate it without signing anyone out.
 
 ## Port Resolution and Validation
 
