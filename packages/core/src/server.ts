@@ -331,12 +331,6 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   // Built from `definition`, below.
   builtIn("/_brick/services", (context: any) => architecture(context));
 
-  // The tools marked `dashboard: true`, for the dashboard's `/mcp`. Only a
-  // request the dashboard's MCP signed for this route gets an answer, and one
-  // the `/app` proxy signed does not. A tool that is not `readOnlyHint: true`
-  // can change data: it is listed and run only when the signature says the
-  // caller may write. Each call runs as the tool says, with the signed identity
-  // as `ctx.dashboard`.
   const dashboardTools = services
     .flatMap((service) => service.listTools())
     .filter((tool) => tool.config.dashboard === true);

@@ -28,7 +28,6 @@ function post(
   });
 }
 
-/** Call a tool and read its answer: the JSON it printed, or the error text. */
 async function call(
   base: string,
   name: string,
@@ -55,7 +54,6 @@ const root = (method: string, route: string) => ({
   "url.path": route.replace(":id", "7"),
 });
 
-/** A finished request: its spans start and end in order, the last one the root. */
 function request(
   traceId: string,
   startMs: number,
@@ -245,15 +243,23 @@ describe("the dashboard's MCP endpoint", () => {
         "list_errors",
         "app_overview",
       ]);
-      // The names an app may not take for its own tool: core refuses them at startup.
-      expect(result.tools.map((tool: { name: string }) => tool.name)).toEqual([
-        ...DASHBOARD_MCP_TOOLS,
-      ]);
       for (const tool of result.tools) {
         expect(tool.annotations).toEqual({ readOnlyHint: true });
         expect(tool.description.length).toBeGreaterThan(40);
         expect(tool.inputSchema.type).toBe("object");
       }
+    } finally {
+      stop();
+    }
+  });
+
+  it("serves exactly the names core reserves", async () => {
+    const { base, stop } = await dev();
+    try {
+      const { result } = await (await post(base, rpc("tools/list"))).json();
+      expect(result.tools.map((tool: { name: string }) => tool.name)).toEqual([
+        ...DASHBOARD_MCP_TOOLS,
+      ]);
     } finally {
       stop();
     }
@@ -267,7 +273,6 @@ describe("the dashboard's MCP endpoint", () => {
       store,
       mode: "production",
       mcp: true,
-      // A signed-in user, the one caller the dashboard lets do more elsewhere.
       auth: {
         authorize: () => {
           identityCalls++;
@@ -288,7 +293,6 @@ describe("the dashboard's MCP endpoint", () => {
         ).json();
         expect(answer.error.code).toBe(-32602);
       }
-      // `Object.prototype` names are not tools either.
       const inherited = await (
         await post(base, rpc("tools/call", { name: "constructor" }))
       ).json();
@@ -328,7 +332,6 @@ describe("the dashboard's MCP endpoint", () => {
       });
       expect(data.slowestEndpoints[0].avgMs).toBeGreaterThan(800);
 
-      // Nothing happened in a window that ended an hour and a half ago.
       const empty = (await call(base, "summary", {
         from: "3h",
         to: "90m",
@@ -407,7 +410,6 @@ describe("the dashboard's MCP endpoint", () => {
         expect(answer.data.total).toBe(4);
         expect(answer.data.window.from).toBe(new Date(hourAgo).toISOString());
       }
-      // A window that starts after the requests held none.
       const later = (await call(base, "summary", {
         from: String(Date.now() + 60_000),
         to: String(Date.now() + 120_000),
@@ -515,7 +517,6 @@ describe("the dashboard's MCP endpoint", () => {
       expect(answer.data.truncated.spans).toBeGreaterThan(0);
       expect(answer.data.truncated.events).toBeGreaterThan(0);
       expect(answer.data.truncated.text).toBeGreaterThan(0);
-      // What stays is still a valid tree.
       expect(answer.data.spans[0].name).toBe("GET /api/pages/:id");
     } finally {
       stop();
@@ -524,12 +525,12 @@ describe("the dashboard's MCP endpoint", () => {
 
   it("leaves the spans out when even the harshest cut is over the cap", async () => {
     const { base, store, stop } = await dev({ seeded: false });
+    const unshortenable = "k".repeat(MAX_TRACE_CHARS);
     try {
       store.ingest(
         request("huge-key-1", Date.now(), {
           spans: 50,
-          // Attribute keys are never shortened.
-          attributes: { ["k".repeat(MAX_TRACE_CHARS)]: "v" },
+          attributes: { [unshortenable]: "v" },
         }).flat(),
         1,
       );
@@ -552,7 +553,6 @@ describe("the dashboard's MCP endpoint", () => {
       expect(answer).toMatchObject({ isError: true });
       expect((answer as any).text).toContain("No request with trace id nope");
       expect(await call(base, "get_trace")).toMatchObject({ isError: true });
-      // The server is still up.
       expect((await call(base, "summary")).isError).toBe(false);
     } finally {
       stop();
@@ -563,7 +563,6 @@ describe("the dashboard's MCP endpoint", () => {
     const { base, stop } = await dev();
     try {
       const { data } = (await call(base, "list_errors")) as any;
-      // The 404 is a client error: list_requests has it.
       expect(data.total).toBe(1);
       expect(data.errors[0]).toMatchObject({
         code: "INTERNAL",
@@ -657,7 +656,6 @@ describe("the dashboard's MCP endpoint", () => {
           .outcome,
       ).toBe("server");
 
-      // Not finished, so not on disk yet.
       store.ingest(
         [
           {
@@ -728,7 +726,6 @@ describe("the MCP endpoint's access", () => {
       expect(allowed.status).toBe(200);
       expect((await allowed.json()).result.tools).toHaveLength(5);
       expect(allowed.headers.get("cache-control")).toBe("no-store");
-      // The agent sends the Bearer header on a tool call too.
       const summary = await call(base, "summary", {}, bearer);
       expect(summary).toMatchObject({ isError: false });
     } finally {
@@ -757,7 +754,6 @@ describe("the MCP endpoint's access", () => {
           "sec-fetch-site": "cross-site",
         });
         expect(cross.status).toBe(403);
-        // The dashboard's own origin, and a client that sends none, are fine.
         const own = await post(target, rpc("tools/list"), {
           ...headers,
           origin: target,

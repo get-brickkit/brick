@@ -81,7 +81,7 @@ export function createMcpRegistry(options: McpRegistryOptions): McpRegistry {
 }
 
 // MCP requires an object outputSchema, so other outputs travel as `{ result }`.
-const WRAP_RESULT = "x-brick-wrap-result";
+export const WRAP_RESULT = "x-brick-wrap-result";
 function outputSchema(schema: { type?: unknown }) {
   return schema.type === "object"
     ? schema

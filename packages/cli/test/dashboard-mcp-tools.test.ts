@@ -17,7 +17,6 @@ const agentKey = "agent-api-key-0123456789";
 const rpc = (method: string, params?: unknown, id = 1) =>
   JSON.stringify({ jsonrpc: "2.0", id, method, params });
 
-/** What the tools saw, to check who they thought was calling. */
 const refunds: { orderId: string; by?: string }[] = [];
 
 const support = definePlugin({
@@ -60,7 +59,6 @@ function appWithTools() {
     name: "close_account",
     description: "Close an account.",
     dashboard: true,
-    // The author's own value is kept.
     annotations: { destructiveHint: false },
     input: t.Object({ id: t.String() }),
     execute: () => "closed",
@@ -73,7 +71,6 @@ function appWithTools() {
     authorize: ({ ctx }) => ctx.dashboard?.user?.id === "admin",
     execute: () => "refunded",
   });
-  // Not marked: for an agent that talks to the app itself, not the dashboard.
   service.tool({
     name: "not_for_the_dashboard",
     input: t.Object({}),
@@ -186,11 +183,9 @@ describe("the app's tools on the dashboard's /mcp, in brick dev", () => {
     });
     expect(tool("find_order").inputSchema.properties.id).toBeDefined();
     expect(tool("find_order").outputSchema.properties.totalCents).toBeDefined();
-    // A tool that is not marked read-only advertises destructiveHint ...
     expect(tool("create_refund").annotations).toEqual({
       destructiveHint: true,
     });
-    // ... unless its author said otherwise.
     expect(tool("close_account").annotations).toEqual({
       destructiveHint: false,
     });
@@ -206,7 +201,6 @@ describe("the app's tools on the dashboard's /mcp, in brick dev", () => {
     });
     const write = await call(base, "create_refund", { orderId: "o1" });
     expect(write.result.structuredContent).toEqual({ refunded: "o1" });
-    // `/app` gives no user in dev, so neither does this.
     expect(refunds).toEqual([{ orderId: "o1", by: undefined }]);
     expect(
       (await call(base, "support_note", { orderId: "o1" })).result.content[0]
@@ -273,7 +267,6 @@ describe("the app's tools on /mcp, in production", () => {
     const done = await call(base, "create_refund", { orderId: "o9" }, headers);
     expect(done.result.structuredContent).toEqual({ refunded: "o9" });
     expect(refunds).toEqual([{ orderId: "o9", by: "agent-1" }]);
-    // The tool's own authorize still decides: this user is not "admin".
     const denied = await call(base, "admin_refund", { orderId: "o9" }, headers);
     expect(denied.result.isError).toBe(true);
   });
@@ -352,7 +345,6 @@ describe("the /app proxy and the app's MCP route", () => {
 
   it("does not let a /app-signed request run a write tool at the app", async () => {
     const { appUrl } = await setup({ auth: { token } });
-    // What /app signs for a token caller: an identity with no user, no scope.
     const replay = await fetch(`${appUrl}/_brick/dashboard/mcp`, {
       method: "POST",
       headers: {

@@ -4,6 +4,7 @@ import {
   DASHBOARD_MCP_ROUTE,
   signDashboardMcp,
   UnknownToolError,
+  WRAP_RESULT,
   type DashboardIdentity,
   type DashboardMcpCaller,
   type McpRegistry,
@@ -38,11 +39,9 @@ import type { DevHistory } from "./dev-history";
 import type { DevTelemetryStore } from "./dev-telemetry-store";
 
 /*
- * The dashboard's data for a coding agent, over MCP at `/mcp`. The five tools
- * here only read, for every caller, a signed-in user included: log lines carry
- * what end users typed, and an agent that reads them must not be able to act on
- * them. The app's own tools marked `dashboard: true` come beside them (below):
- * those that can change data go only to a signed-in user, or in `brick dev`.
+ * The five built-in tools only read, for every caller, a signed-in user
+ * included: log lines carry what end users typed, and an agent that reads them
+ * must not be able to act on them.
  */
 
 const MINUTE = 60_000;
@@ -50,10 +49,10 @@ const UNITS = { s: 1000, m: MINUTE, h: 60 * MINUTE, d: 24 * 60 * MINUTE };
 const DEFAULT_LIST_LIMIT = 20;
 const MAX_LIST_LIMIT = 100;
 const SLOWEST_ENDPOINTS = 5;
-/** A `get_trace` answer is cut to about this many characters of JSON. */
+const EPOCH_MS_MIN_DIGITS = 10;
+const EPOCH_MS = new RegExp(`^\\d{${EPOCH_MS_MIN_DIGITS},}$`);
 export const MAX_TRACE_CHARS = 50_000;
-/** From mildest to harshest: the first that fits the cap is the answer. */
-const TRACE_LEVELS = [
+const TRACE_LEVELS_MILDEST_FIRST = [
   { text: 2000, attributes: 40, events: 50, spans: 300 },
   { text: 500, attributes: 20, events: 20, spans: 150 },
   { text: 200, attributes: 10, events: 5, spans: 60 },
@@ -62,7 +61,6 @@ const TRACE_LEVELS = [
 
 type Args = Record<string, unknown>;
 
-/** Where the queries read: stored history when there is some, else what is in memory. */
 interface Source {
   name: "history" | "memory";
   summary(query: HistoryQuery): HistorySummary;
@@ -72,7 +70,6 @@ interface Source {
   trace(traceId: string): TraceSummary | undefined;
 }
 
-/** The same rules the Requests view runs over its live requests. */
 function memorySource(store: DevTelemetryStore): Source {
   const rows = (query: HistoryQuery) =>
     store
@@ -99,27 +96,22 @@ function memorySource(store: DevTelemetryStore): Source {
 
 function sourceOf(store: DevTelemetryStore, history?: DevHistory): Source {
   if (!history) return memorySource(store);
-  const memory = memorySource(store);
+  const unfinished = memorySource(store).trace;
   return {
     name: "history",
     summary: (query) => history.summary(query),
     slowestEndpoints: (query, limit) => history.slowestEndpoints(query, limit),
     traces: (query) => history.traces(query),
     facets: (query) => history.facets(query),
-    // A request still running is not on disk yet.
-    trace: (traceId) => history.trace(traceId) ?? memory.trace(traceId),
+    trace: (traceId) => history.trace(traceId) ?? unfinished(traceId),
   };
 }
-
-// ---------------------------------------------------------------------------
-// Arguments
 
 function time(value: unknown, name: string, now: number): number | undefined {
   if (value === undefined) return undefined;
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
-    // Ten digits or more is epoch milliseconds; a shorter string, such as "2026", is a date.
-    if (/^\d{10,}$/.test(value.trim())) return Number(value.trim());
+    if (EPOCH_MS.test(value.trim())) return Number(value.trim());
     const ago = /^(\d+)\s*([smhd])$/.exec(value.trim());
     if (ago) return now - Number(ago[1]) * UNITS[ago[2] as keyof typeof UNITS];
     const parsed = Date.parse(value);
@@ -159,9 +151,6 @@ function text(args: Args, name: string): string | undefined {
   return value.trim() || undefined;
 }
 
-// ---------------------------------------------------------------------------
-// Output
-
 const iso = (ms: number) => new Date(ms).toISOString();
 const round = (ms: number | undefined) =>
   ms === undefined ? undefined : Math.round(ms * 10) / 10;
@@ -169,8 +158,7 @@ const cut = (value: string | undefined, limit: number) =>
   value !== undefined && value.length > limit
     ? `${value.slice(0, limit)}… [${value.length - limit} more characters]`
     : value;
-/** Compact JSON: an agent pays for every space. */
-const out = (value: unknown) => JSON.stringify(value);
+const compactJson = (value: unknown) => JSON.stringify(value);
 
 function row(trace: HistoryTrace) {
   return {
@@ -195,12 +183,11 @@ interface Cuts {
   spans: number;
 }
 
-/** The trace as a tree of spans, within `limits`; `cuts` counts what was left out. */
 function traceTree(
   trace: TraceSummary,
-  limits: (typeof TRACE_LEVELS)[number],
-  cuts: Cuts,
+  limits: (typeof TRACE_LEVELS_MILDEST_FIRST)[number],
 ) {
+  const cuts: Cuts = { text: 0, attributes: 0, events: 0, spans: 0 };
   const shorten = (value: string | undefined) => {
     const short = cut(value, limits.text);
     if (short !== value) cuts.text += 1;
@@ -249,7 +236,6 @@ function traceTree(
         stack: shorten(stringAttribute(exception, ATTR.exceptionStack)),
       },
       attributes: attributes(span.attributes),
-      // A log line is an event named `log`.
       events: shown.slice(0, limits.events).map((event) =>
         event.name === SPAN.logEvent
           ? {
@@ -269,17 +255,32 @@ function traceTree(
       children: [] as unknown[],
     };
     nodes.set(span.spanId, node);
-    // A span whose parent was cut, or never reported, goes at the top.
     const parent = span.parentSpanId && nodes.get(span.parentSpanId);
     (parent ? parent.children : roots).push(node);
   }
-  return roots;
+  return { roots, cuts };
+}
+
+function withoutSpans(answer: string, trace: TraceSummary): string {
+  const {
+    spans: _spans,
+    truncated: _truncated,
+    ...request
+  } = JSON.parse(answer) as Record<string, unknown>;
+  return compactJson({
+    ...request,
+    message: cut(trace.message, 500),
+    spans: [],
+    truncated: {
+      note: `This trace is too large to send even cut down, so its spans are left out. It is about ${Math.round(answer.length / 1000)} KB; open it in the dashboard instead.`,
+    },
+  });
 }
 
 function traceAnswer(trace: TraceSummary): string {
   let answer = "";
-  for (const limits of TRACE_LEVELS) {
-    const cuts: Cuts = { text: 0, attributes: 0, events: 0, spans: 0 };
+  for (const limits of TRACE_LEVELS_MILDEST_FIRST) {
+    const { roots, cuts } = traceTree(trace, limits);
     const row = toRow(trace);
     const cutAny = () => Object.values(cuts).some((count) => count > 0);
     const body = {
@@ -294,8 +295,7 @@ function traceAnswer(trace: TraceSummary): string {
       service: trace.service,
       action: trace.action,
       message: cut(trace.message, limits.text),
-      // `startMs` and `atMs` below count from the start of the request.
-      spans: traceTree(trace, limits, cuts),
+      spans: roots,
       truncated: undefined as unknown,
     };
     if (trace.truncated || cutAny())
@@ -303,28 +303,11 @@ function traceAnswer(trace: TraceSummary): string {
         note: `Cut to fit about ${MAX_TRACE_CHARS / 1000} KB. Left out: ${cuts.spans} spans, ${cuts.events} events, ${cuts.attributes} attributes; shortened ${cuts.text} long strings.${trace.truncated ? " The app itself also stopped recording spans of this request, which was very large." : ""}`,
         ...cuts,
       };
-    answer = out(body);
+    answer = compactJson(body);
     if (answer.length <= MAX_TRACE_CHARS) return answer;
   }
-  // Even the harshest cut is too big (very long names or keys): send the
-  // request without its spans rather than break the cap.
-  const {
-    spans: _spans,
-    truncated: _truncated,
-    ...request
-  } = JSON.parse(answer) as Record<string, unknown>;
-  return out({
-    ...request,
-    message: cut(trace.message, 500),
-    spans: [],
-    truncated: {
-      note: `This trace is too large to send even cut down, so its spans are left out. It is about ${Math.round(answer.length / 1000)} KB; open it in the dashboard instead.`,
-    },
-  });
+  return withoutSpans(answer, trace);
 }
-
-// ---------------------------------------------------------------------------
-// The tools
 
 const TIME_HELP =
   'An ISO 8601 time, epoch milliseconds, or a time ago such as "30m", "2h" or "7d".';
@@ -466,7 +449,6 @@ const TOOLS: McpToolDefinition[] = [
   },
 ];
 
-/** The tools the dashboard offers a coding agent. Every one only reads. */
 export function createDashboardMcpRegistry(options: {
   store: DevTelemetryStore;
   history?: DevHistory;
@@ -480,7 +462,7 @@ export function createDashboardMcpRegistry(options: {
       const query: HistoryQuery = { from, to };
       const total = source.summary(query);
       const slowest = source.slowestEndpoints(query, SLOWEST_ENDPOINTS);
-      return out({
+      return compactJson({
         window: { from: iso(from), to: iso(to) },
         source: source.name,
         requests: total.total,
@@ -532,7 +514,7 @@ export function createDashboardMcpRegistry(options: {
         limit,
         offset,
       });
-      return out({
+      return compactJson({
         window: { from: iso(from), to: iso(to) },
         source: source.name,
         total: found.total,
@@ -562,7 +544,6 @@ export function createDashboardMcpRegistry(options: {
         MAX_LIST_LIMIT,
         DEFAULT_LIST_LIMIT,
       )!;
-      // A client error (4xx) is not a failure here; list_requests has them.
       const failures = store
         .snapshot()
         .failures.filter(
@@ -570,7 +551,7 @@ export function createDashboardMcpRegistry(options: {
             (since === undefined || failure.at >= since) &&
             (failure.status ?? SERVER_ERROR) >= SERVER_ERROR,
         );
-      return out({
+      return compactJson({
         total: failures.length,
         errors: failures.slice(0, limit).map((failure) => ({
           time: iso(failure.at),
@@ -589,7 +570,7 @@ export function createDashboardMcpRegistry(options: {
     app_overview() {
       const { architecture } = store.snapshot();
       if (!architecture)
-        return out({
+        return compactJson({
           note: "The app has not reported its architecture yet. It may still be starting.",
         });
       const { schema } = architecture;
@@ -598,7 +579,7 @@ export function createDashboardMcpRegistry(options: {
         ...(events?.listeners ?? []).filter((item) => item.kind === "workflow"),
         ...(events?.schedules ?? []).filter((item) => item.kind === "workflow"),
       ].map((item) => item.name);
-      return out({
+      return compactJson({
         mode: options.mode,
         historyDays: history?.days ?? 0,
         version: schema.version,
@@ -637,29 +618,20 @@ export function createDashboardMcpRegistry(options: {
   };
 }
 
-/** Core's mark on an output schema that wraps a value that is not an object. */
-const WRAP_RESULT = "x-brick-wrap-result";
 const LIST_TIMEOUT_MS = 5000;
 const CALL_TIMEOUT_MS = 30_000;
 const BUILT_IN = new Set(TOOLS.map((tool) => tool.name));
 
-/** A tool the app offers is a write tool unless its author says it only reads (it then advertises `destructiveHint`). */
+/** MCP defaults `readOnlyHint` to false, so a tool is a write tool unless it says otherwise. */
 const writes = (tool: McpToolDefinition) =>
   tool.annotations?.readOnlyHint !== true;
 
 interface AppTools {
-  /** The app's `dashboard: true` tools, when it answered. */
   tools: McpToolDefinition[];
-  /** Why it did not. */
   failed?: string;
 }
 
-/**
- * The app's MCP for the dashboard, over its HTTP, signed as the dashboard's
- * `/app` is, but with a scope of its own that `/app` never signs, and the
- * claim that the caller may change data or not. The tool runs with
- * `ctx.dashboard` set as for an extension page, and its own `authorize`, rate limit, sensitive-field removal and audit apply.
- */
+/** Signed with the MCP scope, which `/app` never signs: neither signature works on the other's route. */
 async function askApp(
   appUrl: string,
   caller: DashboardMcpCaller,
@@ -691,7 +663,6 @@ async function askApp(
   };
 }
 
-/** The built-in tools, and the app's own beside them, for one caller. */
 function withAppTools(
   base: McpRegistry,
   app: AppTools | undefined,
@@ -706,7 +677,6 @@ function withAppTools(
     listTools: () => [
       ...base.listTools(),
       ...own
-        // A tool that can change data is offered only to one who may change it.
         .filter((tool) => !writes(tool) || caller.mayChange)
         .map((tool) =>
           writes(tool)
@@ -727,10 +697,7 @@ function withAppTools(
           `The app did not answer (${app.failed}), so its tools are unavailable. It may be restarting.`,
         );
       if (!caller.appUrl) throw new UnknownToolError(name);
-      // Not in the list does not mean unknown: the app leaves a write tool out
-      // for a caller who may not write, and says why when it is called. The app
-      // decides; it is told the caller's claim, signed.
-      const tool = own.find((item) => item.name === name);
+      const listed = own.find((item) => item.name === name);
       const answer = await askApp(
         caller.appUrl,
         { ...caller.identity, write: caller.mayChange },
@@ -744,7 +711,7 @@ function withAppTools(
         throw new Error(answer.error?.message ?? text);
       const structured = answer.result?.structuredContent;
       if (structured === undefined) return text ?? "";
-      return (tool?.outputSchema as Record<string, unknown> | undefined)?.[
+      return (listed?.outputSchema as Record<string, unknown> | undefined)?.[
         WRAP_RESULT
       ]
         ? (structured as { result: unknown }).result
@@ -753,22 +720,14 @@ function withAppTools(
   };
 }
 
-/**
- * The MCP endpoint's handler: the dashboard's five tools, and the app's tools
- * marked `dashboard: true`. Those that are not `readOnlyHint: true` can change
- * data, and go only to a caller `mayChange` allows.
- */
 export function createDashboardMcp(
   options: Parameters<typeof createDashboardMcpRegistry>[0] & {
-    /** Where the app listens, when it does. */
     appUrl: () => string | undefined;
-    /** Whether this caller may use tools that change data. */
     mayChange: (identity: DashboardIdentity) => boolean;
   },
 ): (request: Request, identity: DashboardIdentity) => Promise<Response> {
   const base = createDashboardMcpRegistry(options);
   return async (request, identity) => {
-    // Only a list, or a call to a tool that is not the dashboard's own, asks the app.
     const rpc = (await request
       .clone()
       .json()

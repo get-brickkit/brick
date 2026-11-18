@@ -24,6 +24,8 @@ export function isLoopbackHost(host: string): boolean {
   );
 }
 
+const MAX_DECODE_ROUNDS = 4;
+
 /**
  * Whether a path, as the app will route it, is under `/_brick/`: Brick's own
  * routes, such as the one that answers the dashboard's MCP, which the `/app`
@@ -42,8 +44,7 @@ export function isInternalAppPath(path: string): boolean {
       return true;
     }
     if (decoded === current) break;
-    // Still changing after this many rounds: no honest path does that.
-    if (round === 4) return true;
+    if (round === MAX_DECODE_ROUNDS) return true;
     current = decoded;
   }
   const resolved: string[] = [];

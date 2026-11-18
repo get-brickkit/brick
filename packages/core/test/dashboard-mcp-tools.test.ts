@@ -25,7 +25,6 @@ function setup() {
     output: t.Object({ id: t.String() }),
     execute: ({ input }) => ({ id: input.id }),
   });
-  // Not marked read-only, so it is a write tool.
   service.tool({
     name: "change",
     dashboard: true,
@@ -127,14 +126,12 @@ describe("the app's MCP for the dashboard", () => {
     ).json();
     expect(call.result.isError).toBe(true);
     expect(call.result.content[0].text).toContain("can change data");
-    // A user in the claim is not enough: `write` decides.
     const withUser = signDashboardMcp({ user: { id: "u1" }, write: false });
     const again = await (
       await rpc(app, "tools/call", { name: "change", arguments: {} }, withUser)
     ).json();
     expect(again.result.isError).toBe(true);
     expect(changes).toEqual([]);
-    // A read tool still runs.
     const read = await (
       await rpc(
         app,
@@ -160,7 +157,6 @@ describe("the app's MCP for the dashboard", () => {
         ).json()
       ).result.content[0].text;
     expect(await call(writer("u1"))).toBe("u1");
-    // On a developer's machine the claim allows writes and there is no user.
     expect(await call(signDashboardMcp({ write: true }))).toBe("nobody");
     expect(changes).toEqual(["u1", undefined]);
   });
@@ -171,7 +167,6 @@ describe("the app's MCP for the dashboard", () => {
     expect(() => brick({ services: [service] })).toThrow(
       /'summary' is marked dashboard: true/,
     );
-    // Without the mark it is an ordinary tool.
     const other = defineService("fine");
     other.tool({ name: "summary", execute: () => "x" });
     expect(() => brick({ services: [other] })).not.toThrow();

@@ -65,7 +65,6 @@ export function signDashboardIdentity(
   return sign({ user: identity.user }, now);
 }
 
-/** The claims of a request's signed header, when the signature and its time are good. */
 function verifiedClaims(
   request: Request | undefined,
 ): { user?: DashboardUser; scope?: unknown; write?: unknown } | undefined {
@@ -90,10 +89,7 @@ function verifiedClaims(
   }
 }
 
-/**
- * Who a request came from, through the dashboard's `/app/*` proxy. A signature
- * made for the MCP route carries a `scope`, and is not an identity here.
- */
+/** A signature made for the MCP route carries a `scope`, and is not an identity here. */
 export function dashboardIdentity(
   request: Request | undefined,
 ): DashboardIdentity | undefined {
@@ -119,7 +115,6 @@ export function signDashboardMcp(
   return sign({ user: caller.user, scope: "mcp", write: caller.write }, now);
 }
 
-/** The caller of a request signed with `signDashboardMcp`; undefined for any other. */
 export function dashboardMcpCaller(
   request: Request | undefined,
 ): DashboardMcpCaller | undefined {

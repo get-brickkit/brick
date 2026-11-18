@@ -257,7 +257,6 @@ export function percentile(sorted: number[], fraction: number): number {
   );
 }
 
-/** How one endpoint did over a window: for the slowest-endpoints list. */
 export interface EndpointStats {
   endpoint: string;
   requests: number;
@@ -266,7 +265,6 @@ export interface EndpointStats {
   maxMs: number;
 }
 
-/** The `limit` endpoints with the highest average duration; requests without a duration are not counted. */
 export function slowestEndpoints(
   rows: HistoryTrace[],
   limit: number,

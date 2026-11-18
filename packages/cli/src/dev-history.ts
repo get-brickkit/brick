@@ -505,7 +505,6 @@ export class DevHistory {
     };
   }
 
-  /** The endpoints with the highest average duration, in one grouped query. */
   slowestEndpoints(query: HistoryQuery, limit: number): EndpointStats[] {
     this.flush();
     const { sql, params } = filterSql(query);

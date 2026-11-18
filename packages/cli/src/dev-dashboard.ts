@@ -119,12 +119,6 @@ export interface DevDashboardOptions {
   /** Who may use the dashboard, checked before anything but `/_health`. */
   auth?: DashboardAuth;
   inspector?: boolean;
-  /**
-   * Serve `/mcp`: a coding agent's view of requests, traces, logs and errors
-   * (read-only), plus the app's `dashboard: true` tools, whose writes go only
-   * to a signed-in user, or anyone in `brick dev`. `brick dev` always serves
-   * it; production only when the app sets `dashboard.mcp`.
-   */
   mcp?: boolean;
   /** Whether the app answers; `/_health` reports it, for uptime monitors. */
   probe?: () => Promise<boolean>;
@@ -355,11 +349,6 @@ export function startDevDashboard(
     },
   };
 
-  /**
-   * Who may change something through the dashboard: in production only a
-   * signed-in user (`authorize` returned `{ user }`), as in the inspector; on
-   * a developer's own machine, anyone who reaches it.
-   */
   const mayChange = (identity: DashboardIdentity) =>
     !production || Boolean(identity.user);
 
@@ -375,7 +364,7 @@ export function startDevDashboard(
    * The MCP endpoint. Browsers have no use for it, so a request from another
    * origin is refused (`fromOwnPage` accepts an `Origin` that matches the
    * `Host`, so it does not stop DNS rebinding: the `allowedHosts` check in
-   * `respond` does, on loopback). Access was checked before, as for every route.
+   * `respond` does, on loopback).
    */
   async function mcpRoute(
     request: IncomingMessage,

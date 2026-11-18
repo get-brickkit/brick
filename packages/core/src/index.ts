@@ -281,7 +281,12 @@ export {
 export type { SecretSource, SecretOptions } from "./secrets";
 
 export { defineTool, isTool } from "./tool";
-export { createMcpRegistry, createMcpHandler, UnknownToolError } from "./mcp";
+export {
+  createMcpRegistry,
+  createMcpHandler,
+  UnknownToolError,
+  WRAP_RESULT,
+} from "./mcp";
 export type {
   McpToolDefinition,
   McpRegistry,

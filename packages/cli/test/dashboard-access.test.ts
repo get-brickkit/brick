@@ -267,7 +267,6 @@ describe("isInternalAppPath", () => {
       "/api\\..\\_brick/x",
       "/_brick",
       "/_brick/",
-      // Cannot be decoded, or decodes without end: refused.
       "/_brick%",
       "/%E0%A4%A/_brick",
       "/%25252525252F_brick",
