@@ -58,14 +58,19 @@ a browser reload shows the new UI without restarting `brick dev`.
 
 ## Design system
 
-Follows Efferd's Dashboard 9. Tokens live in `styles.css` for both themes.
+Follows the landing page's design system (brickkit.dev, `www/src/styles/app.css`).
+Token values live in `theme.css` for both themes; keep them in step with the
+site's `:root` and `.dark`.
 
-- **Look:** monochrome and dense. Color is kept for status: green for good
-  trends, red for failures and negative trends.
+- **Look:** warm paper and ink: `#f5f5f3` page, `#fafaf8` cards, `#eeedea` muted
+  surfaces, `#d9d9d3` borders (dark: `#161615`, `#1b1b19`, `#22221f`,
+  `#373730`). The terracotta brand color is `--ring`: focus rings, text
+  selection, and the current page's icon in the sidebar. Otherwise color is
+  kept for status: green for good trends, red for failures and negative trends.
 - **Type:** Geist and Geist Mono. 12px metadata, 14px body and navigation,
   24px metric values and page headings.
-- **Shape:** cards and tables are square with a 1px border and no shadow.
-  Controls use `--radius` (10px). Cards carry a plus mark on each corner.
+- **Shape:** cards and tables are square with a 1px border, on the card color,
+  and no shadow. Controls use `--radius` (6px), with the site's radius scale.
 - **Layout:** a 48px icon rail that opens to show labels (the top bar button
   or ⌘B/Ctrl+B; it overlays the page on narrow screens), a 56px top bar, 24px
   page padding, and 16px gaps between cards.
@@ -74,7 +79,7 @@ Follows Efferd's Dashboard 9. Tokens live in `styles.css` for both themes.
 - **Charts:** stacked rectangular blocks (`block-bars` in `styles.css`) over
   dashed gridlines, in grayscale with red for server errors.
 - **Span colors:** request blue, action violet, service call amber, SQL teal,
-  other gray (`--span-*` in `styles.css`), used by the waterfall, its legend,
+  other gray (`--span-*` in `theme.css`), used by the waterfall, its legend,
   and the service graph's edges. Red and green stay reserved for status.
 - **Service graph:** boxed nodes on a dotted canvas, left to right: clients,
   services, then databases. A node shows its name, what it holds (a service's

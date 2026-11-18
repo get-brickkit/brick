@@ -1,7 +1,7 @@
 /*
- * Brick dev dashboard. Tokens and components follow Efferd's Dashboard 9:
- * monochrome and dense, 1px borders, square cards with corner marks, an icon
- * rail, outline controls, block-style bar charts. Color is kept for status.
+ * Brick dev dashboard. Tokens and components follow the landing page's design
+ * system (www/src/styles/app.css): warm paper and ink, a terracotta focus ring,
+ * 1px borders, square cards, 6px controls. Dense, with color kept for status.
  */
 
 @import "tailwindcss";
@@ -45,9 +45,13 @@
   body {
     @apply bg-background font-sans text-sm text-foreground antialiased;
   }
+
+  ::selection {
+    background: color-mix(in oklch, var(--ring) 28%, transparent);
+  }
 }
 
-/* Block-style bars: a solid fill sliced into rows, as in Efferd's charts. */
+/* Block-style bars: a solid fill sliced into rows. */
 @utility block-bars {
   mask: repeating-linear-gradient(to top, #000 0 5px, transparent 5px 6px);
 }
