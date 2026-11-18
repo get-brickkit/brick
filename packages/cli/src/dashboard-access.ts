@@ -32,7 +32,7 @@ const MAX_DECODE_ROUNDS = 4;
  * proxy must never reach. It decodes percent-encoding until nothing changes
  * (`%2F`, `%5F`, `%252F`), reads `\` as `/`, drops empty and `.` segments,
  * resolves `..`, and compares without regard to case. A path it cannot decode
- * is refused too.
+ * is refused too. `/_brick/files`, local file storage's signed links, passes.
  */
 export function isInternalAppPath(path: string): boolean {
   let current = path;
@@ -53,6 +53,9 @@ export function isInternalAppPath(path: string): boolean {
     if (segment === "..") resolved.pop();
     else resolved.push(segment);
   }
+  // Local file storage's links are signed with their own token, so an
+  // extension may open them.
+  if (resolved.join("/") === "_brick/files") return false;
   return resolved[0]?.toLowerCase() === "_brick";
 }
 

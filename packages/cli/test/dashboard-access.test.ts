@@ -270,6 +270,8 @@ describe("isInternalAppPath", () => {
       "/_brick%",
       "/%E0%A4%A/_brick",
       "/%25252525252F_brick",
+      "/_brick/files/../dashboard/mcp",
+      "/_brick/files/x",
     ])
       expect([path, isInternalAppPath(path)]).toEqual([path, true]);
   });
@@ -286,6 +288,7 @@ describe("isInternalAppPath", () => {
       "/api/a%2Fb",
       "/api/../api/orders",
       "/admin/queues",
+      "/_brick/files",
     ])
       expect([path, isInternalAppPath(path)]).toEqual([path, false]);
   });
