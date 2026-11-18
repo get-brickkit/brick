@@ -356,6 +356,8 @@ export function startDevDashboard(
     store: options.store,
     history: options.history,
     mode: production ? "production" : "dev",
+    inspector: !production || Boolean(options.inspector),
+    docs: options.docs,
     appUrl: () => options.appUrl ?? options.store.apiSnapshot()?.appUrl,
     mayChange,
   });
