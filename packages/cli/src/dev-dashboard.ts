@@ -29,9 +29,11 @@ import {
   CSRF_HEADER,
   CSRF_VALUE,
   DOCS_PATHS,
+  INSPECTOR_READ_ONLY_HEADER,
   INSPECTOR_TOKEN_HEADER,
   matchRoute,
   ROUTES,
+  viewsWithout,
   type DashboardEvents,
   type DashboardSnapshot,
   type HistoryResponses,
@@ -75,6 +77,15 @@ const NOT_RETURNED = new Set([
   "set-cookie",
 ]);
 
+const PRODUCTION_POLICY =
+  "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'";
+
+// 'wasm-unsafe-eval': the inspector decodes zstd-compressed payloads with WebAssembly.
+const INSPECTOR_POLICY = `${PRODUCTION_POLICY.replace(
+  "script-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
+)}; frame-ancestors 'self'`;
+
 const PRODUCTION_HEADERS = {
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
@@ -83,8 +94,7 @@ const PRODUCTION_HEADERS = {
   "cross-origin-resource-policy": "same-origin",
   // Requests and logs are private: nothing caches them on the way.
   "cache-control": "no-store",
-  "content-security-policy":
-    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  "content-security-policy": `${PRODUCTION_POLICY}; frame-ancestors 'none'`,
 };
 
 /** How long `/_health` waits for the app before calling it down. */
@@ -98,13 +108,14 @@ export interface DevDashboardOptions {
    */
   host?: string;
   /**
-   * `"production"` is the read-only monitoring dashboard of `brick start`: it
+   * `"production"` is the monitoring dashboard of `brick start`: it
    * serves only the routes marked `production`, with security headers, and
    * tells its page to hide the tabs that need a developer's machine.
    */
   mode?: "dev" | "production";
   /** Who may use the dashboard, checked before anything but `/_health`. */
   auth?: DashboardAuth;
+  inspector?: boolean;
   /** Whether the app answers; `/_health` reports it, for uptime monitors. */
   probe?: () => Promise<boolean>;
   store: DevTelemetryStore;
@@ -227,8 +238,12 @@ export function startDevDashboard(
   }
 
   function servedInProduction(route: RouteName): boolean {
-    const served: boolean | "extension" = ROUTES[route].production;
-    return served === "extension" ? Boolean(extension?.active) : served;
+    const served: boolean | "extension" | "inspector" =
+      ROUTES[route].production;
+    if (served === "extension") return Boolean(extension?.active);
+    return served === "inspector"
+      ? Boolean(options.inspector && options.store.inspectorTarget())
+      : served;
   }
 
   /** 200 while the app answers its own health check, 503 when it does not. */
@@ -308,13 +323,15 @@ export function startDevDashboard(
     openapi: (_request, response) =>
       json(response, options.store.apiDocuments()),
     proxy,
-    workflows(request, response, url) {
+    workflows(request, response, url, identity) {
       // Only the dashboard may frame it: framed by another site, a click could
       // land on Cancel or Replay. The rest of the dashboard may be embedded.
       frameOnlyHere(response);
-      return inspector(request, response, url);
+      if (production)
+        response.setHeader("content-security-policy", INSPECTOR_POLICY);
+      return inspector(request, response, url, identity);
     },
-    schedules: (request, response, url) => inspector(request, response, url),
+    schedules: inspector,
     ingest,
     restart(request, response) {
       if (!options.restart) {
@@ -332,6 +349,7 @@ export function startDevDashboard(
       canRestart: Boolean(options.restart),
       historyDays: options.history?.days ?? 0,
       mode: production ? "production" : "dev",
+      hiddenViews: production ? viewsWithout(servedInProduction) : [],
       extension: extension?.active
         ? { revision: extension.revision, error: extension.error }
         : null,
@@ -443,6 +461,7 @@ export function startDevDashboard(
     request: IncomingMessage,
     response: ServerResponse,
     url: URL,
+    identity: DashboardIdentity,
   ): Promise<void> {
     const target = options.store.inspectorTarget();
     if (!target) {
@@ -462,7 +481,12 @@ export function startDevDashboard(
       request,
       response,
       `http://127.0.0.1:${target.port}${url.pathname}${url.search}`,
-      (headers) => headers.set(INSPECTOR_TOKEN_HEADER, target.token),
+      (headers) => {
+        headers.set(INSPECTOR_TOKEN_HEADER, target.token);
+        if (production && !identity.user)
+          headers.set(INSPECTOR_READ_ONLY_HEADER, "1");
+        else headers.delete(INSPECTOR_READ_ONLY_HEADER);
+      },
       "Could not reach the workflow inspector.",
     );
   }

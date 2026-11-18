@@ -408,7 +408,7 @@ These are the Workflow SDK's webhooks. To receive a callback from a payment, tel
 
 The `brick dev` dashboard gains a Workflows tab for an app with workflow listeners: the Workflow SDK's observability UI (a vendored copy of `@workflow/web` that ships with the CLI, without its own header, in the dashboard's theme), with every run, its trace of steps and sleeps, its events, streams and hooks, and the buttons to replay or cancel a run. It reads the world your app runs on, whichever `createWorld()` settings you gave it, and follows the app across reloads.
 
-The inspector can cancel runs and resume hooks, so it is a developer's tool: the production dashboard of `brick start` does not serve it, and the dev dashboard passes it only requests made from its own page. It needs `brick dev` with the dashboard on (the default).
+The inspector can cancel runs and resume hooks, so the dashboard passes it only requests made from its own page. `brick dev` shows it with the dashboard on (the default). The production dashboard of `brick start` shows it only when the app sets `dashboard.inspector`, and there only a signed-in user can change a run: see [Schedules and Workflows in production](/docs/brick-cli/dev-and-start#schedules-and-workflows-in-production).
 
 ### With `brick build`
 

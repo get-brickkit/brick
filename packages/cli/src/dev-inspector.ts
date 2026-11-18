@@ -4,9 +4,16 @@ import { join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { BrickApp, ScheduleControl } from "@brickkit/core";
 import type { CreateFetchHandler } from "../../workflow-inspector/server/handler";
-import { INSPECTOR_TOKEN_HEADER, ROUTES } from "./dashboard-protocol";
+import {
+  INSPECTOR_READ_ONLY_HEADER,
+  INSPECTOR_TOKEN_HEADER,
+  ROUTES,
+} from "./dashboard-protocol";
 
 const INSPECTOR_PATH = ROUTES.workflows.path;
+
+const READ_ONLY =
+  "This sign-in can look but not change anything. To run a schedule or change a run, sign in as a user: dashboard.auth.authorize must return { user }.";
 
 export interface Inspector {
   readonly port: number;
@@ -58,6 +65,7 @@ async function schedulesRoute(
   names: ReadonlySet<string>,
   request: Request,
   pathname: string,
+  readOnly: boolean,
 ): Promise<Response> {
   let name: string;
   try {
@@ -71,6 +79,7 @@ async function schedulesRoute(
     return new Response("Not found", { status: 404 });
   if (!names.has(name))
     return new Response(`No schedule named '${name}'`, { status: 404 });
+  if (readOnly) return new Response(READ_ONLY, { status: 403 });
   try {
     return Response.json({ started: await schedules.trigger(name) });
   } catch (error) {
@@ -84,7 +93,7 @@ async function schedulesRoute(
  * port of its own. The dashboard proxies them at `/workflows` and
  * `/api/schedules`; it is the only caller that knows the token. The UI can
  * cancel runs and resume hooks, and a schedule can be run from it, so nothing
- * else may reach it, and it exists only under `brick dev`.
+ * else may reach it.
  *
  * @param app - The loaded app, running in this process.
  * @param directory - The inspector's build; this package's own by default.
@@ -121,10 +130,14 @@ export async function startInspector(
       if (request.headers.get(INSPECTOR_TOKEN_HEADER) !== token)
         return new Response("Forbidden", { status: 403 });
       const { pathname } = new URL(request.url);
+      const readOnly = request.headers.has(INSPECTOR_READ_ONLY_HEADER);
       if (schedules && pathname.startsWith(ROUTES.schedules.path))
-        return schedulesRoute(schedules, names, request, pathname);
+        return schedulesRoute(schedules, names, request, pathname, readOnly);
       if (!workflows) return new Response("Not found", { status: 404 });
-      return browserAsset(request, workflows.client) ?? workflows.page(request);
+      return (
+        browserAsset(request, workflows.client) ??
+        workflows.page(request, { readOnly, refusal: READ_ONLY })
+      );
     },
   });
   return {

@@ -71,8 +71,11 @@ interface RouteSpec {
   prefix?: boolean;
   /** The methods it answers; any when absent. */
   methods?: readonly string[];
-  /** Served by the production dashboard; `"extension"`: only when it has one. */
-  production: boolean | "extension";
+  /**
+   * Served by the production dashboard; `"extension"`: only when it has one;
+   * `"inspector"`: only with `dashboard.inspector` and a running inspector.
+   */
+  production: boolean | "extension" | "inspector";
   /** The page's view that needs it; a view whose routes production lacks is hidden there. */
   view?: ViewName;
   /** It changes something, so the request must carry `CSRF_HEADER`. */
@@ -84,8 +87,7 @@ const GET = ["GET"] as const;
 /**
  * Every route the dashboard serves. The server dispatches from this table and
  * the page builds its URLs from it. Production serves only what is marked
- * `production`: the shell, live state and stored history. Nothing that
- * changes the app or reaches into it, and nothing from the project's source.
+ * `production`.
  */
 export const ROUTES = {
   /** Open to everyone: uptime monitors cannot sign in. */
@@ -121,7 +123,7 @@ export const ROUTES = {
   workflows: {
     path: "/workflows",
     prefix: true,
-    production: false,
+    production: "inspector",
     view: "workflows",
   },
   /** The app's schedules, served beside the workflow inspector: list them, run one now. */
@@ -129,7 +131,7 @@ export const ROUTES = {
     path: "/api/schedules",
     prefix: true,
     methods: ["GET", "POST"],
-    production: false,
+    production: "inspector",
     view: "schedules",
   },
   ingest: {
@@ -166,12 +168,15 @@ export function matchRoute(
   return undefined;
 }
 
-/** Views the production dashboard hides: they need a route it does not serve. */
-export const PRODUCTION_HIDDEN_VIEWS: ReadonlySet<string> = new Set<ViewName>(
-  Object.values(ROUTES as Record<RouteName, RouteSpec>).flatMap((route) =>
-    route.view && route.production === false ? [route.view] : [],
+export const viewsWithout = (
+  served: (route: RouteName) => boolean,
+): ViewName[] => [
+  ...new Set(
+    (Object.entries(ROUTES) as [RouteName, RouteSpec][]).flatMap(
+      ([name, route]) => (route.view && !served(name) ? [route.view] : []),
+    ),
   ),
-);
+];
 
 /** What each history query endpoint answers, as JSON. */
 export interface HistoryResponses {
@@ -252,6 +257,8 @@ export const CSRF_VALUE = "1";
 
 /** The header that proves a request to the workflow inspector comes from the dashboard. */
 export const INSPECTOR_TOKEN_HEADER = "x-brick-inspector";
+
+export const INSPECTOR_READ_ONLY_HEADER = "x-brick-inspector-read-only";
 
 /** What a process that cannot share memory with the dashboard posts to `/api/ingest`. */
 export interface IngestPayload {
@@ -476,8 +483,9 @@ export interface DashboardSnapshot extends DevTelemetrySnapshot {
   canRestart: boolean;
   /** Days of requests kept on disk; zero when history is off. */
   historyDays: number;
-  /** `production` is the read-only monitoring dashboard of `brick start`. */
+  /** `production` is the monitoring dashboard of `brick start`. */
   mode: "dev" | "production";
+  hiddenViews: ViewName[];
   /** The project's extension; null when it has none. */
   extension: ExtensionBuild | null;
 }

@@ -62,7 +62,20 @@ function stubWorld() {
         };
       },
     },
+    events: {
+      list: async () => ({
+        data: [
+          {
+            eventType: "hook_created",
+            eventData: { token: "hook_secret", isWebhook: true },
+          },
+        ],
+        cursor: null,
+        hasMore: false,
+      }),
+    },
     hooks: {
+      get: async (hookId: string) => ({ hookId, token: "hook_secret" }),
       getByToken: async (token: string) => {
         world.tokens.push(token);
         throw new Error("No such hook");
@@ -93,7 +106,7 @@ async function rpc(
 
 describe.skipIf(!built)("createFetchHandler", () => {
   const world = stubWorld();
-  let handle: (request: Request) => Promise<Response>;
+  let handle: ReturnType<CreateFetchHandler>;
   beforeAll(() => {
     // A stub: only the parts the tests reach.
     handle = createFetchHandler(BASE_PATH, {
@@ -132,6 +145,72 @@ describe.skipIf(!built)("createFetchHandler", () => {
     const answer = await rpc(handle, "fetchRuns");
     expect(answer.success).toBe(true);
     expect(world.listed).toBe(before + 1);
+  });
+
+  it("lets a read-only caller read, and refuses every call that changes something", async () => {
+    const caller = { readOnly: true, refusal: "Sign in to change this." };
+    const call = (method: string) =>
+      handle(
+        new Request(`${base}/api/rpc`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ method, params: {} }),
+        }),
+        caller,
+      );
+    const before = world.listed;
+    const resumed = world.tokens.length;
+    expect((await call("fetchRuns")).status).toBe(200);
+    expect(world.listed).toBe(before + 1);
+    for (const method of [
+      "cancelRun",
+      "bulkCancelRuns",
+      "recreateRun",
+      "reenqueueRun",
+      "wakeUpRun",
+      "resumeHook",
+      "fetchHookToken",
+    ]) {
+      const refused = await call(method);
+      expect(refused.status).toBe(403);
+      expect(decode(new Uint8Array(await refused.arrayBuffer()))).toEqual({
+        success: false,
+        error: { message: caller.refusal, layer: "server" },
+      });
+    }
+    expect(world.tokens).toHaveLength(resumed);
+  });
+
+  it("sends a read-only caller no hook token, and anyone else all of them", async () => {
+    const caller = { readOnly: true, refusal: "Sign in to change this." };
+    const read = async (
+      method: string,
+      params: object,
+      from?: typeof caller,
+    ) => {
+      const response = await handle(
+        new Request(`${base}/api/rpc`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ method, params }),
+        }),
+        from,
+      );
+      return decode(new Uint8Array(await response.arrayBuffer())).data;
+    };
+    const hook = { hookId: "hook_1" };
+    const events = { runId: "wrun_1", withData: true };
+
+    expect(await read("fetchHook", hook)).toMatchObject({
+      token: "hook_secret",
+    });
+    expect((await read("fetchEvents", events)).data[0].eventData.token).toBe(
+      "hook_secret",
+    );
+    expect(await read("fetchHook", hook, caller)).toEqual(hook);
+    expect((await read("fetchEvents", events, caller)).data).toEqual([
+      { eventType: "hook_created", eventData: { isWebhook: true } },
+    ]);
   });
 
   it("keeps each handler's own world when another is made", async () => {

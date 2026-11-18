@@ -14,12 +14,18 @@ describe("brick({ dashboard })", () => {
     expect(brick({ services: services() }).definition.telemetry).toBe(false);
     const { definition } = brick({
       services: services(),
-      dashboard: { port: 9500, host: " 0.0.0.0 ", historyDays: 7 },
+      dashboard: {
+        port: 9500,
+        host: " 0.0.0.0 ",
+        historyDays: 7,
+        inspector: true,
+      },
     });
     expect(definition.dashboard).toEqual({
       port: 9500,
       host: "0.0.0.0",
       historyDays: 7,
+      inspector: true,
     });
     expect(definition.telemetry).toBe(true);
     expect(Object.isFrozen(definition.dashboard)).toBe(true);
@@ -64,6 +70,7 @@ describe("brick({ dashboard })", () => {
     expect(build({ host: " " })).toThrow(/host must be an address/);
     expect(build({ historyDays: -1 })).toThrow(/historyDays/);
     expect(build({ historyDays: 1.5 })).toThrow(/historyDays/);
+    expect(build({ inspector: "yes" })).toThrow(/inspector must be true/);
     expect(build({ auth: { token: "short" } })).toThrow(
       /at least 16 characters/,
     );

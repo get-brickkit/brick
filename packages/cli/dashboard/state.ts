@@ -54,6 +54,7 @@ export const initialState: DashboardState = {
   canRestart: false,
   historyDays: 0,
   mode: "dev",
+  hiddenViews: [],
   extension: null,
   connected: false,
   loaded: false,

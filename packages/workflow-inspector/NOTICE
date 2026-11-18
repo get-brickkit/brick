@@ -17,4 +17,6 @@ the environment is read or sent to the browser; the standalone server, the
 Vercel and self-host entry points, the registry file and the upstream tests
 were dropped; the stylesheet imports @workflow/web-shared from npm; the client
 is built for current browsers (es2022), and for the path the dashboard serves it
-at (/workflows/), so that its file URLs need no rewriting at run time.
+at (/workflows/), so that its file URLs need no rewriting at run time; the host
+may mark a request read-only, and the RPC route then refuses every method that
+changes a run or resumes a hook, and sends no hook's token.

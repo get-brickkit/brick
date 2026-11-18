@@ -104,7 +104,7 @@ A document that throws is skipped with a warning. Documents load again on each r
 
 ### Workflow Inspector
 
-For an app with workflow listeners (see [Events](/docs/events)), the dashboard gains a Workflows tab that shows the Workflow SDK's observability UI for the world the app runs on: runs, step and sleep traces, events, streams, hooks, replay and cancel. The UI is a vendored copy of `@workflow/web` that ships with the CLI, without its own header, in the dashboard's colors and fonts and following its light or dark theme. Nothing needs installing. The app serves the UI on a loopback port of its own and the dashboard passes requests to it at `/workflows`, so the address stays the same when the app reloads. It is served only by `brick dev`: it can cancel runs and resume hooks, so the production dashboard does not have it, and the dev dashboard accepts changes to it only from its own page.
+For an app with workflow listeners (see [Events](/docs/events)), the dashboard gains a Workflows tab that shows the Workflow SDK's observability UI for the world the app runs on: runs, step and sleep traces, events, streams, hooks, replay and cancel. The UI is a vendored copy of `@workflow/web` that ships with the CLI, without its own header, in the dashboard's colors and fonts and following its light or dark theme. Nothing needs installing. The app serves the UI on a loopback port of its own and the dashboard passes requests to it at `/workflows`, so the address stays the same when the app reloads. It can cancel runs and resume hooks, so the dashboard accepts changes to it only from its own page, and the production dashboard serves it only when the app asks for it: see [Schedules and Workflows in production](#schedules-and-workflows-in-production).
 
 ### Developer Docs
 
@@ -267,13 +267,41 @@ authorize: async (request) => {
 
 `GET /_health` on the dashboard's port needs no sign-in, so an uptime monitor can use it: it answers 200 `{"status":"ok","app":"up"}` while the app answers its own `/_health`, and 503 when it does not. It says nothing else.
 
-**What it shows, and what it does not.** Requests, spans, errors, logs, and the shape of the service, from the time the process started. Restart, the APIs, Docs and Workflows tabs, the API proxy, and OpenAPI documents are not served at all, so a signed-in viewer can look but not change or call anything. Responses carry `Cache-Control: no-store`, a strict Content-Security-Policy, and `X-Frame-Options: DENY`. Serve it over HTTPS (terminate it at your proxy): a token sent over plain HTTP can be read on the way. There is no limit on failed sign-ins, so use long random tokens.
+**What it shows, and what it does not.** Requests, spans, errors, logs, and the shape of the service, from the time the process started. Restart, the APIs and Docs tabs, the API proxy, and OpenAPI documents are not served at all, so a signed-in viewer can look but not change or call anything. The Schedules and Workflows tabs are off too, unless you [turn them on](#schedules-and-workflows-in-production), which lets the users that `authorize` returns as `{ user }` make changes. Responses carry `Cache-Control: no-store`, a strict Content-Security-Policy, and `X-Frame-Options: DENY`. Serve it over HTTPS (terminate it at your proxy): a token sent over plain HTTP can be read on the way. There is no limit on failed sign-ins, so use long random tokens.
 
 **Logs go to the dashboard, not the console.** While the dashboard is on, `ctx.logger` and `console.log`, `info`, `warn`, `error`, and `debug` lines written during a request are kept for the dashboard and are not printed, so they stay out of the container's logs. Lines outside a request (startup, shutdown) and crashes still print. See [Logs](#logs).
 
 **Retention.** The dashboard keeps recent requests in memory, so they are gone when the process restarts. Set `historyDays` to keep finished requests on disk, in `.brick/` of the working folder, which then needs a volume that outlives the container.
 
 The dashboard runs inside the app's process. It stays up through errors in the app's handlers and through requests it cannot route, but if the process itself dies, so does the dashboard; use the container's restart policy for that.
+
+#### Schedules and Workflows in production
+
+The Schedules and Workflows tabs are off in production, because they do more than monitor: **Run now** starts a schedule, and the workflow inspector can cancel or replay a run and resume a hook. Turn them on with `inspector`:
+
+```ts
+dashboard: {
+  host: "0.0.0.0",
+  inspector: true,
+  auth: {
+    token: process.env.DASHBOARD_TOKEN,
+    authorize: async (request) => {
+      const session = await auth.api.getSession({ headers: request.headers });
+      if (session?.user.role !== "admin") return false;
+      return { user: { id: session.user.id, name: session.user.name } };
+    },
+  },
+},
+```
+
+Each tab appears when the app has something for it: Schedules for an app with schedules, Workflows for one with workflow listeners. An app with neither starts as usual and says so once at startup.
+
+Who may do what:
+
+- **Look**: anyone the dashboard lets in. That includes each run's input and output, so turn `inspector` on only where everyone who can sign in, or who holds a token, may read those. A hook's token goes only to a signed-in user: with it, anyone can resume the hook from outside the dashboard. A token your own workflow puts into a run's or a step's input or output, such as a webhook URL passed to a step, is part of that data and is shown with it.
+- **Change** (run a schedule; cancel, replay or wake a run; resume a hook): only a signed-in user, one that `authorize` returned as `{ user }`. A token, an `authorize` that returns `true`, and a loopback dashboard with no `auth` can look and no more: a change is answered 403, with a message that says why. The request must also come from the dashboard's own page, so a page on another site cannot make a change for someone who is signed in. So `authorize` decides who may change things: return `{ user }` for those people, and `true` for the ones who should only look.
+
+The inspector's UI ships inside `@brickkit/cli`, the package a built server already loads the dashboard from, so there is nothing else to install. The app serves the inspector and the schedules on a loopback port with a random token that only the dashboard holds, and the dashboard passes requests on, so nothing else can reach them. The Workflows tab is the one page the dashboard frames: its responses allow framing by the dashboard itself, and WebAssembly (which decodes payloads a world compressed). Every other response keeps `X-Frame-Options: DENY`.
 
 ## Port Resolution and Validation
 

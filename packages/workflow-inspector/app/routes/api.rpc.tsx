@@ -7,10 +7,13 @@
  */
 
 import { decode, encode } from "cbor-x";
-import { rpcMethods } from "~/server/workflow-server-actions.server";
+import {
+  READ_METHODS,
+  rpcMethods,
+} from "~/server/workflow-server-actions.server";
 import type { Route } from "./+types/api.rpc";
 import type { World } from "@workflow/world";
-import { worldContext } from "../server/inspector-host.server";
+import { callerContext, worldContext } from "../server/inspector-host.server";
 
 function cborResponse(data: unknown, status = 200): Response {
   const encoded = encode(data);
@@ -18,6 +21,19 @@ function cborResponse(data: unknown, status = 200): Response {
     status,
     headers: { "Content-Type": "application/cbor" },
   });
+}
+
+const withoutToken = ({
+  token: _token,
+  ...rest
+}: Record<string, unknown>): Record<string, unknown> => rest;
+
+/** Brick change: a hook's token resumes it from outside the inspector, so a read-only caller is sent none. */
+function withoutHookTokens(row: any): unknown {
+  if (row?.hookId) return withoutToken(row);
+  if (row?.eventData?.token)
+    return { ...row, eventData: withoutToken(row.eventData) };
+  return row;
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
@@ -52,11 +68,27 @@ export async function action({ request, context }: Route.ActionArgs) {
     );
   }
 
+  const caller = context.get(callerContext);
+  if (caller?.readOnly && !READ_METHODS.has(method)) {
+    return cborResponse(
+      { success: false, error: { message: caller.refusal, layer: "server" } },
+      403,
+    );
+  }
+
   // The client's `rpc()` is typed against `rpcMethods`; the body itself is not checked.
   // Each method catches its own errors and returns them.
   const handler = rpcMethods[method as keyof typeof rpcMethods] as (
     world: World,
     params: object,
   ) => Promise<unknown>;
-  return cborResponse(await handler(context.get(worldContext), params ?? {}));
+  const answer = (await handler(context.get(worldContext), params ?? {})) as {
+    success: boolean;
+    data?: any;
+  };
+  if (caller?.readOnly && answer.success)
+    answer.data = Array.isArray(answer.data?.data)
+      ? { ...answer.data, data: answer.data.data.map(withoutHookTokens) }
+      : withoutHookTokens(answer.data);
+  return cborResponse(answer);
 }
