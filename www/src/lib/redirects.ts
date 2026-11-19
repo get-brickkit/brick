@@ -21,3 +21,12 @@ export function redirectFor(path: string): string | undefined {
   const target = redirects[md ? path.slice(0, -3) : path];
   return target && (md ? `${target}.md` : target);
 }
+
+export function canonicalRedirect(pathname: string): string | undefined {
+  const slashless =
+    pathname.length > 1 ? pathname.replace(/\/+$/, "") || "/" : pathname;
+  const target =
+    redirectFor(slashless) ?? (slashless === pathname ? undefined : slashless);
+  if (!target || target === pathname) return undefined;
+  return target;
+}
