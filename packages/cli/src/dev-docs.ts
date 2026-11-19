@@ -370,6 +370,23 @@ export class DevDocs {
     };
   }
 
+  /** A page as written, without its frontmatter, for a reader that is not the dashboard's page. */
+  source(
+    slugs: string[],
+  ):
+    | { title: string; description?: string; path: string; content: string }
+    | undefined {
+    const file = this.#pages.get(slugs.join("/"));
+    return (
+      file && {
+        title: file.title,
+        description: file.description,
+        path: file.path,
+        content: file.content,
+      }
+    );
+  }
+
   /** Compile one page; undefined when there is no such page. */
   async page(slugs: string[]): Promise<DocsPage | undefined> {
     const key = slugs.join("/");

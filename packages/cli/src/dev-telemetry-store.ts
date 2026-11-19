@@ -193,6 +193,16 @@ export class DevTelemetryStore {
     this.#emit({ type: "inspector", inspector: Boolean(target?.workflows) });
   }
 
+  /** The architecture as the app last reported it, without building the whole snapshot. */
+  architecture(): ArchitectureSnapshot | null {
+    return this.#architecture;
+  }
+
+  /** Whether the app serves the workflow inspector, not only the schedules. */
+  servesWorkflows(): boolean {
+    return Boolean(this.#inspector?.workflows);
+  }
+
   /** Where the dashboard proxies the workflow inspector and schedules, when the app serves them. */
   inspectorTarget(): { port: number; token: string } | undefined {
     return this.#inspector;

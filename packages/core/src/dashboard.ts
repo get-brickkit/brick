@@ -71,7 +71,49 @@ export interface DashboardOptions {
    * in (by token, or by `authorize` returning `true`) can only look.
    */
   inspector?: boolean;
+  /**
+   * Let a coding agent (Claude Code, Cursor, Codex) read the dashboard's data
+   * over MCP at `/mcp`, while it debugs: requests, traces, logs, errors and the
+   * app's architecture. Default false; `brick dev` always has it, since it only
+   * listens on this machine. Its own tools only read, even for a signed-in
+   * user, and it passes the same checks as the rest of the dashboard: the agent sends
+   * `Authorization: Bearer <token>` with one of `auth.token`.
+   *
+   * What the agent reads goes to its model provider: request paths and
+   * messages, log lines (which can hold what your users typed), error stacks,
+   * and span attributes such as SQL text. Turn it on only for a dashboard
+   * whose data you are willing to send there.
+   *
+   * It also serves the app's own tools marked `dashboard: true` (see
+   * `service.tool`), next to the dashboard's. A tool that is not marked
+   * `readOnlyHint: true` can change data, and is offered only to a signed-in
+   * user (one `auth.authorize` returned as `{ user }`).
+   */
+  mcp?: boolean;
 }
+
+/**
+ * Where the app answers MCP for the dashboard's `/mcp`: its tools marked
+ * `dashboard: true`. Only a request signed by the dashboard gets in.
+ */
+export const DASHBOARD_MCP_ROUTE = "/_brick/dashboard/mcp";
+
+/** The dashboard's own MCP tools. A `dashboard: true` tool may not take one of these names. */
+export const DASHBOARD_MCP_TOOLS = [
+  "summary",
+  "list_requests",
+  "get_trace",
+  "list_errors",
+  "app_overview",
+  "search_logs",
+  "list_reloads",
+  "list_schedules",
+  "list_runs",
+  "get_run",
+  "get_openapi",
+  "list_docs",
+  "read_doc",
+] as const;
 
 const MIN_TOKEN_LENGTH = 16;
 
@@ -84,7 +126,7 @@ export function normalizeDashboard(
   options: DashboardOptions | undefined,
 ): DashboardOptions | undefined {
   if (options === undefined) return undefined;
-  const { port, host, auth, historyDays, inspector } = options;
+  const { port, host, auth, historyDays, inspector, mcp } = options;
   if (
     port !== undefined &&
     (!Number.isInteger(port) || port < 1 || port > 65535)
@@ -105,11 +147,14 @@ export function normalizeDashboard(
     );
   if (inspector !== undefined && typeof inspector !== "boolean")
     throw new Error("Brick: dashboard inspector must be true or false.");
+  if (mcp !== undefined && typeof mcp !== "boolean")
+    throw new Error("Brick: dashboard mcp must be true or false.");
   const normalized: DashboardOptions = {
     ...(port !== undefined ? { port } : {}),
     ...(host !== undefined ? { host: host.trim() } : {}),
     ...(historyDays !== undefined ? { historyDays } : {}),
     ...(inspector !== undefined ? { inspector } : {}),
+    ...(mcp !== undefined ? { mcp } : {}),
   };
   if (auth !== undefined) {
     const tokens =

@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  ATTR,
   HISTORY_PAGE_SIZE,
+  SPAN,
   type FacetValue,
   type HistoryFacets,
   type HistoryInfo,
@@ -16,13 +18,18 @@ import {
   bucketSize,
   CLIENT_ERROR,
   endpointOf,
+  LOG_LEVELS,
   MAX_FACET_VALUES,
   percentile,
   SEARCHED,
   SERVER_ERROR,
   tracesToCsv,
+  type EndpointStats,
   type Facet,
   type HistoryQuery,
+  type LogLevel,
+  type LogLine,
+  type LogSearch,
 } from "./dashboard-query";
 
 const DAY_MS = 86_400_000;
@@ -32,6 +39,10 @@ const PRUNE_MS = 30 * 60_000;
 const VOLUME_BUCKETS = 48;
 const MAX_LIMIT = 500;
 const MAX_EXPORT_ROWS = 100_000;
+/** A log search reads the spans of this many requests, the newest of its window. */
+export const MAX_SCANNED_REQUESTS = 20_000;
+/** A text search reads at most this many log lines, newest first, of those requests. */
+export const MAX_SCANNED_LOG_LINES = 100_000;
 
 interface Statement {
   run(...params: unknown[]): unknown;
@@ -118,6 +129,10 @@ const text = (value: unknown): string | undefined =>
   value === null || value === undefined ? undefined : String(value);
 const number = (value: unknown): number | undefined =>
   value === null || value === undefined ? undefined : Number(value);
+
+const LOG_LEVEL_SQL = `CASE WHEN json_extract(event.value, '$.attributes."${ATTR.logLevel}"') IN (${LOG_LEVELS.map((level) => `'${level}'`).join(", ")})
+  THEN json_extract(event.value, '$.attributes."${ATTR.logLevel}"') ELSE 'info' END`;
+const LOG_MESSAGE_SQL = `COALESCE(json_extract(event.value, '$.attributes."${ATTR.logMessage}"'), '')`;
 
 /** Each row's outcome, by the rules of `outcomeOf`. */
 const OUTCOME_CASE = `CASE
@@ -502,6 +517,109 @@ export class DevHistory {
       medianMs: percentile(durations, 0.5),
       p95Ms: percentile(durations, 0.95),
     };
+  }
+
+  /**
+   * Log lines (span events named `log`) of the requests in a window, newest
+   * first, found with SQLite's JSON functions over each request's stored spans.
+   * Only the newest `MAX_SCANNED_REQUESTS` requests of the window are searched;
+   * `requestsInWindow` says how many it held. SQLite's `LIKE` folds only
+   * ASCII, so text is matched here, as the in-memory search does, over at most
+   * `MAX_SCANNED_LOG_LINES` lines; `linesCapped` says it stopped there.
+   */
+  searchLogLines(
+    search: LogSearch,
+    page: { limit: number; offset: number },
+  ): { lines: LogLine[]; requestsInWindow: number; linesCapped: boolean } {
+    this.flush();
+    const { sql, params } = filterSql({
+      from: search.from,
+      to: search.to,
+      endpoints: search.endpoint ? [search.endpoint] : undefined,
+      services: search.service ? [search.service] : undefined,
+    });
+    const requestsInWindow = Number(
+      this.#database
+        .prepare(`SELECT COUNT(*) AS n FROM traces WHERE ${sql}`)
+        .get(...params)?.n ?? 0,
+    );
+    const clauses = [
+      `json_extract(event.value, '$.name') = '${SPAN.logEvent}'`,
+    ];
+    const filters: unknown[] = [];
+    if (search.level) {
+      clauses.push(`${LOG_LEVEL_SQL} = ?`);
+      filters.push(search.level);
+    }
+    const needle = search.query?.toLowerCase();
+    const rows = this.#database
+      .prepare(
+        `WITH newest AS (
+           SELECT trace_id, endpoint, spans FROM traces WHERE ${sql}
+           ORDER BY start_ms DESC LIMIT ?)
+         SELECT newest.trace_id, newest.endpoint,
+           json_extract(span.value, '$.name') AS span_name,
+           json_extract(event.value, '$.timeMs') AS time_ms,
+           ${LOG_LEVEL_SQL} AS level, ${LOG_MESSAGE_SQL} AS message,
+           span.key AS span_index, event.key AS event_index
+         FROM newest, json_each(newest.spans) AS span,
+           json_each(span.value, '$.events') AS event
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY time_ms DESC, newest.trace_id ASC, span_index ASC, event_index ASC
+         LIMIT ? OFFSET ?`,
+      )
+      .all(
+        ...params,
+        MAX_SCANNED_REQUESTS,
+        ...filters,
+        needle === undefined ? page.limit : MAX_SCANNED_LOG_LINES,
+        needle === undefined ? page.offset : 0,
+      );
+    const lines = rows
+      .map((row) => ({
+        timeMs: Number(row.time_ms),
+        level: String(row.level) as LogLevel,
+        message: String(row.message),
+        traceId: String(row.trace_id),
+        endpoint: String(row.endpoint),
+        span: String(row.span_name),
+        spanIndex: Number(row.span_index),
+        eventIndex: Number(row.event_index),
+      }))
+      .filter(
+        (line) =>
+          needle === undefined || line.message.toLowerCase().includes(needle),
+      );
+    return {
+      requestsInWindow,
+      lines:
+        needle === undefined
+          ? lines
+          : lines.slice(page.offset, page.offset + page.limit),
+      linesCapped:
+        needle !== undefined && rows.length === MAX_SCANNED_LOG_LINES,
+    };
+  }
+
+  slowestEndpoints(query: HistoryQuery, limit: number): EndpointStats[] {
+    this.flush();
+    const { sql, params } = filterSql(query);
+    return this.#database
+      .prepare(
+        `SELECT endpoint, COUNT(*) AS n,
+           SUM(CASE WHEN ${OUTCOME_CASE} = 'server' THEN 1 ELSE 0 END) AS errors,
+           AVG(duration_ms) AS avg_ms, MAX(duration_ms) AS max_ms
+         FROM traces WHERE ${sql} AND duration_ms IS NOT NULL
+         GROUP BY endpoint ORDER BY avg_ms DESC, n DESC LIMIT ?`,
+      )
+      .all(...params, limit)
+      .map((row) => ({
+        endpoint: String(row.endpoint),
+        requests: Number(row.n),
+        serverErrors: Number(row.errors),
+        avgMs: Number(row.avg_ms),
+        maxMs: Number(row.max_ms),
+      }));
   }
 
   /** Write what is queued and release the database. */

@@ -213,6 +213,86 @@ describe.skipIf(!built)("createFetchHandler", () => {
     ]);
   });
 
+  it("answers JSON to a caller that asks for it, with no hook token for a read-only one", async () => {
+    const caller = { readOnly: true, refusal: "Sign in to change this." };
+    const ask = (method: string, params: object) =>
+      handle(
+        new Request(`${base}/api/rpc`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json",
+          },
+          body: JSON.stringify({ method, params }),
+        }),
+        caller,
+      );
+    const events = await ask("fetchEvents", {
+      runId: "wrun_1",
+      withData: true,
+    });
+    expect(events.headers.get("content-type")).toContain("application/json");
+    expect(await events.json()).toMatchObject({
+      success: true,
+      data: {
+        data: [{ eventType: "hook_created", eventData: { isWebhook: true } }],
+      },
+    });
+    expect(
+      JSON.stringify(await (await ask("fetchHook", { hookId: "h" })).json()),
+    ).not.toContain("hook_secret");
+    const refused = await ask("cancelRun", {});
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({
+      success: false,
+      error: { message: caller.refusal, layer: "server" },
+    });
+  });
+
+  it("answers every kind of binary data in JSON as its size", async () => {
+    const binary = stubWorld();
+    (binary.events as { list: unknown }).list = async () => ({
+      data: [
+        {
+          eventType: "step_completed",
+          eventData: {
+            bytes: new Uint8Array(3),
+            words: new Uint16Array(4),
+            floats: new Float64Array(2),
+            view: new DataView(new ArrayBuffer(5)),
+            buffer: new ArrayBuffer(6),
+            node: Buffer.from("seven77"),
+          },
+        },
+      ],
+      cursor: null,
+      hasMore: false,
+    });
+    const answer = await createFetchHandler(BASE_PATH, {
+      world: binary as unknown as World,
+    })(
+      new Request(`${base}/api/rpc`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({
+          method: "fetchEvents",
+          params: { runId: "wrun_1", withData: true },
+        }),
+      }),
+    );
+    expect((await answer.json()).data.data[0].eventData).toEqual({
+      bytes: "<3 bytes>",
+      words: "<8 bytes>",
+      floats: "<16 bytes>",
+      view: "<5 bytes>",
+      buffer: "<6 bytes>",
+      node: "<7 bytes>",
+    });
+  });
+
   it("keeps each handler's own world when another is made", async () => {
     const other = stubWorld();
     const second = createFetchHandler(BASE_PATH, {

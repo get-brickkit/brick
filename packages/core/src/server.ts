@@ -6,7 +6,7 @@ import {
   type CompiledApplication,
   type RouteIR,
 } from "./compiler";
-import { DuplicateNameError, type Service } from "./types";
+import { DuplicateNameError, type Service, type Tool } from "./types";
 import { getGlobalRegistry } from "./registry";
 import { getPluginEndpoints, installedPlugins } from "./plugin";
 import { pluginDepsOf, pluginLifecycle, setupAppPlugins } from "./plugin-app";
@@ -25,8 +25,19 @@ import {
   type OpenApiDocument,
   type ReferenceOptions,
 } from "./docs";
-import { normalizeDashboard, type DashboardOptions } from "./dashboard";
-import { markDashboardArrival } from "./dashboard-identity";
+import {
+  DASHBOARD_MCP_ROUTE,
+  DASHBOARD_MCP_TOOLS,
+  normalizeDashboard,
+  type DashboardOptions,
+} from "./dashboard";
+import {
+  createMcpHandler,
+  createMcpRegistry,
+  type McpRegistry,
+  type McpToolDefinition,
+} from "./mcp";
+import { dashboardMcpCaller, markDashboardArrival } from "./dashboard-identity";
 import {
   createEndpointHandler,
   endpointPaths,
@@ -319,6 +330,54 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
   }
   // Built from `definition`, below.
   builtIn("/_brick/services", (context: any) => architecture(context));
+
+  const dashboardTools: Tool<any, any, any, any>[] = [];
+  const dashboardToolService = new Map<string, string>();
+  for (const service of services)
+    for (const tool of service.listTools()) {
+      if (tool.config.dashboard !== true) continue;
+      if ((DASHBOARD_MCP_TOOLS as readonly string[]).includes(tool.name))
+        throw new DuplicateNameError(
+          `Brick: the tool '${tool.name}' is marked dashboard: true, but the dashboard's MCP endpoint has a tool of that name. Rename yours.`,
+        );
+      const other = dashboardToolService.get(tool.name);
+      if (other !== undefined)
+        throw new DuplicateNameError(
+          `Brick: the services '${other}' and '${service.name}' both have a tool '${tool.name}' marked dashboard: true. The dashboard's MCP endpoint needs one name per tool, so rename one of them.`,
+        );
+      dashboardToolService.set(tool.name, service.name);
+      dashboardTools.push(tool);
+    }
+  const toolRegistry = createMcpRegistry({ tools: dashboardTools });
+  const readsOnly = (tool: McpToolDefinition) =>
+    tool.annotations.readOnlyHint === true;
+  const forCaller = (write: boolean): McpRegistry => ({
+    listTools: () =>
+      toolRegistry.listTools().filter((tool) => write || readsOnly(tool)),
+    callTool(name, args, ctx) {
+      const tool = toolRegistry.listTools().find((item) => item.name === name);
+      if (tool && !write && !readsOnly(tool))
+        throw new Error(
+          `${name} can change data, so only a signed-in user may call it: dashboard.auth.authorize must return { user }. A token, or authorize returning true, can only read.`,
+        );
+      return toolRegistry.callTool(name, args, ctx);
+    },
+  });
+  const mcpHandlers = [false, true].map((write) =>
+    createMcpHandler({
+      registry: forCaller(write),
+      serverInfo: { name: title, version },
+    }),
+  );
+  app.post(DASHBOARD_MCP_ROUTE, ({ request }) => {
+    const caller = dashboardMcpCaller(request);
+    return caller
+      ? mcpHandlers[caller.write ? 1 : 0]!(request, {
+          dashboard: caller.user ? { user: caller.user } : {},
+        })
+      : new Response("Unauthorized", { status: 401 });
+  });
+  registeredRoutes.set(routeKey("POST", DASHBOARD_MCP_ROUTE), false);
 
   const sockets = services.flatMap((service) =>
     service.listSockets().map((definition) => ({

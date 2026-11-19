@@ -117,6 +117,25 @@ site's `:root` and `.dark`.
   compared in constant time, and the app's `authorize` with a five-second limit)
   before anything but `/_health`. Spans reach the store in-process, with no
   worker or ingest endpoint.
+- **MCP endpoint:** `/mcp` (`ROUTES.mcp`, `src/dashboard-mcp.ts`) is a read-only
+  view of the same data for coding agents, a stateless `createMcpHandler` over
+  read-only tools for every view, each in `src/dashboard-mcp*.ts`: the request
+  tools call the history store, or the in-memory store when history is off,
+  with the rules in `dashboard-query.ts` (`search_logs` runs the same search in
+  SQL over the stored spans and in memory, and a test keeps them in step); the
+  schedule and run tools read the workflow inspector with its read-only mark;
+  `get_openapi`, `list_docs` and `read_doc` are dev only. A tool is listed only
+  while its data exists (`BuiltInTool.available`). It is served by
+  `brick dev` and the Vite plugin; production serves it only with
+  `dashboard.mcp` (route marked `"mcp"`). It goes through the same access check
+  as every route, refuses a request with another `Origin`, and the built-in
+  tools never write, whoever the identity is. A trace answer is cut to about
+  50 KB. The app's tools marked `dashboard: true` are listed beside them: the
+  dashboard asks the app for them at `DASHBOARD_MCP_ROUTE` (`@brickkit/core`,
+  answered only for a signed request) and calls them with the identity it signs,
+  as `/app` does. A tool without `readOnlyHint: true` is a write tool: listed
+  with `destructiveHint`, and only to an identity that `mayChange` allows (in
+  production one with a `user`, the check the inspector uses; in dev anyone).
 - **Request log:** laid out like a hosting dashboard's logs. Four cards (requests,
   error rate, median, slowest 5%) follow the range and filters. A timeline strip
   across the top (drag to zoom), a Custom picker beside the ranges (from and to,

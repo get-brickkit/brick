@@ -16,6 +16,7 @@ import {
   resolvePort,
 } from "./config";
 import { openDashboard } from "./dashboard-host";
+import { ROUTES } from "./dashboard-protocol";
 import { ownModule } from "./own-module";
 import type { DashboardExtensionOptions } from "./dashboard-extension";
 import { startDevApplication } from "./dev-application";
@@ -311,7 +312,11 @@ export async function startDevServer(options: DevServerOptions = {}) {
     return application;
   };
   if (dashboard) {
-    console.log(`📊 Dev dashboard:       http://127.0.0.1:${dashboard.port}`);
+    const dashboardUrl = `http://127.0.0.1:${dashboard.port}`;
+    console.log(`📊 Dev dashboard:       ${dashboardUrl}`);
+    console.log(
+      `🤖 Agent MCP:           ${dashboardUrl}${ROUTES.mcp.path} (claude mcp add --transport http brick <url>)`,
+    );
   }
   let child = launch();
   // The worker reports the other files the entry imports (brick:dependencies).

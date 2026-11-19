@@ -57,13 +57,16 @@ export {
 export { traceRoute } from "./telemetry";
 export { SPAN, ATTR, GLOBAL_SYMBOL } from "./telemetry-names";
 export type { DashboardAuth, DashboardOptions } from "./dashboard";
+export { DASHBOARD_MCP_ROUTE, DASHBOARD_MCP_TOOLS } from "./dashboard";
 export {
   dashboardUser,
   dashboardKey,
   signDashboardIdentity,
+  signDashboardMcp,
   DASHBOARD_IDENTITY_HEADER,
   DASHBOARD_KEY_ENV,
   type DashboardIdentity,
+  type DashboardMcpCaller,
   type DashboardUser,
 } from "./dashboard-identity";
 export {
@@ -278,7 +281,12 @@ export {
 export type { SecretSource, SecretOptions } from "./secrets";
 
 export { defineTool, isTool } from "./tool";
-export { createMcpRegistry, createMcpHandler, UnknownToolError } from "./mcp";
+export {
+  createMcpRegistry,
+  createMcpHandler,
+  UnknownToolError,
+  WRAP_RESULT,
+} from "./mcp";
 export type {
   McpToolDefinition,
   McpRegistry,

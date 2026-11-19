@@ -1,6 +1,6 @@
 ---
 title: "Brick v0.16: the security checks an audit asked for"
-description: "Rate limits on the action, verified provider webhooks, sensitive fields in schemas, tenant-scoped file storage and an audit log, plus deps as plain values on the service, and every breaking change."
+description: "Rate limits on the action, verified provider webhooks, sensitive fields in schemas, tenant-scoped file storage and an audit log, plus deps as plain values on the service, Schedules and Workflows in the production dashboard, an MCP endpoint on the dashboard for coding agents, and every breaking change."
 date: "2026-11-15"
 category: release
 version: "0.16.0"
@@ -255,6 +255,104 @@ export default brick({ services: [orders] });
 It is also stricter. A service sees only its own deps: a call into another service runs with that service's deps, by every route we could find, so a storage or a client handed to one service cannot leak to another through a nested call. A unit test can still replace a dep by calling the action with `ctx: { deps: { carrier: fake } }`.
 
 `useDeps(service)` returns a service's deps, typed, from a listener, a schedule or a workflow step.
+
+## 8. Schedules and Workflows in the production dashboard
+
+The Schedules and Workflows tabs used to exist only under `brick dev`. The production dashboard now has them too, if the app asks:
+
+```ts
+dashboard: {
+  host: "0.0.0.0",
+  inspector: true,
+  auth: {
+    token: process.env.DASHBOARD_TOKEN,
+    authorize: async (request) => {
+      const session = await auth.api.getSession({ headers: request.headers });
+      if (session?.user.role !== "admin") return false;
+      return { user: { id: session.user.id, name: session.user.name } };
+    },
+  },
+},
+```
+
+They are off by default because they do more than show data. **Run now** starts a schedule, and the workflow inspector can cancel, replay or wake a run and resume a hook. So the dashboard separates who can look from who can change things:
+
+- **Look**: anyone the dashboard lets in. That includes every run's input and output, so turn `inspector` on only where everyone who can sign in may read them.
+- **Change**: only a signed-in user, meaning `authorize` returned `{ user }`, acting from the dashboard's own page. A token, an `authorize` that returns `true`, and a loopback dashboard with no `auth` can only look. A change from any of them gets a 403 that says why.
+
+`authorize` can now return `{ user }` as well as `true`, `false` or a `Response`. That return is what allows someone to make changes.
+
+The inspector ships inside `@brickkit/cli`, so there is nothing else to install. The app serves it on a loopback port with a random token that only the dashboard holds. An app with schedules and no workflow world gets only the Schedules tab. An app with neither starts as usual and says so once. See [Schedules and Workflows in production](/docs/brick-cli/dev-and-start#schedules-and-workflows-in-production).
+
+## 9. Connect a coding agent to the dashboard
+
+When you debug with a coding agent, you end up pasting things into it: the failing request, the stack, the log lines around it. The dashboard already has all of that. Now the agent can read it itself.
+
+`brick dev` serves an MCP endpoint on the dashboard's port, at `/mcp`. It prints the address when it starts. Connect an agent with the HTTP transport:
+
+```bash
+claude mcp add --transport http brick http://127.0.0.1:9400/mcp
+```
+
+Cursor and Codex take the same URL in their MCP settings. The agent gets a tool for each view of the dashboard:
+
+- **`summary`**: request count, error rate, median and p95 duration, and the slowest endpoints for a window.
+- **`list_requests`**: requests as rows, with the Requests tab's filters.
+- **`get_trace`**: one request by trace id, as a tree of spans with timing, attributes, log lines and the error with its stack.
+- **`search_logs`**: log lines by text and level, each with the trace id to open.
+- **`list_errors`**: recent server errors and crashes, each with its trace id.
+- **`list_reloads`**: when the app restarted and why, and its startup crashes.
+- **`app_overview`**: services, routes, events, schedules and workflows. How the app is built, not what it is doing.
+- **`list_schedules`**: each schedule's next run and last runs, with their outcome.
+- **`list_runs`** and **`get_run`**: workflow runs, filtered by status, and one run with its steps, errors, input and output.
+- **`get_openapi`**, **`list_docs`** and **`read_doc`**: the app's OpenAPI documents and its own docs, under `brick dev`.
+
+A tool whose data is not there is not listed. The schedule and workflow tools need the inspector, which `brick dev` serves. A good session starts with `list_errors` or `search_logs`, then `get_trace` on the one that matters, and for a workflow, `list_runs` with status `failed`, then `get_run`. The `brick` skill in the repo says so, so an agent that has it does this without being told.
+
+In production it is off. Turn it on with `mcp`:
+
+```ts
+dashboard: {
+  host: "0.0.0.0",
+  mcp: true,
+  auth: { token: process.env.DASHBOARD_TOKEN },
+},
+```
+
+The agent sends the token as `Authorization: Bearer <token>`.
+
+Your own tools join the five. Mark a tool `dashboard: true`, and say whether it only reads:
+
+```ts
+billing.tool({
+  name: "find_order",
+  description: "Look an order up by id.",
+  dashboard: true,
+  annotations: { readOnlyHint: true },
+  input: t.Object({ id: t.String() }),
+  execute: ({ input }) => findOrder(input.id),
+});
+
+billing.tool({
+  name: "create_refund",
+  description: "Refund an order.",
+  dashboard: true,
+  input: t.Object({ orderId: t.String() }),
+  execute: ({ input, ctx }) =>
+    refund(input, { requestedBy: ctx.dashboard?.user?.id ?? "dev" }),
+});
+```
+
+A tool without `readOnlyHint: true` is a write tool. In production only a signed-in user sees it: `authorize` must return `{ user }`, for example after it checks an API key you gave the agent. A token sees only the read tools. The call runs as an extension page's call does, so the tool's rate limit, audit and any `authorize` of its own apply, and the audit log records the user. A plugin's tools count too. How it behaves:
+
+- **The built-in tools are read-only; your own can write, for a signed-in user only.** None of the five changes anything, not even for a signed-in user: log lines carry what your users typed, and an agent that reads them must not be able to act on them. Tools you add with `dashboard: true` can change data. See below.
+- **Same access as the dashboard.** A non-loopback dashboard still needs `auth`, and `/mcp` checks the same token or `authorize` as every other route.
+- **Browsers can't use it.** A request with an `Origin` header from another site gets a 403. The dashboard's local `Host` check is what stops DNS rebinding.
+- **Output is capped.** `get_trace`, `get_run`, `get_openapi` and `read_doc` cut a long answer to about 50 KB, shorten long strings, and say what they left out.
+- **Reads only, and no hook tokens.** The schedule and workflow tools read through the inspector as a caller that may look and not change, so they cannot run a schedule or touch a run, and a hook's token is never sent.
+- **Without history it reads memory.** With `historyDays: 0` the request and log tools read the last 200 requests, as the Requests tab does for Live.
+
+Limits, honestly. A write tool can be reached by an agent that read an injected instruction in a log line. Agents are told the tool is destructive, so they ask first, but only a person's approval stops a bad call: keep write tools narrow. What the agent reads goes to its model provider: request paths, error messages, stacks, SQL text and log lines, which can include user input. Turn `mcp` on only where you are willing to send that. `list_errors` reads only the failures held in memory since the process started (the last 200), even when history is kept on disk, so older ones are found with `list_requests` and `outcome: "server"`. 4xx responses are in `list_requests`, not in `list_errors`. There is no live stream: MCP here is plain request and response, so an agent asks again to see what is new. In production, `get_openapi`, `list_docs` and `read_doc` are not listed, and the schedule and workflow tools only with `inspector: true`. There is no stdio bridge for agents that can't speak HTTP, and no OAuth: the token is the only way in. See [Coding agents (MCP)](/docs/brick-cli/dev-and-start#coding-agents-mcp).
 
 ## Upgrade checklist
 

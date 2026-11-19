@@ -50,20 +50,24 @@ export function markDashboardArrival(request: Request): void {
 const mac = (payload: string) =>
   createHmac("sha256", dashboardKey()).update(payload).digest();
 
+const sign = (claims: object, now: number): string => {
+  const payload = Buffer.from(
+    JSON.stringify({ ...claims, exp: now + SIGNATURE_TTL_MS }),
+  ).toString("base64url");
+  return `${payload}.${mac(payload).toString("base64url")}`;
+};
+
 /** The header value for an identity: `<base64url(json)>.<hmac>`. */
 export function signDashboardIdentity(
   identity: DashboardIdentity,
   now = Date.now(),
 ): string {
-  const payload = Buffer.from(
-    JSON.stringify({ user: identity.user, exp: now + SIGNATURE_TTL_MS }),
-  ).toString("base64url");
-  return `${payload}.${mac(payload).toString("base64url")}`;
+  return sign({ user: identity.user }, now);
 }
 
-export function dashboardIdentity(
+function verifiedClaims(
   request: Request | undefined,
-): DashboardIdentity | undefined {
+): { user?: DashboardUser; scope?: unknown; write?: unknown } | undefined {
   const header = request?.headers.get(DASHBOARD_IDENTITY_HEADER);
   if (!header) return undefined;
   const dot = header.indexOf(".");
@@ -74,15 +78,52 @@ export function dashboardIdentity(
   if (given.length !== expected.length || !timingSafeEqual(given, expected))
     return undefined;
   try {
-    const { user, exp } = JSON.parse(
+    const claims = JSON.parse(
       Buffer.from(payload, "base64url").toString("utf8"),
     );
     const now = (request && arrivedAt.get(request)) ?? Date.now();
-    if (typeof exp !== "number" || exp < now) return undefined;
-    return user === undefined ? {} : { user };
+    if (typeof claims?.exp !== "number" || claims.exp < now) return undefined;
+    return claims;
   } catch {
     return undefined;
   }
+}
+
+/** A signature made for the MCP route carries a `scope`, and is not an identity here. */
+export function dashboardIdentity(
+  request: Request | undefined,
+): DashboardIdentity | undefined {
+  const claims = verifiedClaims(request);
+  if (!claims || claims.scope !== undefined) return undefined;
+  return claims.user === undefined ? {} : { user: claims.user };
+}
+
+/** Who a call forwarded by the dashboard's `/mcp` is for, and whether tools that change data may run. */
+export interface DashboardMcpCaller extends DashboardIdentity {
+  write: boolean;
+}
+
+/**
+ * The header value for a call the dashboard's `/mcp` forwards to the app. It is
+ * scoped to the MCP route: the `/app` proxy never signs one, and a signature
+ * made for `/app` is not accepted there.
+ */
+export function signDashboardMcp(
+  caller: DashboardMcpCaller,
+  now = Date.now(),
+): string {
+  return sign({ user: caller.user, scope: "mcp", write: caller.write }, now);
+}
+
+export function dashboardMcpCaller(
+  request: Request | undefined,
+): DashboardMcpCaller | undefined {
+  const claims = verifiedClaims(request);
+  if (claims?.scope !== "mcp") return undefined;
+  return {
+    ...(claims.user === undefined ? {} : { user: claims.user }),
+    write: claims.write === true,
+  };
 }
 
 /**
