@@ -35,6 +35,7 @@ import {
   toRow,
   type HistoryQuery,
 } from "./dashboard-query";
+import { LOG_TOOL_NAMES, logTools } from "./dashboard-mcp-logs";
 import {
   compactJson,
   cut,
@@ -403,7 +404,7 @@ const TOOLS: McpToolDefinition[] = [
 ];
 
 /** The tools of the dashboard's other views, by name, whether or not their data exists now. */
-const VIEW_TOOL_NAMES: string[] = [];
+const VIEW_TOOL_NAMES: readonly string[] = [...LOG_TOOL_NAMES];
 
 /** Every tool the dashboard has of its own, listed or not. */
 export const DASHBOARD_TOOL_NAMES: readonly string[] = [
@@ -413,7 +414,7 @@ export const DASHBOARD_TOOL_NAMES: readonly string[] = [
 
 export function createDashboardMcpRegistry(options: McpSources): McpRegistry {
   const { store, history } = options;
-  const viewTools: BuiltInTool[] = [];
+  const viewTools: BuiltInTool[] = [...logTools(options)];
   const calls: Record<string, (args: Args) => string> = {
     summary(args) {
       const { from, to } = window(args, 60 * MINUTE);

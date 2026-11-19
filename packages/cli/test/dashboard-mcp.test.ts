@@ -4,11 +4,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Attributes } from "@opentelemetry/api";
 import { DASHBOARD_MCP_TOOLS } from "@brickkit/core";
-import { MAX_TRACE_CHARS } from "../src/dashboard-mcp";
-import type { TelemetryRecord } from "../src/dashboard-protocol";
+import { DASHBOARD_TOOL_NAMES, MAX_TRACE_CHARS } from "../src/dashboard-mcp";
+import { MAX_SCANNED_REQUESTS } from "../src/dev-history";
+import type { TelemetryRecord, TraceSummary } from "../src/dashboard-protocol";
 import { startDevDashboard } from "../src/dev-dashboard";
 import { openHistory } from "../src/dev-history";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
+
+/** What a dashboard with no inspector, no OpenAPI and no docs lists. */
+const ALWAYS = [
+  "summary",
+  "list_requests",
+  "get_trace",
+  "list_errors",
+  "app_overview",
+  "search_logs",
+];
 
 const token = "0123456789abcdef-secret";
 const bearer = { authorization: `Bearer ${token}` };
@@ -64,7 +75,9 @@ function request(
     durationMs?: number;
     error?: string;
     spans?: number;
-    logs?: string[];
+    /** The service whose action handled it, as an action span says. */
+    service?: string;
+    logs?: (string | { level: string; message: string })[];
     attributes?: Attributes;
   } = {},
 ): TelemetryRecord[] {
@@ -80,6 +93,28 @@ function request(
       attributes: root(options.method ?? "GET", route),
     },
   ];
+  if (options.service)
+    records.push(
+      {
+        phase: "start",
+        traceId,
+        spanId: "action",
+        parentSpanId: "root",
+        name: `action ${options.service}.get`,
+        startMs: startMs + 1,
+        attributes: {},
+      },
+      {
+        phase: "end",
+        traceId,
+        spanId: "action",
+        name: `action ${options.service}.get`,
+        endMs: startMs + 2,
+        status: "ok",
+        attributes: { "brick.service": options.service, "brick.action": "get" },
+        events: [],
+      },
+    );
   for (let index = 0; index < (options.spans ?? 0); index++) {
     const spanId = `child-${index}`;
     records.push(
@@ -125,10 +160,13 @@ function request(
         : {}),
     },
     events: [
-      ...(options.logs ?? []).map((message) => ({
+      ...(options.logs ?? []).map((line) => ({
         name: "log",
         timeMs: startMs + 3,
-        attributes: { "log.level": "warn", "log.message": message },
+        attributes: {
+          "log.level": typeof line === "string" ? "warn" : line.level,
+          "log.message": typeof line === "string" ? line : line.message,
+        },
       })),
       ...(options.error
         ? [
@@ -189,12 +227,23 @@ function seed(store: DevTelemetryStore) {
   );
   const records = [
     request("ok-1", now - 5000, { logs: ["cache miss"], spans: 1 }),
-    request("slow-1", now - 4000, { route: "/api/slow", durationMs: 900 }),
-    request("gone-1", now - 3000, { status: 404 }),
+    request("slow-1", now - 4000, {
+      route: "/api/slow",
+      durationMs: 900,
+      logs: [{ level: "debug", message: "warming Cache" }],
+    }),
+    request("gone-1", now - 3000, {
+      status: 404,
+      logs: [
+        { level: "info", message: "no such page: 100% not found_here" },
+        { level: "error", message: "lookup failed" },
+      ],
+    }),
     request("boom-1", now - 2000, {
       status: 500,
       error: "database is locked",
       logs: ["about to fail"],
+      service: "pages",
     }),
   ];
   store.ingest(records.flat(), 1);
@@ -210,6 +259,7 @@ async function dev(options: { history?: boolean; seeded?: boolean } = {}) {
   const dashboard = await startDevDashboard({ port: 0, store, history });
   return {
     store,
+    history,
     base: `http://127.0.0.1:${dashboard.port}`,
     stop() {
       dashboard.stop();
@@ -220,7 +270,7 @@ async function dev(options: { history?: boolean; seeded?: boolean } = {}) {
 }
 
 describe("the dashboard's MCP endpoint", () => {
-  it("answers initialize and lists five read-only tools", async () => {
+  it("answers initialize and lists the read-only tools", async () => {
     const { base, stop } = await dev();
     try {
       const init = await (
@@ -242,6 +292,7 @@ describe("the dashboard's MCP endpoint", () => {
         "get_trace",
         "list_errors",
         "app_overview",
+        "search_logs",
       ]);
       for (const tool of result.tools) {
         expect(tool.annotations).toEqual({ readOnlyHint: true });
@@ -257,9 +308,11 @@ describe("the dashboard's MCP endpoint", () => {
     const { base, stop } = await dev();
     try {
       const { result } = await (await post(base, rpc("tools/list"))).json();
-      expect(result.tools.map((tool: { name: string }) => tool.name)).toEqual([
-        ...DASHBOARD_MCP_TOOLS,
-      ]);
+      // Every name the dashboard has is one an app may not take, listed or not.
+      expect([...DASHBOARD_TOOL_NAMES]).toEqual([...DASHBOARD_MCP_TOOLS]);
+      expect(result.tools.map((tool: { name: string }) => tool.name)).toEqual(
+        DASHBOARD_TOOL_NAMES.filter((name) => ALWAYS.includes(name)),
+      );
     } finally {
       stop();
     }
@@ -337,6 +390,151 @@ describe("the dashboard's MCP endpoint", () => {
         to: "90m",
       })) as any;
       expect(empty.data).toMatchObject({ requests: 0, errorRate: 0 });
+    } finally {
+      stop();
+    }
+  });
+
+  it("searches log lines by text, level, service and endpoint, newest first", async () => {
+    const { base, stop } = await dev();
+    try {
+      const search = async (args: Record<string, unknown> = {}) =>
+        ((await call(base, "search_logs", args)) as any).data;
+      const all = await search();
+      expect(all.source).toBe("memory");
+      expect(
+        all.lines.map((line: any) => [line.traceId, line.level, line.message]),
+      ).toEqual([
+        ["boom-1", "warn", "about to fail"],
+        ["gone-1", "info", "no such page: 100% not found_here"],
+        ["gone-1", "error", "lookup failed"],
+        ["slow-1", "debug", "warming Cache"],
+        ["ok-1", "warn", "cache miss"],
+      ]);
+      expect(all.lines[0]).toMatchObject({
+        endpoint: "GET /api/pages/:id",
+        span: "GET /api/pages/:id",
+      });
+      expect(all.nextOffset).toBeUndefined();
+
+      const traces = async (args: Record<string, unknown>) =>
+        (await search(args)).lines.map((line: any) => line.traceId);
+      // Any case, and `%` and `_` are only themselves.
+      expect(await traces({ query: "CACHE" })).toEqual(["slow-1", "ok-1"]);
+      expect(await traces({ query: "100%" })).toEqual(["gone-1"]);
+      expect(await traces({ query: "found_here" })).toEqual(["gone-1"]);
+      expect(await traces({ query: "foundxhere" })).toEqual([]);
+      expect(await traces({ level: "error" })).toEqual(["gone-1"]);
+      expect(await traces({ level: "debug", query: "cache" })).toEqual([
+        "slow-1",
+      ]);
+      expect(await traces({ endpoint: "GET /api/slow" })).toEqual(["slow-1"]);
+      expect(await traces({ service: "pages" })).toEqual(["boom-1"]);
+      expect(await traces({ to: "10m" })).toEqual([]);
+      expect(await traces({ from: "1s" })).toEqual([]);
+    } finally {
+      stop();
+    }
+  });
+
+  it("pages through log lines, and refuses a level that does not exist", async () => {
+    const { base, stop } = await dev();
+    try {
+      const first = ((await call(base, "search_logs", { limit: 2 })) as any)
+        .data;
+      expect(first.lines).toHaveLength(2);
+      expect(first.nextOffset).toBe(2);
+      const last = ((await call(base, "search_logs", { offset: 4 })) as any)
+        .data;
+      expect(last.lines.map((line: any) => line.traceId)).toEqual(["ok-1"]);
+      expect(await call(base, "search_logs", { level: "loud" })).toMatchObject({
+        isError: true,
+      });
+    } finally {
+      stop();
+    }
+  });
+
+  it("finds the same log lines in memory and in history", async () => {
+    const memory = await dev();
+    const stored = await dev({ history: true });
+    try {
+      for (const args of [
+        {},
+        { query: "cache" },
+        { query: "100%" },
+        { query: "found_here" },
+        { level: "warn" },
+        { level: "error", endpoint: "GET /api/pages/:id" },
+        { service: "pages" },
+        { limit: 2, offset: 1 },
+      ]) {
+        const [a, b] = await Promise.all(
+          [memory, stored].map(
+            async ({ base }) =>
+              ((await call(base, "search_logs", args)) as any).data,
+          ),
+        );
+        expect([a.source, b.source]).toEqual(["memory", "history"]);
+        // The two stores were seeded a moment apart: compare all but the time.
+        const withoutTime = (lines: Record<string, unknown>[]) =>
+          lines.map(({ time: _time, ...line }) => line);
+        expect([JSON.stringify(args), withoutTime(b.lines)]).toEqual([
+          JSON.stringify(args),
+          withoutTime(a.lines),
+        ]);
+        expect(b.nextOffset).toBe(a.nextOffset);
+      }
+    } finally {
+      memory.stop();
+      stored.stop();
+    }
+  });
+
+  it("cuts a long message, and says when a window holds more requests than it searches", async () => {
+    const { base, history, stop } = await dev({
+      history: true,
+      seeded: false,
+    });
+    try {
+      const now = Date.now();
+      const trace = (index: number, message: string): TraceSummary => ({
+        traceId: `bulk-${index}`,
+        name: "GET /api/bulk",
+        method: "GET",
+        route: "/api/bulk",
+        generation: 1,
+        startMs: now - index,
+        endMs: now,
+        durationMs: 1,
+        status: "ok",
+        truncated: false,
+        spans: [
+          {
+            spanId: "root",
+            name: "GET /api/bulk",
+            startMs: now - index,
+            endMs: now,
+            status: "ok",
+            attributes: {},
+            events: [
+              {
+                name: "log",
+                timeMs: now - index,
+                attributes: { "log.level": "info", "log.message": message },
+              },
+            ],
+          },
+        ],
+      });
+      for (let index = 0; index <= MAX_SCANNED_REQUESTS; index++)
+        history!.saveTrace(trace(index, index === 0 ? "x".repeat(5000) : "y"));
+      const answer = ((await call(base, "search_logs", { limit: 1 })) as any)
+        .data;
+      expect(answer.lines[0].message).toContain("more characters");
+      expect(answer.lines[0].message.length).toBeLessThan(600);
+      expect(answer.note).toContain(`${MAX_SCANNED_REQUESTS + 1} requests`);
+      expect(answer.note).toContain(`newest ${MAX_SCANNED_REQUESTS}`);
     } finally {
       stop();
     }
@@ -724,7 +922,7 @@ describe("the MCP endpoint's access", () => {
       ).toBe(401);
       const allowed = await post(base, rpc("tools/list"), bearer);
       expect(allowed.status).toBe(200);
-      expect((await allowed.json()).result.tools).toHaveLength(5);
+      expect((await allowed.json()).result.tools).toHaveLength(ALWAYS.length);
       expect(allowed.headers.get("cache-control")).toBe("no-store");
       const summary = await call(base, "summary", {}, bearer);
       expect(summary).toMatchObject({ isError: false });

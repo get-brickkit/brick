@@ -105,6 +105,7 @@ export const DASHBOARD_MCP_TOOLS = [
   "get_trace",
   "list_errors",
   "app_overview",
+  "search_logs",
 ] as const;
 
 const MIN_TOKEN_LENGTH = 16;

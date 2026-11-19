@@ -7,6 +7,7 @@ import {
   signDashboardIdentity,
   t,
 } from "@brickkit/core";
+import { DASHBOARD_TOOL_NAMES } from "../src/dashboard-mcp";
 import { startDevDashboard } from "../src/dev-dashboard";
 import { DevTelemetryStore } from "../src/dev-telemetry-store";
 
@@ -149,12 +150,20 @@ async function call(
   return { result, error };
 }
 
+/** The dashboard's own tools in a list, and the app's. */
+const dashboards = (listed: string[]) =>
+  listed.filter((name) => DASHBOARD_TOOL_NAMES.includes(name));
+const apps = (listed: string[]) =>
+  listed.filter((name) => !DASHBOARD_TOOL_NAMES.includes(name));
+
+/** What a dashboard with no inspector, OpenAPI or docs lists of its own. */
 const BUILT_IN = [
   "summary",
   "list_requests",
   "get_trace",
   "list_errors",
   "app_overview",
+  "search_logs",
 ];
 const READ_TOOLS = ["find_order", "support_note"];
 const WRITE_TOOLS = ["create_refund", "close_account", "admin_refund"];
@@ -163,10 +172,8 @@ describe("the app's tools on the dashboard's /mcp, in brick dev", () => {
   it("lists a dashboard: true tool, a plugin's too, and leaves out one without the mark", async () => {
     const { base } = await setup();
     const listed = await names(base);
-    expect(listed.slice(0, 5)).toEqual(BUILT_IN);
-    expect(listed.slice(5).sort()).toEqual(
-      [...READ_TOOLS, ...WRITE_TOOLS].sort(),
-    );
+    expect(dashboards(listed)).toEqual(BUILT_IN);
+    expect(apps(listed).sort()).toEqual([...READ_TOOLS, ...WRITE_TOOLS].sort());
     expect(listed).not.toContain("not_for_the_dashboard");
     const refused = await call(base, "not_for_the_dashboard", {});
     expect(refused.error.code).toBe(-32602);
@@ -222,7 +229,7 @@ describe("the app's tools on /mcp, in production", () => {
     const { base } = await setup({ mode: "production", auth: { token } });
     const headers = { authorization: `Bearer ${token}` };
     const listed = await names(base, headers);
-    expect(listed.slice(5).sort()).toEqual(READ_TOOLS.sort());
+    expect(apps(listed).sort()).toEqual(READ_TOOLS.sort());
     expect(
       (await call(base, "find_order", { id: "o1" }, headers)).result.isError,
     ).toBeUndefined();
@@ -242,7 +249,7 @@ describe("the app's tools on /mcp, in production", () => {
       mode: "production",
       auth: { authorize: () => true },
     });
-    expect((await names(base)).slice(5).sort()).toEqual(READ_TOOLS.sort());
+    expect(apps(await names(base)).sort()).toEqual(READ_TOOLS.sort());
     const refused = await call(base, "create_refund", { orderId: "o1" });
     expect(refused.result.isError).toBe(true);
     expect(refunds).toEqual([]);
@@ -261,9 +268,7 @@ describe("the app's tools on /mcp, in production", () => {
     const headers = { authorization: `Bearer ${agentKey}` };
     expect((await post(base, rpc("tools/list"))).status).toBe(401);
     const listed = await names(base, headers);
-    expect(listed.slice(5).sort()).toEqual(
-      [...READ_TOOLS, ...WRITE_TOOLS].sort(),
-    );
+    expect(apps(listed).sort()).toEqual([...READ_TOOLS, ...WRITE_TOOLS].sort());
     const done = await call(base, "create_refund", { orderId: "o9" }, headers);
     expect(done.result.structuredContent).toEqual({ refunded: "o9" });
     expect(refunds).toEqual([{ orderId: "o9", by: "agent-1" }]);

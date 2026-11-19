@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  ATTR,
   HISTORY_PAGE_SIZE,
+  SPAN,
   type FacetValue,
   type HistoryFacets,
   type HistoryInfo,
@@ -16,6 +18,7 @@ import {
   bucketSize,
   CLIENT_ERROR,
   endpointOf,
+  LOG_LEVELS,
   MAX_FACET_VALUES,
   percentile,
   SEARCHED,
@@ -24,6 +27,9 @@ import {
   type EndpointStats,
   type Facet,
   type HistoryQuery,
+  type LogLevel,
+  type LogLine,
+  type LogSearch,
 } from "./dashboard-query";
 
 const DAY_MS = 86_400_000;
@@ -33,6 +39,8 @@ const PRUNE_MS = 30 * 60_000;
 const VOLUME_BUCKETS = 48;
 const MAX_LIMIT = 500;
 const MAX_EXPORT_ROWS = 100_000;
+/** A log search reads the spans of this many requests, the newest of its window. */
+export const MAX_SCANNED_REQUESTS = 20_000;
 
 interface Statement {
   run(...params: unknown[]): unknown;
@@ -119,6 +127,10 @@ const text = (value: unknown): string | undefined =>
   value === null || value === undefined ? undefined : String(value);
 const number = (value: unknown): number | undefined =>
   value === null || value === undefined ? undefined : Number(value);
+
+const LOG_LEVEL_SQL = `CASE WHEN json_extract(event.value, '$.attributes."${ATTR.logLevel}"') IN (${LOG_LEVELS.map((level) => `'${level}'`).join(", ")})
+  THEN json_extract(event.value, '$.attributes."${ATTR.logLevel}"') ELSE 'info' END`;
+const LOG_MESSAGE_SQL = `COALESCE(json_extract(event.value, '$.attributes."${ATTR.logMessage}"'), '')`;
 
 /** Each row's outcome, by the rules of `outcomeOf`. */
 const OUTCOME_CASE = `CASE
@@ -502,6 +514,80 @@ export class DevHistory {
       serverErrors,
       medianMs: percentile(durations, 0.5),
       p95Ms: percentile(durations, 0.95),
+    };
+  }
+
+  /**
+   * Log lines (span events named `log`) of the requests in a window, newest
+   * first, found with SQLite's JSON functions over each request's stored spans.
+   * Only the newest `MAX_SCANNED_REQUESTS` requests of the window are searched;
+   * `requestsInWindow` says how many it held.
+   */
+  searchLogLines(
+    search: LogSearch,
+    page: { limit: number; offset: number },
+  ): { lines: LogLine[]; requestsInWindow: number } {
+    this.flush();
+    const { sql, params } = filterSql({
+      from: search.from,
+      to: search.to,
+      endpoints: search.endpoint ? [search.endpoint] : undefined,
+      services: search.service ? [search.service] : undefined,
+    });
+    const requestsInWindow = Number(
+      this.#database
+        .prepare(`SELECT COUNT(*) AS n FROM traces WHERE ${sql}`)
+        .get(...params)?.n ?? 0,
+    );
+    const clauses = [
+      `json_extract(event.value, '$.name') = '${SPAN.logEvent}'`,
+    ];
+    const filters: unknown[] = [];
+    if (search.level) {
+      clauses.push(`${LOG_LEVEL_SQL} = ?`);
+      filters.push(search.level);
+    }
+    if (search.query) {
+      clauses.push(`LOWER(${LOG_MESSAGE_SQL}) LIKE ? ESCAPE '\\'`);
+      filters.push(
+        `%${search.query.toLowerCase().replace(/[\\%_]/g, "\\$&")}%`,
+      );
+    }
+    const rows = this.#database
+      .prepare(
+        `WITH newest AS (
+           SELECT trace_id, endpoint, spans FROM traces WHERE ${sql}
+           ORDER BY start_ms DESC LIMIT ?)
+         SELECT newest.trace_id, newest.endpoint,
+           json_extract(span.value, '$.name') AS span_name,
+           json_extract(event.value, '$.timeMs') AS time_ms,
+           ${LOG_LEVEL_SQL} AS level, ${LOG_MESSAGE_SQL} AS message,
+           span.key AS span_index, event.key AS event_index
+         FROM newest, json_each(newest.spans) AS span,
+           json_each(span.value, '$.events') AS event
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY time_ms DESC, newest.trace_id ASC, span_index ASC, event_index ASC
+         LIMIT ? OFFSET ?`,
+      )
+      .all(
+        ...params,
+        MAX_SCANNED_REQUESTS,
+        ...filters,
+        page.limit,
+        page.offset,
+      );
+    return {
+      requestsInWindow,
+      lines: rows.map((row) => ({
+        timeMs: Number(row.time_ms),
+        level: String(row.level) as LogLevel,
+        message: String(row.message),
+        traceId: String(row.trace_id),
+        endpoint: String(row.endpoint),
+        span: String(row.span_name),
+        spanIndex: Number(row.span_index),
+        eventIndex: Number(row.event_index),
+      })),
     };
   }
 

@@ -1,5 +1,6 @@
 import type { Attributes } from "@opentelemetry/api";
 import {
+  ATTR,
   SPAN,
   type FacetValue,
   type HistoryFacets,
@@ -255,6 +256,89 @@ export function percentile(sorted: number[], fraction: number): number {
   return (
     sorted[lower]! + (sorted[upper]! - sorted[lower]!) * (position - lower)
   );
+}
+
+export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
+export type LogLevel = (typeof LOG_LEVELS)[number];
+
+/** A line with no level, or one this does not know, is `info`, as the Logs view reads it. */
+const levelOf = (value: unknown): LogLevel =>
+  LOG_LEVELS.find((level) => level === value) ?? "info";
+
+/** The line of a log search: which requests, and which of their lines. */
+export interface LogSearch {
+  /** The window is on when the request started. */
+  from: number;
+  to: number;
+  /** Case-insensitive substring of the message. */
+  query?: string;
+  level?: LogLevel;
+  service?: string;
+  endpoint?: string;
+}
+
+/** One log line, with the request it belongs to. */
+export interface LogLine {
+  timeMs: number;
+  level: LogLevel;
+  message: string;
+  traceId: string;
+  endpoint: string;
+  span: string;
+  /** Where the line sits in its request, to order lines of the same millisecond. */
+  spanIndex: number;
+  eventIndex: number;
+}
+
+/** Newest first, then by request and position, so a page never repeats or skips a line. */
+export function compareLogLines(a: LogLine, b: LogLine): number {
+  return (
+    b.timeMs - a.timeMs ||
+    (a.traceId < b.traceId ? -1 : a.traceId > b.traceId ? 1 : 0) ||
+    a.spanIndex - b.spanIndex ||
+    a.eventIndex - b.eventIndex
+  );
+}
+
+/** The matching log lines of these requests, newest first. */
+export function searchLogLines(
+  traces: TraceSummary[],
+  search: LogSearch,
+): LogLine[] {
+  const needle = search.query?.toLowerCase();
+  const lines: LogLine[] = [];
+  for (const trace of traces) {
+    const endpoint = endpointOf(trace);
+    if (
+      trace.startMs < search.from ||
+      trace.startMs > search.to ||
+      (search.service !== undefined && trace.service !== search.service) ||
+      (search.endpoint !== undefined && endpoint !== search.endpoint)
+    )
+      continue;
+    for (const [spanIndex, span] of trace.spans.entries())
+      for (const [eventIndex, event] of span.events.entries()) {
+        if (event.name !== SPAN.logEvent) continue;
+        const level = levelOf(event.attributes[ATTR.logLevel]);
+        const message = String(event.attributes[ATTR.logMessage] ?? "");
+        if (
+          (search.level !== undefined && level !== search.level) ||
+          (needle !== undefined && !message.toLowerCase().includes(needle))
+        )
+          continue;
+        lines.push({
+          timeMs: event.timeMs,
+          level,
+          message,
+          traceId: trace.traceId,
+          endpoint,
+          span: span.name,
+          spanIndex,
+          eventIndex,
+        });
+      }
+  }
+  return lines.sort(compareLogLines);
 }
 
 export interface EndpointStats {
