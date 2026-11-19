@@ -164,6 +164,7 @@ const BUILT_IN = [
   "list_errors",
   "app_overview",
   "search_logs",
+  "list_reloads",
 ];
 const READ_TOOLS = ["find_order", "support_note"];
 const WRITE_TOOLS = ["create_refund", "close_account", "admin_refund"];

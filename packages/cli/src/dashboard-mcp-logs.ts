@@ -2,10 +2,13 @@ import {
   compactJson,
   cut,
   DAY,
+  DEFAULT_LIST_LIMIT,
   integer,
   iso,
+  MAX_LIST_LIMIT,
   READ_ONLY,
   text,
+  time,
   TIME_HELP,
   window,
   type BuiltInTool,
@@ -79,7 +82,40 @@ function searchLogs(sources: McpSources, args: Record<string, unknown>) {
   });
 }
 
-/** What the Logs view lists, and what the Reloads view lists. */
+const MAX_STACK_CHARS = 1500;
+const MAX_CRASH_MESSAGE_CHARS = 500;
+
+function listReloads(sources: McpSources, args: Record<string, unknown>) {
+  const since = time(args.from, "from", Date.now());
+  const limit = integer(args, "limit", 1, MAX_LIST_LIMIT, DEFAULT_LIST_LIMIT)!;
+  const { reloads, failures } = sources.store.snapshot();
+  const recent = <T extends { at: number }>(items: T[]) =>
+    items.filter((item) => since === undefined || item.at >= since);
+  return compactJson({
+    mode: sources.mode,
+    reloads: recent(reloads)
+      .slice(0, limit)
+      .map((reload) => ({
+        time: iso(reload.at),
+        kind: reload.kind,
+        generation: reload.generation,
+        detail: reload.detail,
+      })),
+    // A request's failure is in list_errors; these are the process's own.
+    crashes: recent(failures.filter((failure) => failure.phase !== "request"))
+      .slice(0, limit)
+      .map((crash) => ({
+        time: iso(crash.at),
+        kind: crash.phase,
+        code: crash.code,
+        message: cut(crash.message, MAX_CRASH_MESSAGE_CHARS),
+        stack: cut(crash.stack, MAX_STACK_CHARS),
+        generation: crash.generation,
+      })),
+  });
+}
+
+/** What the Logs view and the Reloads view list. */
 export function logTools(sources: McpSources): BuiltInTool[] {
   return [
     {
@@ -133,7 +169,32 @@ export function logTools(sources: McpSources): BuiltInTool[] {
       },
       run: (args) => searchLogs(sources, args),
     },
+    {
+      definition: {
+        name: "list_reloads",
+        description:
+          'What the Reloads view shows, newest first: each time the app started, restarted or exited (kind "started", "restarting", "exited" or "contract-ready"), why, and which generation of the process it was, and the crashes of the process itself with their error and stack: a failed startup, an uncaught exception, an unhandled rejection. Check it when the app seems to restart or does not come up. Under `brick start` the dashboard sees only the process it runs in, so it lists the one start of that process and no crashes.',
+        inputSchema: {
+          type: "object",
+          properties: {
+            from: {
+              type: "string",
+              description: `Only events after this. ${TIME_HELP}`,
+            },
+            limit: {
+              type: "integer",
+              minimum: 1,
+              maximum: MAX_LIST_LIMIT,
+              description: `Of each list. Default ${DEFAULT_LIST_LIMIT}.`,
+            },
+          },
+          additionalProperties: false,
+        },
+        annotations: READ_ONLY,
+      },
+      run: (args) => listReloads(sources, args),
+    },
   ];
 }
 
-export const LOG_TOOL_NAMES = ["search_logs"] as const;
+export const LOG_TOOL_NAMES = ["search_logs", "list_reloads"] as const;

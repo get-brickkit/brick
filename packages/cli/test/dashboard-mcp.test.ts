@@ -19,6 +19,7 @@ const ALWAYS = [
   "list_errors",
   "app_overview",
   "search_logs",
+  "list_reloads",
 ];
 
 const token = "0123456789abcdef-secret";
@@ -189,6 +190,20 @@ function request(
 function seed(store: DevTelemetryStore) {
   const now = Date.now();
   store.startGeneration("test");
+  store.recordReload({
+    kind: "restarting",
+    generation: 1,
+    detail: "src/app.ts changed",
+  });
+  store.recordWorkerError(
+    "startup",
+    {
+      name: "Error",
+      message: "cannot open database",
+      stack: "Error: cannot open database\n    at open (db.ts:4:9)",
+    },
+    1,
+  );
   store.setArchitecture(
     {
       version: "1",
@@ -293,6 +308,7 @@ describe("the dashboard's MCP endpoint", () => {
         "list_errors",
         "app_overview",
         "search_logs",
+        "list_reloads",
       ]);
       for (const tool of result.tools) {
         expect(tool.annotations).toEqual({ readOnlyHint: true });
@@ -540,6 +556,43 @@ describe("the dashboard's MCP endpoint", () => {
     }
   });
 
+  it("lists reloads and the process's own crashes, newest first", async () => {
+    const { base, stop } = await dev();
+    try {
+      const { data } = (await call(base, "list_reloads")) as any;
+      expect(data.mode).toBe("dev");
+      expect(
+        data.reloads.map((reload: any) => [reload.kind, reload.detail]),
+      ).toEqual([
+        ["restarting", "src/app.ts changed"],
+        ["started", "test"],
+      ]);
+      expect(data.reloads[0]).toMatchObject({ generation: 1 });
+      expect(data.crashes).toHaveLength(1);
+      expect(data.crashes[0]).toMatchObject({
+        kind: "startup",
+        code: "STARTUP_FAILED",
+        message: "cannot open database",
+        generation: 1,
+      });
+      expect(data.crashes[0].stack).toContain("db.ts:4:9");
+
+      // A failed request is list_errors', not a crash.
+      expect(data.crashes.every((crash: any) => crash.kind !== "request")).toBe(
+        true,
+      );
+      const limited = (await call(base, "list_reloads", { limit: 1 })) as any;
+      expect(limited.data.reloads).toHaveLength(1);
+      const none = (await call(base, "list_reloads", {
+        from: String(Date.now() + 60_000),
+      })) as any;
+      expect(none.data.reloads).toEqual([]);
+      expect(none.data.crashes).toEqual([]);
+    } finally {
+      stop();
+    }
+  });
+
   it("lists requests with the history filters, a page at a time", async () => {
     const { base, stop } = await dev();
     try {
@@ -761,7 +814,12 @@ describe("the dashboard's MCP endpoint", () => {
     const { base, stop } = await dev();
     try {
       const { data } = (await call(base, "list_errors")) as any;
-      expect(data.total).toBe(1);
+      // The request's failure, and the startup crash before it.
+      expect(data.total).toBe(2);
+      expect(data.errors[1]).toMatchObject({
+        code: "STARTUP_FAILED",
+        kind: "startup",
+      });
       expect(data.errors[0]).toMatchObject({
         code: "INTERNAL",
         message: "database is locked",
