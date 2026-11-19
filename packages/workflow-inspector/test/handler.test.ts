@@ -213,6 +213,42 @@ describe.skipIf(!built)("createFetchHandler", () => {
     ]);
   });
 
+  it("answers JSON to a caller that asks for it, with no hook token for a read-only one", async () => {
+    const caller = { readOnly: true, refusal: "Sign in to change this." };
+    const ask = (method: string, params: object) =>
+      handle(
+        new Request(`${base}/api/rpc`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json",
+          },
+          body: JSON.stringify({ method, params }),
+        }),
+        caller,
+      );
+    const events = await ask("fetchEvents", {
+      runId: "wrun_1",
+      withData: true,
+    });
+    expect(events.headers.get("content-type")).toContain("application/json");
+    expect(await events.json()).toMatchObject({
+      success: true,
+      data: {
+        data: [{ eventType: "hook_created", eventData: { isWebhook: true } }],
+      },
+    });
+    expect(
+      JSON.stringify(await (await ask("fetchHook", { hookId: "h" })).json()),
+    ).not.toContain("hook_secret");
+    const refused = await ask("cancelRun", {});
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({
+      success: false,
+      error: { message: caller.refusal, layer: "server" },
+    });
+  });
+
   it("keeps each handler's own world when another is made", async () => {
     const other = stubWorld();
     const second = createFetchHandler(BASE_PATH, {

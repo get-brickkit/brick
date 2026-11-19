@@ -6,6 +6,7 @@
  * preserves Uint8Array values for client-side hydration/deserialization.
  */
 
+import { hydrateResourceIO } from "@workflow/web-shared";
 import { decode, encode } from "cbor-x";
 import {
   READ_METHODS,
@@ -23,6 +24,34 @@ function cborResponse(data: unknown, status = 200): Response {
   });
 }
 
+/** Brick change: values JSON has no form for, as plain ones. */
+function plainValue(_key: string, value: unknown): unknown {
+  if (value instanceof Uint8Array) return `<${value.byteLength} bytes>`;
+  if (value instanceof Map || value instanceof Headers)
+    return Object.fromEntries(value);
+  if (value instanceof Set) return [...value];
+  if (value instanceof Error)
+    return { name: value.name, message: value.message, stack: value.stack };
+  if (typeof value === "bigint") return value.toString();
+  return value;
+}
+
+function jsonResponse(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data, plainValue), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/** Brick change: a run, step or event as the page reads it, its serialized input, output and error turned into values. */
+function hydrated(row: unknown): unknown {
+  try {
+    return hydrateResourceIO(row);
+  } catch {
+    return row;
+  }
+}
+
 const withoutToken = ({
   token: _token,
   ...rest
@@ -37,6 +66,12 @@ function withoutHookTokens(row: any): unknown {
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
+  // Brick change: a caller that asks for JSON (the dashboard's MCP) gets it,
+  // with run, step and event data hydrated; the page asks for CBOR as before.
+  const json = (request.headers.get("accept") ?? "").includes(
+    "application/json",
+  );
+  const respond = json ? jsonResponse : cborResponse;
   let body: { method: unknown; params: unknown };
   const contentType = request.headers.get("content-type") || "";
   try {
@@ -47,7 +82,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       body = await request.json();
     }
   } catch {
-    return cborResponse(
+    return respond(
       {
         success: false,
         error: { message: "Malformed request body", layer: "server" },
@@ -59,7 +94,7 @@ export async function action({ request, context }: Route.ActionArgs) {
   const { method, params } = body;
 
   if (typeof method !== "string" || !Object.hasOwn(rpcMethods, method)) {
-    return cborResponse(
+    return respond(
       {
         success: false,
         error: { message: `Unknown method: ${method}`, layer: "server" },
@@ -70,7 +105,7 @@ export async function action({ request, context }: Route.ActionArgs) {
 
   const caller = context.get(callerContext);
   if (caller?.readOnly && !READ_METHODS.has(method)) {
-    return cborResponse(
+    return respond(
       { success: false, error: { message: caller.refusal, layer: "server" } },
       403,
     );
@@ -90,5 +125,9 @@ export async function action({ request, context }: Route.ActionArgs) {
     answer.data = Array.isArray(answer.data?.data)
       ? { ...answer.data, data: answer.data.data.map(withoutHookTokens) }
       : withoutHookTokens(answer.data);
-  return cborResponse(answer);
+  if (json && answer.success)
+    answer.data = Array.isArray(answer.data?.data)
+      ? { ...answer.data, data: answer.data.data.map(hydrated) }
+      : hydrated(answer.data);
+  return respond(answer);
 }
