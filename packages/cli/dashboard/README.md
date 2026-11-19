@@ -119,12 +119,16 @@ site's `:root` and `.dark`.
   worker or ingest endpoint.
 - **MCP endpoint:** `/mcp` (`ROUTES.mcp`, `src/dashboard-mcp.ts`) is a read-only
   view of the same data for coding agents, a stateless `createMcpHandler` over
-  five tools (`summary`, `list_requests`, `get_trace`, `list_errors`,
-  `app_overview`) that call the history store, or the in-memory store when
-  history is off, with the rules in `dashboard-query.ts`. It is served by
+  read-only tools for every view, each in `src/dashboard-mcp*.ts`: the request
+  tools call the history store, or the in-memory store when history is off,
+  with the rules in `dashboard-query.ts` (`search_logs` runs the same search in
+  SQL over the stored spans and in memory, and a test keeps them in step); the
+  schedule and run tools read the workflow inspector with its read-only mark;
+  `get_openapi`, `list_docs` and `read_doc` are dev only. A tool is listed only
+  while its data exists (`BuiltInTool.available`). It is served by
   `brick dev` and the Vite plugin; production serves it only with
   `dashboard.mcp` (route marked `"mcp"`). It goes through the same access check
-  as every route, refuses a request with another `Origin`, and the five built-in
+  as every route, refuses a request with another `Origin`, and the built-in
   tools never write, whoever the identity is. A trace answer is cut to about
   50 KB. The app's tools marked `dashboard: true` are listed beside them: the
   dashboard asks the app for them at `DASHBOARD_MCP_ROUTE` (`@brickkit/core`,

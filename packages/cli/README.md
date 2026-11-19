@@ -182,10 +182,15 @@ Requests that send a W3C `traceparent` header join the caller's trace, and the
 dashboard shows them under that trace id.
 
 `brick dev` also serves `/mcp` on the dashboard's port, an MCP endpoint
-for coding agents (Claude Code, Cursor, Codex) with five read-only tools: `summary`, `list_requests`,
-`get_trace`, `list_errors` and `app_overview`. It prints the address on start;
-connect with `claude mcp add --transport http brick http://127.0.0.1:9400/mcp`.
-Those five only read, and a request from another origin is refused. Tools of
+for coding agents (Claude Code, Cursor, Codex) with read-only tools for every
+view: `summary`, `list_requests`, `get_trace`, `search_logs`, `list_errors`,
+`list_reloads` and `app_overview`; `list_schedules`, `list_runs` and `get_run`
+while the workflow inspector is served; and, under `brick dev` only,
+`get_openapi`, `list_docs` and `read_doc`. A tool whose data is not there is left
+out of the list. It prints the address on start; connect with
+`claude mcp add --transport http brick http://127.0.0.1:9400/mcp`. They only
+read, a hook's token is never sent, there is no live stream (each call is a
+plain request and response), and a request from another origin is refused. Tools of
 the app's own marked `dashboard: true` (`service.tool`, or a plugin's) are
 listed beside them; one without `readOnlyHint: true` can change data and is
 advertised as destructive. `list_errors` reads only the failures held in memory
