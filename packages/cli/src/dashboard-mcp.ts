@@ -35,6 +35,7 @@ import {
   toRow,
   type HistoryQuery,
 } from "./dashboard-query";
+import { DOCS_TOOL_NAMES, docsTools } from "./dashboard-mcp-docs";
 import { LOG_TOOL_NAMES, logTools } from "./dashboard-mcp-logs";
 import { WORKFLOW_TOOL_NAMES, workflowTools } from "./dashboard-mcp-workflows";
 import {
@@ -408,6 +409,7 @@ const TOOLS: McpToolDefinition[] = [
 const VIEW_TOOL_NAMES: readonly string[] = [
   ...LOG_TOOL_NAMES,
   ...WORKFLOW_TOOL_NAMES,
+  ...DOCS_TOOL_NAMES,
 ];
 
 /** Every tool the dashboard has of its own, listed or not. */
@@ -421,6 +423,7 @@ export function createDashboardMcpRegistry(options: McpSources): McpRegistry {
   const viewTools: BuiltInTool[] = [
     ...logTools(options),
     ...workflowTools(options),
+    ...docsTools(options),
   ];
   const calls: Record<string, (args: Args) => string> = {
     summary(args) {

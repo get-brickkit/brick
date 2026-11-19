@@ -110,6 +110,9 @@ export const DASHBOARD_MCP_TOOLS = [
   "list_schedules",
   "list_runs",
   "get_run",
+  "get_openapi",
+  "list_docs",
+  "read_doc",
 ] as const;
 
 const MIN_TOKEN_LENGTH = 16;
