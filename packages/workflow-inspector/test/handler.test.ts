@@ -249,6 +249,50 @@ describe.skipIf(!built)("createFetchHandler", () => {
     });
   });
 
+  it("answers every kind of binary data in JSON as its size", async () => {
+    const binary = stubWorld();
+    (binary.events as { list: unknown }).list = async () => ({
+      data: [
+        {
+          eventType: "step_completed",
+          eventData: {
+            bytes: new Uint8Array(3),
+            words: new Uint16Array(4),
+            floats: new Float64Array(2),
+            view: new DataView(new ArrayBuffer(5)),
+            buffer: new ArrayBuffer(6),
+            node: Buffer.from("seven77"),
+          },
+        },
+      ],
+      cursor: null,
+      hasMore: false,
+    });
+    const answer = await createFetchHandler(BASE_PATH, {
+      world: binary as unknown as World,
+    })(
+      new Request(`${base}/api/rpc`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({
+          method: "fetchEvents",
+          params: { runId: "wrun_1", withData: true },
+        }),
+      }),
+    );
+    expect((await answer.json()).data.data[0].eventData).toEqual({
+      bytes: "<3 bytes>",
+      words: "<8 bytes>",
+      floats: "<16 bytes>",
+      view: "<5 bytes>",
+      buffer: "<6 bytes>",
+      node: "<7 bytes>",
+    });
+  });
+
   it("keeps each handler's own world when another is made", async () => {
     const other = stubWorld();
     const second = createFetchHandler(BASE_PATH, {

@@ -25,8 +25,11 @@ function cborResponse(data: unknown, status = 200): Response {
 }
 
 /** Brick change: values JSON has no form for, as plain ones. */
-function plainValue(_key: string, value: unknown): unknown {
-  if (value instanceof Uint8Array) return `<${value.byteLength} bytes>`;
+function plainValue(this: unknown, key: string, value: unknown): unknown {
+  // `toJSON` has run on `value` already: a Buffer's has made it an object.
+  const original = (this as Record<string, unknown> | undefined)?.[key];
+  if (original instanceof ArrayBuffer || ArrayBuffer.isView(original))
+    return `<${original.byteLength} bytes>`;
   if (value instanceof Map || value instanceof Headers)
     return Object.fromEntries(value);
   if (value instanceof Set) return [...value];
