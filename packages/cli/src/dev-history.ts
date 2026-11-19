@@ -41,6 +41,8 @@ const MAX_LIMIT = 500;
 const MAX_EXPORT_ROWS = 100_000;
 /** A log search reads the spans of this many requests, the newest of its window. */
 export const MAX_SCANNED_REQUESTS = 20_000;
+/** A text search reads at most this many log lines, newest first, of those requests. */
+export const MAX_SCANNED_LOG_LINES = 100_000;
 
 interface Statement {
   run(...params: unknown[]): unknown;
@@ -521,12 +523,14 @@ export class DevHistory {
    * Log lines (span events named `log`) of the requests in a window, newest
    * first, found with SQLite's JSON functions over each request's stored spans.
    * Only the newest `MAX_SCANNED_REQUESTS` requests of the window are searched;
-   * `requestsInWindow` says how many it held.
+   * `requestsInWindow` says how many it held. SQLite's `LIKE` folds only
+   * ASCII, so text is matched here, as the in-memory search does, over at most
+   * `MAX_SCANNED_LOG_LINES` lines; `linesCapped` says it stopped there.
    */
   searchLogLines(
     search: LogSearch,
     page: { limit: number; offset: number },
-  ): { lines: LogLine[]; requestsInWindow: number } {
+  ): { lines: LogLine[]; requestsInWindow: number; linesCapped: boolean } {
     this.flush();
     const { sql, params } = filterSql({
       from: search.from,
@@ -547,12 +551,7 @@ export class DevHistory {
       clauses.push(`${LOG_LEVEL_SQL} = ?`);
       filters.push(search.level);
     }
-    if (search.query) {
-      clauses.push(`LOWER(${LOG_MESSAGE_SQL}) LIKE ? ESCAPE '\\'`);
-      filters.push(
-        `%${search.query.toLowerCase().replace(/[\\%_]/g, "\\$&")}%`,
-      );
-    }
+    const needle = search.query?.toLowerCase();
     const rows = this.#database
       .prepare(
         `WITH newest AS (
@@ -573,12 +572,11 @@ export class DevHistory {
         ...params,
         MAX_SCANNED_REQUESTS,
         ...filters,
-        page.limit,
-        page.offset,
+        needle === undefined ? page.limit : MAX_SCANNED_LOG_LINES,
+        needle === undefined ? page.offset : 0,
       );
-    return {
-      requestsInWindow,
-      lines: rows.map((row) => ({
+    const lines = rows
+      .map((row) => ({
         timeMs: Number(row.time_ms),
         level: String(row.level) as LogLevel,
         message: String(row.message),
@@ -587,7 +585,19 @@ export class DevHistory {
         span: String(row.span_name),
         spanIndex: Number(row.span_index),
         eventIndex: Number(row.event_index),
-      })),
+      }))
+      .filter(
+        (line) =>
+          needle === undefined || line.message.toLowerCase().includes(needle),
+      );
+    return {
+      requestsInWindow,
+      lines:
+        needle === undefined
+          ? lines
+          : lines.slice(page.offset, page.offset + page.limit),
+      linesCapped:
+        needle !== undefined && rows.length === MAX_SCANNED_LOG_LINES,
     };
   }
 

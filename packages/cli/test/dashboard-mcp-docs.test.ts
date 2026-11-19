@@ -243,6 +243,30 @@ describe("get_openapi", () => {
     });
   });
 
+  it("keeps an operation that escapes to twice its size under the cap", async () => {
+    const { call } = await setup({
+      documents: [
+        {
+          title: "Quoted",
+          document: {
+            paths: {
+              "/api/quoted": {
+                post: {
+                  operationId: "quoted",
+                  description: '"\\'.repeat(120_000),
+                },
+              },
+            },
+          },
+        },
+      ],
+    });
+    const answer = (await call("get_openapi", { operation: "quoted" })) as any;
+    expect(answer.text.length).toBeLessThanOrEqual(MAX_DOCS_CHARS);
+    expect(answer.data.note).toContain("Cut to fit");
+    expect(answer.data.operation.preview).toContain("more characters");
+  });
+
   it("cuts a big operation, and a long list of operations, and says so", async () => {
     const paths: Record<string, unknown> = {};
     for (let index = 0; index < 400; index++)

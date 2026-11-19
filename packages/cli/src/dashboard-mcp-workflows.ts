@@ -46,14 +46,15 @@ const EVENTS_PER_PAGE = 1000;
 const MAX_EVENT_PAGES = 5;
 const LAST_SCHEDULE_RUNS = 5;
 const MAX_ERROR_CHARS = 500;
+const MAX_ID_CHARS = 200;
 /** A `get_run` answer is cut to about this many characters of JSON. */
 export const MAX_RUN_CHARS = 50_000;
 /** From mildest to harshest: the first that fits the cap is the answer. */
 const RUN_LEVELS_MILDEST_FIRST = [
-  { value: 2000, steps: 200 },
-  { value: 500, steps: 100 },
-  { value: 100, steps: 50 },
-  { value: 0, steps: 20 },
+  { value: 2000, steps: 200, hooks: 200 },
+  { value: 500, steps: 100, hooks: 100 },
+  { value: 100, steps: 50, hooks: 50 },
+  { value: 0, steps: 20, hooks: 20 },
 ] as const;
 
 interface InspectorTarget {
@@ -171,6 +172,7 @@ async function listRuns(target: InspectorTarget, args: Args) {
   const found: any[] = [];
   let cursor: string | undefined;
   let more = false;
+  let scanned = 0;
   // Newest first: stop at a run older than the window, or when there is enough.
   for (let page = 0; page < MAX_RUN_PAGES && found.length <= limit; page++) {
     const answer = await inspectorRpc(target, "fetchRuns", {
@@ -180,6 +182,7 @@ async function listRuns(target: InspectorTarget, args: Args) {
       ...(status ? { status } : {}),
     });
     let passedWindow = false;
+    scanned += (answer.data as any[]).length;
     for (const run of answer.data as any[]) {
       const created = dateOf(run.createdAt) ?? 0;
       if (from !== undefined && created < from) {
@@ -199,15 +202,24 @@ async function listRuns(target: InspectorTarget, args: Args) {
     cursor = answer.cursor ?? undefined;
     if (!more || !cursor) break;
   }
+  // The page budget ran out with runs left to read and too few found.
+  const cutShort = more && found.length <= limit;
   return compactJson({
     runs: found.slice(0, limit).map(runRow),
     ...(found.length > limit ? { hasMore: true } : {}),
+    ...(cutShort
+      ? {
+          truncated: true,
+          note: `Only the newest ${scanned} runs were looked through, and older ones may match. Narrow it with from, status or workflow.`,
+        }
+      : {}),
   });
 }
 
 interface Level {
   value: number;
   steps: number;
+  hooks: number;
 }
 
 /** A value as it is, or a preview of its JSON when that is longer than `limit`. */
@@ -297,6 +309,7 @@ function runAnswer(
   level: Level,
 ) {
   const shown = steps.slice(0, level.steps);
+  const shownHooks = hooks.slice(0, level.hooks);
   return {
     runId: run.runId,
     workflow: shortName(String(run.workflowName)),
@@ -329,12 +342,13 @@ function runAnswer(
         level.value,
       ),
     })),
-    hooks,
+    hooks: shownHooks,
     note:
       shown.length < steps.length ||
+      shownHooks.length < hooks.length ||
       moreEvents ||
       level !== RUN_LEVELS_MILDEST_FIRST[0]
-        ? `Cut to fit about ${MAX_RUN_CHARS / 1000} KB.${shown.length < steps.length ? ` ${steps.length - shown.length} steps are left out.` : ""}${level !== RUN_LEVELS_MILDEST_FIRST[0] ? " Long inputs, outputs and errors are shortened or left out." : ""}${moreEvents ? ` Only the first ${eventsRead} events were read, so later steps may be missing.` : ""}`
+        ? `Cut to fit about ${MAX_RUN_CHARS / 1000} KB.${shown.length < steps.length ? ` ${steps.length - shown.length} steps are left out.` : ""}${shownHooks.length < hooks.length ? ` ${hooks.length - shownHooks.length} hooks are left out.` : ""}${level !== RUN_LEVELS_MILDEST_FIRST[0] ? " Long inputs, outputs and errors are shortened or left out." : ""}${moreEvents ? ` Only the first ${eventsRead} events were read, so later steps may be missing.` : ""}`
         : undefined,
   };
 }
@@ -361,14 +375,23 @@ async function getRun(target: InspectorTarget, args: Args) {
   }
   const steps = stepsOf(events);
   const hooks = hooksOf(events);
-  let answer = "";
   for (const level of RUN_LEVELS_MILDEST_FIRST) {
-    answer = compactJson(
+    const answer = compactJson(
       runAnswer(run, steps, hooks, events.length, moreEvents, level),
     );
-    if (answer.length <= MAX_RUN_CHARS) break;
+    if (answer.length <= MAX_RUN_CHARS) return answer;
   }
-  return answer;
+  // Even the harshest cut is too big: the run's own facts, and how much there is.
+  return compactJson({
+    runId: cut(String(run.runId), MAX_ID_CHARS),
+    workflow: cut(shortName(String(run.workflowName)), MAX_ID_CHARS),
+    status: run.status,
+    createdAt: run.createdAt,
+    completedAt: run.completedAt,
+    steps: steps.length,
+    hooks: hooks.length,
+    note: `This run is too large to send even cut down, so its details are left out: ${steps.length} steps, ${hooks.length} hooks. Open it in the dashboard's Workflows view.`,
+  });
 }
 
 async function listSchedules(target: InspectorTarget) {

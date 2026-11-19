@@ -19,6 +19,10 @@ import type { DocsNode } from "./dashboard-protocol";
 export const MAX_DOCS_CHARS = 50_000;
 const MAX_OPERATIONS_LISTED = 300;
 const MAX_REFERENCED_SCHEMAS = 100;
+/** The last resort for an operation too large to show: how much of it to try, each time half as much. */
+const PREVIEW_CHARS_MOST_FIRST = [25_000, 10_000, 2_000] as const;
+const MAX_NAMED_SCHEMAS = 20;
+const MAX_NAME_CHARS = 200;
 const HTTP_METHODS = [
   "get",
   "put",
@@ -135,9 +139,9 @@ function getOpenapi(documents: ApiDocument[], args: Args) {
     note?: string,
   ) =>
     compactJson({
-      document: title,
+      document: cut(title, MAX_NAME_CHARS),
       method: method.toUpperCase(),
-      path,
+      path: cut(path, MAX_NAME_CHARS),
       operation: parts.operation,
       referenced: parts.schemas,
       ...(note ? { note } : {}),
@@ -150,14 +154,22 @@ function getOpenapi(documents: ApiDocument[], args: Args) {
     "Cut to fit about 50 KB: the schemas the operation refers to are named, not shown.",
   );
   if (result.length <= MAX_DOCS_CHARS) return result;
+  // Still too big: show only its start, as little as it takes to fit (escaping
+  // can double a preview), and in the end none of it.
+  const names = Object.keys(schemas)
+    .slice(0, MAX_NAMED_SCHEMAS)
+    .map((name) => cut(name, MAX_NAME_CHARS));
+  const json = JSON.stringify(operation);
+  for (const chars of PREVIEW_CHARS_MOST_FIRST) {
+    result = answer(
+      { operation: { preview: cut(json, chars) }, schemas: names },
+      "Cut to fit about 50 KB: the operation itself is too large, so only its start is shown.",
+    );
+    if (result.length <= MAX_DOCS_CHARS) return result;
+  }
   return answer(
-    {
-      operation: {
-        preview: cut(JSON.stringify(operation), MAX_DOCS_CHARS - 2000),
-      },
-      schemas: Object.keys(schemas),
-    },
-    "Cut to fit about 50 KB: the operation itself is too large, so only its start is shown.",
+    { operation: "left out", schemas: names },
+    `The operation is ${json.length} characters long, too large to show even cut down. Read it in the dashboard's APIs view.`,
   );
 }
 

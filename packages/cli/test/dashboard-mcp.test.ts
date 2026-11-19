@@ -471,6 +471,53 @@ describe("the dashboard's MCP endpoint", () => {
     }
   });
 
+  it("matches non-ASCII text in any case, the same in memory and in history", async () => {
+    const memory = await dev({ seeded: false });
+    const stored = await dev({ history: true, seeded: false });
+    try {
+      for (const { store } of [memory, stored])
+        store.ingest(
+          [
+            ...request("de-1", Date.now() - 2000, {
+              logs: ["Ärger beim Laden", "Straße gesperrt"],
+            }),
+            ...request("de-2", Date.now() - 1000, {
+              logs: ["kein ärger", "ÄRGER"],
+            }),
+          ],
+          1,
+        );
+      for (const query of ["ärger", "ÄRGER", "Ärger", "straße", "STRASSE"]) {
+        const [a, b] = await Promise.all(
+          [memory, stored].map(
+            async ({ base }) =>
+              ((await call(base, "search_logs", { query })) as any).data,
+          ),
+        );
+        const messages = (data: any) =>
+          data.lines.map((line: any) => line.message);
+        expect([query, messages(b)]).toEqual([query, messages(a)]);
+      }
+      const found = (await call(stored.base, "search_logs", {
+        query: "ärger",
+      })) as any;
+      expect(found.data.lines.map((line: any) => line.message).sort()).toEqual(
+        ["kein ärger", "ÄRGER", "Ärger beim Laden"].sort(),
+      );
+      // A page of a text search is still a page.
+      const second = (await call(stored.base, "search_logs", {
+        query: "ärger",
+        limit: 1,
+        offset: 1,
+      })) as any;
+      expect(second.data.lines).toHaveLength(1);
+      expect(second.data.nextOffset).toBe(2);
+    } finally {
+      memory.stop();
+      stored.stop();
+    }
+  });
+
   it("finds the same log lines in memory and in history", async () => {
     const memory = await dev();
     const stored = await dev({ history: true });

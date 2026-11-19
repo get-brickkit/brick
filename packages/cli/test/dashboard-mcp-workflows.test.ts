@@ -357,6 +357,40 @@ describe("the workflow and schedule tools", () => {
     expect(await call("get_run")).toMatchObject({ isError: true });
   });
 
+  it("say when a run list stopped before it had looked through every run", async () => {
+    const world = stubWorld();
+    world.runs.list = async () => ({
+      data: Array.from({ length: 100 }, (_, index) => run(index + 1)),
+      cursor: "more",
+      hasMore: true,
+    });
+    const { call } = await setup({ world });
+    // Nothing matches, and there are always more runs to read.
+    const none = (await call("list_runs", { workflow: "nothing" })) as any;
+    expect(none.data.runs).toEqual([]);
+    expect(none.data.truncated).toBe(true);
+    expect(none.data.note).toContain("newest 1000 runs");
+    // Enough found: that is a full page, not a cut-short search.
+    const full = (await call("list_runs", { limit: 5 })) as any;
+    expect(full.data.hasMore).toBe(true);
+    expect(full.data.truncated).toBeUndefined();
+  });
+
+  it("cut a run with very many hooks to the cap, and say so", async () => {
+    const world = stubWorld();
+    world.events.rows = Array.from({ length: 5000 }, (_, index) =>
+      event("hook_created", `hook_${"h".repeat(60)}_${index}`, index, {
+        token: HOOK_TOKEN,
+      }),
+    );
+    const { call } = await setup({ world });
+    const answer = (await call("get_run", { run_id: "wrun_1" })) as any;
+    expect(answer.text.length).toBeLessThanOrEqual(MAX_RUN_CHARS);
+    expect(answer.text).not.toContain(HOOK_TOKEN);
+    expect(answer.data.hooks.length).toBeLessThan(5000);
+    expect(answer.data.note).toMatch(/\d+ hooks are left out/);
+  });
+
   it("cut a run's long values and many steps to the cap, and say so", async () => {
     const world = stubWorld();
     world.runs.get = async (runId: string) =>
