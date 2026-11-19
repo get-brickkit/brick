@@ -313,6 +313,9 @@ describe("the workflow and schedule tools", () => {
     expect(await call("list_runs", { status: "stuck" })).toMatchObject({
       isError: true,
     });
+    expect(await call("list_runs", { from: "1m", to: "2h" })).toMatchObject({
+      isError: true,
+    });
   });
 
   it("show one run with its steps, and never a hook token", async () => {

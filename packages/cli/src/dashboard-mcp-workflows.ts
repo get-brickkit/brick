@@ -168,6 +168,8 @@ async function listRuns(target: InspectorTarget, args: Args) {
   const now = Date.now();
   const from = time(args.from, "from", now);
   const to = time(args.to, "to", now) ?? now;
+  if (from !== undefined && from > to)
+    throw new Error("from must not be after to.");
   const limit = integer(args, "limit", 1, MAX_LIST_LIMIT, DEFAULT_LIST_LIMIT)!;
   const found: any[] = [];
   let cursor: string | undefined;
