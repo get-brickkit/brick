@@ -19,3 +19,14 @@ describe("code blocks", () => {
     expect(region).toContain("overflow-auto");
   });
 });
+
+describe("mermaid", () => {
+  test("server-renders the diagram source as a code block", () => {
+    const { Mermaid } = getMDXComponents();
+    const html = renderToStaticMarkup(
+      <Mermaid chart={"flowchart LR\n  A --> B"} />,
+    );
+    expect(html).toContain("flowchart LR");
+    expect(html).toContain("fd-scroll-container");
+  });
+});

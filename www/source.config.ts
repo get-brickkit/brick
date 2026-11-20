@@ -1,4 +1,5 @@
 import { defineConfig, defineDocs } from "fumadocs-mdx/config";
+import { remarkMdxMermaid } from "fumadocs-core/mdx-plugins";
 import { pageSchema } from "fumadocs-core/source/schema";
 import { z } from "zod";
 import {
@@ -19,7 +20,8 @@ export const docs = defineDocs({
 
 export default defineConfig({
   mdxOptions: {
-    remarkPlugins: [remarkDocsMarkdown],
+    // Mermaid runs last so the docs markdown plugin still sees the plain fence.
+    remarkPlugins: [remarkDocsMarkdown, remarkMdxMermaid],
     rehypeCodeOptions: { themes: codeThemes },
   },
 });

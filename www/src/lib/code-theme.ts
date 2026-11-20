@@ -42,18 +42,27 @@ function brickTheme(
   };
 }
 
-export const brickLight = brickTheme("brick-light", "light", {
-  background: "#fafaf8",
-  ink: "#171716",
-  muted: "#666660",
-  accent: "#9b432c",
-});
+export const brickPalette = {
+  light: {
+    background: "#fafaf8",
+    ink: "#171716",
+    muted: "#666660",
+    accent: "#9b432c",
+  },
+  dark: {
+    background: "#1b1b19",
+    ink: "#f3f3ee",
+    muted: "#a5a59c",
+    accent: "#da916e",
+  },
+};
 
-export const brickDark = brickTheme("brick-dark", "dark", {
-  background: "#1b1b19",
-  ink: "#f3f3ee",
-  muted: "#a5a59c",
-  accent: "#da916e",
-});
+export const brickLight = brickTheme(
+  "brick-light",
+  "light",
+  brickPalette.light,
+);
+
+export const brickDark = brickTheme("brick-dark", "dark", brickPalette.dark);
 
 export const codeThemes = { light: brickLight, dark: brickDark };
