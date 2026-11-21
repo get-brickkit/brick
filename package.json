@@ -11,6 +11,7 @@
     "examples/showcase",
     "examples/extensions",
     "examples/events",
+    "examples/board",
     "examples/websocket",
     "www",
     "examples/pages"
