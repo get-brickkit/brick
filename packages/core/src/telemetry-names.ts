@@ -25,6 +25,12 @@ export const ATTR = {
   webhook: "brick.webhook",
   webhookEventId: "brick.webhook.event_id",
   webhookOutcome: "brick.webhook.outcome",
+  /** A schedule run: the schedule's name, what started it, which try, its due time and how it ended. */
+  schedule: "brick.schedule",
+  scheduleTrigger: "brick.schedule.trigger",
+  scheduleAttempt: "brick.schedule.attempt",
+  scheduleSlot: "brick.schedule.slot",
+  scheduleOutcome: "brick.schedule.outcome",
   traceId: "brick.trace_id",
   errorCode: "brick.error.code",
   errorMessage: "brick.error.message",

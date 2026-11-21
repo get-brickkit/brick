@@ -282,7 +282,7 @@ They are off by default because they do more than show data. **Run now** starts 
 
 `authorize` can now return `{ user }` as well as `true`, `false` or a `Response`. That return is what allows someone to make changes.
 
-The inspector ships inside `@brickkit/cli`, so there is nothing else to install. The app serves it on a loopback port with a random token that only the dashboard holds. An app with schedules and no workflow world gets only the Schedules tab. An app with neither starts as usual and says so once. See [Schedules and Workflows in production](/docs/brick-cli/dev-and-start#schedules-and-workflows-in-production).
+The inspector ships inside `@brickkit/cli`, so there is nothing else to install. The app serves it on a loopback port with a random token that only the dashboard holds. An app with schedules and no workflow world gets only the Schedules tab. An app with neither starts as usual and says so once. Each schedule run is one trace, `schedule <name>`, with its SQL and outbound `fetch` calls as child spans. See [Schedules and Workflows in production](/docs/brick-cli/dev-and-start#schedules-and-workflows-in-production).
 
 ## 9. Connect a coding agent to the dashboard
 

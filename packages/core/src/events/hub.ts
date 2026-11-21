@@ -1,3 +1,4 @@
+import { traceScheduleRun } from "../telemetry";
 import { GLOBAL_SYMBOL } from "../telemetry-names";
 import { Dispatcher, type OutboxCounts } from "./dispatcher";
 import { newEventId } from "./id";
@@ -116,10 +117,12 @@ export class EventsHub {
    * @param options - The `events` option.
    * @param deps - The deps of the app's services, which `useDeps()` returns in
    * its listeners, schedules and workflow steps.
+   * @param telemetry - Trace each schedule run, as `brick({ telemetry })` does requests.
    */
   constructor(
     options: EventsOptions,
     private readonly deps: Record<string, unknown> = {},
+    private readonly telemetry = false,
   ) {
     for (const listener of options.listeners ?? []) {
       validateListener(listener);
@@ -270,10 +273,13 @@ export class EventsHub {
       db,
       table,
       this.scheduleList,
-      (schedule, run) =>
-        schedule.workflow
-          ? this.runtime!.startScheduled(schedule, run)
-          : runWithDeps(this.deps, async () => schedule.run!(run)),
+      (schedule, run) => {
+        const start = () =>
+          schedule.workflow
+            ? this.runtime!.startScheduled(schedule, run)
+            : runWithDeps(this.deps, async () => schedule.run!(run));
+        return this.telemetry ? traceScheduleRun(run, start) : start();
+      },
       {
         timer: options.timer ?? true,
         intervalMs: options.intervalMs ?? 1_000,
