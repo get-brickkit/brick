@@ -200,12 +200,6 @@ export function instrumentDatabase(db: unknown): void {
   driver[DATABASE_INSTRUMENTED] = true;
 }
 
-/**
- * Record outbound `fetch` calls as client spans, like SQL statements. Only
- * scheme, host and path are kept: the query, credentials, headers and bodies
- * can carry API keys. Calls outside a traced request skip the span entirely.
- * Calling this again is a no-op.
- */
 export function instrumentFetch(): void {
   const original = globalThis.fetch as typeof fetch & {
     [FETCH_INSTRUMENTED]?: true;
@@ -213,7 +207,6 @@ export function instrumentFetch(): void {
   if (original[FETCH_INSTRUMENTED]) return;
   // A Proxy keeps fetch's own properties, such as Bun's `fetch.preconnect`.
   const wrapped = new Proxy(original, {
-    // The marker lives on the wrapper only, so a restored original can be wrapped again.
     get: (target, key) =>
       key === FETCH_INSTRUMENTED ? true : Reflect.get(target, key),
     apply(target, self, args: Parameters<typeof fetch>) {
@@ -234,7 +227,6 @@ export function instrumentFetch(): void {
           kind: SpanKind.CLIENT,
           attributes: {
             [ATTR.httpMethod]: method,
-            // `origin` leaves out user:password@.
             [ATTR.urlFull]: truncate(
               redactText(`${url.origin}${url.pathname}`),
             ),
@@ -254,7 +246,6 @@ export function instrumentFetch(): void {
       } catch (error) {
         return fail(error);
       }
-      // shortcut: the span ends when the response headers arrive, not when the body is read; wrap the body stream if body time matters.
       return pending.then((response) => {
         span.setAttribute(ATTR.httpStatus, response.status);
         if (response.status >= 400) {

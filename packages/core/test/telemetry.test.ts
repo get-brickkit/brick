@@ -513,6 +513,11 @@ describe("outbound fetch spans", () => {
     try {
       brick({ services: [], requestLogging: false, telemetry: true });
       expect(globalThis.fetch).not.toBe(throwing);
+      const wrappedThrowing = globalThis.fetch;
+      globalThis.fetch = throwing as unknown as typeof fetch;
+      brick({ services: [], requestLogging: false, telemetry: true });
+      expect(globalThis.fetch).not.toBe(throwing);
+      expect(globalThis.fetch).not.toBe(wrappedThrowing);
       const app = appCalling(async () => ({
         error: await Promise.resolve()
           .then(() => fetch(`${base}/sync`))

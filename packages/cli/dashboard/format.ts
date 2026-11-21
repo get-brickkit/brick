@@ -109,7 +109,6 @@ export interface TraceBreakdown {
   /** Calls to other services made while handling it. */
   calls: TraceSpan[];
   queries: SpanTotals;
-  /** Outbound HTTP calls, such as `fetch` to another API. */
   fetches: SpanTotals;
   /** The first exception recorded on a span, with where it came from. */
   exception:

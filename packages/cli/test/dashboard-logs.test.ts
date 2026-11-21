@@ -220,7 +220,6 @@ describe("from ctx.logger to the dashboard", () => {
     const tracer = trace.getTracer("test");
     await tracer.startActiveSpan("GET /x", async (request) => {
       await waitFor(() => activeAtSend.length > 0);
-      // The next batch starts while the request's span is active, as a fetch span would.
       tracer.startSpan("GET api.example.com/v1").end();
       await waitFor(() => activeAtSend.length > 1);
       request.end();
