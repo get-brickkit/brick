@@ -430,6 +430,32 @@ describe("outbound fetch spans", () => {
     expect(recorded).not.toContain("hunter2");
   });
 
+  it("masks a sensitive value that appears in the URL path", async () => {
+    const crm = defineService("crm");
+    crm.action({
+      name: "notify",
+      input: t.Object({ token: t.Sensitive(t.String()) }),
+      execute: async ({ input }) => {
+        await fetch(`${base}/bot${input.token}/send`);
+        return { ok: true };
+      },
+    });
+    const app = brick({
+      services: [crm],
+      requestLogging: false,
+      telemetry: true,
+    });
+
+    await postJson(app, "/api/crm/notify", { token: "tok_live_123456" });
+    const call = exporter
+      .getFinishedSpans()
+      .find((span) => span.attributes["url.full"] !== undefined);
+    expect(call?.name).toBe(
+      `GET 127.0.0.1:${upstream.port}/bot[REDACTED]/send`,
+    );
+    expect(call?.attributes["url.full"]).toBe(`${base}/bot[REDACTED]/send`);
+  });
+
   it("accepts a Request as input and marks 4xx responses as errors", async () => {
     const app = appCalling(async () => {
       const response = await fetch(
@@ -478,6 +504,30 @@ describe("outbound fetch spans", () => {
     const patched = globalThis.fetch;
     brick({ services: [], requestLogging: false, telemetry: true });
     expect(globalThis.fetch).toBe(patched);
+
+    const thrown = new Error("bad init");
+    const throwing = () => {
+      throw thrown;
+    };
+    globalThis.fetch = throwing as unknown as typeof fetch;
+    try {
+      brick({ services: [], requestLogging: false, telemetry: true });
+      expect(globalThis.fetch).not.toBe(throwing);
+      const app = appCalling(async () => ({
+        error: await Promise.resolve()
+          .then(() => fetch(`${base}/sync`))
+          .catch((error: Error) => error.message),
+      }));
+      expect(await (await postJson(app, "/api/crm/search", {})).json()).toEqual(
+        { error: "bad init" },
+      );
+      expect(spanNamed(`GET 127.0.0.1:${upstream.port}/sync`).status.code).toBe(
+        SpanStatusCode.ERROR,
+      );
+      exporter.reset();
+    } finally {
+      globalThis.fetch = patched;
+    }
 
     expect(await (await fetch(`${base}/plain`)).text()).toBe("seen GET /plain");
     expect(exporter.getFinishedSpans()).toHaveLength(0);

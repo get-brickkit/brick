@@ -213,6 +213,9 @@ export function instrumentFetch(): void {
   if (original[FETCH_INSTRUMENTED]) return;
   // A Proxy keeps fetch's own properties, such as Bun's `fetch.preconnect`.
   const wrapped = new Proxy(original, {
+    // The marker lives on the wrapper only, so a restored original can be wrapped again.
+    get: (target, key) =>
+      key === FETCH_INSTRUMENTED ? true : Reflect.get(target, key),
     apply(target, self, args: Parameters<typeof fetch>) {
       const [input, init] = args;
       if (!trace.getActiveSpan()) return Reflect.apply(target, self, args);
@@ -226,41 +229,46 @@ export function instrumentFetch(): void {
         init?.method ?? (input instanceof Request ? input.method : "GET")
       ).toUpperCase();
       const span = trace.getTracer(INSTRUMENTATION_SCOPE).startSpan(
-        truncate(`${method} ${url.host}${url.pathname}`),
+        truncate(redactText(`${method} ${url.host}${url.pathname}`)),
         {
           kind: SpanKind.CLIENT,
           attributes: {
             [ATTR.httpMethod]: method,
             // `origin` leaves out user:password@.
-            [ATTR.urlFull]: truncate(`${url.origin}${url.pathname}`),
+            [ATTR.urlFull]: truncate(
+              redactText(`${url.origin}${url.pathname}`),
+            ),
             [ATTR.serverAddress]: url.hostname,
           },
         },
         context.active(),
       );
+      const fail = (error: unknown) => {
+        recordThrown(span, error);
+        span.end();
+        throw error;
+      };
+      let pending: Promise<Response>;
+      try {
+        pending = Reflect.apply(target, self, args);
+      } catch (error) {
+        return fail(error);
+      }
       // shortcut: the span ends when the response headers arrive, not when the body is read; wrap the body stream if body time matters.
-      return (Reflect.apply(target, self, args) as Promise<Response>).then(
-        (response) => {
-          span.setAttribute(ATTR.httpStatus, response.status);
-          if (response.status >= 400) {
-            span.setStatus({
-              code: SpanStatusCode.ERROR,
-              message: `HTTP ${response.status}`,
-            });
-          }
-          span.end();
-          return response;
-        },
-        (error: unknown) => {
-          recordThrown(span, error);
-          span.end();
-          throw error;
-        },
-      );
+      return pending.then((response) => {
+        span.setAttribute(ATTR.httpStatus, response.status);
+        if (response.status >= 400) {
+          span.setStatus({
+            code: SpanStatusCode.ERROR,
+            message: `HTTP ${response.status}`,
+          });
+        }
+        span.end();
+        return response;
+      }, fail);
     },
   });
   globalThis.fetch = wrapped;
-  wrapped[FETCH_INSTRUMENTED] = true;
 }
 
 type BunSqliteStatement = Record<
