@@ -70,6 +70,7 @@ export const THEME_TOKENS = [
   "span-action",
   "span-rpc",
   "span-sql",
+  "span-fetch",
   "span-event",
   "span-other",
 ] as const;

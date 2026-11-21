@@ -356,7 +356,7 @@ const TOOLS: McpToolDefinition[] = [
   {
     name: "get_trace",
     description:
-      'One request in full, by trace id: the tree of spans with each one\'s name, timing (milliseconds from the start of the request), status, attributes (such as SQL text), events and any error with its stack. Log lines are events named "log" with a level and message. The answer is cut to about 50 KB, and says what was left out.',
+      'One request in full, by trace id: the tree of spans with each one\'s name, timing (milliseconds from the start of the request), status, attributes (such as SQL text, or the URL and status of an outbound HTTP call), events and any error with its stack. Log lines are events named "log" with a level and message. The answer is cut to about 50 KB, and says what was left out.',
     inputSchema: {
       type: "object",
       properties: {

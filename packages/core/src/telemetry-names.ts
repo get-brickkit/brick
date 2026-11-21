@@ -16,6 +16,9 @@ export const ATTR = {
   httpRoute: "http.route",
   httpStatus: "http.response.status_code",
   urlPath: "url.path",
+  /** An outbound request's scheme, host and path. Never the query, credentials, headers or body. */
+  urlFull: "url.full",
+  serverAddress: "server.address",
   service: "brick.service",
   action: "brick.action",
   /** A webhook delivery: the webhook's name, its event id and what became of it. Never the body or the signature. */

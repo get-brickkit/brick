@@ -78,6 +78,11 @@ describe("dashboard format helpers", () => {
       "sql",
     ]);
     expect(spanKind(span("d", { name: "rpc svc.act" }))).toBe("rpc");
+    expect(
+      spanKind(
+        span("f", { attributes: { "url.full": "https://api.example.com/v1" } }),
+      ),
+    ).toBe("fetch");
 
     const depths = spanDepths([root, action, sql]);
     expect([depths.get("a"), depths.get("b"), depths.get("c")]).toEqual([
@@ -123,12 +128,23 @@ describe("dashboard format helpers", () => {
             endMs: 15,
             attributes: { "db.statement": "select 2" },
           }),
+          span("f1", {
+            parentSpanId: "action",
+            startMs: 15,
+            endMs: 815,
+            attributes: { "url.full": "https://api.example.com/v1/search" },
+          }),
         ],
       }),
     );
     expect(breakdown.action?.spanId).toBe("action");
     expect(breakdown.calls.map((call) => call.spanId)).toEqual(["rpc"]);
     expect(breakdown.queries).toEqual({ count: 2, totalMs: 13, slowestMs: 10 });
+    expect(breakdown.fetches).toEqual({
+      count: 1,
+      totalMs: 800,
+      slowestMs: 800,
+    });
     expect(breakdown.exception).toEqual({
       message: "db down",
       stack: "Error: db down\n  at list",

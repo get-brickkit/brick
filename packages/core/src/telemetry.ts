@@ -14,6 +14,7 @@ const INSTRUMENTATION_SCOPE = "@brickkit/core";
 const MAX_TEXT_LENGTH = 500;
 const MAX_STATEMENT_LENGTH = 2000;
 const DATABASE_INSTRUMENTED = Symbol.for("brickkit.telemetry.database");
+const FETCH_INSTRUMENTED = Symbol.for("brickkit.telemetry.fetch");
 const SQLITE_STATEMENT_METHODS = ["all", "get", "run", "values"] as const;
 
 type Outcome =
@@ -197,6 +198,69 @@ export function instrumentDatabase(db: unknown): void {
     return;
   }
   driver[DATABASE_INSTRUMENTED] = true;
+}
+
+/**
+ * Record outbound `fetch` calls as client spans, like SQL statements. Only
+ * scheme, host and path are kept: the query, credentials, headers and bodies
+ * can carry API keys. Calls outside a traced request skip the span entirely.
+ * Calling this again is a no-op.
+ */
+export function instrumentFetch(): void {
+  const original = globalThis.fetch as typeof fetch & {
+    [FETCH_INSTRUMENTED]?: true;
+  };
+  if (original[FETCH_INSTRUMENTED]) return;
+  // A Proxy keeps fetch's own properties, such as Bun's `fetch.preconnect`.
+  const wrapped = new Proxy(original, {
+    apply(target, self, args: Parameters<typeof fetch>) {
+      const [input, init] = args;
+      if (!trace.getActiveSpan()) return Reflect.apply(target, self, args);
+      let url: URL;
+      try {
+        url = new URL(input instanceof Request ? input.url : String(input));
+      } catch {
+        return Reflect.apply(target, self, args);
+      }
+      const method = (
+        init?.method ?? (input instanceof Request ? input.method : "GET")
+      ).toUpperCase();
+      const span = trace.getTracer(INSTRUMENTATION_SCOPE).startSpan(
+        truncate(`${method} ${url.host}${url.pathname}`),
+        {
+          kind: SpanKind.CLIENT,
+          attributes: {
+            [ATTR.httpMethod]: method,
+            // `origin` leaves out user:password@.
+            [ATTR.urlFull]: truncate(`${url.origin}${url.pathname}`),
+            [ATTR.serverAddress]: url.hostname,
+          },
+        },
+        context.active(),
+      );
+      // shortcut: the span ends when the response headers arrive, not when the body is read; wrap the body stream if body time matters.
+      return (Reflect.apply(target, self, args) as Promise<Response>).then(
+        (response) => {
+          span.setAttribute(ATTR.httpStatus, response.status);
+          if (response.status >= 400) {
+            span.setStatus({
+              code: SpanStatusCode.ERROR,
+              message: `HTTP ${response.status}`,
+            });
+          }
+          span.end();
+          return response;
+        },
+        (error: unknown) => {
+          recordThrown(span, error);
+          span.end();
+          throw error;
+        },
+      );
+    },
+  });
+  globalThis.fetch = wrapped;
+  wrapped[FETCH_INSTRUMENTED] = true;
 }
 
 type BunSqliteStatement = Record<

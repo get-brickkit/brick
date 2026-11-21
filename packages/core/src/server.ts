@@ -44,7 +44,12 @@ import {
   type BrickApp,
   type EndpointDefinition,
 } from "./endpoints";
-import { instrumentDatabase, traceHttpRequest, withSpan } from "./telemetry";
+import {
+  instrumentDatabase,
+  instrumentFetch,
+  traceHttpRequest,
+  withSpan,
+} from "./telemetry";
 import { EventsHub } from "./events/hub";
 import { appDeps } from "./deps";
 import { WEBHOOK_ROUTE } from "./events/workflows";
@@ -279,6 +284,7 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
     app.all(WEBHOOK_ROUTE, ({ request }) => events.webhook(request));
   if (telemetry) {
     for (const service of services) instrumentDatabase(service.getDb());
+    instrumentFetch();
   }
 
   // Close declarations before anything reads them.
