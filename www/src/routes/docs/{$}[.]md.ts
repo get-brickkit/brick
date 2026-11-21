@@ -5,13 +5,13 @@ import {
   markdownResponse,
   source,
 } from "@/lib/source";
-import { redirectFor } from "@/lib/redirects";
+import { canonicalRedirect } from "@/lib/redirects";
 
 export const Route = createFileRoute("/docs/{$}.md")({
   server: {
     handlers: {
-      GET: async ({ params }) => {
-        const target = redirectFor(`/docs/${params._splat ?? ""}`);
+      GET: async ({ params, request }) => {
+        const target = canonicalRedirect(new URL(request.url).pathname);
         if (target) {
           return new Response(null, {
             status: 308,

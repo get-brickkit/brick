@@ -27,6 +27,7 @@ export default defineConfig({
 export const blog = defineDocs({
   dir: "content/blog",
   docs: {
+    lastModified: true,
     schema: pageSchema.extend({
       description: z.string(),
       date: z.iso.date(),
