@@ -1,0 +1,15 @@
+{
+  "name": "brick-board-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "brick dev src/app.ts --no-dashboard",
+    "start": "brick start src/app.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "cli": "bun src/cli.ts"
+  },
+  "dependencies": {
+    "@brickkit/cli": "workspace:*",
+    "@brickkit/core": "workspace:*"
+  }
+}
