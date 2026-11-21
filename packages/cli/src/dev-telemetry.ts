@@ -1,6 +1,7 @@
 import {
   context,
   propagation,
+  ROOT_CONTEXT,
   SpanStatusCode,
   trace,
   type Attributes,
@@ -189,7 +190,8 @@ class RecordBatcher {
     if (this.#records.length === 0) return;
     const records = this.#records;
     this.#records = [];
-    this.#send(records);
+    // A flush can run inside a traced request; sending from its context would trace the send itself (an ingest fetch) and loop.
+    context.with(ROOT_CONTEXT, () => this.#send(records));
   }
 }
 
