@@ -6,6 +6,8 @@ import { boardMcp } from "./mcp";
 const tokens = Object.fromEntries(
   (process.env.BOARD_TOKENS ?? "demo=demo-token").split(",").map((pair) => {
     const at = pair.indexOf("=");
+    if (at < 1 || at === pair.length - 1)
+      throw new Error(`BOARD_TOKENS: '${pair}' is not actor=token`);
     return [pair.slice(0, at), pair.slice(at + 1)];
   }),
 );

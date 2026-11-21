@@ -210,6 +210,10 @@ export function toCli(surface: Surface, options: CliOptions) {
           ...(raw as string[]).map((item) => {
             if (item.startsWith("{")) return JSON.parse(item);
             const at = item.indexOf("=");
+            if (at < 1)
+              throw new Error(
+                `--${words(key, "-")}: '${item}' is not key=value`,
+              );
             return { [item.slice(0, at)]: item.slice(at + 1) };
           }),
         );
