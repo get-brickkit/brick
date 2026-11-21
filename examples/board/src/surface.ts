@@ -1,4 +1,4 @@
-import type { Surface } from "./derive";
+import type { Expose, Surface } from "./derive";
 
 // The only surface definition. It names what the Board model offers; the HTTP
 // routes, the MCP tools and the CLI subcommands all come from these names and
@@ -24,3 +24,9 @@ export const BoardApi = {
   },
   queries: { ReadyTasks: "readyTasks" },
 } as const satisfies Surface;
+
+/**
+ * What the MCP server and the CLI offer. Everything, now: return `false` for an
+ * entry to keep it off both, or give each wiring its own predicate.
+ */
+export const exposed: Expose = () => true;

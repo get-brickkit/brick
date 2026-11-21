@@ -20,19 +20,40 @@ export interface Surface {
 
 type Kind = "command" | "view" | "query";
 
-const entries = (surface: Surface) =>
+export interface Entry {
+  name: string;
+  kind: Kind;
+  action: string;
+}
+
+/** Which surface entries a surface offers. Everything, when left out. */
+export type Expose = (entry: Entry) => boolean;
+
+const entries = (surface: Surface, expose: Expose = () => true): Entry[] =>
   (
     [
       ["command", surface.commands],
       ["view", surface.views],
       ["query", surface.queries],
     ] as const
-  ).flatMap(([kind, map]) =>
-    Object.entries(map).map(([name, action]) => ({
-      name,
-      kind: kind as Kind,
-      action,
-    })),
+  )
+    .flatMap(([kind, map]) =>
+      Object.entries(map).map(([name, action]) => ({
+        name,
+        kind: kind as Kind,
+        action,
+      })),
+    )
+    .filter(expose);
+
+const unknownAction = (
+  surface: Surface,
+  name: string,
+  action: string,
+  known: string[],
+) =>
+  new Error(
+    `${surface.name}.${name} maps to '${action}', which '${surface.service}' does not define. It defines: ${known.join(", ")}`,
   );
 
 const words = (name: string, separator: string) =>
@@ -52,13 +73,20 @@ export const commandName = (name: string) => words(name, "-");
  *
  * @returns A registry for `createMcpHandler`.
  */
-export function toMcp(surface: Surface, service: Service<any, any>) {
+export function toMcp(
+  surface: Surface,
+  service: Service<any, any>,
+  options: { expose?: Expose } = {},
+) {
   return createMcpRegistry({
-    tools: entries(surface).map(({ name, kind, action }) => {
+    tools: entries(surface, options.expose).map(({ name, kind, action }) => {
       const target = service.getAction(action);
       if (!target)
-        throw new Error(
-          `${surface.name}.${name} maps to '${action}', which '${service.name}' does not define`,
+        throw unknownAction(
+          surface,
+          name,
+          action,
+          service.listActions().map((a) => a.name),
         );
       return defineTool({
         name: toolName(name),
@@ -94,6 +122,7 @@ export interface CliOptions {
   name: string;
   baseUrl: string;
   headers?: () => Record<string, string>;
+  expose?: Expose;
 }
 
 /**
@@ -121,9 +150,16 @@ export function toCli(surface: Surface, options: CliOptions) {
       }[];
     };
     const actions = services.find((s) => s.name === surface.service)?.actions;
-    return entries(surface).map(({ name, kind, action }) => {
+    return entries(surface, options.expose).map(({ name, kind, action }) => {
       const found = actions?.find((a) => a.name === action);
-      if (!found?.path || !found.method)
+      if (!found)
+        throw unknownAction(
+          surface,
+          name,
+          action,
+          (actions ?? []).map((a) => a.name),
+        );
+      if (!found.path || !found.method)
         throw new Error(`the server has no route for '${action}'`);
       return {
         name,

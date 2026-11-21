@@ -2,6 +2,9 @@
   "name": "brick-board-example",
   "private": true,
   "type": "module",
+  "bin": {
+    "board": "src/cli.ts"
+  },
   "scripts": {
     "dev": "brick dev src/app.ts --no-dashboard",
     "start": "brick start src/app.ts",

@@ -45,6 +45,21 @@ alike. A message's author and a task's holder are the caller.
 - Actions are POST-only by default and have no read-only marker, so the views and
   the query are POST actions, and `toMcp` marks them `readOnlyHint` from the surface.
 
+## Against Alchemy's `Domain.Api`
+
+Done here: one surface; `expose` on both `toMcp` and `toCli`; a surface name that
+the service doesn't define fails when the app starts, naming what it does define;
+`protocolVersions` on the MCP handler; the CLI is an executable (`bin: board`);
+the MCP server was driven by the official `@modelcontextprotocol/sdk` client.
+
+Can't be done in an example, because Brick has no such thing:
+
+- **Names checked by the compiler.** A `Service`'s type doesn't carry its action
+  names, so a typo is caught at startup, not in the editor.
+- **A consistency setting** (`DefaultConsistency`). Views read the one database.
+- **MCP streaming and sessions.** `createMcpHandler` is stateless JSON over POST.
+- **A CLI that works without the server.** Its flags come from `/_brick/services`.
+
 ## Not built
 
 vercel/board's task dependencies (`needs`), `block`/`fail`/`cancel`, watchers,
