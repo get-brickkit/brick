@@ -214,6 +214,20 @@ describe("from ctx.logger to the dashboard", () => {
   beforeAll(resetTracing);
   afterAll(resetTracing);
 
+  it("sends batches outside the request's trace, so an ingest fetch is not traced", async () => {
+    const activeAtSend: unknown[] = [];
+    installTracing(() => activeAtSend.push(trace.getActiveSpan()));
+    const tracer = trace.getTracer("test");
+    await tracer.startActiveSpan("GET /x", async (request) => {
+      await waitFor(() => activeAtSend.length > 0);
+      tracer.startSpan("GET api.example.com/v1").end();
+      await waitFor(() => activeAtSend.length > 1);
+      request.end();
+    });
+    expect(activeAtSend).toEqual([undefined, undefined]);
+    resetTracing();
+  });
+
   it("shows a line logged in a traced request, as the dev server records it", async () => {
     const records: TelemetryRecord[] = [];
     // The same call the dev worker makes: it also turns log capture on.

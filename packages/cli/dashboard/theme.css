@@ -46,6 +46,7 @@
   --color-span-action: var(--span-action);
   --color-span-rpc: var(--span-rpc);
   --color-span-sql: var(--span-sql);
+  --color-span-fetch: var(--span-fetch);
   --color-span-event: var(--span-event);
   --color-span-other: var(--span-other);
 
@@ -92,6 +93,7 @@
   --span-action: oklch(0.55 0.2 295);
   --span-rpc: oklch(0.66 0.17 65);
   --span-sql: oklch(0.58 0.12 195);
+  --span-fetch: oklch(0.58 0.12 110);
   --span-event: oklch(0.58 0.16 340);
   --span-other: oklch(0.7 0 0);
 }
@@ -127,6 +129,7 @@
   --span-action: oklch(0.72 0.15 295);
   --span-rpc: oklch(0.8 0.15 75);
   --span-sql: oklch(0.77 0.12 190);
+  --span-fetch: oklch(0.8 0.13 105);
   --span-event: oklch(0.74 0.14 340);
   --span-other: oklch(0.5 0 0);
 }

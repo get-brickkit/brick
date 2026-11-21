@@ -14,6 +14,7 @@ const INSTRUMENTATION_SCOPE = "@brickkit/core";
 const MAX_TEXT_LENGTH = 500;
 const MAX_STATEMENT_LENGTH = 2000;
 const DATABASE_INSTRUMENTED = Symbol.for("brickkit.telemetry.database");
+const FETCH_INSTRUMENTED = Symbol.for("brickkit.telemetry.fetch");
 const SQLITE_STATEMENT_METHODS = ["all", "get", "run", "values"] as const;
 
 type Outcome =
@@ -197,6 +198,68 @@ export function instrumentDatabase(db: unknown): void {
     return;
   }
   driver[DATABASE_INSTRUMENTED] = true;
+}
+
+export function instrumentFetch(): void {
+  const original = globalThis.fetch as typeof fetch & {
+    [FETCH_INSTRUMENTED]?: true;
+  };
+  if (original[FETCH_INSTRUMENTED]) return;
+  // A Proxy keeps fetch's own properties, such as Bun's `fetch.preconnect`.
+  const wrapped = new Proxy(original, {
+    get: (target, key) =>
+      key === FETCH_INSTRUMENTED ? true : Reflect.get(target, key),
+    apply(target, self, args: Parameters<typeof fetch>) {
+      const [input, init] = args;
+      if (!trace.getActiveSpan()) return Reflect.apply(target, self, args);
+      let url: URL;
+      try {
+        url = new URL(input instanceof Request ? input.url : String(input));
+      } catch {
+        return Reflect.apply(target, self, args);
+      }
+      const method = (
+        init?.method ?? (input instanceof Request ? input.method : "GET")
+      ).toUpperCase();
+      const span = trace.getTracer(INSTRUMENTATION_SCOPE).startSpan(
+        truncate(redactText(`${method} ${url.host}${url.pathname}`)),
+        {
+          kind: SpanKind.CLIENT,
+          attributes: {
+            [ATTR.httpMethod]: method,
+            [ATTR.urlFull]: truncate(
+              redactText(`${url.origin}${url.pathname}`),
+            ),
+            [ATTR.serverAddress]: url.hostname,
+          },
+        },
+        context.active(),
+      );
+      const fail = (error: unknown) => {
+        recordThrown(span, error);
+        span.end();
+        throw error;
+      };
+      let pending: Promise<Response>;
+      try {
+        pending = Reflect.apply(target, self, args);
+      } catch (error) {
+        return fail(error);
+      }
+      return pending.then((response) => {
+        span.setAttribute(ATTR.httpStatus, response.status);
+        if (response.status >= 400) {
+          span.setStatus({
+            code: SpanStatusCode.ERROR,
+            message: `HTTP ${response.status}`,
+          });
+        }
+        span.end();
+        return response;
+      }, fail);
+    },
+  });
+  globalThis.fetch = wrapped;
 }
 
 type BunSqliteStatement = Record<

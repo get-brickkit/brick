@@ -377,3 +377,164 @@ it("accepts the OpenTelemetry API of hosts on SDK 2.x", async () => {
     Bun.semver.satisfies("1.9.0", manifest.dependencies["@opentelemetry/api"]),
   ).toBe(true);
 });
+
+describe("outbound fetch spans", () => {
+  const upstream = Bun.serve({
+    port: 0,
+    fetch: async (request) => {
+      const path = new URL(request.url).pathname;
+      if (path === "/slow") await Bun.sleep(200);
+      return new Response(`seen ${request.method} ${path}`, {
+        status: path === "/missing" ? 404 : 200,
+      });
+    },
+  });
+  afterAll(() => upstream.stop(true));
+  const base = `http://127.0.0.1:${upstream.port}`;
+
+  function appCalling(call: () => Promise<unknown>) {
+    const crm = defineService("crm");
+    crm.action({ name: "search", execute: call });
+    return brick({ services: [crm], requestLogging: false, telemetry: true });
+  }
+
+  it("records method, host, path and status under the action, without query or credentials", async () => {
+    const authed = base.replace("http://", "http://user:hunter2@");
+    const app = appCalling(async () => {
+      const response = await fetch(`${authed}/v1/search?api_key=secret`, {
+        method: "post",
+        headers: { authorization: "Bearer secret" },
+        body: "{}",
+      });
+      return { text: await response.text() };
+    });
+
+    const response = await postJson(app, "/api/crm/search", {});
+    expect(await response.json()).toEqual({ text: "seen POST /v1/search" });
+    const action = spanNamed("action crm.search");
+    const call = spanNamed(`POST 127.0.0.1:${upstream.port}/v1/search`);
+    expect(call.kind).toBe(SpanKind.CLIENT);
+    expect(call.parentSpanContext?.spanId).toBe(action.spanContext().spanId);
+    expect(call.attributes).toEqual({
+      "http.request.method": "POST",
+      "url.full": `${base}/v1/search`,
+      "server.address": "127.0.0.1",
+      "http.response.status_code": 200,
+    });
+    const recorded = JSON.stringify(
+      exporter
+        .getFinishedSpans()
+        .map(({ name, attributes, events }) => ({ name, attributes, events })),
+    );
+    expect(recorded).not.toContain("secret");
+    expect(recorded).not.toContain("hunter2");
+  });
+
+  it("masks a sensitive value that appears in the URL path", async () => {
+    const crm = defineService("crm");
+    crm.action({
+      name: "notify",
+      input: t.Object({ token: t.Sensitive(t.String()) }),
+      execute: async ({ input }) => {
+        await fetch(`${base}/bot${input.token}/send`);
+        return { ok: true };
+      },
+    });
+    const app = brick({
+      services: [crm],
+      requestLogging: false,
+      telemetry: true,
+    });
+
+    await postJson(app, "/api/crm/notify", { token: "tok_live_123456" });
+    const call = exporter
+      .getFinishedSpans()
+      .find((span) => span.attributes["url.full"] !== undefined);
+    expect(call?.name).toBe(
+      `GET 127.0.0.1:${upstream.port}/bot[REDACTED]/send`,
+    );
+    expect(call?.attributes["url.full"]).toBe(`${base}/bot[REDACTED]/send`);
+  });
+
+  it("accepts a Request as input and marks 4xx responses as errors", async () => {
+    const app = appCalling(async () => {
+      const response = await fetch(
+        new Request(`${base}/missing`, { method: "DELETE" }),
+      );
+      return { status: response.status };
+    });
+
+    await postJson(app, "/api/crm/search", {});
+    const call = spanNamed(`DELETE 127.0.0.1:${upstream.port}/missing`);
+    expect(call.attributes["http.response.status_code"]).toBe(404);
+    expect(call.status.code).toBe(SpanStatusCode.ERROR);
+  });
+
+  it("records an aborted or failed fetch as an error and rethrows it", async () => {
+    const app = appCalling(async () => {
+      const aborted = await fetch(`${base}/slow`, {
+        signal: AbortSignal.timeout(20),
+      }).catch((error: Error) => error.name);
+      const refused = await fetch("http://127.0.0.1:1/down").catch(
+        () => "refused",
+      );
+      return { aborted, refused };
+    });
+
+    const response = await postJson(app, "/api/crm/search", {});
+    expect(await response.json()).toEqual({
+      aborted: "TimeoutError",
+      refused: "refused",
+    });
+    for (const name of [
+      `GET 127.0.0.1:${upstream.port}/slow`,
+      "GET 127.0.0.1:1/down",
+    ]) {
+      const call = spanNamed(name);
+      expect(call.status.code).toBe(SpanStatusCode.ERROR);
+      expect(call.events.some((event) => event.name === "exception")).toBe(
+        true,
+      );
+      expect(call.attributes["http.response.status_code"]).toBeUndefined();
+    }
+  });
+
+  it("records nothing outside a traced request and patches fetch once", async () => {
+    brick({ services: [], requestLogging: false, telemetry: true });
+    const patched = globalThis.fetch;
+    brick({ services: [], requestLogging: false, telemetry: true });
+    expect(globalThis.fetch).toBe(patched);
+
+    const thrown = new Error("bad init");
+    const throwing = () => {
+      throw thrown;
+    };
+    globalThis.fetch = throwing as unknown as typeof fetch;
+    try {
+      brick({ services: [], requestLogging: false, telemetry: true });
+      expect(globalThis.fetch).not.toBe(throwing);
+      const wrappedThrowing = globalThis.fetch;
+      globalThis.fetch = throwing as unknown as typeof fetch;
+      brick({ services: [], requestLogging: false, telemetry: true });
+      expect(globalThis.fetch).not.toBe(throwing);
+      expect(globalThis.fetch).not.toBe(wrappedThrowing);
+      const app = appCalling(async () => ({
+        error: await Promise.resolve()
+          .then(() => fetch(`${base}/sync`))
+          .catch((error: Error) => error.message),
+      }));
+      expect(await (await postJson(app, "/api/crm/search", {})).json()).toEqual(
+        { error: "bad init" },
+      );
+      expect(spanNamed(`GET 127.0.0.1:${upstream.port}/sync`).status.code).toBe(
+        SpanStatusCode.ERROR,
+      );
+      exporter.reset();
+    } finally {
+      globalThis.fetch = patched;
+    }
+
+    expect(await (await fetch(`${base}/plain`)).text()).toBe("seen GET /plain");
+    expect(exporter.getFinishedSpans()).toHaveLength(0);
+  });
+});

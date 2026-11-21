@@ -6,6 +6,7 @@ export const SPAN_BG: Record<SpanKind, string> = {
   action: "bg-span-action",
   rpc: "bg-span-rpc",
   sql: "bg-span-sql",
+  fetch: "bg-span-fetch",
   other: "bg-span-other",
 };
 
@@ -14,5 +15,6 @@ export const SPAN_LABEL: Record<SpanKind, string> = {
   action: "Action",
   rpc: "Service call",
   sql: "SQL",
+  fetch: "Outbound HTTP",
   other: "Other",
 };

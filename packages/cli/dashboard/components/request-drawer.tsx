@@ -282,6 +282,17 @@ export function RequestDrawer({
                     ))}
                   </Step>
                 )}
+                {breakdown.fetches.count > 0 && (
+                  <Step tone="muted" title="Outbound HTTP">
+                    <Fact label="Calls">{breakdown.fetches.count}</Fact>
+                    <Fact label="Total time">
+                      {formatDuration(breakdown.fetches.totalMs)}
+                    </Fact>
+                    <Fact label="Slowest">
+                      {formatDuration(breakdown.fetches.slowestMs)}
+                    </Fact>
+                  </Step>
+                )}
                 {breakdown.queries.count > 0 && (
                   <Step tone="muted" title="Database">
                     <Fact label="Queries">{breakdown.queries.count}</Fact>

@@ -73,10 +73,11 @@ export function formatCount(value: number): string {
     : value.toLocaleString();
 }
 
-export type SpanKind = "http" | "action" | "rpc" | "sql" | "other";
+export type SpanKind = "http" | "action" | "rpc" | "sql" | "fetch" | "other";
 
 export function spanKind(span: TraceSpan): SpanKind {
   if (span.attributes[ATTR.dbStatement] !== undefined) return "sql";
+  if (span.attributes[ATTR.urlFull] !== undefined) return "fetch";
   if (span.name.startsWith(SPAN.actionPrefix)) return "action";
   if (span.name.startsWith(SPAN.rpcPrefix)) return "rpc";
   if (span.attributes[ATTR.httpRoute] !== undefined) return "http";
@@ -107,20 +108,34 @@ export interface TraceBreakdown {
   action: TraceSpan | undefined;
   /** Calls to other services made while handling it. */
   calls: TraceSpan[];
-  queries: { count: number; totalMs: number; slowestMs: number };
+  queries: SpanTotals;
+  fetches: SpanTotals;
   /** The first exception recorded on a span, with where it came from. */
   exception:
     | { message?: string; stack?: string; code?: string; span: string }
     | undefined;
 }
 
+interface SpanTotals {
+  count: number;
+  totalMs: number;
+  slowestMs: number;
+}
+
 const spanMs = (span: TraceSpan): number =>
   span.endMs === undefined ? 0 : span.endMs - span.startMs;
 
+function totals(spans: TraceSpan[]): SpanTotals {
+  const durations = spans.map(spanMs);
+  return {
+    count: spans.length,
+    totalMs: durations.reduce((sum, value) => sum + value, 0),
+    slowestMs: Math.max(0, ...durations),
+  };
+}
+
 /** What a request did, picked out of its spans for the detail view. */
 export function describeTrace(trace: TraceSummary): TraceBreakdown {
-  const queries = trace.spans.filter((span) => spanKind(span) === "sql");
-  const durations = queries.map(spanMs);
   let exception: TraceBreakdown["exception"];
   for (const span of trace.spans) {
     const event = findException(span.events);
@@ -138,11 +153,8 @@ export function describeTrace(trace: TraceSummary): TraceBreakdown {
   return {
     action: trace.spans.find((span) => spanKind(span) === "action"),
     calls: trace.spans.filter((span) => spanKind(span) === "rpc"),
-    queries: {
-      count: queries.length,
-      totalMs: durations.reduce((sum, value) => sum + value, 0),
-      slowestMs: Math.max(0, ...durations),
-    },
+    queries: totals(trace.spans.filter((span) => spanKind(span) === "sql")),
+    fetches: totals(trace.spans.filter((span) => spanKind(span) === "fetch")),
     exception,
   };
 }

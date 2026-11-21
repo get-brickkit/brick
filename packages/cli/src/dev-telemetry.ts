@@ -1,6 +1,7 @@
 import {
   context,
   propagation,
+  ROOT_CONTEXT,
   SpanStatusCode,
   trace,
   type Attributes,
@@ -189,7 +190,7 @@ class RecordBatcher {
     if (this.#records.length === 0) return;
     const records = this.#records;
     this.#records = [];
-    this.#send(records);
+    context.with(ROOT_CONTEXT, () => this.#send(records));
   }
 }
 
