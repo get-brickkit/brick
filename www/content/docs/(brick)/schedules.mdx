@@ -170,6 +170,8 @@ A handler is the default because it needs nothing beyond the database. Use a wor
 
 In `brick dev`, the dashboard gains a **Schedules** tab for an app with schedules: when each is next due, whether it is running, its last runs with their errors, and a **Run now** button. A workflow schedule's runs show in the Workflows tab too. The production dashboard of `brick start` has the same tab when the app sets `dashboard.inspector`; there **Run now** needs a signed-in user. See [Schedules and Workflows in production](/docs/brick-cli/dev-and-start#schedules-and-workflows-in-production).
 
+Each try of a schedule is traced on its own, as a request named `schedule <name>`, when the app has `telemetry` on (a dashboard turns it on). The SQL statements and outbound `fetch` calls of the run are its child spans and its log lines are events on it, so the Requests tab and the MCP `list_requests` and `get_trace` tools show the run as one entry. The span carries the schedule's name, what started it (`schedule` or `manual`), which try it is, its due time and how it ended; a run that throws marks the span as failed, with the error. **Run now** is traced the same way. A workflow schedule's span covers starting the workflow run; the run's steps show in the Workflows tab.
+
 From the command line, against the app's database:
 
 ```sh

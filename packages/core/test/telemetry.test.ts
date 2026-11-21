@@ -8,6 +8,7 @@ import {
   test,
 } from "bun:test";
 import {
+  INVALID_SPAN_CONTEXT,
   propagation,
   SpanKind,
   SpanStatusCode,
@@ -26,13 +27,16 @@ import postgres from "postgres";
 import {
   brick,
   defineDatabase,
+  defineSchedule,
   defineService,
   resetGlobalRegistry,
+  scheduleTable,
+  syncSchema,
   t,
   traceRoute,
   useService,
 } from "../src";
-import { postJson, requireService } from "./helpers";
+import { postJson, requireService, track } from "./helpers";
 
 const pgUrl = requireService(
   "TEST_DATABASE_URL",
@@ -497,6 +501,97 @@ describe("outbound fetch spans", () => {
       );
       expect(call.attributes["http.response.status_code"]).toBeUndefined();
     }
+  });
+
+  function scheduledApp(run: () => Promise<void>, telemetry = true) {
+    const table = scheduleTable("sqlite");
+    const database = defineDatabase({ tables: { schedules: table } });
+    syncSchema([table], database.getDb() as any);
+    const jobs = defineService("jobs", { database });
+    const app = track(
+      brick({
+        services: [jobs],
+        events: {
+          schedules: [defineSchedule({ name: "reconcile", every: "10m", run })],
+          dispatch: { timer: false },
+        },
+        requestLogging: false,
+        docs: false,
+        telemetry,
+      }),
+    );
+    return { app, db: jobs.getDb()! as any };
+  }
+
+  it("records a schedule run as one trace with its SQL and fetch calls under it", async () => {
+    let db: any;
+    const { app, db: jobsDb } = scheduledApp(async () => {
+      db.all(sql`select 1 as value`);
+      await fetch(`${base}/v1/domains`, { method: "POST" });
+    });
+    db = jobsDb;
+
+    expect(await app.events!.schedules!.drain()).toBe(1);
+    const run = spanNamed("schedule reconcile");
+    expect(run.parentSpanContext).toBeUndefined();
+    expect(run.attributes).toMatchObject({
+      "brick.schedule": "reconcile",
+      "brick.schedule.trigger": "schedule",
+      "brick.schedule.attempt": 1,
+      "brick.schedule.outcome": "succeeded",
+    });
+    const spans = exporter.getFinishedSpans();
+    expect(spans.map((span) => span.name).sort()).toEqual([
+      `POST 127.0.0.1:${upstream.port}/v1/domains`,
+      "SQL SELECT",
+      "schedule reconcile",
+    ]);
+    for (const span of spans.filter((span) => span !== run)) {
+      expect(span.spanContext().traceId).toBe(run.spanContext().traceId);
+      expect(span.parentSpanContext?.spanId).toBe(run.spanContext().spanId);
+    }
+  });
+
+  it("records a failed or manual run on its own root span", async () => {
+    const { app } = scheduledApp(async () => {
+      throw new Error("inboxkit down");
+    });
+    const schedules = app.events!.schedules!;
+    await schedules.drain();
+    const failed = spanNamed("schedule reconcile");
+    expect(failed.status.code).toBe(SpanStatusCode.ERROR);
+    expect(failed.attributes["brick.schedule.outcome"]).toBe("failed");
+    exporter.reset();
+
+    // Triggered from inside a request's trace, the run still starts its own.
+    const request = trace.getTracer("test").startSpan("GET /dashboard");
+    await context.with(trace.setSpan(context.active(), request), () =>
+      schedules.trigger("reconcile"),
+    );
+    request.end();
+    await schedules.drain();
+    const manual = spanNamed("schedule reconcile");
+    expect(manual.attributes["brick.schedule.trigger"]).toBe("manual");
+    expect(manual.parentSpanContext).toBeUndefined();
+    expect(manual.spanContext().traceId).not.toBe(
+      request.spanContext().traceId,
+    );
+  });
+
+  it("records no schedule span unless the app opts in with telemetry: true", async () => {
+    const { app } = scheduledApp(async () => {}, false);
+    expect(await app.events!.schedules!.drain()).toBe(1);
+    expect(exporter.getFinishedSpans()).toHaveLength(0);
+  });
+
+  it("records no SQL or fetch spans under a span that is not recording", async () => {
+    const { db } = scheduledApp(async () => {});
+    const noop = trace.wrapSpanContext(INVALID_SPAN_CONTEXT);
+    await context.with(trace.setSpan(context.active(), noop), async () => {
+      db.all(sql`select 1 as value`);
+      await fetch(`${base}/v1/domains`);
+    });
+    expect(exporter.getFinishedSpans()).toHaveLength(0);
   });
 
   it("records nothing outside a traced request and patches fetch once", async () => {

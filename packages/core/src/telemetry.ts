@@ -2,6 +2,7 @@ import { ATTR } from "./telemetry-names";
 import { redactText, redacting } from "./sensitive";
 import {
   context,
+  isSpanContextValid,
   propagation,
   SpanKind,
   SpanStatusCode,
@@ -47,7 +48,51 @@ export function withCallSpan<T>(
   attributes: Attributes,
   fn: () => T,
 ): T {
-  return trace.getActiveSpan() ? withSpan(name, attributes, fn) : fn();
+  return inTrace() ? withSpan(name, attributes, fn) : fn();
+}
+
+/**
+ * Whether a child span would join a trace: the active span is recording and
+ * has a valid context. A non-recording span, such as one from a tracer that
+ * never got the registered provider, would make each child a root trace.
+ */
+function inTrace(): boolean {
+  const span = trace.getActiveSpan();
+  return (
+    Boolean(span?.isRecording()) && isSpanContextValid(span!.spanContext())
+  );
+}
+
+/**
+ * Run one try of a schedule as a root span, `schedule <name>`, so the SQL,
+ * fetch calls and log lines of the run share its trace. Never a child of
+ * whatever context started the tick, such as the request that triggered it.
+ */
+export function traceScheduleRun<T>(
+  run: { schedule: string; trigger: string; attempt: number; slot: string },
+  fn: () => Promise<T>,
+): Promise<T> {
+  return trace.getTracer(INSTRUMENTATION_SCOPE).startActiveSpan(
+    `schedule ${run.schedule}`,
+    {
+      root: true,
+      attributes: {
+        [ATTR.schedule]: run.schedule,
+        [ATTR.scheduleTrigger]: run.trigger,
+        [ATTR.scheduleAttempt]: run.attempt,
+        [ATTR.scheduleSlot]: run.slot,
+      },
+    },
+    (span) =>
+      settle(fn, (outcome) => {
+        span.setAttribute(
+          ATTR.scheduleOutcome,
+          outcome.failed ? "failed" : "succeeded",
+        );
+        if (outcome.failed) recordThrown(span, outcome.error);
+        span.end();
+      }),
+  );
 }
 
 interface HttpContext {
@@ -211,7 +256,7 @@ export function instrumentFetch(): void {
       key === FETCH_INSTRUMENTED ? true : Reflect.get(target, key),
     apply(target, self, args: Parameters<typeof fetch>) {
       const [input, init] = args;
-      if (!trace.getActiveSpan()) return Reflect.apply(target, self, args);
+      if (!inTrace()) return Reflect.apply(target, self, args);
       let url: URL;
       try {
         url = new URL(input instanceof Request ? input.url : String(input));
@@ -304,7 +349,7 @@ function instrumentPostgres(client: PostgresClient): void {
   const unsafe = client.unsafe.bind(client);
   client.unsafe = (sql: string, ...rest: unknown[]) => {
     const query = unsafe(sql, ...rest);
-    if (!trace.getActiveSpan() || typeof query?.then !== "function") {
+    if (!inTrace() || typeof query?.then !== "function") {
       return query;
     }
     const span = startStatementSpan(sql, "postgresql");
@@ -336,7 +381,7 @@ function instrumentPostgres(client: PostgresClient): void {
 }
 
 function recordStatement<T>(sql: string, system: string, fn: () => T): T {
-  if (!trace.getActiveSpan()) return fn();
+  if (!inTrace()) return fn();
   return withSpan(
     statementName(sql),
     statementAttributes(sql, system),

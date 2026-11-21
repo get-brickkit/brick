@@ -278,7 +278,9 @@ export function brick(options: CreateServerOptions = {}): BrickApp {
       }
     : options.events;
   const events = eventsOptions
-    ? new EventsHub(eventsOptions, appDeps(services)).attach(services)
+    ? new EventsHub(eventsOptions, appDeps(services), telemetry).attach(
+        services,
+      )
     : undefined;
   if (events?.workflows)
     app.all(WEBHOOK_ROUTE, ({ request }) => events.webhook(request));
