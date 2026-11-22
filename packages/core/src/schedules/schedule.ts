@@ -5,6 +5,7 @@ import {
   parseDuration,
   type CronExpression,
 } from "./cron";
+import type { Returns } from "../effect";
 
 /** What a schedule's `run` receives: which run this is. */
 export interface ScheduleRun {
@@ -72,7 +73,7 @@ export type ScheduleConfig = When & {
 } & (
     | {
         /** Runs in the process that claims the due time. Throwing retries it. */
-        run: (run: ScheduleRun) => void | Promise<void>;
+        run: (run: ScheduleRun) => Returns<void>;
         workflow?: never;
       }
     | {
@@ -98,7 +99,7 @@ export interface Schedule {
   readonly backoffMs: number;
   readonly jitterMs: number;
   readonly enabled: boolean;
-  readonly run?: (run: ScheduleRun) => void | Promise<void>;
+  readonly run?: (run: ScheduleRun) => Returns<void>;
   readonly workflow?: ScheduleWorkflow;
   /** What decides the due times, as stored with them: a change makes the next one be worked out again. */
   readonly spec: string;

@@ -1,4 +1,5 @@
 import type { Service } from "./types";
+import { settle } from "./effect";
 
 /**
  * Who a call comes from, as the service's `identity` hook says. Brick treats
@@ -27,7 +28,7 @@ export function attachIdentity(
     (identity ??= Promise.resolve()
       .then(() => {
         const { [IDENTITY]: _own, ...withoutIdentity } = ctx;
-        return hook({ ...withoutIdentity, deps } as any);
+        return settle(hook({ ...withoutIdentity, deps } as any));
       })
       .then((value) => checked(service.name, value)));
 }

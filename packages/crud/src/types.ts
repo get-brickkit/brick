@@ -5,6 +5,9 @@ import type {
   ResourcePlugin,
   PluginRoutes,
   PluginHookArgs,
+  Returns,
+  EffectOf,
+  NotEffect,
 } from "@brickkit/core";
 import type { TSchema, TUnsafe, Static } from "@sinclair/typebox";
 import type { Table, SQL, Column, GetColumnData } from "drizzle-orm";
@@ -20,10 +23,7 @@ export interface ColumnFieldPolicy {
   sort?: boolean;
   schema?: TSchema;
   resolve?: never;
-  scrub?: (args: {
-    value: any;
-    ctx: ActionContext;
-  }) => unknown | Promise<unknown>;
+  scrub?: (args: { value: any; ctx: ActionContext }) => Returns<NotEffect>;
 }
 export interface DerivedFieldPolicy {
   read: true;
@@ -32,7 +32,7 @@ export interface DerivedFieldPolicy {
   resolve: (args: {
     rows: readonly Readonly<Record<string, unknown>>[];
     ctx: ActionContext;
-  }) => readonly unknown[] | Promise<readonly unknown[]>;
+  }) => Returns<readonly unknown[]>;
   create?: false;
   update?: false;
   filter?: readonly [];
@@ -67,7 +67,7 @@ export type CrudCommitArgs = {
 type WriteHooks = {
   [K in Exclude<keyof PluginHookArgs, "afterCommit">]?: (
     args: PluginHookArgs[K] & { error: ErrorBuilder<Record<string, never>> },
-  ) => void | Promise<void>;
+  ) => Returns<void>;
 };
 export interface CrudOptions<
   F extends Fields = Fields,
@@ -94,11 +94,11 @@ export interface CrudOptions<
   access:
     | "public"
     | {
-        authorize?: (args: CrudAuthorizeArgs<F>) => boolean | Promise<boolean>;
+        authorize?: (args: CrudAuthorizeArgs<F>) => Returns<boolean>;
         scope?: (args: {
           operation: Operation;
           ctx: ActionContext;
-        }) => SQL | undefined | Promise<SQL | undefined>;
+        }) => Returns<SQL | undefined>;
       };
   /**
    * Write hooks run inside the operation's transaction, once per row (bulk
@@ -109,7 +109,7 @@ export interface CrudOptions<
   hooks?: WriteHooks & {
     afterCommit?: (
       args: CrudCommitArgs & PluginHookArgs["afterCommit"],
-    ) => void | Promise<void>;
+    ) => Returns<void>;
   };
 }
 type Row<T extends Table> = T["$inferSelect"];
@@ -130,7 +130,9 @@ type FieldValue<T extends Table, F, K extends keyof F> = F[K] extends {
 }
   ? Static<S>
   : F[K] extends { scrub: (...args: any[]) => infer V }
-    ? Awaited<V>
+    ? V extends EffectOf<infer A>
+      ? A
+      : Awaited<V>
     : K extends keyof Row<T>
       ? Row<T>[K]
       : never;

@@ -1,0 +1,73 @@
+---
+title: Effect
+description: Return an Effect from an action, a listener, a schedule or a hook, and let Brick run it.
+---
+
+If you write your code with [Effect](https://effect.website), you can return an Effect from the callbacks you give Brick, where it would take a value or a Promise. Brick runs it and uses what it succeeds with. If you don't use Effect, nothing changes: Brick doesn't depend on it, and the types stay as strict as before.
+
+The [Effect example](https://github.com/get-brickkit/brick/tree/main/examples/effect) is an uptime checker that returns Effects from actions, `authorize`, a service's `context`, a CRUD `scrub` and a schedule.
+
+## Minimal Example
+
+```ts title="src/services/pages.ts"
+import { defineService, t } from "@brickkit/core";
+import { Effect } from "effect";
+
+export const pagesService = defineService("pages");
+
+export const getPage = pagesService.action({
+  name: "getPage",
+  input: t.Object({ id: t.String() }),
+  output: t.Object({ id: t.String(), title: t.String() }),
+  execute: ({ input, error }) =>
+    Effect.gen(function* () {
+      const page = yield* Effect.promise(() => findPage(input.id));
+      if (!page) return error.NOT_FOUND("No such page");
+      return page;
+    }),
+});
+```
+
+The action's `output` still checks what the Effect succeeds with, and `getPage.run({ id })` returns a Promise of it, as for any action.
+
+## Install Effect
+
+Brick needs effect@4 and loads it only when a callback returns an Effect:
+
+```bash
+bun add effect@4
+```
+
+Without it, such a callback fails with an error saying the `effect` package could not be loaded. effect@3 and earlier are not supported.
+
+## Errors
+
+When the Effect fails, Brick throws the original error, so it is mapped as if you had thrown it from a Promise-returning callback:
+
+- An `ActionExecutionError` keeps its code and status. You can raise one with `Effect.fail(new ActionExecutionError(...))`, or call an `error` helper such as `error.NOT_FOUND()` inside `Effect.gen`: it throws, and the throw ends the Effect.
+- Any other failure, and a defect from `Effect.die`, answers 500 `INTERNAL_SERVER_ERROR` with the cause logged, not returned.
+
+## Provide the Services First
+
+Brick runs the Effect as it is: it has no `Layer` or `Context` to give it. An Effect that still needs a service is a type error. Provide every requirement before returning it:
+
+```ts
+execute: ({ input }) =>
+  findPage(input.id).pipe(Effect.provide(DatabaseLive)),
+```
+
+A CRUD `scrub` and a plugin endpoint `handler` take any result, so to catch such an Effect their return type excludes it. A result typed as `unknown` must be narrowed or cast before you return it.
+
+## Where It Works
+
+These callbacks may return an Effect, wherever they appear:
+
+- An action's or tool's `execute` and `authorize`, including those of resource actions and plugin actions.
+- A service's `context` and `identity` hooks.
+- An event listener's `run`, and a schedule's `run`.
+- `@brickkit/crud`'s `authorize`, `scope`, `scrub`, derived-field `resolve`, and write hooks including `afterCommit`.
+- A plugin's route handler (`routes.endpoint`), its `start` and `stop` handlers, its middleware, and the hooks it adds to a host.
+
+A callback that runs in a database transaction, such as a hook, has its Effect run inside it, so keep the Effect to that work.
+
+Other callbacks, such as WebSocket handlers, webhook verifiers, `reveal` and rate-limit keys, still take a value or a Promise.

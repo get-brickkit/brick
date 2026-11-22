@@ -161,6 +161,8 @@ Bun.serve = options => serve({ ...options, port: 0 });
       server = Bun.spawn(
         [
           process.execPath,
+          // Without it Bun would fetch a missing effect and hide an unbundled one.
+          "--no-install",
           "--preload",
           join(deploy, "port-zero.js"),
           join(deploy, "server.js"),
@@ -178,6 +180,8 @@ Bun.serve = options => serve({ ...options, port: 0 });
       const ready = await fetch(`${base}/v1/plain/get-ready`);
       expect(ready.status).toBe(200);
       expect(await ready.json()).toEqual({ ok: true });
+      const effect = await fetch(`${base}/v1/plain/get-effect`);
+      expect(await effect.json()).toEqual({ effect: true });
       expect((await fetch(`${base}/v1/excluded/hello`)).status).toBe(404);
       expect(await (await fetch(`${base}/raw`)).json()).toEqual({ raw: true });
       const custom = await fetch(`${base}/custom`);

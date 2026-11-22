@@ -52,6 +52,7 @@ import {
 } from "./audit";
 import { addHostHooks } from "./plugin-hooks";
 import { hasIdentity } from "./identity";
+import { settle } from "./effect";
 import {
   checkWebhook,
   defineWebhookMeta,
@@ -594,7 +595,7 @@ async function resolveServiceContext<
   };
 
   const resolvedExtra = service.options.context
-    ? await service.options.context(fullBaseCtx)
+    ? await settle(service.options.context(fullBaseCtx))
     : {};
   const finalCtx: any = {
     ...fullBaseCtx,

@@ -1,0 +1,25 @@
+{
+  "name": "brick-effect-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test test",
+    "dev": "brick dev src/app.ts --no-dashboard",
+    "start": "brick start src/app.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check ."
+  },
+  "dependencies": {
+    "@brickkit/cli": "workspace:*",
+    "@brickkit/core": "workspace:*",
+    "@brickkit/crud": "workspace:*",
+    "effect": "4.1.5"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.78.0",
+    "oxlint": "^1.93.0"
+  }
+}

@@ -13,6 +13,19 @@
         "typescript": "^7.0.2",
       },
     },
+    "examples/effect": {
+      "name": "brick-effect-example",
+      "dependencies": {
+        "@brickkit/cli": "workspace:*",
+        "@brickkit/core": "workspace:*",
+        "@brickkit/crud": "workspace:*",
+        "effect": "4.1.5",
+      },
+      "devDependencies": {
+        "oxfmt": "^0.78.0",
+        "oxlint": "^1.93.0",
+      },
+    },
     "examples/events": {
       "name": "brick-events-example",
       "dependencies": {
@@ -174,6 +187,7 @@
         "@vitejs/plugin-react": "^6.3.0",
         "@workflow/builders": "5.1.0",
         "clsx": "^2.1.1",
+        "effect": "4.1.5",
         "fumadocs-core": "16.19.3",
         "fumadocs-openapi": "12.6.4",
         "fumadocs-ui": "npm:@fumadocs/base-ui@16.19.3",
@@ -228,6 +242,7 @@
         "@types/bun": "^1.4.4",
         "drizzle-kit": "0.31.11",
         "drizzle-orm": "^0.45.4",
+        "effect": "4.1.5",
         "oxfmt": "^0.78.0",
         "oxlint": "^1.93.0",
         "tsdown": "^0.23.7",
@@ -238,10 +253,12 @@
         "@tanstack/query-core": "^5.0.0",
         "drizzle-kit": "^0.31.0",
         "drizzle-orm": "^0.45.2",
+        "effect": "^4.0.0",
       },
       "optionalPeers": [
         "@tanstack/query-core",
         "drizzle-kit",
+        "effect",
       ],
     },
     "packages/crud": {
@@ -251,6 +268,7 @@
         "@sinclair/typebox": "^0.34.52",
         "@types/bun": "^1.4.4",
         "drizzle-orm": "^0.45.4",
+        "effect": "4.1.5",
         "tsdown": "^0.23.7",
         "typescript": "^7.0.2",
       },
@@ -1686,6 +1704,8 @@
 
     "braces": ["braces@3.0.3", "", { "dependencies": { "fill-range": "^7.1.1" } }, "sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA=="],
 
+    "brick-effect-example": ["brick-effect-example@workspace:examples/effect"],
+
     "brick-events-example": ["brick-events-example@workspace:examples/events"],
 
     "brick-extensions-example": ["brick-extensions-example@workspace:examples/extensions"],
@@ -1969,6 +1989,8 @@
     "eastasianwidth": ["eastasianwidth@0.2.0", "", {}, "sha512-I88TYZWc9XiYHRQ4/3c5rjjfgkjhLyW2luGIheGERbNQ6OY7yTybanSpDXZa8y7VUP9YmDcYa+eyq4ca7iLqWA=="],
 
     "easy-table": ["easy-table@1.2.0", "", { "dependencies": { "ansi-regex": "^5.0.1" }, "optionalDependencies": { "wcwidth": "^1.0.1" } }, "sha512-OFzVOv03YpvtcWGe5AayU5G2hgybsg3iqA6drU8UaoZyB9jLGMTrz9+asnLp/E+6qPh88yEI1gvyZFZ41dmgww=="],
+
+    "effect": ["effect@4.1.5", "", {}, "sha512-xyR20KhQI0vg2gD8ILUSQRTTESEYJ0JKdP+QD8J37xbwPTqXRxFM/l0+vUVD9fuSvoYruoTqyt33C4FZv1s4TQ=="],
 
     "ejs": ["ejs@3.1.10", "", { "dependencies": { "jake": "^10.8.5" }, "bin": { "ejs": "bin/cli.js" } }, "sha512-UeJmFfOrAQS8OJWPZ4qtgHyWExa088/MtK5UEyoJGFH67cDEXkZSviOiKRCZ4Xij0zxI3JECgYs3oKx+AizQBA=="],
 

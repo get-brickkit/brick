@@ -7,6 +7,7 @@ import {
   getHostHooks,
   runInTransaction,
   onTransactionCommit,
+  settle,
   type CrudEventPayload,
   type EventRecorder,
   type ResourcePluginContext,
@@ -70,16 +71,20 @@ function withHostHooks(
   const hosted = [resource, service]
     .map(getHostHooks)
     .filter(Boolean) as Record<string, Hook[]>[];
-  if (!hosted.length) return hooks ?? {};
-  const merged: Record<string, Hook> = { ...hooks };
-  for (const name of new Set(hosted.flatMap((item) => Object.keys(item)))) {
+  const own = hooks as Record<string, Hook> | undefined;
+  const merged: Record<string, Hook> = {};
+  for (const name of new Set([
+    ...Object.keys(own ?? {}),
+    ...hosted.flatMap((item) => Object.keys(item)),
+  ])) {
     const chain = [
-      (hooks as Record<string, Hook> | undefined)?.[name],
+      own?.[name],
       ...hosted.flatMap((item) => item[name] ?? []),
     ].filter((hook): hook is Hook => typeof hook === "function");
-    merged[name] = async (args) => {
-      for (const hook of chain) await hook(args);
-    };
+    if (chain.length)
+      merged[name] = async (args) => {
+        for (const hook of chain) await settle(hook(args));
+      };
   }
   return merged;
 }
@@ -152,9 +157,11 @@ export function operations(model: CrudModel) {
     const accessConfig = options.access;
     if (
       !accessConfig?.authorize ||
-      !(await accessConfig.authorize(
-        // inputs[operation] validated this value before execute.
-        { operation, input, ctx } as CrudAuthorizeArgs<any>,
+      !(await settle(
+        accessConfig.authorize(
+          // inputs[operation] validated this value before execute.
+          { operation, input, ctx } as CrudAuthorizeArgs<any>,
+        ),
       ))
     )
       deny(`${resource.name}.${operation}`, ctx.user);
@@ -314,7 +321,9 @@ export function operations(model: CrudModel) {
     if (!rows.length) return rows;
     const resolved = rows.map((row) => ({ ...row }));
     for (const key of call.derived) {
-      const values = await fields[key].resolve!({ rows, ctx: call.ctx });
+      const values = await settle(
+        fields[key].resolve!({ rows, ctx: call.ctx }),
+      );
       if (values.length !== rows.length)
         throw new Error(
           `Derived CRUD field '${key}' returned an incorrect number of values`,
@@ -328,10 +337,12 @@ export function operations(model: CrudModel) {
     const result: Record<string, unknown> = {};
     for (const key of call.selected)
       result[key] = fields[key].scrub
-        ? await fields[key].scrub!({
-            value: jsonValue(row[key]),
-            ctx: call.ctx,
-          })
+        ? await settle(
+            fields[key].scrub!({
+              value: jsonValue(row[key]),
+              ctx: call.ctx,
+            }),
+          )
         : jsonValue(row[key]);
     return result;
   };
@@ -568,7 +579,7 @@ export function operations(model: CrudModel) {
     const scope =
       options.access === "public"
         ? undefined
-        : await options.access?.scope?.({ operation, ctx });
+        : await settle(options.access?.scope?.({ operation, ctx }));
     const call: Call = {
       ...begin(operation, input, scope, db),
       ctx,

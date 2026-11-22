@@ -93,6 +93,13 @@ export {
   type HandlerFactory,
 } from "./compiler";
 export { deny } from "./compiler/runtime";
+export {
+  settle,
+  useEffectRuntime,
+  type EffectOf,
+  type NotEffect,
+  type Returns,
+} from "./effect";
 
 export { defineService } from "./service";
 export type {

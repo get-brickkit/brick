@@ -20,6 +20,7 @@ import type { Reveal } from "./sensitive";
 import type { StandardErrorCode } from "./protocol";
 import type { DashboardIdentity } from "./dashboard-identity";
 import type { Identity } from "./identity";
+import type { Returns } from "./effect";
 import type { RateLimit } from "./rate-limit";
 import type { WebhookConfig } from "./webhook";
 import type { ServiceEvents } from "./events/types";
@@ -343,14 +344,12 @@ export interface ActionConfigWithAuthorize<
     user?: TContext extends { user: infer U } ? U : any;
     input: TInputSchema extends TSchema ? Static<TInputSchema> : any;
     ctx: TContext;
-  }) => boolean | Promise<boolean>;
+  }) => Returns<boolean>;
   execute: (params: {
     input: TInputSchema extends TSchema ? Static<TInputSchema> : any;
     ctx: NarrowAuthorizedContext<TContext>;
     error: ErrorBuilder<TErrors>;
-  }) =>
-    | Promise<TOutputSchema extends TSchema ? Static<TOutputSchema> : any>
-    | (TOutputSchema extends TSchema ? Static<TOutputSchema> : any);
+  }) => Returns<TOutputSchema extends TSchema ? Static<TOutputSchema> : any>;
 }
 
 export interface ActionConfigWithoutAuthorize<
@@ -398,9 +397,7 @@ export interface ActionConfigWithoutAuthorize<
     input: TInputSchema extends TSchema ? Static<TInputSchema> : any;
     ctx: TContext;
     error: ErrorBuilder<TErrors>;
-  }) =>
-    | Promise<TOutputSchema extends TSchema ? Static<TOutputSchema> : any>
-    | (TOutputSchema extends TSchema ? Static<TOutputSchema> : any);
+  }) => Returns<TOutputSchema extends TSchema ? Static<TOutputSchema> : any>;
 }
 
 export type ActionConfig<
@@ -761,7 +758,7 @@ export interface CommandConfig<
     user?: TCtx extends { user: infer U } ? U : any;
     input: ResourceActionInput<TIn, true>;
     ctx: TCtx;
-  }) => boolean | Promise<boolean>;
+  }) => Returns<boolean>;
   /**
    * The rules: a pure function of the loaded row and the input. Return
    * `error.CODE()` to reject (nothing is written), or the changes to make.
@@ -813,10 +810,7 @@ export type ResourceActionAccess<TCtx = any> =
   | {
       scope: (args: {
         ctx: TCtx;
-      }) =>
-        | import("drizzle-orm").SQL
-        | undefined
-        | Promise<import("drizzle-orm").SQL | undefined>;
+      }) => Returns<import("drizzle-orm").SQL | undefined>;
     };
 
 /** A record action's input: its own fields and the `id` from the path. */
@@ -869,16 +863,14 @@ export interface ResourceActionConfig<
     user?: TCtx extends { user: infer U } ? U : any;
     input: ResourceActionInput<TIn, TRecord>;
     ctx: TCtx;
-  }) => boolean | Promise<boolean>;
+  }) => Returns<boolean>;
   execute: (params: {
     input: ResourceActionInput<TIn, TRecord>;
     ctx: TCtx;
     error: ErrorBuilder<TErr>;
     /** The loaded row of a record action; `undefined` otherwise. */
     row: TRecord extends true ? TRow : undefined;
-  }) =>
-    | Promise<TOut extends TSchema ? Static<TOut> : any>
-    | (TOut extends TSchema ? Static<TOut> : any);
+  }) => Returns<TOut extends TSchema ? Static<TOut> : any>;
 }
 
 export interface ServiceOptions<
@@ -896,9 +888,7 @@ export interface ServiceOptions<
   deps?: TDeps;
   context?: (
     baseCtx: BaseContext<TDb> & { user?: unknown; deps: Readonly<TDeps> },
-  ) =>
-    | Promise<TServiceContext & { deps?: never }>
-    | (TServiceContext & { deps?: never });
+  ) => Returns<TServiceContext & { deps?: never }>;
   /**
    * Who the caller is and which tenant they act in, for the features that need
    * it. Runs at most once per call, and only when a feature asks. Return `null`
@@ -909,7 +899,7 @@ export interface ServiceOptions<
    */
   identity?: (
     ctx: BaseContext<TDb> & TServiceContext & { deps: Readonly<TDeps> },
-  ) => Identity | null | undefined | Promise<Identity | null | undefined>;
+  ) => Returns<Identity | null | undefined>;
   /**
    * The service's event catalog: payload schema by event name. Each becomes
    * `service.events.<name>`, recorded as `<service>.<name>`.

@@ -1,5 +1,6 @@
 import type { ActionErrorDefinition, ErrorDetails } from "../types";
 import type { Schedule } from "../schedules/schedule";
+import type { Returns } from "../effect";
 
 /**
  * An event, as it was recorded. It is the same for every listener of it.
@@ -79,7 +80,7 @@ export interface EventListener<TPayload = any> {
    * A handler that runs in the dispatching process for each delivery. Throwing
    * retries the delivery with a growing delay. A listener has this or `workflow`.
    */
-  readonly run?: (delivery: EventDelivery<TPayload>) => void | Promise<void>;
+  readonly run?: (delivery: EventDelivery<TPayload>) => Returns<void>;
   /** The typed errors a handler can fail with; `retry` receives them as a `ListenerFailure`. */
   readonly errors?: Record<string, ActionErrorDefinition>;
   /**

@@ -116,6 +116,7 @@
     "@vitejs/plugin-react": "^6.3.0",
     "@workflow/builders": "5.1.0",
     "clsx": "^2.1.1",
+    "effect": "4.1.5",
     "fumadocs-core": "16.19.3",
     "fumadocs-openapi": "12.6.4",
     "fumadocs-ui": "npm:@fumadocs/base-ui@16.19.3",

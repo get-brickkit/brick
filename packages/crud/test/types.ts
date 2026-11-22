@@ -1,5 +1,6 @@
 import { defineService } from "@brickkit/core";
 import { Type } from "@sinclair/typebox";
+import { Effect } from "effect";
 import { sqliteTable, integer, text } from "drizzle-orm/sqlite-core";
 
 import type { CrudAuthorizeArgs, CrudInputs } from "../src";
@@ -22,6 +23,7 @@ const resource = service.resource({ name: "typed", table, id: table.id }).use(
         update: true,
         filter: ["contains"],
         sort: true,
+        scrub: ({ value }) => Effect.succeed(String(value).trim()),
       },
       email: {
         read: true,
@@ -42,6 +44,24 @@ result.then((rows) => {
   void email;
   // @ts-expect-error name was not selected
   void rows.items[0].name;
+});
+resource.list.run({ select: ["name"] }).then((rows) => {
+  // An Effect-returning scrub reads as the value it succeeds with.
+  const name: string = rows.items[0].name;
+  void name;
+});
+declare const needsClock: Effect.Effect<number, never, "Clock">;
+crud({
+  access: "public",
+  fields: {
+    id: {
+      read: true,
+      // @ts-expect-error an Effect that still needs a service is not runnable
+      scrub: () => needsClock,
+    },
+    name: { read: true, scrub: () => ({ masked: true }) },
+    email: { read: true, scrub: () => ["a", "b"] },
+  },
 });
 resource.create.run({ name: "A" });
 resource.update.run({ id: 1, data: { name: "B" } });

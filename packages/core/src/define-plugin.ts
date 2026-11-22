@@ -5,6 +5,7 @@ import { Value } from "@sinclair/typebox/value";
 import { getTableName, type Table } from "drizzle-orm";
 import { actionMeta } from "./action-meta";
 import { freezeAsBuiltDeps } from "./deps";
+import type { Returns } from "./effect";
 import type { CallDeps } from "./file-storage";
 import { portOf } from "./service-port";
 import type { EventCatalog, EventRef, EventRefs } from "./events/catalog";
@@ -112,7 +113,7 @@ export interface PluginAppContext<
    */
   on(
     event: "start" | "stop",
-    handler: (context: PluginLifecycleContext<O, S, P>) => void | Promise<void>,
+    handler: (context: PluginLifecycleContext<O, S, P>) => Returns<void>,
   ): void;
   /**
    * Run before every request is routed. Return a `Response` (or any value) to

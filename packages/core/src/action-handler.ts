@@ -5,6 +5,7 @@ import { sensitivity } from "./sensitive";
 import { actionMeta } from "./action-meta";
 import { describeRoute, type RouteIR } from "./compiler/ir";
 import { portOf } from "./service-port";
+import { settle } from "./effect";
 import { bindRoute, type CompiledRoutePlan } from "./compiler/runtime";
 
 /** The plan of an analyzed route: its callbacks, validators and logger. */
@@ -19,9 +20,13 @@ export function planRoute(
     route,
     service: portOf(service),
     action,
-    execute: action.config.execute,
-    authorize: action.config.authorize,
-    contextHook: service.options.context,
+    execute: (params) => settle(action.config.execute(params)),
+    authorize:
+      action.config.authorize &&
+      ((params) => settle(action.config.authorize!(params))),
+    contextHook:
+      service.options.context &&
+      ((baseCtx) => settle(service.options.context!(baseCtx))),
     inputChecker: action.config.input
       ? (getCompiledCheck(action.config.input) as any)
       : undefined,
