@@ -48,17 +48,17 @@ curl -s -X POST localhost:4310/api/sprites/stack \
 
 The JSON has `stripPng` and `sheetPng`, both base64. Options:
 
-| Field | What it does |
-| --- | --- |
-| `sample` | `car` or `tree`. Ignored when `sheet` is set. |
-| `sheet` | A 4-view PNG, base64 or a data URL. |
-| `slices` | Layer count, up to 96. `0` keeps the sheet height. |
-| `round` | Lathe each solid layer into an ellipse. Trees, pots, balloons. |
-| `palette` | Shared palette size. `0` keeps every color. |
-| `shade` | Darken side faces toward the ground, `0` to `1`. |
-| `order` | `reading` (top, side, front, back) or `auto`. |
-| `sideNose` | `left` or `right`. |
-| `topNose` | `auto`, `up`, or `down`. |
+| Field      | What it does                                                   |
+| ---------- | -------------------------------------------------------------- |
+| `sample`   | `car` or `tree`. Ignored when `sheet` is set.                  |
+| `sheet`    | A 4-view PNG, base64 or a data URL.                            |
+| `slices`   | Layer count, up to 96. `0` keeps the sheet height.             |
+| `round`    | Lathe each solid layer into an ellipse. Trees, pots, balloons. |
+| `palette`  | Shared palette size. `0` keeps every color.                    |
+| `shade`    | Darken side faces toward the ground, `0` to `1`.               |
+| `order`    | `reading` (top, side, front, back) or `auto`.                  |
+| `sideNose` | `left` or `right`.                                             |
+| `topNose`  | `auto`, `up`, or `down`.                                       |
 
 ## MCP
 
