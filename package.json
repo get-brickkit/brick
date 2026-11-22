@@ -13,6 +13,7 @@
     "examples/events",
     "examples/board",
     "examples/websocket",
+    "examples/sprites",
     "www",
     "examples/pages"
   ],
@@ -21,7 +22,7 @@
     "check": "bun run lint && bun run format:check && bun run build && bun run typecheck && bun run test",
     "build": "bun run --filter './packages/*' --filter '!@brickkit/workflow-inspector' build",
     "release": "bun scripts/release.ts",
-    "test": "bun test packages examples/extensions/test examples/websocket/test scripts --path-ignore-patterns='**/*-world/**' && bun run --cwd examples/events test",
+    "test": "bun test packages examples/extensions/test examples/websocket/test examples/sprites/test scripts --path-ignore-patterns='**/*-world/**' && bun run --cwd examples/events test",
     "typecheck": "bun run --filter './packages/*' typecheck",
     "build:worlds": "bun run --filter '@brickkit/*-world' build",
     "test:worlds": "bun run --filter '@brickkit/*-world' test",

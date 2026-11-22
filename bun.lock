@@ -119,6 +119,17 @@
         "oxlint": "^1.91.0",
       },
     },
+    "examples/sprites": {
+      "name": "brick-sprites-example",
+      "dependencies": {
+        "@brickkit/cli": "workspace:*",
+        "@brickkit/core": "workspace:*",
+      },
+      "devDependencies": {
+        "oxfmt": "^0.76.0",
+        "oxlint": "^1.91.0",
+      },
+    },
     "examples/websocket": {
       "name": "brick-websocket-example",
       "dependencies": {
@@ -1753,6 +1764,8 @@
     "brick-extensions-example": ["brick-extensions-example@workspace:examples/extensions"],
 
     "brick-showcase": ["brick-showcase@workspace:examples/showcase"],
+
+    "brick-sprites-example": ["brick-sprites-example@workspace:examples/sprites"],
 
     "brick-websocket-example": ["brick-websocket-example@workspace:examples/websocket"],
 

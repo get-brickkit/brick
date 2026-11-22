@@ -1,0 +1,17 @@
+{
+  "title": "Sprite stack",
+  "description": "One TypeBox action turns four pixel-art views into a sprite you can spin. The same action runs in process, over HTTP, from the typed client, and as an MCP tool.",
+  "tags": ["Showcase", "MCP", "Typed actions"],
+  "features": [
+    "One action, called in process, over HTTP, from the typed client, and as an MCP tool",
+    "TypeBox input and output on a single defineTool with http: true",
+    "A canvas turntable served by the same app"
+  ],
+  "entry": "src/app.ts",
+  "order": 40,
+  "run": [
+    "bun run --cwd examples/sprites dev",
+    "bun run --cwd examples/sprites cli -- car"
+  ],
+  "runNote": "The server listens on port 4310. Open it for the turntable. POST /mcp exposes the stack tool."
+}

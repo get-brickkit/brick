@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sprite stack</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #10131a;
+        --panel: #171c27;
+        --line: #2c3448;
+        --text: #f3efe6;
+        --muted: #8e98ad;
+        --amber: #ffb703;
+        --ink: #1a1408;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+      }
+      body {
+        min-height: 100vh;
+        font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+        background:
+          radial-gradient(900px 420px at 80% -10%, #3a2a14 0%, transparent 60%),
+          var(--bg);
+        color: var(--text);
+      }
+      .wrap {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 28px 20px 56px;
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        align-items: flex-end;
+        flex-wrap: wrap;
+      }
+      .kicker {
+        color: var(--amber);
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        font-size: 12px;
+        margin: 0 0 8px;
+      }
+      h1 {
+        font-size: 32px;
+        line-height: 1;
+        margin: 0;
+        letter-spacing: -0.03em;
+      }
+      .lede {
+        margin: 10px 0 0;
+        max-width: 46ch;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      .doors {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .doors li {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 12px;
+        color: var(--text);
+        background: #121722;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 16px;
+        margin-top: 22px;
+      }
+      @media (max-width: 860px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 16px;
+      }
+      .drop {
+        border: 1px dashed #46506a;
+        border-radius: 14px;
+        min-height: 112px;
+        display: grid;
+        place-items: center;
+        text-align: center;
+        padding: 14px;
+        color: var(--muted);
+        background: #121722;
+        cursor: pointer;
+      }
+      .drop.hot {
+        border-color: var(--amber);
+        color: var(--text);
+      }
+      .drop strong {
+        color: var(--text);
+        display: block;
+        margin-bottom: 4px;
+      }
+      .samples {
+        display: flex;
+        gap: 8px;
+        margin: 12px 0;
+      }
+      button,
+      .file {
+        font: inherit;
+        color: inherit;
+        background: #121722;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+      button.active,
+      button.primary {
+        background: var(--amber);
+        color: var(--ink);
+        border-color: var(--amber);
+        font-weight: 700;
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: progress;
+      }
+      label {
+        display: grid;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--muted);
+        margin: 10px 0;
+      }
+      label span {
+        display: flex;
+        justify-content: space-between;
+      }
+      input[type="range"] {
+        width: 100%;
+        accent-color: var(--amber);
+      }
+      .check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--text);
+        font-size: 13px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-top: 12px;
+      }
+      .status {
+        min-height: 2.6em;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+        margin: 10px 0 0;
+      }
+      .status.error {
+        color: #ff8b8b;
+      }
+      .sheet {
+        margin-top: 12px;
+        width: 100%;
+        image-rendering: pixelated;
+        background: #0e121a;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+      }
+      .stage {
+        min-height: 420px;
+        border-radius: 14px;
+        display: grid;
+        place-items: center;
+        cursor: grab;
+        touch-action: none;
+        background-color: #141924;
+        background-image:
+          linear-gradient(45deg, #1e2636 25%, transparent 25%),
+          linear-gradient(-45deg, #1e2636 25%, transparent 25%),
+          linear-gradient(45deg, transparent 75%, #1e2636 75%),
+          linear-gradient(-45deg, transparent 75%, #1e2636 75%);
+        background-size: 22px 22px;
+        background-position:
+          0 0,
+          0 11px,
+          11px -11px,
+          -11px 0;
+      }
+      .stage:active {
+        cursor: grabbing;
+      }
+      canvas {
+        image-rendering: pixelated;
+        max-width: 100%;
+        height: auto;
+      }
+      .meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: center;
+        margin-top: 12px;
+        flex-wrap: wrap;
+      }
+      .meta p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .baked {
+        margin-top: 12px;
+        overflow-x: auto;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #0e121a;
+      }
+      .baked img {
+        image-rendering: pixelated;
+        height: 96px;
+        width: auto;
+        display: block;
+      }
+      footer {
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      footer a {
+        color: var(--amber);
+      }
+      code {
+        color: var(--text);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div>
+          <p class="kicker">brickkit</p>
+          <h1>Sprite stack</h1>
+          <p class="lede">
+            Four orthographic views become a sprite you can spin. One TypeBox
+            action runs in process, as an HTTP route, from the typed client, and
+            as an MCP tool.
+          </p>
+        </div>
+        <ul class="doors">
+          <li>in process</li>
+          <li>POST /api/sprites/stack</li>
+          <li>typed client</li>
+          <li>MCP stack</li>
+        </ul>
+      </header>
+      <div class="layout">
+        <section class="panel">
+          <div
+            class="drop"
+            id="drop"
+            tabindex="0"
+            role="button"
+            aria-label="Drop a 4-view PNG"
+          >
+            <div>
+              <strong>Drop a 4-view PNG</strong>
+              top, side, front, back, one row
+            </div>
+          </div>
+          <input id="file" class="file" type="file" accept="image/png" hidden />
+          <div class="samples">
+            <button type="button" id="car" class="active">Car</button>
+            <button type="button" id="tree">Tree</button>
+          </div>
+          <img id="source" class="sheet" alt="The four views in a row" />
+          <label>
+            <span>Slices <b id="slices-label">native</b></span>
+            <input id="slices" type="range" min="0" max="48" value="0" />
+          </label>
+          <label>
+            <span>Palette <b id="palette-label">all colors</b></span>
+            <input
+              id="palette"
+              type="range"
+              min="0"
+              max="32"
+              step="1"
+              value="0"
+            />
+          </label>
+          <label class="check">
+            <input id="round" type="checkbox" />
+            Round carving
+          </label>
+          <div class="row">
+            <button type="button" class="primary" id="go">Stack</button>
+            <button type="button" id="spin">Pause</button>
+          </div>
+          <p class="status" id="status">Stacking the car.</p>
+        </section>
+        <section class="panel">
+          <div class="stage" id="stage" title="Drag to turn">
+            <canvas id="view" width="320" height="320"></canvas>
+          </div>
+          <div class="meta">
+            <p id="readout">Drag the sprite. Arrows turn it.</p>
+            <div class="row">
+              <button type="button" id="save-strip">Slice strip</button>
+              <button type="button" id="save-sheet">16 frames</button>
+            </div>
+          </div>
+          <div class="baked">
+            <img id="baked" alt="Sixteen baked directions" />
+          </div>
+        </section>
+      </div>
+      <footer>
+        Carving is a TypeScript port of
+        <a href="https://github.com/danielwh2/sprite-stacking"
+          >sprite-stacking</a
+        >
+        by Daniel White, MIT. A voxel survives only where all four views cover
+        it. The volume is cut into layers, ground first. Each layer is rotated,
+        squashed for pitch, and lifted 1px. Ask an agent, pointed at
+        <code>POST /mcp</code>, to make a rotatable pixel-art car.
+      </footer>
+    </div>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const state = {
+        sample: "car",
+        sheet: null,
+        spinning: true,
+        angle: 35,
+        dragging: false,
+        lastX: 0,
+        result: null,
+        pixels: null,
+        raf: 0,
+      };
+
+      const presets = {
+        car: { round: false, palette: 0 },
+        tree: { round: true, palette: 0 },
+      };
+
+      function labelOf(id, value, zero) {
+        $(id).textContent = value === 0 ? zero : String(value);
+      }
+
+      $("slices").addEventListener("input", () => {
+        labelOf("slices-label", Number($("slices").value), "native");
+      });
+      $("palette").addEventListener("input", () => {
+        labelOf("palette-label", Number($("palette").value), "all colors");
+      });
+
+      function applyPreset(name) {
+        state.sample = name;
+        state.sheet = null;
+        $("car").classList.toggle("active", name === "car");
+        $("tree").classList.toggle("active", name === "tree");
+        $("round").checked = presets[name].round;
+        $("source").src = "/samples/" + name + ".png";
+      }
+
+      $("car").onclick = () => {
+        applyPreset("car");
+        stack();
+      };
+      $("tree").onclick = () => {
+        applyPreset("tree");
+        stack();
+      };
+      $("go").onclick = () => stack();
+      $("spin").onclick = () => {
+        state.spinning = !state.spinning;
+        $("spin").textContent = state.spinning ? "Pause" : "Spin";
+        if (state.spinning) loop(performance.now());
+      };
+
+      const drop = $("drop");
+      drop.onclick = () => $("file").click();
+      drop.ondragover = (event) => {
+        event.preventDefault();
+        drop.classList.add("hot");
+      };
+      drop.ondragleave = () => drop.classList.remove("hot");
+      drop.ondrop = (event) => {
+        event.preventDefault();
+        drop.classList.remove("hot");
+        const file = event.dataTransfer.files[0];
+        if (file) readFile(file);
+      };
+      $("file").onchange = () => {
+        const file = $("file").files[0];
+        if (file) readFile(file);
+      };
+
+      function readFile(file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          state.sheet = String(reader.result);
+          state.sample = null;
+          $("car").classList.remove("active");
+          $("tree").classList.remove("active");
+          $("source").src = state.sheet;
+          stack();
+        };
+        reader.readAsDataURL(file);
+      }
+
+      function payload() {
+        const body = {
+          slices: Number($("slices").value),
+          round: $("round").checked,
+          palette: Number($("palette").value),
+        };
+        if (state.sheet) body.sheet = state.sheet;
+        else body.sample = state.sample;
+        return body;
+      }
+
+      async function stack() {
+        const button = $("go");
+        button.disabled = true;
+        $("status").className = "status";
+        $("status").textContent = "Stacking...";
+        const started = performance.now();
+        try {
+          const response = await fetch("/api/sprites/stack", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload()),
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.message || "Stack failed");
+          state.result = body;
+          state.pixels = await decodeStrip(body);
+          $("baked").src = "data:image/png;base64," + body.sheetPng;
+          const ms = Math.round(performance.now() - started);
+          $("status").textContent =
+            body.slices +
+            " slices of " +
+            body.sliceWidth +
+            "x" +
+            body.sliceHeight +
+            " in " +
+            ms +
+            " ms. POST /api/sprites/stack";
+          draw(state.angle);
+        } catch (err) {
+          $("status").className = "status error";
+          $("status").textContent = err.message;
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      function decodeStrip(result) {
+        return new Promise((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => {
+            const canvas = document.createElement("canvas");
+            canvas.width = image.width;
+            canvas.height = image.height;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(image, 0, 0);
+            resolve({
+              width: image.width,
+              height: image.height,
+              data: ctx.getImageData(0, 0, image.width, image.height).data,
+              slices: result.slices,
+              sliceWidth: result.sliceWidth,
+              sliceHeight: result.sliceHeight,
+            });
+          };
+          image.onerror = () =>
+            reject(new Error("Could not read the slice strip"));
+          image.src = "data:image/png;base64," + result.stripPng;
+        });
+      }
+
+      // Same projection as src/render.ts: rotate, squash, lift 1px, ground first.
+      function draw(angle) {
+        const strip = state.pixels;
+        const canvas = $("view");
+        if (!strip) return;
+        const squash = 0.75;
+        const w = strip.sliceWidth;
+        const h = strip.sliceHeight;
+        const n = strip.slices;
+        const diag = Math.ceil(Math.hypot(w, h)) + 8;
+        const cw = diag + 12;
+        const ch = Math.ceil(diag * squash) + (n - 1) + 16;
+        const cx = Math.floor(cw / 2);
+        const baseY = ch - Math.ceil((diag * squash) / 2) - 6;
+        const rad = (angle * Math.PI) / 180;
+        const ca = Math.cos(rad);
+        const sa = Math.sin(rad);
+        const pixels = new Uint8ClampedArray(cw * ch * 4);
+        const body = new Uint8ClampedArray(cw * ch * 4);
+        const at = (sx, sy, z) => {
+          if (sx < 0 || sy < 0 || sx >= w || sy >= h) return -1;
+          return (sy * strip.width + z * w + sx) * 4;
+        };
+        for (let y = 0; y < ch; y++) {
+          const dy = (y - (baseY + 3)) / squash;
+          for (let x = 0; x < cw; x++) {
+            const dx = x - (cx + 2);
+            const sx = Math.floor(dx * ca + dy * sa + w / 2);
+            const sy = Math.floor(-dx * sa + dy * ca + h / 2);
+            let hit = false;
+            for (let z = 0; z < n && !hit; z++) {
+              const i = at(sx, sy, z);
+              if (i >= 0 && strip.data[i + 3] > 0) hit = true;
+            }
+            if (!hit) continue;
+            const p = (y * cw + x) * 4;
+            pixels[p] = 186;
+            pixels[p + 1] = 198;
+            pixels[p + 2] = 212;
+            pixels[p + 3] = 255;
+          }
+        }
+        for (let z = 0; z < n; z++) {
+          const origin = baseY - z;
+          for (let y = 0; y < ch; y++) {
+            const dy = (y - origin) / squash;
+            for (let x = 0; x < cw; x++) {
+              const dx = x - cx;
+              const sx = Math.floor(dx * ca + dy * sa + w / 2);
+              const sy = Math.floor(-dx * sa + dy * ca + h / 2);
+              const i = at(sx, sy, z);
+              if (i < 0 || strip.data[i + 3] === 0) continue;
+              const p = (y * cw + x) * 4;
+              body[p] = strip.data[i];
+              body[p + 1] = strip.data[i + 1];
+              body[p + 2] = strip.data[i + 2];
+              body[p + 3] = 255;
+            }
+          }
+        }
+        const solid = (x, y) =>
+          x >= 0 &&
+          y >= 0 &&
+          x < cw &&
+          y < ch &&
+          body[(y * cw + x) * 4 + 3] > 0;
+        for (let y = 0; y < ch; y++) {
+          for (let x = 0; x < cw; x++) {
+            if (solid(x, y)) continue;
+            if (
+              solid(x, y - 1) ||
+              solid(x, y + 1) ||
+              solid(x - 1, y) ||
+              solid(x + 1, y)
+            ) {
+              const p = (y * cw + x) * 4;
+              pixels[p] = 24;
+              pixels[p + 1] = 28;
+              pixels[p + 2] = 36;
+              pixels[p + 3] = 255;
+            }
+          }
+        }
+        for (let i = 3; i < body.length; i += 4) {
+          if (body[i] > 0) {
+            pixels[i - 3] = body[i - 3];
+            pixels[i - 2] = body[i - 2];
+            pixels[i - 1] = body[i - 1];
+            pixels[i] = 255;
+          }
+        }
+        const scale = Math.max(3, Math.min(6, Math.floor(440 / ch)));
+        const scratch =
+          draw.scratch || (draw.scratch = document.createElement("canvas"));
+        scratch.width = cw;
+        scratch.height = ch;
+        scratch
+          .getContext("2d")
+          .putImageData(new ImageData(pixels, cw, ch), 0, 0);
+        canvas.width = cw * scale;
+        canvas.height = ch * scale;
+        const ctx = canvas.getContext("2d");
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(scratch, 0, 0, canvas.width, canvas.height);
+        $("readout").textContent =
+          Math.round(angle % 360) + " deg  " + n + " layers, lift 1px";
+      }
+
+      function loop(now) {
+        if (!state.spinning) return;
+        if (!loop.last) loop.last = now;
+        state.angle += (now - loop.last) * 0.04;
+        loop.last = now;
+        draw(state.angle);
+        state.raf = requestAnimationFrame(loop);
+      }
+
+      const stage = $("stage");
+      stage.onpointerdown = (event) => {
+        state.dragging = true;
+        state.lastX = event.clientX;
+        state.spinning = false;
+        $("spin").textContent = "Spin";
+        stage.setPointerCapture(event.pointerId);
+      };
+      stage.onpointermove = (event) => {
+        if (!state.dragging) return;
+        state.angle += (event.clientX - state.lastX) * 0.6;
+        state.lastX = event.clientX;
+        draw(state.angle);
+      };
+      stage.onpointerup = () => {
+        state.dragging = false;
+      };
+
+      addEventListener("keydown", (event) => {
+        if (event.key === "ArrowLeft") state.angle -= 8;
+        else if (event.key === "ArrowRight") state.angle += 8;
+        else if (event.key === " ") {
+          event.preventDefault();
+          $("spin").click();
+          return;
+        } else return;
+        state.spinning = false;
+        $("spin").textContent = "Spin";
+        draw(state.angle);
+      });
+
+      function download(b64, name) {
+        const link = document.createElement("a");
+        link.href = "data:image/png;base64," + b64;
+        link.download = name;
+        link.click();
+      }
+      $("save-strip").onclick = () =>
+        state.result && download(state.result.stripPng, "slices.png");
+      $("save-sheet").onclick = () =>
+        state.result && download(state.result.sheetPng, "turntable.png");
+
+      applyPreset("car");
+      stack().then(() => loop(performance.now()));
+    </script>
+  </body>
+</html>

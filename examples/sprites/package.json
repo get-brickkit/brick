@@ -1,0 +1,24 @@
+{
+  "name": "brick-sprites-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test test",
+    "dev": "bun src/server.ts",
+    "start": "bun src/server.ts",
+    "cli": "bun src/cli.ts",
+    "media": "bun scripts/render-media.ts",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check ."
+  },
+  "dependencies": {
+    "@brickkit/cli": "workspace:*",
+    "@brickkit/core": "workspace:*"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.76.0",
+    "oxlint": "^1.91.0"
+  }
+}
