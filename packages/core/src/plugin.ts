@@ -20,6 +20,7 @@ import {
   type ServicePluginContext,
 } from "./plugin-types";
 import { defineAction } from "./action";
+import { settle, type NotEffect, type Returns } from "./effect";
 import { actionMeta, type PluginRouteBinding } from "./action-meta";
 import { kebabCase } from "./kebab";
 import { DEFAULT_PREFIX, pathParamNames, pluginRoutePath } from "./routes";
@@ -143,7 +144,7 @@ function copyControls<S extends PluginRouteScope>(
 
 type Binding = PluginRouteBinding;
 interface RawBinding extends Binding {
-  handler: (context: PluginEndpointContext<any>) => unknown | Promise<unknown>;
+  handler: (context: PluginEndpointContext<any>) => Returns<NotEffect>;
   summary?: string;
   description?: string;
   tags?: string[];
@@ -223,10 +224,12 @@ export function getPluginEndpoints(
       description: binding.description,
       tags: binding.tags,
       handler: async (context: Omit<PluginEndpointContext, "ctx">) =>
-        binding.handler({
-          ...context,
-          ctx: await service.resolveContext({ request: context.request }),
-        }),
+        settle(
+          binding.handler({
+            ...context,
+            ctx: await service.resolveContext({ request: context.request }),
+          }),
+        ),
     }));
 }
 

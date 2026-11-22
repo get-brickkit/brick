@@ -1,5 +1,6 @@
 import { traceScheduleRun } from "../telemetry";
 import { GLOBAL_SYMBOL } from "../telemetry-names";
+import { settle } from "../effect";
 import { Dispatcher, type OutboxCounts } from "./dispatcher";
 import { newEventId } from "./id";
 import { listenerDeps, validateListener } from "./listener";
@@ -277,7 +278,7 @@ export class EventsHub {
         const start = () =>
           schedule.workflow
             ? this.runtime!.startScheduled(schedule, run)
-            : runWithDeps(this.deps, async () => schedule.run!(run));
+            : runWithDeps(this.deps, async () => settle(schedule.run!(run)));
         return this.telemetry ? traceScheduleRun(run, start) : start();
       },
       {
@@ -407,7 +408,7 @@ export class EventsHub {
         ...(maxAttempts !== undefined ? { maxAttempts } : {}),
         run: workflow
           ? (delivery) => this.runtime!.startRun(listener, delivery)
-          : (delivery) => runWithDeps(deps, () => run!(delivery)),
+          : (delivery) => runWithDeps(deps, () => settle(run!(delivery))),
       };
       this.deliverables.set(name, found);
     }

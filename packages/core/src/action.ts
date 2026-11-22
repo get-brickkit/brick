@@ -13,6 +13,7 @@ import { STANDARD_ERRORS } from "./protocol";
 import { validateWithSchema } from "./typebox";
 import { actionMeta } from "./action-meta";
 import { baseContext } from "./context";
+import { settle } from "./effect";
 import { invalid, runStages, type Stages } from "./compiler/runtime";
 import { enforceRateLimits, rateLimitsOf } from "./rate-limit";
 import { auditStage, type AuditStage, type AuditTable } from "./audit";
@@ -188,8 +189,9 @@ export function defineAction(config: any): any {
           input,
           ctx,
         )),
-    authorize: config.authorize,
-    execute: config.execute,
+    authorize:
+      config.authorize && ((params) => settle(config.authorize(params))),
+    execute: (params) => settle(config.execute(params)),
     errorBuilder: errorHelpers,
     checkOutput: (result) => {
       if (!(actionMeta(actionFn).runtimeOutput ?? config.output)) return result;

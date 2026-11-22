@@ -12,6 +12,7 @@ import { portOf } from "./service-port";
 import { Type } from "./typebox";
 import { isSensitive, Sensitive, sensitivity } from "./sensitive";
 import { runInTransaction } from "./events/transaction";
+import { settle } from "./effect";
 import { entryOf, inlineAudit, isAuditTable, recordInline } from "./audit";
 import { checkPayload, crudEventSource, type EventRef } from "./events/catalog";
 import {
@@ -58,7 +59,7 @@ export async function loadRecord(
   const scope =
     args.access === "public"
       ? undefined
-      : await args.access.scope({ ctx: args.ctx });
+      : await settle(args.access.scope({ ctx: args.ctx }));
   const [row] = await db
     .select()
     .from(resource.table)
@@ -148,7 +149,7 @@ function defineResourceAction(
         ? await loadRecord(resource, { id: input.id, ctx, access })
         : undefined;
       if (record && row === undefined) notFound(resource, input.id, error);
-      return execute({ input, ctx, error, row } as any);
+      return settle(execute({ input, ctx, error, row } as any));
     },
   } as any);
   const info: ResourceActionInfo = {

@@ -1,4 +1,5 @@
 import { PLUGIN_DEPS } from "./deps";
+import { settle } from "./effect";
 import type { EventListener } from "./events/types";
 import type {
   PluginInstallOptions,
@@ -130,7 +131,7 @@ export function setupAppPlugins(
         own[event].push(handler);
       },
       middleware(handler) {
-        middleware.push(handler);
+        middleware.push((context) => settle(handler(context)));
       },
       listeners(...items) {
         // `useDeps()` in a plugin's listener, and its workflow's steps, return the plugin's deps.
@@ -141,10 +142,10 @@ export function setupAppPlugins(
     });
     lifecycles.push({
       start: async () => {
-        for (const handler of own.start) await handler(lifecycle);
+        for (const handler of own.start) await settle(handler(lifecycle));
       },
       stop: async () => {
-        for (const handler of own.stop) await handler(lifecycle);
+        for (const handler of own.stop) await settle(handler(lifecycle));
       },
     });
   }

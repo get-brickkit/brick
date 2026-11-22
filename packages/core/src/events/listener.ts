@@ -1,6 +1,7 @@
 import { isEventRef, type EventRef } from "./catalog";
 import { buildErrorHelpers } from "../action";
 import { PLUGIN_DEPS } from "../deps";
+import type { Returns } from "../effect";
 import type { ActionErrorDefinition, ErrorBuilder } from "../types";
 import type {
   EventDelivery,
@@ -35,7 +36,7 @@ type ListenerConfig<
       run: (
         delivery: EventDelivery<TPayload>,
         helpers: { error: ErrorBuilder<TErrors> },
-      ) => void | Promise<void>;
+      ) => Returns<void>;
       workflow?: never;
     }
   | { workflow: EventWorkflow<TPayload>; run?: never }

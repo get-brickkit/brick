@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, mkdir, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { compileBrickApplication, WORKFLOW_BUNDLE } from "@brickkit/core";
@@ -88,10 +89,18 @@ export async function buildApplication(options: BuildApplicationOptions) {
       ? join(outdir, "dashboard")
       : undefined;
     const theme = JSON.stringify(options.dashboard?.theme);
+    // Core imports effect lazily, which a bundle cannot follow; bundle the app's copy when it has one.
+    const effectPath = resolveEffect(entry);
+    const effect = effectPath
+      ? `import { Effect, Cause } from ${JSON.stringify(effectPath)};
+import { useEffectRuntime } from "@brickkit/core";
+useEffectRuntime({ Effect, Cause });
+`
+      : "";
     const source = `import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { loadCompiledBrickApp } from "@brickkit/core";
-import { resolvePort } from ${JSON.stringify(ownModule("config"))};
+${effect}import { resolvePort } from ${JSON.stringify(ownModule("config"))};
 import { serveApp, shutdownOnSignal } from ${JSON.stringify(ownModule("serve"))};
 const workflows = fileURLToPath(new URL(${JSON.stringify(`./${WORKFLOW_BUNDLE.dir}`)}, import.meta.url));
 export const app = await loadCompiledBrickApp(() => import(${JSON.stringify(entry)}), undefined, {
@@ -168,5 +177,31 @@ if (import.meta.main) {
     };
   } finally {
     await rm(staging, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The `effect` module to bundle: only when the app's nearest package.json
+ * declares effect, so a copy hoisted for some other package is not bundled.
+ */
+export function resolveEffect(entry: string): string | undefined {
+  for (let dir = dirname(entry); ; dir = dirname(dir)) {
+    const manifest = join(dir, "package.json");
+    if (existsSync(manifest)) {
+      const pkg = JSON.parse(readFileSync(manifest, "utf8"));
+      const declared = [
+        pkg.dependencies,
+        pkg.devDependencies,
+        pkg.peerDependencies,
+        pkg.optionalDependencies,
+      ].some((deps) => deps?.effect);
+      if (!declared) return undefined;
+      try {
+        return Bun.resolveSync("effect", dirname(entry));
+      } catch {
+        return undefined;
+      }
+    }
+    if (dirname(dir) === dir) return undefined;
   }
 }

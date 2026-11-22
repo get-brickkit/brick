@@ -26,6 +26,7 @@
     "audit-log",
     "webhooks",
     "validation-and-errors",
+    "effect",
     "sensitive-fields",
     "hooks",
     "events",

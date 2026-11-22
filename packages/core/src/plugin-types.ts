@@ -1,4 +1,5 @@
 import type { HttpMethod } from "./http";
+import type { NotEffect, Returns } from "./effect";
 import type { TSchema } from "@sinclair/typebox";
 import type { PluginInstance } from "./define-plugin";
 import type { PluginActionChecks } from "./action-meta";
@@ -75,7 +76,7 @@ export interface PluginRouteRegistrar<
     path: string;
     method: PluginRouteMethod;
     scope?: S;
-    handler: (context: PluginEndpointContext<C>) => unknown | Promise<unknown>;
+    handler: (context: PluginEndpointContext<C>) => Returns<NotEffect>;
     summary?: string;
     description?: string;
     tags?: string[];

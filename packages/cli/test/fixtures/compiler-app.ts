@@ -8,6 +8,7 @@ import {
   sqliteTable,
   text,
 } from "@brickkit/core";
+import { Effect } from "effect";
 const service = defineService("built", {
   context: (ctx) => ({
     user: ctx.request.headers.get("x-user") ? { id: "alice" } : null,
@@ -27,6 +28,11 @@ plain.action({
   name: "getReady",
   method: "GET",
   execute: () => ({ ok: true }),
+});
+plain.action({
+  name: "getEffect",
+  method: "GET",
+  execute: () => Effect.succeed({ effect: true }),
 });
 
 const pages = sqliteTable("built_read_pages", {
