@@ -21,13 +21,13 @@ import { Wordmark } from "@/components/logo";
 import { useMDXComponents } from "@/components/mdx";
 import { baseOptions } from "@/lib/layout.shared";
 import { gitConfig, repoUrl } from "@/lib/shared";
-import { redirectFor } from "@/lib/redirects";
+import { canonicalRedirect } from "@/lib/redirects";
 import { slugsToMarkdownPath, source } from "@/lib/source";
 import { socialMeta } from "@/lib/social";
 
 export const Route = createFileRoute("/docs/$")({
-  beforeLoad: ({ params }) => {
-    const target = redirectFor(`/docs/${params._splat ?? ""}`);
+  beforeLoad: ({ location }) => {
+    const target = canonicalRedirect(location.pathname);
     if (target) throw redirect({ href: target, statusCode: 308 });
   },
   component: Page,
